@@ -1,8 +1,11 @@
 # Build artifacts
 /bin/
 /dist/
-click
-click.exe
+# Anchored to repo root (leading slash) — a bare "click"/"click.exe" pattern would also match
+# ANY nested path named "click", including cmd/click/, silently excluding it from git entirely.
+# (This is exactly what happened: cmd/click/main.go was never committed until this fix.)
+/click
+/click.exe
 *.exe
 *.test
 *.out
