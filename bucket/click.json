@@ -1,0 +1,15 @@
+{
+    "version": "0.1.0",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/Angel-MercadoCLK/click-ai-devkit/releases/download/v0.1.0/click_0.1.0_windows_amd64.zip",
+            "bin": [
+                "click.exe"
+            ],
+            "hash": "607530955c0dd38401b24cf3a0c9bfe130f8391c6a23270e3c51d9b0449ed750"
+        }
+    },
+    "homepage": "https://github.com/Angel-MercadoCLK/click-ai-devkit",
+    "license": "Proprietary",
+    "description": "click-ai-devkit installer and manager for Claude Code plugins + Engram."
+}
