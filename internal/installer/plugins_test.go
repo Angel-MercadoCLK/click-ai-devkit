@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	clickmemory "github.com/Angel-MercadoCLK/click-ai-devkit/plugins/click-memory"
+	clickreview "github.com/Angel-MercadoCLK/click-ai-devkit/plugins/click-review"
 	clicksdd "github.com/Angel-MercadoCLK/click-ai-devkit/plugins/click-sdd"
 )
 
@@ -257,5 +258,124 @@ func TestRemoveClickMemoryPlugin_NoopWhenAlreadyAbsent(t *testing.T) {
 
 	if err := RemoveClickMemoryPlugin(cfg); err != nil {
 		t.Fatalf("RemoveClickMemoryPlugin() on an absent plugin error = %v, want nil", err)
+	}
+}
+
+func TestCopyClickReviewPlugin_CreatesExpectedFiles(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+
+	if err := CopyClickReviewPlugin(cfg); err != nil {
+		t.Fatalf("CopyClickReviewPlugin() error = %v", err)
+	}
+
+	wantPluginJSON, err := clickreview.Files.ReadFile(".claude-plugin/plugin.json")
+	if err != nil {
+		t.Fatalf("read embedded plugin.json: %v", err)
+	}
+	wantAgent, err := clickreview.Files.ReadFile("agents/click-pr-reviewer.md")
+	if err != nil {
+		t.Fatalf("read embedded click-pr-reviewer.md: %v", err)
+	}
+
+	gotPluginJSON, err := os.ReadFile(filepath.Join(cfg.ClickReviewPluginDir(), ".claude-plugin", "plugin.json"))
+	if err != nil {
+		t.Fatalf("CopyClickReviewPlugin() did not create plugin.json: %v", err)
+	}
+	if string(gotPluginJSON) != string(wantPluginJSON) {
+		t.Errorf("copied plugin.json = %q, want %q", gotPluginJSON, wantPluginJSON)
+	}
+
+	gotAgent, err := os.ReadFile(filepath.Join(cfg.ClickReviewPluginDir(), "agents", "click-pr-reviewer.md"))
+	if err != nil {
+		t.Fatalf("CopyClickReviewPlugin() did not create click-pr-reviewer.md: %v", err)
+	}
+	if string(gotAgent) != string(wantAgent) {
+		t.Errorf("copied click-pr-reviewer.md = %q, want %q", gotAgent, wantAgent)
+	}
+}
+
+func TestClickReviewPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
+	type pluginManifest struct {
+		Name        string `json:"name"`
+		Version     string `json:"version"`
+		Description string `json:"description"`
+		Author      string `json:"author"`
+	}
+
+	data, err := clickreview.Files.ReadFile(".claude-plugin/plugin.json")
+	if err != nil {
+		t.Fatalf("ReadFile(plugin.json) error = %v", err)
+	}
+
+	var manifest pluginManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("plugin.json parse error = %v", err)
+	}
+	if manifest.Name != "click-review" {
+		t.Fatalf("manifest.Name = %q, want click-review", manifest.Name)
+	}
+	if manifest.Version == "" || manifest.Description == "" || manifest.Author == "" {
+		t.Fatalf("manifest fields missing: %+v", manifest)
+	}
+
+	expectedFiles := []string{
+		"agents/click-pr-reviewer.md",
+		"skills/pr-review/SKILL.md",
+		"skills/pre-merge-checklist/SKILL.md",
+	}
+	for _, name := range expectedFiles {
+		content, err := clickreview.Files.ReadFile(name)
+		if err != nil {
+			t.Fatalf("expected file %s missing: %v", name, err)
+		}
+		if len(strings.TrimSpace(string(content))) == 0 {
+			t.Fatalf("expected file %s is empty", name)
+		}
+	}
+}
+
+func TestCopyClickReviewPlugin_IdempotentOnSecondCall(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+
+	if err := CopyClickReviewPlugin(cfg); err != nil {
+		t.Fatalf("first CopyClickReviewPlugin() error = %v", err)
+	}
+	if err := CopyClickReviewPlugin(cfg); err != nil {
+		t.Fatalf("second CopyClickReviewPlugin() error = %v", err)
+	}
+
+	entries, err := os.ReadDir(cfg.ClickReviewPluginDir())
+	if err != nil {
+		t.Fatalf("ReadDir(%s) error = %v", cfg.ClickReviewPluginDir(), err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("ClickReviewPluginDir() has %d entries after two installs, want exactly 3 (.claude-plugin, agents, skills)", len(entries))
+	}
+}
+
+func TestRemoveClickReviewPlugin_RemovesDirectory(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+
+	if err := CopyClickReviewPlugin(cfg); err != nil {
+		t.Fatalf("CopyClickReviewPlugin() error = %v", err)
+	}
+	if err := RemoveClickReviewPlugin(cfg); err != nil {
+		t.Fatalf("RemoveClickReviewPlugin() error = %v", err)
+	}
+
+	if _, err := os.Stat(cfg.ClickReviewPluginDir()); !os.IsNotExist(err) {
+		t.Fatalf("RemoveClickReviewPlugin() left %s behind", cfg.ClickReviewPluginDir())
+	}
+}
+
+func TestRemoveClickReviewPlugin_NoopWhenAlreadyAbsent(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+
+	if err := RemoveClickReviewPlugin(cfg); err != nil {
+		t.Fatalf("RemoveClickReviewPlugin() on an absent plugin error = %v, want nil", err)
 	}
 }

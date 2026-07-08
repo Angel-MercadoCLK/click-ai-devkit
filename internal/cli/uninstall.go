@@ -39,6 +39,12 @@ func runUninstall(cmd *cobra.Command) error {
 		return err
 	}
 
+	if err := r.RunStep("Quitando plugin click-review…", "Plugin click-review eliminado", func() error {
+		return installer.RemoveClickReviewPlugin(cfg)
+	}); err != nil {
+		return err
+	}
+
 	if err := r.RunStep("Limpiando CLAUDE.md…", "Bloque de CLAUDE.md eliminado", func() error {
 		return installer.StripManagedBlock(cfg.ClaudeMDPath())
 	}); err != nil {

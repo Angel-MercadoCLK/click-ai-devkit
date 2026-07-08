@@ -40,6 +40,7 @@ func Run(cfg installer.Config) Report {
 	return Report{Checks: []CheckResult{
 		checkPlugin(cfg),
 		checkMemoryPlugin(cfg),
+		checkReviewPlugin(cfg),
 		checkClaudeMD(cfg),
 		checkMemoryGuardHook(cfg),
 	}}
@@ -69,6 +70,19 @@ func checkMemoryPlugin(cfg installer.Config) CheckResult {
 		return CheckResult{Name: name, Healthy: false, Detail: "plugin.json faltante"}
 	}
 	return CheckResult{Name: name, Healthy: true, Detail: "presente en " + cfg.ClickMemoryPluginDir()}
+}
+
+func checkReviewPlugin(cfg installer.Config) CheckResult {
+	const name = "plugin click-review"
+
+	info, err := os.Stat(cfg.ClickReviewPluginDir())
+	if err != nil || !info.IsDir() {
+		return CheckResult{Name: name, Healthy: false, Detail: "no encontrado en " + cfg.ClickReviewPluginDir()}
+	}
+	if _, err := os.Stat(filepath.Join(cfg.ClickReviewPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "plugin.json faltante"}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: "presente en " + cfg.ClickReviewPluginDir()}
 }
 
 func checkClaudeMD(cfg installer.Config) CheckResult {

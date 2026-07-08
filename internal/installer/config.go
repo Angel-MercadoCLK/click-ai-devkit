@@ -43,6 +43,11 @@ func (c Config) ClickMemoryPluginDir() string {
 	return filepath.Join(c.ClaudeHome, "plugins", "click-memory")
 }
 
+// ClickReviewPluginDir is where the click-review plugin is installed under this Config's ClaudeHome.
+func (c Config) ClickReviewPluginDir() string {
+	return filepath.Join(c.ClaudeHome, "plugins", "click-review")
+}
+
 // ClaudeMDPath is the managed CLAUDE.md file's path under this Config's ClaudeHome.
 func (c Config) ClaudeMDPath() string {
 	return filepath.Join(c.ClaudeHome, "CLAUDE.md")

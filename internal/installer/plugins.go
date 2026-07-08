@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	clickmemory "github.com/Angel-MercadoCLK/click-ai-devkit/plugins/click-memory"
+	clickreview "github.com/Angel-MercadoCLK/click-ai-devkit/plugins/click-review"
 	clicksdd "github.com/Angel-MercadoCLK/click-ai-devkit/plugins/click-sdd"
 )
 
@@ -22,6 +23,11 @@ func CopyClickMemoryPlugin(cfg Config) error {
 	return copyEmbeddedTree(clickmemory.Files, cfg.ClickMemoryPluginDir())
 }
 
+// CopyClickReviewPlugin copies the embedded click-review plugin into cfg.ClickReviewPluginDir().
+func CopyClickReviewPlugin(cfg Config) error {
+	return copyEmbeddedTree(clickreview.Files, cfg.ClickReviewPluginDir())
+}
+
 // RemoveClickSDDPlugin removes cfg.ClickSDDPluginDir() entirely. It is idempotent.
 func RemoveClickSDDPlugin(cfg Config) error {
 	if err := os.RemoveAll(cfg.ClickSDDPluginDir()); err != nil {
@@ -34,6 +40,14 @@ func RemoveClickSDDPlugin(cfg Config) error {
 func RemoveClickMemoryPlugin(cfg Config) error {
 	if err := os.RemoveAll(cfg.ClickMemoryPluginDir()); err != nil {
 		return fmt.Errorf("installer: remove plugin dir %s: %w", cfg.ClickMemoryPluginDir(), err)
+	}
+	return nil
+}
+
+// RemoveClickReviewPlugin removes cfg.ClickReviewPluginDir() entirely. It is idempotent.
+func RemoveClickReviewPlugin(cfg Config) error {
+	if err := os.RemoveAll(cfg.ClickReviewPluginDir()); err != nil {
+		return fmt.Errorf("installer: remove plugin dir %s: %w", cfg.ClickReviewPluginDir(), err)
 	}
 	return nil
 }
