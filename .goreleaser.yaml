@@ -1,0 +1,71 @@
+version: 2
+
+project_name: click
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: click
+    main: ./cmd/click
+    binary: click
+    goos:
+      - windows
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/Angel-MercadoCLK/click-ai-devkit/internal/version.Version={{ .Version }} -X github.com/Angel-MercadoCLK/click-ai-devkit/internal/version.Commit={{ .Commit }}
+
+archives:
+  - id: click-archive
+    ids:
+      - click
+    formats:
+      - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git
+
+release:
+  github:
+    owner: Angel-MercadoCLK
+    name: click-ai-devkit
+
+scoops:
+  - name: click
+    ids:
+      - click
+    repository:
+      owner: Angel-MercadoCLK
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
+    directory: bucket
+    commit_author:
+      name: click-ai-devkit release bot
+      email: releases@click-ai-devkit.local
+    homepage: https://github.com/Angel-MercadoCLK/click-ai-devkit
+    description: click-ai-devkit installer and manager for Claude Code plugins + Engram.
+    license: Proprietary
+
+brews:
+  - name: click
+    ids:
+      - click
+    repository:
+      owner: Angel-MercadoCLK
+      name: homebrew-click
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/Angel-MercadoCLK/click-ai-devkit
+    description: click-ai-devkit installer and manager for Claude Code plugins + Engram.
+    license: Proprietary
+    skip_upload: true

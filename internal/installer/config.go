@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // claudeHomeEnvOverride lets tests (and power users) point click at a directory other than the
@@ -48,6 +49,15 @@ func (c Config) ClickReviewPluginDir() string {
 	return filepath.Join(c.ClaudeHome, "plugins", "click-review")
 }
 
+// DefaultEngramBinaryPath is where Click-managed Engram binaries are expected to live locally.
+func (c Config) DefaultEngramBinaryPath() string {
+	name := "engram"
+	if runtime.GOOS == "windows" {
+		name = "engram.exe"
+	}
+	return filepath.Join(c.ClaudeHome, "bin", name)
+}
+
 // ClaudeMDPath is the managed CLAUDE.md file's path under this Config's ClaudeHome.
 func (c Config) ClaudeMDPath() string {
 	return filepath.Join(c.ClaudeHome, "CLAUDE.md")
@@ -56,4 +66,14 @@ func (c Config) ClaudeMDPath() string {
 // SettingsPath is Claude Code's settings.json under ClaudeHome.
 func (c Config) SettingsPath() string {
 	return filepath.Join(c.ClaudeHome, "settings.json")
+}
+
+// EngramMCPConfigPath is the durable MCP config Click writes for the pinned Engram binary.
+func (c Config) EngramMCPConfigPath() string {
+	return filepath.Join(c.ClaudeHome, "mcp", "engram.json")
+}
+
+// EngramStatePath stores the Click-managed pinned Engram metadata.
+func (c Config) EngramStatePath() string {
+	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "engram.json")
 }
