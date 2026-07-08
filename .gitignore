@@ -1,0 +1,25 @@
+# Build artifacts
+/bin/
+/dist/
+click
+click.exe
+*.exe
+*.test
+*.out
+
+# Go
+vendor/
+
+# Env / secrets
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,43 @@
+categories:
+  - name: pii
+    reason: "blocked: detected pii"
+    rules:
+      - id: pii/email
+        description: "Email addresses are always forbidden in memory."
+        pattern: '(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b'
+      - id: pii/dni
+        description: "Argentine DNI-like numbers (TODO: confirm additional Click-specific context cues if false positives appear)."
+        pattern: '\b[0-9]{7,8}\b'
+      - id: pii/cuit-cuil
+        description: "Argentine CUIT/CUIL identifiers."
+        pattern: '\b[0-9]{2}-?[0-9]{8}-?[0-9]\b'
+      - id: pii/phone
+        description: "Argentine phone numbers, especially when labeled or country-coded."
+        pattern: '(?i)(?:\+54\s?9?\s?[0-9]{2,4}[\s-]?[0-9]{3,4}[\s-]?[0-9]{4}\b|(?:tel[eé]fono|celular|whatsapp|phone)[:\s-]*[0-9]{2,4}[\s-]?[0-9]{3,4}[\s-]?[0-9]{4}\b)'
+  - name: amounts
+    reason: "blocked: detected monetary amount"
+    rules:
+      - id: amounts/ars-symbol
+        description: "Amounts prefixed with currency symbol."
+        pattern: '(?i)\$\s?[0-9]+(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?\b'
+      - id: amounts/ars-code
+        description: "Amounts prefixed with ARS currency code."
+        pattern: '(?i)\bARS\s?[0-9]+(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?\b'
+  - name: policy-numbers
+    reason: "blocked: detected policy number"
+    rules:
+      - id: policy-numbers/placeholder
+        description: "Placeholder policy-number format for v0.1 (TODO: confirm real Click policy formats before shipping)."
+        pattern: '(?i)\b(?:p[oó]liza|policy|pol)[:\s#-]*[A-Z0-9][A-Z0-9-]{5,19}\b'
+  - name: claim-ids
+    reason: "blocked: detected claim identifier"
+    rules:
+      - id: claim-ids/placeholder
+        description: "Placeholder claim-id format for v0.1 (TODO: confirm real Click siniestro formats before shipping)."
+        pattern: '(?i)\b(?:siniestro|claim|sin)[:\s#-]*[A-Z0-9][A-Z0-9-]{4,19}\b'
+  - name: customer-identifiers
+    reason: "blocked: detected customer identifier"
+    rules:
+      - id: customer-identifiers/placeholder
+        description: "Placeholder customer-id format for v0.1 (TODO: confirm real Click customer identifier formats before shipping)."
+        pattern: '(?i)\b(?:customer|cliente)[-_\s]*(?:id|identifier|number|nro)?[:\s#-]*[A-Z0-9][A-Z0-9-]{3,19}\b'
