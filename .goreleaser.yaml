@@ -18,6 +18,12 @@ builds:
     goarch:
       - amd64
       - arm64
+    # scoop (Windows) requires exactly ONE matching windows archive; arm64 Windows devices
+    # are effectively nonexistent for this pilot, so we only ship windows/amd64. darwin and
+    # linux keep both amd64 and arm64 (Apple Silicon / ARM servers are common there).
+    ignore:
+      - goos: windows
+        goarch: arm64
     ldflags:
       - -s -w -X github.com/Angel-MercadoCLK/click-ai-devkit/internal/version.Version={{ .Version }} -X github.com/Angel-MercadoCLK/click-ai-devkit/internal/version.Commit={{ .Commit }}
 
@@ -46,7 +52,7 @@ release:
 scoops:
   - name: click
     ids:
-      - click
+      - click-archive
     repository:
       owner: Angel-MercadoCLK
       name: click-ai-devkit
@@ -58,17 +64,32 @@ scoops:
     description: click-ai-devkit installer and manager for Claude Code plugins + Engram.
     license: Proprietary
 
-# brew fast-follow (D17): deferred. skip_upload keeps the formula generated locally in the
-# release artifacts without pushing anywhere, so no homebrew-click repo/token is needed yet.
-brews:
-  - name: click
-    ids:
-      - click
-    repository:
-      owner: Angel-MercadoCLK
-      name: homebrew-click
-    directory: Formula
-    homepage: https://github.com/Angel-MercadoCLK/click-ai-devkit
-    description: click-ai-devkit installer and manager for Claude Code plugins + Engram.
-    license: Proprietary
-    skip_upload: true
+# brew fast-follow (D17): fully deferred, not just skip_upload.
+#
+# INCIDENT NOTE (v0.1.0 first release attempt): a scaffolded `brews:` block with
+# `skip_upload: true` still BROKE the release — GoReleaser tries to select a matching
+# archive for the formula even when not uploading, using its own default goos/goarch/goarm
+# filters (it expects an `arm` goarm=6/7 variant among other things). We only build
+# amd64/arm64, so artifact selection failed with:
+#   "no linux/macos archives found matching goos=[darwin linux] goarch=[amd64 arm64 arm]
+#    goamd64=v1 goarm=6 ids=[click]"
+# and the whole release aborted at 100% (build+archives done, but nothing published).
+#
+# Lesson: `skip_upload` silences PUBLISHING, not artifact SELECTION/validation. A brew
+# config that isn't ready to actually match real archives must be left OUT of the config
+# entirely, not merely disabled. Re-add this block only once brew support is actually being
+# built (D17 fast-follow), with archive formats/goarch chosen to satisfy brew's matcher
+# (typically tar.gz for darwin/linux, and being deliberate about goarm if `arm` is included).
+#
+# brews:
+#   - name: click
+#     ids:
+#       - click
+#     repository:
+#       owner: Angel-MercadoCLK
+#       name: homebrew-click
+#     directory: Formula
+#     homepage: https://github.com/Angel-MercadoCLK/click-ai-devkit
+#     description: click-ai-devkit installer and manager for Claude Code plugins + Engram.
+#     license: Proprietary
+#     skip_upload: true
