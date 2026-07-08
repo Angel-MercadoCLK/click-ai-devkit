@@ -50,11 +50,15 @@ User Request → ClickOrchestrator → click-sdd-explore → click-sdd-prd → c
 | D15 | Memory/security docs | `allowed-memory.md` / `forbidden-memory.md` / `SECURITY.md` mirror D14 categories; SECURITY.md outline in tech-spec §7.2. | Confirmed (signed by user) |
 | D16 | marketplace.json | **Drop** `.claude-plugin/marketplace.json` for v0.1; CLI uses its own embedded `manifest.yaml` (one per release). Supersedes its mentions in architecture.md §4 / mvp-scope.md §2. | Confirmed (signed by user) |
 | D17 | Installers | **Scoop only** for v0.1; brew fast-follow via GoReleaser; PowerShell deferred. | Confirmed (signed by user) |
-| D18 | Scoop bucket | Dedicated `click-seguros/scoop-bucket` repo, auto-published by CI on tag. | Confirmed (signed by user) |
+| D18 | Scoop bucket | Dedicated `Angel-MercadoCLK/scoop-bucket` repo, auto-published by CI on tag. | Confirmed (signed by user) |
 | D19 | Guard latency | Budget **<50ms p95** (sets NFR-006). | Confirmed (signed by user) |
 | D20 | Guard audit log | Local JSON, **content hashes only** (never raw payloads), no telemetry (sets NFR-008 mechanism). | Confirmed (signed by user) |
 | D21 | memory-guard v0.1 | **Block-only in v0.1; redaction in v0.2.** Spike B CONFIRMED PreToolUse can mutate input (`updatedInput`), so redaction is possible — block-only is now a deliberate policy (max-safe, keeps regex off the v0.1 critical path). v0.2 = redact-when-certain / block-when-uncertain. | Confirmed (signed by user) |
 | D22 | Pre-build spikes | **DONE.** Spike A → `spikes/spike-a-engram-packaging.md` (Engram = Go MCP binary + CC plugin; pin the binary). Spike B → `spikes/spike-b-pretooluse-contract.md` (hook CAN redact; fail-closed needs `exit 2`; matcher = plugin-scoped, verify at runtime). | Done |
+
+> **Owner note:** v0.1 repos live under the personal work account `Angel-MercadoCLK`
+> (click-ai-devkit, scoop-bucket, homebrew-click); migration to a Click Seguros org remains
+> possible later without changing the design.
 
 ### CLI scope guardrail (agreed)
 The CLI is a **thin installer/manager**, not the orchestration brain. Responsibilities:

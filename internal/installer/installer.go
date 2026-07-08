@@ -31,10 +31,12 @@ func Install(cfg Config) error {
 	return nil
 }
 
-// Uninstall reverses Install exactly: removes the click-sdd, click-memory, and click-review
-// plugin directories, strips the managed CLAUDE.md block, and removes the managed memory-guard
-// hook entry while leaving unrelated Claude settings intact. It is idempotent — safe to call
-// when already uninstalled.
+// Uninstall reverses everything Install and ConfigureEngramMCP (the latter only ever run by
+// `click update`) can have written: removes the click-sdd, click-memory, and click-review plugin
+// directories, strips the managed CLAUDE.md block, removes the managed memory-guard hook entry,
+// and removes the Engram MCP config/state files if `click update` ever ran — while leaving
+// unrelated Claude settings intact. It is idempotent — safe to call when already uninstalled, or
+// when Engram was never configured in the first place.
 func Uninstall(cfg Config) error {
 	if err := RemoveClickSDDPlugin(cfg); err != nil {
 		return err
@@ -49,6 +51,9 @@ func Uninstall(cfg Config) error {
 		return err
 	}
 	if err := UnregisterMemoryGuardHook(cfg); err != nil {
+		return err
+	}
+	if err := RemoveEngramMCP(cfg); err != nil {
 		return err
 	}
 	return nil

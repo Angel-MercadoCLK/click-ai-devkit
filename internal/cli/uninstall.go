@@ -10,7 +10,7 @@ import (
 func newUninstallCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall",
-		Short: "Reverse click install exactly",
+		Short: "Reverse everything click install and click update wrote",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUninstall(cmd)
 		},
@@ -53,6 +53,12 @@ func runUninstall(cmd *cobra.Command) error {
 
 	if err := r.RunStep("Quitando memory-guard…", "memory-guard eliminado", func() error {
 		return installer.UnregisterMemoryGuardHook(cfg)
+	}); err != nil {
+		return err
+	}
+
+	if err := r.RunStep("Quitando pin de Engram…", "Pin de Engram eliminado", func() error {
+		return installer.RemoveEngramMCP(cfg)
 	}); err != nil {
 		return err
 	}

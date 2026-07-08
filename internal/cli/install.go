@@ -10,7 +10,7 @@ import (
 func newInstallCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install",
-		Short: "Install click-ai-devkit's click-sdd plugin and CLAUDE.md block into Claude Code",
+		Short: "Install click-ai-devkit's plugins, CLAUDE.md block, and memory-guard hook into Claude Code",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInstall(cmd)
 		},

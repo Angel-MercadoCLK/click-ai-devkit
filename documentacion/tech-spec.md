@@ -407,11 +407,11 @@ version is correct.
 {
   "version": "0.1.0",
   "description": "click-ai-devkit — Click Seguros' installable Claude Code system",
-  "homepage": "https://github.com/click-seguros/click-ai-devkit",
+  "homepage": "https://github.com/Angel-MercadoCLK/click-ai-devkit",
   "license": "Proprietary",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/click-seguros/click-ai-devkit/releases/download/v0.1.0/click_0.1.0_windows_amd64.zip",
+      "url": "https://github.com/Angel-MercadoCLK/click-ai-devkit/releases/download/v0.1.0/click_0.1.0_windows_amd64.zip",
       "hash": "sha256:<checksum>"
     }
   },
@@ -420,7 +420,7 @@ version is correct.
   "autoupdate": {
     "architecture": {
       "64bit": {
-        "url": "https://github.com/click-seguros/click-ai-devkit/releases/download/v$version/click_$version_windows_amd64.zip"
+        "url": "https://github.com/Angel-MercadoCLK/click-ai-devkit/releases/download/v$version/click_$version_windows_amd64.zip"
       }
     }
   }
@@ -607,7 +607,7 @@ scoop already covers the Windows fleet; defer indefinitely unless a concrete nee
 
 ### OI-7 — Scoop bucket repo ownership / CI
 
-**Proposal:** a dedicated private repo, `click-seguros/scoop-bucket`, in the same GitHub org (D2),
+**Proposal:** a dedicated private repo, `Angel-MercadoCLK/scoop-bucket` (v0.1 owner — see the owner note in `00-decisions-and-open-questions.md`; org migration possible later),
 maintained entirely by the click-ai-devkit release pipeline — GoReleaser's `scoop:` block
 auto-commits manifest updates on every tag using a scoped deploy token. No manual step, no
 separate release process to keep in sync by hand.

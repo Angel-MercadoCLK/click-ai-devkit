@@ -56,6 +56,26 @@ func ConfigureEngramMCP(cfg Config, m *manifest.Manifest) error {
 	return nil
 }
 
+// RemoveEngramMCP removes the durable Claude Code MCP entry and the Click-managed state file that
+// ConfigureEngramMCP writes. It is idempotent — safe to call when Engram was never configured
+// (e.g. a developer who ran `click install` but never `click update`).
+func RemoveEngramMCP(cfg Config) error {
+	if err := removeIfExists(cfg.EngramMCPConfigPath()); err != nil {
+		return fmt.Errorf("installer: remove engram mcp config: %w", err)
+	}
+	if err := removeIfExists(cfg.EngramStatePath()); err != nil {
+		return fmt.Errorf("installer: remove engram state: %w", err)
+	}
+	return nil
+}
+
+func removeIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // ResolveEngramBinaryPath resolves the absolute path to the pinned Engram binary. v0.1 prefers a
 // test/deployment override, then a PATH-resolved binary, and finally falls back to the Click-
 // managed default path where a release-installed binary is expected to land. The actual binary

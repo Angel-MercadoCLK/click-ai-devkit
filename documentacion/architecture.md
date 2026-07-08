@@ -66,7 +66,7 @@ doctor/uninstall; it does not participate in the SDD flow at runtime.
 ## 2. Install flow, end to end
 
 ```
-1. scoop bucket add click-seguros https://github.com/click-seguros/scoop-bucket && scoop install click        (D3, D5, D18 — scoop primary)
+1. scoop bucket add click https://github.com/Angel-MercadoCLK/scoop-bucket && scoop install click        (D3, D5, D18 — scoop primary)
         │
         ▼
 2. click install

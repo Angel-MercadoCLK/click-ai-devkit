@@ -69,7 +69,7 @@ requirement IDs from `requirements.md`.
 > As a Click developer, I want to install the whole devkit with one command, so that I don't hand-copy files into `~/.claude`.
 
 Acceptance criteria:
-- `scoop bucket add click-seguros https://github.com/click-seguros/scoop-bucket` then `scoop install click` succeeds on a clean Windows machine. (FR-016, D18)
+- `scoop bucket add click https://github.com/Angel-MercadoCLK/scoop-bucket` then `scoop install click` succeeds on a clean Windows machine. (FR-016, D18)
 - `click install` copies the three plugins, writes `CLAUDE.md` rules, configures the pinned Engram MCP entry, and registers the `memory-guard` hook — without error. (FR-001–FR-005)
 - `click doctor` reports every step healthy. (FR-009, NFR-012)
 
