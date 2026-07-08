@@ -243,14 +243,14 @@ pinning (D8), versioning, and `click update` moving the pin.
 - **Resolve the Engram packaging mechanism** (tech-spec §5 open verification): confirm whether Engram ships as a Claude Code plugin (bundle into `~/.claude/plugins/engram/`) or a standalone MCP server (pinned `mcpServers` entry) by inspecting `Gentleman-Programming/engram`'s actual release artifacts. Update `internal/installer/mcpconfig.go` (and Slice 1's placeholder) accordingly.
 - `ENGRAM_VERSION` file: committed, bumped via its own reviewable PR (optionally bot-proposed, always human-merged) — makes "latest at release-cut time" (D8) an auditable git diff
 - GoReleaser config: build `windows/darwin/linux` × `amd64/arm64`; embed `manifest.yaml` via `go:embed` (click version from git tag, `engram.version` from `ENGRAM_VERSION`, real plugin versions); package `plugins/` into the release archive
-- Scoop bucket: dedicated `Angel-MercadoCLK/scoop-bucket` repo (D18; personal work account for v0.1, org migration possible later without a design change); GoReleaser `scoop:` block auto-commits the manifest on tag via a scoped deploy token — no manual step
+- Scoop bucket: no separate repo needed (D23, supersedes D18) — GoReleaser publishes into this repo's `bucket/` folder on tag, using the default `GITHUB_TOKEN` (no `SCOOP_BUCKET_TOKEN` secret to create or manage)
 - Brew tap: GoReleaser `brews:` block, same binary, near-zero incremental cost (D17 fast-follow — not a v0.1 launch blocker, but should land before/around team-wide rollout)
 - Post-release smoke job: install `click` from the freshly-published bucket on a clean CI runner, run `click doctor --json`, assert all-healthy
 - `click update`: verify it re-syncs plugins + moves the Engram pin using only the embedded manifest of the *currently installed* binary — no network resolution beyond what a fresh Engram pin needs (§5)
 
 **DoD** (mvp-scope.md §3: "scoop install... succeeds on a clean Windows machine", "click update re-syncs... without manual file edits"; FR-016–021, FR-051; NFR-003–005):
-- [ ] `scoop bucket add click https://github.com/Angel-MercadoCLK/scoop-bucket` then `scoop install click` succeeds on a clean Windows machine (integration test, windows-latest runner; D18)
-- [ ] Tagging a release produces binaries for all three OSes, a published GitHub Release, and an auto-committed scoop bucket update
+- [ ] `scoop bucket add click https://github.com/Angel-MercadoCLK/click-ai-devkit` then `scoop install click` succeeds on a clean Windows machine (integration test, windows-latest runner; D23)
+- [ ] Tagging a release produces binaries for all three OSes, a published GitHub Release, and an auto-committed update to this repo's `bucket/` folder
 - [ ] `click update` moves the Engram pin correctly when the underlying `click` binary is upgraded first (two-step motion per `tech-spec.md` §2.1), and is idempotent on a second run (NFR-004)
 - [ ] Post-release smoke job passes on a clean runner
 - [ ] Brew tap builds successfully (even if not yet promoted as a primary channel — FR-018 is Should, not Must)

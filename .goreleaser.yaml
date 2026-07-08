@@ -40,14 +40,16 @@ release:
     owner: Angel-MercadoCLK
     name: click-ai-devkit
 
+# v0.1: publish the scoop manifest into THIS same repo (no separate scoop-bucket repo).
+# Devs add it with: scoop bucket add click https://github.com/Angel-MercadoCLK/click-ai-devkit
+# GITHUB_TOKEN (default GoReleaser Actions token) is enough — no extra secret needed.
 scoops:
   - name: click
     ids:
       - click
     repository:
       owner: Angel-MercadoCLK
-      name: scoop-bucket
-      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
+      name: click-ai-devkit
     directory: bucket
     commit_author:
       name: click-ai-devkit release bot
@@ -56,6 +58,8 @@ scoops:
     description: click-ai-devkit installer and manager for Claude Code plugins + Engram.
     license: Proprietary
 
+# brew fast-follow (D17): deferred. skip_upload keeps the formula generated locally in the
+# release artifacts without pushing anywhere, so no homebrew-click repo/token is needed yet.
 brews:
   - name: click
     ids:
@@ -63,7 +67,6 @@ brews:
     repository:
       owner: Angel-MercadoCLK
       name: homebrew-click
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: https://github.com/Angel-MercadoCLK/click-ai-devkit
     description: click-ai-devkit installer and manager for Claude Code plugins + Engram.

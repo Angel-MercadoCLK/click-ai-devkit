@@ -60,7 +60,7 @@
 
 | ID | Requirement | MoSCoW | Trace |
 |---|---|---|---|
-| FR-016 | click-ai-devkit MUST be installable via a Click-hosted scoop bucket (two-step: `scoop bucket add click https://github.com/Angel-MercadoCLK/scoop-bucket` then `scoop install click`) as the primary distribution channel. | Must | D3, D5, D18 |
+| FR-016 | click-ai-devkit MUST be installable via a Click-hosted scoop bucket (two-step: `scoop bucket add click https://github.com/Angel-MercadoCLK/click-ai-devkit` then `scoop install click`) as the primary distribution channel. | Must | D3, D5, D23 |
 | FR-017 | The CLI MUST be delivered as a single static Go binary with no separate runtime dependency. | Must | D5 |
 | FR-018 | A brew tap (Mac/Linux) and/or PowerShell installer MAY be published from the same Go binary once prioritized. | Should | D5; **OPEN** on timing — see §6 |
 
@@ -227,7 +227,8 @@ These are **not resolved** by this document — carried forward from `00-decisio
 | D11 | Team-wide rollout gated by hardening canary | FR-043 (red-team gate); broader rollout process is a PRD/adoption-plan concern — see `prd.md` §Milestones and `adoption-plan.md` |
 | D16 | Drop `.claude-plugin/marketplace.json` for v0.1; CLI uses embedded `manifest.yaml` | Architecture/repository structure constraint; no FR but defines CLI distribution model (vs. Marketplace) |
 | D17 | Scoop only for v0.1; brew and PowerShell deferred | FR-018 (deferred); NFR-005 timing |
-| D18 | Dedicated `Angel-MercadoCLK/scoop-bucket` repo, auto-published by CI on tag | FR-016 (scoop bucket channel); architecture/distribution constraint |
+| D18 | (Superseded by D23 for v0.1) Originally proposed: dedicated `Angel-MercadoCLK/scoop-bucket` repo, auto-published by CI on tag | FR-016 (scoop bucket channel); architecture/distribution constraint |
+| D23 | Scoop bucket publishes into a `bucket/` folder inside `click-ai-devkit` itself — no separate repo | FR-016 (scoop bucket channel); architecture/distribution constraint |
 | D19 | Guard latency budget <50ms p95 | NFR-006 (sets performance constraint on `memory-guard`) |
 | D20 | Guard audit log: local JSON, content hashes only, no telemetry | NFR-008 (audit trail mechanism); satisfies security constraint in FR-041 |
 | D21 | memory-guard v0.1 block-only (no redaction) | FR-041, FR-042; satisfies fail-closed design principle for guard (defer redaction complexity to v0.2) |

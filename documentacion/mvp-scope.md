@@ -51,7 +51,7 @@ Per the repo structure in `architecture.md` §4:
 
 A Click Seguros developer can go from zero to a working, guarded setup:
 
-- [ ] `scoop bucket add click https://github.com/Angel-MercadoCLK/scoop-bucket` then `scoop install click` succeeds on a clean Windows machine (D18)
+- [ ] `scoop bucket add click https://github.com/Angel-MercadoCLK/click-ai-devkit` then `scoop install click` succeeds on a clean Windows machine (D23)
 - [ ] `click install` completes without error and:
   - [ ] copies `click-sdd`, `click-memory`, `click-review` into `~/.claude/plugins/`
   - [ ] writes/updates `CLAUDE.md` rules (Click conventions + orchestrator activation)

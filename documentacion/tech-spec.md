@@ -401,7 +401,11 @@ version is correct.
 
 ## 6. Distribution & release
 
-### 6.1 Scoop bucket manifest (primary channel — D3, D5, FR-016)
+### 6.1 Scoop bucket manifest (primary channel — D3, D5, D23, FR-016)
+
+Published into a `bucket/` folder inside this same `click-ai-devkit` repo (D23) — not a separate
+`scoop-bucket` repo. No dedicated deploy token is required; GoReleaser's `scoop:` block commits the
+manifest using the default `GITHUB_TOKEN` from GitHub Actions, since it writes to the same repo.
 
 ```json
 {
@@ -445,7 +449,7 @@ cost. Not required for v0.1 launch.
    `manifest.yaml` (click version from the git tag, `engram.version` from `ENGRAM_VERSION`, plugin
    versions) via `go:embed`, packages `plugins/` into each release archive, generates checksums,
    publishes to GitHub Releases.
-4. GoReleaser's `scoop:` block auto-commits the updated manifest to the scoop bucket repo (§9 OI-7).
+4. GoReleaser's `scoop:` block auto-commits the updated manifest to this repo's `bucket/` folder (D23; §9 OI-7).
 5. (Once prioritized) GoReleaser's `brews:` block auto-commits to a Homebrew tap repo.
 6. Post-release smoke job: install from the freshly-published bucket on a clean CI runner, run
    `click doctor --json`, assert all-healthy (ties to §8.3).
@@ -605,12 +609,23 @@ cost is low (`brews:` config block) — targeted for the same milestone as team-
 blocking the canary. A separate PowerShell (non-scoop) installer is lower priority still, since
 scoop already covers the Windows fleet; defer indefinitely unless a concrete need surfaces.
 
-### OI-7 — Scoop bucket repo ownership / CI
+### OI-7 — Scoop bucket repo ownership / CI (RESOLVED by D23)
 
-**Proposal:** a dedicated private repo, `Angel-MercadoCLK/scoop-bucket` (v0.1 owner — see the owner note in `00-decisions-and-open-questions.md`; org migration possible later),
+**Original proposal (superseded):** a dedicated private repo, `Angel-MercadoCLK/scoop-bucket` (v0.1
+owner — see the owner note in `00-decisions-and-open-questions.md`; org migration possible later),
 maintained entirely by the click-ai-devkit release pipeline — GoReleaser's `scoop:` block
 auto-commits manifest updates on every tag using a scoped deploy token. No manual step, no
 separate release process to keep in sync by hand.
+
+**Resolution (D23):** for v0.1, skip the separate repo entirely. GoReleaser publishes the scoop
+manifest into a `bucket/` folder inside `click-ai-devkit` itself (`scoops: repository: { owner:
+Angel-MercadoCLK, name: click-ai-devkit }`, `directory: bucket`). The default `GITHUB_TOKEN` from
+GitHub Actions is sufficient since it's the same repo — no `SCOOP_BUCKET_TOKEN` to provision, scope,
+or rotate. Fewer repos to create/manage for a small pilot; a simpler mental model. Install becomes:
+`scoop bucket add click https://github.com/Angel-MercadoCLK/click-ai-devkit` then `scoop install
+click`. Homebrew is unaffected — `homebrew-click` will still need its own repo later, because
+Homebrew's short `brew tap` syntax requires a repo literally named `homebrew-<name>` (a real
+Homebrew constraint, not a choice); D17 stands.
 
 ### OI-8 — `memory-guard` performance budget (NFR-006, no numeric target locked)
 

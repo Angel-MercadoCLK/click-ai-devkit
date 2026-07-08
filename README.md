@@ -13,15 +13,16 @@ full build plan and slice history.
 
 ## Install
 
-`click` is installable via the Click scoop bucket (bucket repo pending creation — not live yet):
+`click` is installable via scoop directly from this repo — GoReleaser publishes the manifest
+into the `bucket/` folder on every tagged release, so no separate bucket repo is needed:
 
 ```
-scoop bucket add click https://github.com/Angel-MercadoCLK/scoop-bucket
+scoop bucket add click https://github.com/Angel-MercadoCLK/click-ai-devkit
 scoop install click
 ```
 
-(Brew tap for macOS/Linux is scaffolded in `.goreleaser.yaml` but not yet a primary channel —
-see `documentacion/tech-spec.md` §6.)
+(Not live yet — requires a `v0.1.0` tag push to trigger the first release. Brew tap for
+macOS/Linux is scaffolded in `.goreleaser.yaml` but deferred — see `documentacion/tech-spec.md` §6.)
 
 ## Commands
 

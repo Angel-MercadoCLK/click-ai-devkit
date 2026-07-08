@@ -73,7 +73,7 @@ This can be a shared spreadsheet or a simple markdown log per canary dev — the
 
 A short "getting started" for devs, to hand out at canary kickoff and team-wide rollout:
 
-1. Install: `scoop bucket add click https://github.com/Angel-MercadoCLK/scoop-bucket` → `scoop install click` → `click install` → `click doctor` to confirm.
+1. Install: `scoop bucket add click https://github.com/Angel-MercadoCLK/click-ai-devkit` → `scoop install click` → `click install` → `click doctor` to confirm.
 2. Open Claude Code — `ClickOrchestrator` is active. It replies in Spanish and explains what it's doing at each step.
 3. Start any feature by describing it to the orchestrator — it will walk you through explore → PRD → design → tasks → code → review. You don't need to invoke each phase manually.
 4. What gets remembered: only technical decisions, conventions, and gotchas — never real customer/policy/claims data. If you ever see the guard block something, that's it working as intended — report it if it blocks something that *should* have been fine (false positive) so the pattern set can improve.

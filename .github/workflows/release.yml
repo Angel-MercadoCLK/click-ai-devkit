@@ -54,6 +54,9 @@ jobs:
           path.write_text("\n".join(out) + "\n")
           PY
 
+      # v0.1: the scoop manifest is published into THIS repo (bucket/ folder), so the default
+      # Actions GITHUB_TOKEN is enough — no SCOOP_BUCKET_TOKEN secret to create or manage.
+      # brews publishing is skip_upload=true (deferred fast-follow, D17) so no HOMEBREW_TAP_TOKEN yet.
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -62,5 +65,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
