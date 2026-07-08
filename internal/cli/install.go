@@ -35,6 +35,12 @@ func runInstall(cmd *cobra.Command) error {
 		return err
 	}
 
+	if err := r.RunStep("Copiando plugin click-memory…", "Plugin click-memory copiado", func() error {
+		return installer.CopyClickMemoryPlugin(cfg)
+	}); err != nil {
+		return err
+	}
+
 	if err := r.RunStep("Actualizando CLAUDE.md…", "CLAUDE.md actualizado", func() error {
 		return installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent)
 	}); err != nil {

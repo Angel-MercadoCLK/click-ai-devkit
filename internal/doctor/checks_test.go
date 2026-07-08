@@ -59,7 +59,7 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	report := Run(cfg)
 
-	if len(report.Checks) != 3 {
-		t.Fatalf("Run() returned %d checks, want 3 (click-sdd plugin, CLAUDE.md, memory-guard hook)", len(report.Checks))
+	if len(report.Checks) != 4 {
+		t.Fatalf("Run() returned %d checks, want 4 (click-sdd plugin, click-memory plugin, CLAUDE.md, memory-guard hook)", len(report.Checks))
 	}
 }

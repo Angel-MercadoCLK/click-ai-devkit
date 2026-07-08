@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	clickmemory "github.com/Angel-MercadoCLK/click-ai-devkit/plugins/click-memory"
 	clicksdd "github.com/Angel-MercadoCLK/click-ai-devkit/plugins/click-sdd"
 )
 
@@ -16,10 +17,23 @@ func CopyClickSDDPlugin(cfg Config) error {
 	return copyEmbeddedTree(clicksdd.Files, cfg.ClickSDDPluginDir())
 }
 
+// CopyClickMemoryPlugin copies the embedded click-memory plugin into cfg.ClickMemoryPluginDir().
+func CopyClickMemoryPlugin(cfg Config) error {
+	return copyEmbeddedTree(clickmemory.Files, cfg.ClickMemoryPluginDir())
+}
+
 // RemoveClickSDDPlugin removes cfg.ClickSDDPluginDir() entirely. It is idempotent.
 func RemoveClickSDDPlugin(cfg Config) error {
 	if err := os.RemoveAll(cfg.ClickSDDPluginDir()); err != nil {
 		return fmt.Errorf("installer: remove plugin dir %s: %w", cfg.ClickSDDPluginDir(), err)
+	}
+	return nil
+}
+
+// RemoveClickMemoryPlugin removes cfg.ClickMemoryPluginDir() entirely. It is idempotent.
+func RemoveClickMemoryPlugin(cfg Config) error {
+	if err := os.RemoveAll(cfg.ClickMemoryPluginDir()); err != nil {
+		return fmt.Errorf("installer: remove plugin dir %s: %w", cfg.ClickMemoryPluginDir(), err)
 	}
 	return nil
 }

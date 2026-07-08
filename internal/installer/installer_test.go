@@ -18,6 +18,9 @@ func TestInstall_CopiesPluginAndWritesManagedBlock(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(cfg.ClickSDDPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
 		t.Errorf("Install() did not copy click-sdd plugin.json: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(cfg.ClickMemoryPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
+		t.Errorf("Install() did not copy click-memory plugin.json: %v", err)
+	}
 
 	ok, err := HasManagedBlock(cfg.ClaudeMDPath())
 	if err != nil {
@@ -76,6 +79,9 @@ func TestUninstall_ReversesInstall(t *testing.T) {
 	if _, err := os.Stat(cfg.ClickSDDPluginDir()); !os.IsNotExist(err) {
 		t.Error("Uninstall() left the plugin directory behind")
 	}
+	if _, err := os.Stat(cfg.ClickMemoryPluginDir()); !os.IsNotExist(err) {
+		t.Error("Uninstall() left the click-memory plugin directory behind")
+	}
 
 	ok, err := HasManagedBlock(cfg.ClaudeMDPath())
 	if err != nil {
@@ -116,6 +122,9 @@ func TestInstallThenUninstallThenInstallAgain_Succeeds(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(cfg.ClickSDDPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
 		t.Errorf("re-Install() did not copy click-sdd plugin.json: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.ClickMemoryPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
+		t.Errorf("re-Install() did not copy click-memory plugin.json: %v", err)
 	}
 	ok, err := HasManagedBlock(cfg.ClaudeMDPath())
 	if err != nil {

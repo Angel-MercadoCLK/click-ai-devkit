@@ -30,6 +30,9 @@ func TestInstallCommand_Succeeds(t *testing.T) {
 	if !strings.Contains(out, "click-sdd") {
 		t.Errorf("install output = %q, want it to mention the click-sdd plugin step", out)
 	}
+	if !strings.Contains(out, "click-memory") {
+		t.Errorf("install output = %q, want it to mention the click-memory plugin step", out)
+	}
 	if !strings.Contains(out, "CLAUDE.md") {
 		t.Errorf("install output = %q, want it to mention the CLAUDE.md step", out)
 	}

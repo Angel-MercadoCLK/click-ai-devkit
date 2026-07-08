@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	clickmemory "github.com/Angel-MercadoCLK/click-ai-devkit/plugins/click-memory"
 	clicksdd "github.com/Angel-MercadoCLK/click-ai-devkit/plugins/click-sdd"
 )
 
@@ -134,5 +135,127 @@ func TestRemoveClickSDDPlugin_NoopWhenAlreadyAbsent(t *testing.T) {
 
 	if err := RemoveClickSDDPlugin(cfg); err != nil {
 		t.Fatalf("RemoveClickSDDPlugin() on an absent plugin error = %v, want nil", err)
+	}
+}
+
+func TestCopyClickMemoryPlugin_CreatesExpectedFiles(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+
+	if err := CopyClickMemoryPlugin(cfg); err != nil {
+		t.Fatalf("CopyClickMemoryPlugin() error = %v", err)
+	}
+
+	wantPluginJSON, err := clickmemory.Files.ReadFile(".claude-plugin/plugin.json")
+	if err != nil {
+		t.Fatalf("read embedded plugin.json: %v", err)
+	}
+	wantPolicy, err := clickmemory.Files.ReadFile("docs/memory-policy.md")
+	if err != nil {
+		t.Fatalf("read embedded memory-policy.md: %v", err)
+	}
+
+	gotPluginJSON, err := os.ReadFile(filepath.Join(cfg.ClickMemoryPluginDir(), ".claude-plugin", "plugin.json"))
+	if err != nil {
+		t.Fatalf("CopyClickMemoryPlugin() did not create plugin.json: %v", err)
+	}
+	if string(gotPluginJSON) != string(wantPluginJSON) {
+		t.Errorf("copied plugin.json = %q, want %q", gotPluginJSON, wantPluginJSON)
+	}
+
+	gotPolicy, err := os.ReadFile(filepath.Join(cfg.ClickMemoryPluginDir(), "docs", "memory-policy.md"))
+	if err != nil {
+		t.Fatalf("CopyClickMemoryPlugin() did not create memory-policy.md: %v", err)
+	}
+	if string(gotPolicy) != string(wantPolicy) {
+		t.Errorf("copied memory-policy.md = %q, want %q", gotPolicy, wantPolicy)
+	}
+}
+
+func TestClickMemoryPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
+	type pluginManifest struct {
+		Name        string `json:"name"`
+		Version     string `json:"version"`
+		Description string `json:"description"`
+		Author      string `json:"author"`
+	}
+
+	data, err := clickmemory.Files.ReadFile(".claude-plugin/plugin.json")
+	if err != nil {
+		t.Fatalf("ReadFile(plugin.json) error = %v", err)
+	}
+
+	var manifest pluginManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("plugin.json parse error = %v", err)
+	}
+	if manifest.Name != "click-memory" {
+		t.Fatalf("manifest.Name = %q, want click-memory", manifest.Name)
+	}
+	if manifest.Version == "" || manifest.Description == "" || manifest.Author == "" {
+		t.Fatalf("manifest fields missing: %+v", manifest)
+	}
+
+	expectedFiles := []string{
+		"skills/memory-proposal/SKILL.md",
+		"skills/memory-review/SKILL.md",
+		"docs/memory-policy.md",
+		"docs/allowed-memory.md",
+		"docs/forbidden-memory.md",
+		"docs/engram-setup.md",
+	}
+	for _, name := range expectedFiles {
+		content, err := clickmemory.Files.ReadFile(name)
+		if err != nil {
+			t.Fatalf("expected file %s missing: %v", name, err)
+		}
+		if len(strings.TrimSpace(string(content))) == 0 {
+			t.Fatalf("expected file %s is empty", name)
+		}
+	}
+}
+
+func TestCopyClickMemoryPlugin_IdempotentOnSecondCall(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+
+	if err := CopyClickMemoryPlugin(cfg); err != nil {
+		t.Fatalf("first CopyClickMemoryPlugin() error = %v", err)
+	}
+	if err := CopyClickMemoryPlugin(cfg); err != nil {
+		t.Fatalf("second CopyClickMemoryPlugin() error = %v", err)
+	}
+
+	entries, err := os.ReadDir(cfg.ClickMemoryPluginDir())
+	if err != nil {
+		t.Fatalf("ReadDir(%s) error = %v", cfg.ClickMemoryPluginDir(), err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("ClickMemoryPluginDir() has %d entries after two installs, want exactly 3 (.claude-plugin, skills, docs)", len(entries))
+	}
+}
+
+func TestRemoveClickMemoryPlugin_RemovesDirectory(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+
+	if err := CopyClickMemoryPlugin(cfg); err != nil {
+		t.Fatalf("CopyClickMemoryPlugin() error = %v", err)
+	}
+	if err := RemoveClickMemoryPlugin(cfg); err != nil {
+		t.Fatalf("RemoveClickMemoryPlugin() error = %v", err)
+	}
+
+	if _, err := os.Stat(cfg.ClickMemoryPluginDir()); !os.IsNotExist(err) {
+		t.Fatalf("RemoveClickMemoryPlugin() left %s behind", cfg.ClickMemoryPluginDir())
+	}
+}
+
+func TestRemoveClickMemoryPlugin_NoopWhenAlreadyAbsent(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+
+	if err := RemoveClickMemoryPlugin(cfg); err != nil {
+		t.Fatalf("RemoveClickMemoryPlugin() on an absent plugin error = %v, want nil", err)
 	}
 }

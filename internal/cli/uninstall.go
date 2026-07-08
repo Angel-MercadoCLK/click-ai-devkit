@@ -33,6 +33,12 @@ func runUninstall(cmd *cobra.Command) error {
 		return err
 	}
 
+	if err := r.RunStep("Quitando plugin click-memory…", "Plugin click-memory eliminado", func() error {
+		return installer.RemoveClickMemoryPlugin(cfg)
+	}); err != nil {
+		return err
+	}
+
 	if err := r.RunStep("Limpiando CLAUDE.md…", "Bloque de CLAUDE.md eliminado", func() error {
 		return installer.StripManagedBlock(cfg.ClaudeMDPath())
 	}); err != nil {

@@ -1,5 +1,5 @@
-// Package doctor owns click's read-only environment/health checks: verifying that the click-sdd
-// plugin is present, that the managed CLAUDE.md block exists, and that the memory-guard hook is
+// Package doctor owns click's read-only environment/health checks: verifying that the installed
+// plugins are present, that the managed CLAUDE.md block exists, and that the memory-guard hook is
 // registered (tech-spec.md §2.1 "click doctor"). Checks in this package never mutate state —
 // `click doctor` is read-only by design (NFR-012). The Engram MCP entry remains deferred to a
 // later slice because the tracer-bullet install still doesn't configure it in this repo.
@@ -34,11 +34,12 @@ func (r Report) Healthy() bool {
 	return true
 }
 
-// Run executes every Slice 1 health check against cfg.ClaudeHome. It never mutates the
+// Run executes every current health check against cfg.ClaudeHome. It never mutates the
 // filesystem.
 func Run(cfg installer.Config) Report {
 	return Report{Checks: []CheckResult{
 		checkPlugin(cfg),
+		checkMemoryPlugin(cfg),
 		checkClaudeMD(cfg),
 		checkMemoryGuardHook(cfg),
 	}}
@@ -55,6 +56,19 @@ func checkPlugin(cfg installer.Config) CheckResult {
 		return CheckResult{Name: name, Healthy: false, Detail: "plugin.json faltante"}
 	}
 	return CheckResult{Name: name, Healthy: true, Detail: "presente en " + cfg.ClickSDDPluginDir()}
+}
+
+func checkMemoryPlugin(cfg installer.Config) CheckResult {
+	const name = "plugin click-memory"
+
+	info, err := os.Stat(cfg.ClickMemoryPluginDir())
+	if err != nil || !info.IsDir() {
+		return CheckResult{Name: name, Healthy: false, Detail: "no encontrado en " + cfg.ClickMemoryPluginDir()}
+	}
+	if _, err := os.Stat(filepath.Join(cfg.ClickMemoryPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "plugin.json faltante"}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: "presente en " + cfg.ClickMemoryPluginDir()}
 }
 
 func checkClaudeMD(cfg installer.Config) CheckResult {

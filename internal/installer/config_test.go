@@ -45,6 +45,11 @@ func TestConfig_PluginDirAndClaudeMDPath(t *testing.T) {
 		t.Errorf("ClickSDDPluginDir() = %q, want %q", got, wantPluginDir)
 	}
 
+	wantMemoryPluginDir := filepath.Join("some", "home", ".claude", "plugins", "click-memory")
+	if got := cfg.ClickMemoryPluginDir(); got != wantMemoryPluginDir {
+		t.Errorf("ClickMemoryPluginDir() = %q, want %q", got, wantMemoryPluginDir)
+	}
+
 	wantClaudeMD := filepath.Join("some", "home", ".claude", "CLAUDE.md")
 	if got := cfg.ClaudeMDPath(); got != wantClaudeMD {
 		t.Errorf("ClaudeMDPath() = %q, want %q", got, wantClaudeMD)
