@@ -2,46 +2,59 @@ package installer
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
-	clickstub "github.com/Angel-MercadoCLK/click-ai-devkit/plugins/click-stub"
+	clicksdd "github.com/Angel-MercadoCLK/click-ai-devkit/plugins/click-sdd"
 )
 
-// CopyStubPlugin copies the embedded click-stub plugin (plugins/click-stub, tracer bullet only —
-// real plugins land in later slices) into cfg.PluginDir(). Safe to call repeatedly: it always
-// overwrites with the embedded content, so re-running install never leaves stale files behind.
-func CopyStubPlugin(cfg Config) error {
-	dir := cfg.PluginDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("installer: create plugin dir %s: %w", dir, err)
-	}
+// CopyClickSDDPlugin copies the embedded click-sdd plugin into cfg.ClickSDDPluginDir(). Safe to
+// call repeatedly: it rewrites the embedded content, so re-running install never leaves stale
+// files behind for the shipped tree.
+func CopyClickSDDPlugin(cfg Config) error {
+	return copyEmbeddedTree(clicksdd.Files, cfg.ClickSDDPluginDir())
+}
 
-	entries, err := clickstub.Files.ReadDir(".")
-	if err != nil {
-		return fmt.Errorf("installer: read embedded stub plugin: %w", err)
-	}
-
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		data, err := clickstub.Files.ReadFile(e.Name())
-		if err != nil {
-			return fmt.Errorf("installer: read embedded file %s: %w", e.Name(), err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, e.Name()), data, 0o644); err != nil {
-			return fmt.Errorf("installer: write plugin file %s: %w", e.Name(), err)
-		}
+// RemoveClickSDDPlugin removes cfg.ClickSDDPluginDir() entirely. It is idempotent.
+func RemoveClickSDDPlugin(cfg Config) error {
+	if err := os.RemoveAll(cfg.ClickSDDPluginDir()); err != nil {
+		return fmt.Errorf("installer: remove plugin dir %s: %w", cfg.ClickSDDPluginDir(), err)
 	}
 	return nil
 }
 
-// RemoveStubPlugin removes cfg.PluginDir() entirely. It is idempotent: removing an already-absent
-// directory is not an error (os.RemoveAll's own contract).
-func RemoveStubPlugin(cfg Config) error {
-	if err := os.RemoveAll(cfg.PluginDir()); err != nil {
-		return fmt.Errorf("installer: remove plugin dir %s: %w", cfg.PluginDir(), err)
+func copyEmbeddedTree(source fs.FS, destinationRoot string) error {
+	if err := os.MkdirAll(destinationRoot, 0o755); err != nil {
+		return fmt.Errorf("installer: create plugin dir %s: %w", destinationRoot, err)
 	}
-	return nil
+
+	return fs.WalkDir(source, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("installer: walk embedded tree %s: %w", path, err)
+		}
+		if path == "." {
+			return nil
+		}
+
+		target := filepath.Join(destinationRoot, filepath.FromSlash(path))
+		if d.IsDir() {
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return fmt.Errorf("installer: create embedded dir %s: %w", target, err)
+			}
+			return nil
+		}
+
+		data, readErr := fs.ReadFile(source, path)
+		if readErr != nil {
+			return fmt.Errorf("installer: read embedded file %s: %w", path, readErr)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return fmt.Errorf("installer: create parent dir %s: %w", target, err)
+		}
+		if err := os.WriteFile(target, data, 0o644); err != nil {
+			return fmt.Errorf("installer: write embedded file %s: %w", target, err)
+		}
+		return nil
+	})
 }

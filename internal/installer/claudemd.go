@@ -17,11 +17,14 @@ const (
 	managedEndMarker   = "# <<< click-ai-devkit (managed) <<<"
 )
 
-// DefaultManagedContent is the body written between the managed markers by Slice 1's tracer
-// bullet install. Real content (persona rules, memory-policy pointers, etc., tech-spec.md §7.1)
-// lands in Slice 3+; this is a minimal placeholder that still explains itself.
-const DefaultManagedContent = `Este bloque es gestionado por click-ai-devkit.
-No lo edites a mano: usa "click update" para actualizarlo o "click uninstall" para quitarlo.`
+// DefaultManagedContent is the Slice 3 managed CLAUDE.md body: it activates ClickOrchestrator,
+// explains the Spanish/English split, points at the memory-policy docs, and reminds the user that
+// click manages this block.
+const DefaultManagedContent = `Use ClickOrchestrator by default for this repository and delegate phase work to the click-sdd agents and skills.
+Reply to the developer in Spanish. Produce all artifacts (PRD, design, tasks, code comments, and memory entries) in English. Keep explanations plain, direct, and free of regional slang.
+Before any mem_save, review plugins/click-memory/docs/memory-policy.md, allowed-memory.md, and forbidden-memory.md. The deterministic memory-guard hook enforces this policy even if a model attempts something unsafe.
+Before opening or merging a PR, run the click-review pre-merge checklist.
+This block is managed by click: edit via "click update" and remove via "click uninstall".`
 
 // WriteManagedBlock inserts or replaces the click-ai-devkit managed block in the file at path.
 // It creates the file (and any parent directories) if missing, appends the block if no markers

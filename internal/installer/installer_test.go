@@ -15,8 +15,8 @@ func TestInstall_CopiesPluginAndWritesManagedBlock(t *testing.T) {
 		t.Fatalf("Install() error = %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(cfg.PluginDir(), "plugin.json")); err != nil {
-		t.Errorf("Install() did not copy plugin.json: %v", err)
+	if _, err := os.Stat(filepath.Join(cfg.ClickSDDPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
+		t.Errorf("Install() did not copy click-sdd plugin.json: %v", err)
 	}
 
 	ok, err := HasManagedBlock(cfg.ClaudeMDPath())
@@ -45,12 +45,12 @@ func TestInstall_TwiceIsIdempotent(t *testing.T) {
 		t.Fatalf("second Install() error = %v", err)
 	}
 
-	entries, err := os.ReadDir(cfg.PluginDir())
+	entries, err := os.ReadDir(cfg.ClickSDDPluginDir())
 	if err != nil {
-		t.Fatalf("ReadDir(%s) error = %v", cfg.PluginDir(), err)
+		t.Fatalf("ReadDir(%s) error = %v", cfg.ClickSDDPluginDir(), err)
 	}
-	if len(entries) != 2 {
-		t.Errorf("PluginDir() has %d entries after two installs, want exactly 2", len(entries))
+	if len(entries) != 3 {
+		t.Errorf("ClickSDDPluginDir() has %d entries after two installs, want exactly 3", len(entries))
 	}
 
 	claudeMD, err := os.ReadFile(cfg.ClaudeMDPath())
@@ -73,7 +73,7 @@ func TestUninstall_ReversesInstall(t *testing.T) {
 		t.Fatalf("Uninstall() error = %v", err)
 	}
 
-	if _, err := os.Stat(cfg.PluginDir()); !os.IsNotExist(err) {
+	if _, err := os.Stat(cfg.ClickSDDPluginDir()); !os.IsNotExist(err) {
 		t.Error("Uninstall() left the plugin directory behind")
 	}
 
@@ -114,8 +114,8 @@ func TestInstallThenUninstallThenInstallAgain_Succeeds(t *testing.T) {
 		t.Fatalf("re-Install() after uninstall error = %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(cfg.PluginDir(), "plugin.json")); err != nil {
-		t.Errorf("re-Install() did not copy plugin.json: %v", err)
+	if _, err := os.Stat(filepath.Join(cfg.ClickSDDPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
+		t.Errorf("re-Install() did not copy click-sdd plugin.json: %v", err)
 	}
 	ok, err := HasManagedBlock(cfg.ClaudeMDPath())
 	if err != nil {

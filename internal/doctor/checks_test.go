@@ -60,6 +60,6 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	report := Run(cfg)
 
 	if len(report.Checks) != 3 {
-		t.Fatalf("Run() returned %d checks, want 3 (plugin, CLAUDE.md, memory-guard hook)", len(report.Checks))
+		t.Fatalf("Run() returned %d checks, want 3 (click-sdd plugin, CLAUDE.md, memory-guard hook)", len(report.Checks))
 	}
 }

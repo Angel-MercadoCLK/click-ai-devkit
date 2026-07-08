@@ -27,8 +27,8 @@ func runUninstall(cmd *cobra.Command) error {
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome}
 
-	if err := r.RunStep("Quitando plugin click-stub…", "Plugin click-stub eliminado", func() error {
-		return installer.RemoveStubPlugin(cfg)
+	if err := r.RunStep("Quitando plugin click-sdd…", "Plugin click-sdd eliminado", func() error {
+		return installer.RemoveClickSDDPlugin(cfg)
 	}); err != nil {
 		return err
 	}

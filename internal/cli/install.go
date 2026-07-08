@@ -10,7 +10,7 @@ import (
 func newInstallCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install",
-		Short: "Install click-ai-devkit's stub plugin and CLAUDE.md block into Claude Code",
+		Short: "Install click-ai-devkit's click-sdd plugin and CLAUDE.md block into Claude Code",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInstall(cmd)
 		},
@@ -29,8 +29,8 @@ func runInstall(cmd *cobra.Command) error {
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome}
 
-	if err := r.RunStep("Copiando plugin click-stub…", "Plugin click-stub copiado", func() error {
-		return installer.CopyStubPlugin(cfg)
+	if err := r.RunStep("Copiando plugin click-sdd…", "Plugin click-sdd copiado", func() error {
+		return installer.CopyClickSDDPlugin(cfg)
 	}); err != nil {
 		return err
 	}

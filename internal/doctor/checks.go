@@ -1,4 +1,4 @@
-// Package doctor owns click's read-only environment/health checks: verifying that the stub
+// Package doctor owns click's read-only environment/health checks: verifying that the click-sdd
 // plugin is present, that the managed CLAUDE.md block exists, and that the memory-guard hook is
 // registered (tech-spec.md §2.1 "click doctor"). Checks in this package never mutate state —
 // `click doctor` is read-only by design (NFR-012). The Engram MCP entry remains deferred to a
@@ -45,16 +45,16 @@ func Run(cfg installer.Config) Report {
 }
 
 func checkPlugin(cfg installer.Config) CheckResult {
-	const name = "plugin click-stub"
+	const name = "plugin click-sdd"
 
-	info, err := os.Stat(cfg.PluginDir())
+	info, err := os.Stat(cfg.ClickSDDPluginDir())
 	if err != nil || !info.IsDir() {
-		return CheckResult{Name: name, Healthy: false, Detail: "no encontrado en " + cfg.PluginDir()}
+		return CheckResult{Name: name, Healthy: false, Detail: "no encontrado en " + cfg.ClickSDDPluginDir()}
 	}
-	if _, err := os.Stat(filepath.Join(cfg.PluginDir(), "plugin.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(cfg.ClickSDDPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
 		return CheckResult{Name: name, Healthy: false, Detail: "plugin.json faltante"}
 	}
-	return CheckResult{Name: name, Healthy: true, Detail: "presente en " + cfg.PluginDir()}
+	return CheckResult{Name: name, Healthy: true, Detail: "presente en " + cfg.ClickSDDPluginDir()}
 }
 
 func checkClaudeMD(cfg installer.Config) CheckResult {

@@ -33,9 +33,9 @@ func ResolveClaudeHome() (string, error) {
 	return filepath.Join(home, ".claude"), nil
 }
 
-// PluginDir is where the stub plugin is installed under this Config's ClaudeHome.
-func (c Config) PluginDir() string {
-	return filepath.Join(c.ClaudeHome, "plugins", "click-stub")
+// ClickSDDPluginDir is where the click-sdd plugin is installed under this Config's ClaudeHome.
+func (c Config) ClickSDDPluginDir() string {
+	return filepath.Join(c.ClaudeHome, "plugins", "click-sdd")
 }
 
 // ClaudeMDPath is the managed CLAUDE.md file's path under this Config's ClaudeHome.

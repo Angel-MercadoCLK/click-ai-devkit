@@ -27,8 +27,8 @@ func TestInstallCommand_Succeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install command error = %v, output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "click-stub") {
-		t.Errorf("install output = %q, want it to mention the click-stub plugin step", out)
+	if !strings.Contains(out, "click-sdd") {
+		t.Errorf("install output = %q, want it to mention the click-sdd plugin step", out)
 	}
 	if !strings.Contains(out, "CLAUDE.md") {
 		t.Errorf("install output = %q, want it to mention the CLAUDE.md step", out)

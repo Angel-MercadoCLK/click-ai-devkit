@@ -40,9 +40,9 @@ func TestResolveClaudeHome_DefaultsUnderUserHome(t *testing.T) {
 func TestConfig_PluginDirAndClaudeMDPath(t *testing.T) {
 	cfg := Config{ClaudeHome: filepath.Join("some", "home", ".claude")}
 
-	wantPluginDir := filepath.Join("some", "home", ".claude", "plugins", "click-stub")
-	if got := cfg.PluginDir(); got != wantPluginDir {
-		t.Errorf("PluginDir() = %q, want %q", got, wantPluginDir)
+	wantPluginDir := filepath.Join("some", "home", ".claude", "plugins", "click-sdd")
+	if got := cfg.ClickSDDPluginDir(); got != wantPluginDir {
+		t.Errorf("ClickSDDPluginDir() = %q, want %q", got, wantPluginDir)
 	}
 
 	wantClaudeMD := filepath.Join("some", "home", ".claude", "CLAUDE.md")
