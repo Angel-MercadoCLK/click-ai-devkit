@@ -1,14 +1,10 @@
 // Package doctor owns click's read-only environment/health checks: verifying that the installed
-// plugins are present, that the managed CLAUDE.md block exists, and that the memory-guard hook is
-// registered (tech-spec.md §2.1 "click doctor"). Checks in this package never mutate state —
-// `click doctor` is read-only by design (NFR-012). The Engram MCP entry remains deferred to a
-// later slice because the tracer-bullet install still doesn't configure it in this repo.
+// plugins are actually registered in Claude Code, that the managed CLAUDE.md block exists, and
+// that the memory-guard hook is registered (tech-spec.md §2.1 "click doctor"). Checks in this
+// package never mutate state — `click doctor` is read-only by design (NFR-012).
 package doctor
 
 import (
-	"os"
-	"path/filepath"
-
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 )
 
@@ -49,40 +45,40 @@ func Run(cfg installer.Config) Report {
 func checkPlugin(cfg installer.Config) CheckResult {
 	const name = "plugin click-sdd"
 
-	info, err := os.Stat(cfg.ClickSDDPluginDir())
-	if err != nil || !info.IsDir() {
-		return CheckResult{Name: name, Healthy: false, Detail: "no encontrado en " + cfg.ClickSDDPluginDir()}
+	ok, err := installer.HasInstalledPlugin(cfg, "click-sdd")
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
 	}
-	if _, err := os.Stat(filepath.Join(cfg.ClickSDDPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
-		return CheckResult{Name: name, Healthy: false, Detail: "plugin.json faltante"}
+	if !ok {
+		return CheckResult{Name: name, Healthy: false, Detail: "no registrado en Claude Code"}
 	}
-	return CheckResult{Name: name, Healthy: true, Detail: "presente en " + cfg.ClickSDDPluginDir()}
+	return CheckResult{Name: name, Healthy: true, Detail: "registrado y habilitado"}
 }
 
 func checkMemoryPlugin(cfg installer.Config) CheckResult {
 	const name = "plugin click-memory"
 
-	info, err := os.Stat(cfg.ClickMemoryPluginDir())
-	if err != nil || !info.IsDir() {
-		return CheckResult{Name: name, Healthy: false, Detail: "no encontrado en " + cfg.ClickMemoryPluginDir()}
+	ok, err := installer.HasInstalledPlugin(cfg, "click-memory")
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
 	}
-	if _, err := os.Stat(filepath.Join(cfg.ClickMemoryPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
-		return CheckResult{Name: name, Healthy: false, Detail: "plugin.json faltante"}
+	if !ok {
+		return CheckResult{Name: name, Healthy: false, Detail: "no registrado en Claude Code"}
 	}
-	return CheckResult{Name: name, Healthy: true, Detail: "presente en " + cfg.ClickMemoryPluginDir()}
+	return CheckResult{Name: name, Healthy: true, Detail: "registrado y habilitado"}
 }
 
 func checkReviewPlugin(cfg installer.Config) CheckResult {
 	const name = "plugin click-review"
 
-	info, err := os.Stat(cfg.ClickReviewPluginDir())
-	if err != nil || !info.IsDir() {
-		return CheckResult{Name: name, Healthy: false, Detail: "no encontrado en " + cfg.ClickReviewPluginDir()}
+	ok, err := installer.HasInstalledPlugin(cfg, "click-review")
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
 	}
-	if _, err := os.Stat(filepath.Join(cfg.ClickReviewPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
-		return CheckResult{Name: name, Healthy: false, Detail: "plugin.json faltante"}
+	if !ok {
+		return CheckResult{Name: name, Healthy: false, Detail: "no registrado en Claude Code"}
 	}
-	return CheckResult{Name: name, Healthy: true, Detail: "presente en " + cfg.ClickReviewPluginDir()}
+	return CheckResult{Name: name, Healthy: true, Detail: "registrado y habilitado"}
 }
 
 func checkClaudeMD(cfg installer.Config) CheckResult {

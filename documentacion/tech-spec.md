@@ -117,7 +117,7 @@ boring, not a best-effort cleanup.
 
 ### 2.3 Manifest / config format — and reconciling `marketplace.json`
 
-**Proposal (see §9, OI-5 for full rationale):** drop `.claude-plugin/marketplace.json` from the
+**Historical note:** D16 originally proposed dropping `.claude-plugin/marketplace.json` from the
 repo skeleton for v0.1. `click` uses its own purpose-built manifest instead, because the two
 formats serve different install *paths* (Claude Code's native `/plugin marketplace add` flow vs.
 the Go CLI's controlled install), and running both risks two divergent, non-reproducible ways to

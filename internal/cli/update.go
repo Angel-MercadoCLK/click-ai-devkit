@@ -30,18 +30,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := r.RunStep("Re-sincronizando plugin click-sdd…", "Plugin click-sdd sincronizado", func() error {
-		return installer.CopyClickSDDPlugin(cfg)
-	}); err != nil {
-		return err
-	}
-	if err := r.RunStep("Re-sincronizando plugin click-memory…", "Plugin click-memory sincronizado", func() error {
-		return installer.CopyClickMemoryPlugin(cfg)
-	}); err != nil {
-		return err
-	}
-	if err := r.RunStep("Re-sincronizando plugin click-review…", "Plugin click-review sincronizado", func() error {
-		return installer.CopyClickReviewPlugin(cfg)
+	if err := r.RunStep("Re-sincronizando plugins click-sdd, click-memory y click-review…", "Plugins sincronizados en Claude Code", func() error {
+		return installer.SyncMarketplacePlugins()
 	}); err != nil {
 		return err
 	}

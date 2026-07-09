@@ -28,16 +28,16 @@ macOS/Linux is scaffolded in `.goreleaser.yaml` but deferred — see `documentac
 
 | Command | What it does |
 |---|---|
-| `click install` | Copies the `click-sdd`, `click-memory`, and `click-review` plugins into `~/.claude/plugins/`, writes/updates the managed `CLAUDE.md` block, and registers the `memory-guard` PreToolUse hook. |
-| `click doctor` | Read-only health check: verifies the three plugins, the managed `CLAUDE.md` block, and the `memory-guard` hook registration (5 checks total). Never mutates state. |
-| `click uninstall` | Reverses everything `install`/`update` write: removes the three plugins, strips the managed `CLAUDE.md` block, deregisters the `memory-guard` hook, and removes the Engram MCP config/state if `update` ever configured it. Idempotent. |
-| `click update` | Re-syncs the three plugins, rewrites the managed `CLAUDE.md` block, re-registers the `memory-guard` hook, and configures the pinned Engram MCP entry. This is currently the only command that writes the Engram MCP entry — `click install` does not configure it yet (tracked as a follow-up). |
+| `click install` | Registers the Click marketplace with `claude plugin marketplace add`, installs `click-sdd`, `click-memory`, and `click-review` via the native `claude plugin` CLI, writes/updates the managed `CLAUDE.md` block, and registers the `memory-guard` PreToolUse hook. |
+| `click doctor` | Read-only health check: verifies the three plugins are actually registered in Claude Code, the managed `CLAUDE.md` block, and the `memory-guard` hook registration (5 checks total). Never mutates state. |
+| `click uninstall` | Reverses everything `install`/`update` write: uninstalls the three plugins through the native `claude plugin` CLI, removes the Click marketplace registration, strips the managed `CLAUDE.md` block, deregisters the `memory-guard` hook, and removes the Engram MCP config/state if `update` ever configured it. Idempotent. |
+| `click update` | Re-runs the native `claude plugin` install flow to re-sync the three plugins, rewrites the managed `CLAUDE.md` block, re-registers the `memory-guard` hook, and configures the pinned Engram MCP entry. |
 | `click --version` | Prints the CLI version, injected at build time via `ldflags` (`internal/version`). |
 
 ## What gets installed
 
-- Three plugins under `~/.claude/plugins/`: `click-sdd`, `click-memory`, `click-review`, embedded
-  into the binary at build time (`go:embed`).
+- Three Claude Code plugins registered through the native marketplace/registry flow: `click-sdd`,
+  `click-memory`, and `click-review`.
 - A managed block in `~/.claude/CLAUDE.md`, delimited by markers so it can be inserted, replaced,
   or fully removed without touching the rest of the file.
 - The `memory-guard` PreToolUse hook entry in `~/.claude/settings.json`.
@@ -66,7 +66,7 @@ can reach Engram. It is:
 - `internal/guard/` — the memory-guard pattern-matching engine.
 - `internal/audit/` — hash-only audit logging for guard decisions.
 - `internal/manifest/` — the embedded release manifest (plugin/Engram version pins).
-- `plugins/` — the three embedded plugins' source content.
+- `plugins/` — the three plugin source trees served by the Click marketplace.
 
 ## Docs
 

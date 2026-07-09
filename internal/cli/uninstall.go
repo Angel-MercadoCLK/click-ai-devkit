@@ -27,20 +27,8 @@ func runUninstall(cmd *cobra.Command) error {
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome}
 
-	if err := r.RunStep("Quitando plugin click-sdd…", "Plugin click-sdd eliminado", func() error {
-		return installer.RemoveClickSDDPlugin(cfg)
-	}); err != nil {
-		return err
-	}
-
-	if err := r.RunStep("Quitando plugin click-memory…", "Plugin click-memory eliminado", func() error {
-		return installer.RemoveClickMemoryPlugin(cfg)
-	}); err != nil {
-		return err
-	}
-
-	if err := r.RunStep("Quitando plugin click-review…", "Plugin click-review eliminado", func() error {
-		return installer.RemoveClickReviewPlugin(cfg)
+	if err := r.RunStep("Quitando plugins click-sdd, click-memory y click-review…", "Plugins eliminados de Claude Code", func() error {
+		return installer.RemoveMarketplacePlugins()
 	}); err != nil {
 		return err
 	}
@@ -53,6 +41,12 @@ func runUninstall(cmd *cobra.Command) error {
 
 	if err := r.RunStep("Quitando memory-guard…", "memory-guard eliminado", func() error {
 		return installer.UnregisterMemoryGuardHook(cfg)
+	}); err != nil {
+		return err
+	}
+
+	if err := r.RunStep("Limpiando pin de Engram…", "Pin de Engram eliminado", func() error {
+		return installer.RemoveEngramMCP(cfg)
 	}); err != nil {
 		return err
 	}

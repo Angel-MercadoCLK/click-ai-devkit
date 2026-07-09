@@ -49,6 +49,16 @@ func (c Config) ClickReviewPluginDir() string {
 	return filepath.Join(c.ClaudeHome, "plugins", "click-review")
 }
 
+// KnownMarketplacesPath is Claude Code's plugin marketplace registry.
+func (c Config) KnownMarketplacesPath() string {
+	return filepath.Join(c.ClaudeHome, "plugins", "known_marketplaces.json")
+}
+
+// InstalledPluginsPath is Claude Code's installed plugins registry.
+func (c Config) InstalledPluginsPath() string {
+	return filepath.Join(c.ClaudeHome, "plugins", "installed_plugins.json")
+}
+
 // DefaultEngramBinaryPath is where Click-managed Engram binaries are expected to live locally.
 func (c Config) DefaultEngramBinaryPath() string {
 	name := "engram"

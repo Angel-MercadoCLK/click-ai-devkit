@@ -3,48 +3,64 @@ package installer
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
 
-func TestInstall_CopiesPluginAndWritesManagedBlock(t *testing.T) {
+func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreSource := SetMarketplaceSourceForTests("https://github.com/Angel-MercadoCLK/click-ai-devkit")
+	defer restoreSource()
 
 	if err := Install(cfg); err != nil {
 		t.Fatalf("Install() error = %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(cfg.ClickSDDPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
-		t.Errorf("Install() did not copy click-sdd plugin.json: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(cfg.ClickMemoryPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
-		t.Errorf("Install() did not copy click-memory plugin.json: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(cfg.ClickReviewPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
-		t.Errorf("Install() did not copy click-review plugin.json: %v", err)
+	for _, plugin := range managedPlugins {
+		ok, err := HasInstalledPlugin(cfg, plugin)
+		if err != nil {
+			t.Fatalf("HasInstalledPlugin(%q) error = %v", plugin, err)
+		}
+		if !ok {
+			t.Fatalf("Install() did not register %s", plugin)
+		}
 	}
 
-	ok, err := HasManagedBlock(cfg.ClaudeMDPath())
-	if err != nil {
+	if ok, err := HasManagedBlock(cfg.ClaudeMDPath()); err != nil {
 		t.Fatalf("HasManagedBlock() error = %v", err)
+	} else if !ok {
+		t.Fatal("Install() did not write the managed CLAUDE.md block")
 	}
-	if !ok {
-		t.Error("Install() did not write the managed CLAUDE.md block")
-	}
-
 	if registered, err := HasMemoryGuardHook(cfg); err != nil {
 		t.Fatalf("HasMemoryGuardHook() error = %v", err)
 	} else if !registered {
-		t.Error("Install() did not register the memory-guard hook")
+		t.Fatal("Install() did not register the memory-guard hook")
+	}
+
+	wantCommands := []string{
+		"claude plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins",
+		"claude plugin install click-sdd@click-ai-devkit",
+		"claude plugin install click-memory@click-ai-devkit",
+		"claude plugin install click-review@click-ai-devkit",
+	}
+	if got := runner.commandStrings(); !reflect.DeepEqual(got, wantCommands) {
+		t.Fatalf("command order = %#v, want %#v", got, wantCommands)
 	}
 }
 
 func TestInstall_TwiceIsIdempotent(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
 
 	if err := Install(cfg); err != nil {
 		t.Fatalf("first Install() error = %v", err)
@@ -53,26 +69,30 @@ func TestInstall_TwiceIsIdempotent(t *testing.T) {
 		t.Fatalf("second Install() error = %v", err)
 	}
 
-	entries, err := os.ReadDir(cfg.ClickSDDPluginDir())
-	if err != nil {
-		t.Fatalf("ReadDir(%s) error = %v", cfg.ClickSDDPluginDir(), err)
-	}
-	if len(entries) != 3 {
-		t.Errorf("ClickSDDPluginDir() has %d entries after two installs, want exactly 3", len(entries))
-	}
-
 	claudeMD, err := os.ReadFile(cfg.ClaudeMDPath())
 	if err != nil {
 		t.Fatalf("ReadFile(CLAUDE.md) error = %v", err)
 	}
 	if n := strings.Count(string(claudeMD), managedBeginMarker); n != 1 {
-		t.Errorf("CLAUDE.md has %d begin markers after two installs, want exactly 1", n)
+		t.Fatalf("CLAUDE.md has %d begin markers after two installs, want exactly 1", n)
+	}
+	for _, plugin := range managedPlugins {
+		ok, err := HasInstalledPlugin(cfg, plugin)
+		if err != nil {
+			t.Fatalf("HasInstalledPlugin(%q) error = %v", plugin, err)
+		}
+		if !ok {
+			t.Fatalf("Install() lost installed state for %s on second run", plugin)
+		}
 	}
 }
 
 func TestUninstall_ReversesInstall(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
 
 	if err := Install(cfg); err != nil {
 		t.Fatalf("Install() error = %v", err)
@@ -81,35 +101,27 @@ func TestUninstall_ReversesInstall(t *testing.T) {
 		t.Fatalf("Uninstall() error = %v", err)
 	}
 
-	if _, err := os.Stat(cfg.ClickSDDPluginDir()); !os.IsNotExist(err) {
-		t.Error("Uninstall() left the plugin directory behind")
+	for _, plugin := range managedPlugins {
+		ok, err := HasInstalledPlugin(cfg, plugin)
+		if err != nil {
+			t.Fatalf("HasInstalledPlugin(%q) error = %v", plugin, err)
+		}
+		if ok {
+			t.Fatalf("Uninstall() left %s registered", plugin)
+		}
 	}
-	if _, err := os.Stat(cfg.ClickMemoryPluginDir()); !os.IsNotExist(err) {
-		t.Error("Uninstall() left the click-memory plugin directory behind")
-	}
-	if _, err := os.Stat(cfg.ClickReviewPluginDir()); !os.IsNotExist(err) {
-		t.Error("Uninstall() left the click-review plugin directory behind")
-	}
-
-	ok, err := HasManagedBlock(cfg.ClaudeMDPath())
-	if err != nil {
+	if ok, err := HasManagedBlock(cfg.ClaudeMDPath()); err != nil {
 		t.Fatalf("HasManagedBlock() error = %v", err)
-	}
-	if ok {
-		t.Error("Uninstall() left the managed CLAUDE.md block behind")
+	} else if ok {
+		t.Fatal("Uninstall() left the managed CLAUDE.md block behind")
 	}
 	if registered, err := HasMemoryGuardHook(cfg); err != nil {
 		t.Fatalf("HasMemoryGuardHook() error = %v", err)
 	} else if registered {
-		t.Error("Uninstall() left the memory-guard hook behind")
+		t.Fatal("Uninstall() left the memory-guard hook behind")
 	}
 }
 
-// TestUninstall_ReversesEngramMCPConfiguredByUpdate covers an asymmetry between what `click
-// update` writes and what `click uninstall` reverses: ConfigureEngramMCP is only ever called by
-// `click update` (never by `click install`), so a developer who ran install then update ends up
-// with an MCP config + state file on disk that plain Install()/Uninstall() never touch. Uninstall
-// must still remove them, since it must reverse everything install *and* update wrote.
 func TestUninstall_ReversesEngramMCPConfiguredByUpdate(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
@@ -117,7 +129,10 @@ func TestUninstall_ReversesEngramMCPConfiguredByUpdate(t *testing.T) {
 	if err := os.WriteFile(binaryPath, []byte("binary"), 0o644); err != nil {
 		t.Fatalf("WriteFile(binary) error = %v", err)
 	}
-	t.Setenv("CLICK_ENGRAM_BINARY_PATH", binaryPath)
+	t.Setenv(engramBinaryPathEnvOverride, binaryPath)
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
 
 	if err := Install(cfg); err != nil {
 		t.Fatalf("Install() error = %v", err)
@@ -133,18 +148,20 @@ func TestUninstall_ReversesEngramMCPConfiguredByUpdate(t *testing.T) {
 	if err := Uninstall(cfg); err != nil {
 		t.Fatalf("Uninstall() error = %v", err)
 	}
-
 	if _, err := os.Stat(cfg.EngramMCPConfigPath()); !os.IsNotExist(err) {
-		t.Errorf("Uninstall() left the Engram MCP config behind at %s (err = %v)", cfg.EngramMCPConfigPath(), err)
+		t.Fatalf("Uninstall() left the Engram MCP config behind")
 	}
 	if _, err := os.Stat(cfg.EngramStatePath()); !os.IsNotExist(err) {
-		t.Errorf("Uninstall() left the Engram state file behind at %s (err = %v)", cfg.EngramStatePath(), err)
+		t.Fatalf("Uninstall() left the Engram state file behind")
 	}
 }
 
 func TestUninstall_NoopWhenAlreadyUninstalled(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
 
 	if err := Uninstall(cfg); err != nil {
 		t.Fatalf("Uninstall() on a never-installed home error = %v, want nil", err)
@@ -154,6 +171,9 @@ func TestUninstall_NoopWhenAlreadyUninstalled(t *testing.T) {
 func TestInstallThenUninstallThenInstallAgain_Succeeds(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
 
 	if err := Install(cfg); err != nil {
 		t.Fatalf("first Install() error = %v", err)
@@ -165,20 +185,18 @@ func TestInstallThenUninstallThenInstallAgain_Succeeds(t *testing.T) {
 		t.Fatalf("re-Install() after uninstall error = %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(cfg.ClickSDDPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
-		t.Errorf("re-Install() did not copy click-sdd plugin.json: %v", err)
+	for _, plugin := range managedPlugins {
+		ok, err := HasInstalledPlugin(cfg, plugin)
+		if err != nil {
+			t.Fatalf("HasInstalledPlugin(%q) error = %v", plugin, err)
+		}
+		if !ok {
+			t.Fatalf("re-Install() did not register %s", plugin)
+		}
 	}
-	if _, err := os.Stat(filepath.Join(cfg.ClickMemoryPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
-		t.Errorf("re-Install() did not copy click-memory plugin.json: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(cfg.ClickReviewPluginDir(), ".claude-plugin", "plugin.json")); err != nil {
-		t.Errorf("re-Install() did not copy click-review plugin.json: %v", err)
-	}
-	ok, err := HasManagedBlock(cfg.ClaudeMDPath())
-	if err != nil {
+	if ok, err := HasManagedBlock(cfg.ClaudeMDPath()); err != nil {
 		t.Fatalf("HasManagedBlock() error = %v", err)
-	}
-	if !ok {
-		t.Error("re-Install() did not write the managed CLAUDE.md block")
+	} else if !ok {
+		t.Fatal("re-Install() did not write the managed CLAUDE.md block")
 	}
 }

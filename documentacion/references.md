@@ -24,8 +24,8 @@ Verified directly against the `gentle-ai` README: its **scoop** installation pat
 - **D3 (Distribution):** Click chose a CLI now (gentle-ai style), distributed via a Click scoop bucket, over a marketplace-only or hybrid approach.
 - **D5 (CLI stack):** Click chose Go for the CLI — a single static binary, no runtime dependency — matching gentle-ai's approach, accepting the trade-off that the team needs Go skills to maintain it.
 
-In other words: Click is not choosing a Go CLI *instead of* what gentle-ai does — it's choosing a Go CLI *because* that's what gentle-ai's own scoop distribution actually is. The marketplace docs (last row above) remain relevant only as background for a possible native Marketplace path in v0.2 — for v0.1 this is resolved by D16 (marketplace.json dropped; CLI uses embedded `manifest.yaml`), as noted below.
+In other words: Click is not choosing a Go CLI *instead of* what gentle-ai does — it's choosing a Go CLI *because* that's what gentle-ai's own scoop distribution actually is. After Spike C and D24, the marketplace docs are also part of the real v0.2 foundation because Claude Code only activates the plugins through the native `claude plugin` registry flow.
 
 ## Marketplace.json resolution (D16)
 
-D16 resolves the ambiguity: `.claude-plugin/marketplace.json` is **dropped for v0.1**. The CLI uses its own embedded `manifest.yaml` (one per release) for install/sync configuration. A native Claude Code Marketplace path becomes a v0.2-optional feature only. The reference to the Claude Code Plugin Marketplace docs (row 6 above) remains relevant as background context for how internal plugins can be distributed via Marketplace in the future (v0.2+), but it is not the v0.1 path.
+D24 supersedes D16: `.claude-plugin/marketplace.json` is shipped, and the Go CLI now orchestrates the native `claude plugin` install path instead of copying loose folders. The embedded `manifest.yaml` still matters for Click's own release metadata and Engram pinning; the marketplace manifest is now the activation path for Claude Code plugins.

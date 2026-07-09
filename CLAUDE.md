@@ -32,13 +32,13 @@ Conventional commits. No AI attribution in commit messages.
 Locked decisions (D1–D22) live in `documentacion/00-decisions-and-open-questions.md`. Read it
 before changing behavior or docs — do not contradict a locked decision.
 
-In particular: **never create `.claude-plugin/marketplace.json`** (D16). This repo's own
-embedded `internal/manifest/manifest.yaml` is the only source of truth for install content.
+In particular: ship and maintain `.claude-plugin/marketplace.json` because Claude Code only loads
+the Click plugins through the native `claude plugin` registry flow (D24 supersedes D16).
 
 ## Plugins
 
 The three plugins (`plugins/click-sdd/`, `plugins/click-memory/`, `plugins/click-review/`) are
-embedded into the binary via `go:embed` (see each plugin's `embed.go`). When adding or changing
-plugin files, update the corresponding `embed.go`, the installer copy logic
+served through the repo marketplace manifest. When adding or changing plugin files, keep
+`.claude-plugin/marketplace.json` and the native `claude plugin` install flow consistent.
 (`internal/installer/plugins.go`), the relevant `internal/doctor` check, and their tests
 together — these four stay in sync by convention, not by a generated check.

@@ -2,5 +2,7 @@
   "name": "click-review",
   "version": "0.1.0",
   "description": "Click Seguros PR review and pre-merge checklist plugin for Claude Code.",
-  "author": "Click Seguros"
+  "author": {
+    "name": "Click Seguros"
+  }
 }

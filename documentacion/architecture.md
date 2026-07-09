@@ -189,7 +189,7 @@ click-ai-devkit/
     └── references.md
 ```
 
-> No `.claude-plugin/marketplace.json` in v0.1 — the CLI uses its embedded `manifest.yaml` (D16); a native Marketplace path is a possible v0.2 option.
+> v0.2 foundation reverses D16: `.claude-plugin/marketplace.json` is now part of the real install path, and `click install` uses the native `claude plugin` CLI to register the marketplace and install the three Click plugins.
 
 `cmd/click/` is the one addition to the brief's original structure — the Go CLI needs a home, and
 `cmd/<binary-name>/` is the idiomatic Go layout. The scoop bucket itself (manifest + release

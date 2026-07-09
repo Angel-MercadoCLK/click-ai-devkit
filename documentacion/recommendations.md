@@ -128,7 +128,7 @@ few practical habits keep it from becoming noise:
 
 Propagation debt — **RESOLVED** in the post-external-review reconciliation pass:
 
-- ✅ **D16 (drop `.claude-plugin/marketplace.json`)** propagated: removed from `architecture.md` §4
+- ✅ **D24 (reverse D16 — ship `.claude-plugin/marketplace.json` and install via the native `claude plugin` CLI)** is now the active plan.
   repo-structure diagram and from `mvp-scope.md` §2 deliverables; reframed as a v0.2-optional path
   in references/requirements/prd.
 - ✅ **Stale `D1–D11` headers** updated to `D1–D20` across all planning docs (including `tech-spec.md`).

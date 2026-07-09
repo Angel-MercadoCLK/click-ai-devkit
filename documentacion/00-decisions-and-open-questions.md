@@ -48,7 +48,7 @@ User Request → ClickOrchestrator → click-sdd-explore → click-sdd-prd → c
 | D13 | Strict-TDD | **On by default** for `click-sdd-code`, opt-out for spikes. Aligns with the enabled Strict TDD Mode. | Confirmed (signed by user) |
 | D14 | Guard pattern set | Category **structure** (PII, policy numbers, claim IDs, amounts, customer identifiers); concrete regex authored later, validated by red-team harness. | Confirmed (signed by user) |
 | D15 | Memory/security docs | `allowed-memory.md` / `forbidden-memory.md` / `SECURITY.md` mirror D14 categories; SECURITY.md outline in tech-spec §7.2. | Confirmed (signed by user) |
-| D16 | marketplace.json | **Drop** `.claude-plugin/marketplace.json` for v0.1; CLI uses its own embedded `manifest.yaml` (one per release). Supersedes its mentions in architecture.md §4 / mvp-scope.md §2. | Confirmed (signed by user) |
+| D16 | marketplace.json | **Drop** `.claude-plugin/marketplace.json` for v0.1; CLI uses its own embedded `manifest.yaml` (one per release). **Superseded by D24** after Spike C verified the native Claude Code plugin registry flow. | Superseded |
 | D17 | Installers | **Scoop only** for v0.1; brew fast-follow via GoReleaser; PowerShell deferred. | Confirmed (signed by user) |
 | D18 | Scoop bucket repo (SUPERSEDED by D23 for v0.1 — no separate repo created; kept here as the original rationale/fallback if this ever needs to split out) | Dedicated `Angel-MercadoCLK/scoop-bucket` repo, auto-published by CI on tag. | Confirmed (signed by user) |
 | D19 | Guard latency | Budget **<50ms p95** (sets NFR-006). | Confirmed (signed by user) |
@@ -56,6 +56,7 @@ User Request → ClickOrchestrator → click-sdd-explore → click-sdd-prd → c
 | D21 | memory-guard v0.1 | **Block-only in v0.1; redaction in v0.2.** Spike B CONFIRMED PreToolUse can mutate input (`updatedInput`), so redaction is possible — block-only is now a deliberate policy (max-safe, keeps regex off the v0.1 critical path). v0.2 = redact-when-certain / block-when-uncertain. | Confirmed (signed by user) |
 | D22 | Pre-build spikes | **DONE.** Spike A → `spikes/spike-a-engram-packaging.md` (Engram = Go MCP binary + CC plugin; pin the binary). Spike B → `spikes/spike-b-pretooluse-contract.md` (hook CAN redact; fail-closed needs `exit 2`; matcher = plugin-scoped, verify at runtime). | Done |
 | D23 | Scoop bucket location | **Same repo, not separate.** The scoop manifest publishes into a `bucket/` folder inside `click-ai-devkit` itself (not a dedicated `scoop-bucket` repo). Fewer repos/secrets for a small pilot. Homebrew still needs its own `homebrew-click` repo later (Homebrew's tap-shortname constraint, not a choice) — D17 unchanged. | Confirmed (signed by user) |
+| D24 | Plugin activation path | **Reverse D16** — ship `.claude-plugin/marketplace.json` and have `click install` use the native `claude plugin` CLI to register/install `click-sdd`, `click-memory`, and `click-review`. Loose-folder copying never loaded in Claude Code (Spike C). | Confirmed |
 
 > **Owner note:** v0.1 repos live under the personal work account `Angel-MercadoCLK`
 > (click-ai-devkit — which also hosts the scoop bucket per D23 — and, later, homebrew-click);
@@ -63,7 +64,7 @@ User Request → ClickOrchestrator → click-sdd-explore → click-sdd-prd → c
 
 ### CLI scope guardrail (agreed)
 The CLI is a **thin installer/manager**, not the orchestration brain. Responsibilities:
-- copy/sync skills + agents into `~/.claude`
+- register/install the Click plugins through the native `claude plugin` CLI
 - configure the Engram MCP
 - install Click's `CLAUDE.md` rules
 - commands: `install`, `update`, `doctor`, `uninstall`
@@ -90,14 +91,14 @@ installers — a real cost, accepted deliberately for install-UX control.
 
 ### Minor items — mostly resolved via D12–D20 (tech-spec sign-off)
 Resolved: SDD defaults (D12 interactive, D13 strict-TDD on), guard pattern structure (D14),
-marketplace.json (D16 drop), installers (D17), scoop bucket (D18), guard latency (D19), audit log (D20).
+plugin activation path (D24 supersedes D16), installers (D17), scoop bucket (D18), guard latency (D19), audit log (D20).
 
 Still genuinely open (authoring/build-time, not blocking planning):
 - Author the concrete PII/insurance **regex** for each D14 category (validated by the red-team harness).
 - Write the actual `allowed-memory.md`, `forbidden-memory.md`, `SECURITY.md` files (structure decided in D15).
 - Build-time caveat (tech-spec §4): confirm whether Claude Code PreToolUse supports payload **mutation**
   for "redact"; if not, redact degrades to **block** (fail-closed) — this is now decided by D21 (v0.1 block-only).
-- ~~**Propagate D16 into `architecture.md` §4 and `mvp-scope.md` §2**~~ DONE: marketplace.json removed from repo structure; D16 applied throughout docs.
+- Update docs that still describe D16 as current; Spike C and D24 make `.claude-plugin/marketplace.json` part of the real install path.
 
 ## 4. Expected deliverables in this folder
 - `vision.md`, `architecture.md`, `mvp-scope.md`, `sdd-workflow.md`, `adoption-plan.md`,

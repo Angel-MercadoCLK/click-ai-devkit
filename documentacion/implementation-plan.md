@@ -54,7 +54,7 @@
 | Go module | `go mod init`, module path matching the repo; Go version pinned in `go.mod` |
 | `cmd/click/` layout | Scaffold `cmd/click/main.go` + empty `internal/{cli,installer,manifest,doctor,guard,fsutil,version}` packages per `tech-spec.md` §2.5 |
 | CI skeleton | GitHub Actions workflow: `go build ./...`, `go vet`, `go test ./...` on push/PR; matrix stub for `windows-latest`/`macos-latest`/`ubuntu-latest` (filled in fully by Slice 6, §8.3) |
-| Embedded manifest scaffold | `internal/manifest/manifest.go` + `embed.go` with `go:embed manifest.yaml`; a stub `manifest.yaml` (schema per `tech-spec.md` §2.3) with placeholder versions — **no `.claude-plugin/marketplace.json`** (D16) |
+| Embedded manifest scaffold | `internal/manifest/manifest.go` + `embed.go` with `go:embed manifest.yaml`; a stub `manifest.yaml` (schema per `tech-spec.md` §2.3) with placeholder versions. v0.2 foundation also ships `.claude-plugin/marketplace.json` for the native plugin registry path (D24). |
 | `plugins/` skeleton | Empty `plugins/click-sdd/`, `plugins/click-memory/`, `plugins/click-review/` directories so Slice 1 has somewhere to point at |
 | Repo root files | `README.md` stub, `CLAUDE.md` stub (content filled in Slice 1/3), `SECURITY.md` placeholder (content authored in Slice 2/4) |
 
@@ -63,7 +63,7 @@
 - [ ] `go build ./...` succeeds from a clean clone
 - [ ] CI runs and passes on an empty-but-compiling tree
 - [ ] `manifest.yaml` is embedded and readable via `internal/manifest` (unit test asserts parsed struct matches file)
-- [ ] No `.claude-plugin/marketplace.json` present anywhere in the skeleton (D16)
+- [ ] `.claude-plugin/marketplace.json` present and valid once the native `claude plugin` install path lands (D24)
 
 ---
 

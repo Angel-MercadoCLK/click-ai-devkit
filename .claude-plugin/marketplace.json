@@ -1,0 +1,44 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "click-ai-devkit",
+  "description": "Click Seguros Claude Code plugin marketplace for SDD, memory policy, and PR review.",
+  "owner": {
+    "name": "Angel Mercado",
+    "email": "angel.mercado@click-ai-devkit.local"
+  },
+  "plugins": [
+    {
+      "name": "click-sdd",
+      "description": "Click Seguros SDD workflow plugin for Claude Code.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Click Seguros"
+      },
+      "source": "./plugins/click-sdd",
+      "category": "productivity",
+      "homepage": "https://github.com/Angel-MercadoCLK/click-ai-devkit"
+    },
+    {
+      "name": "click-memory",
+      "description": "Click Seguros memory policy and curation plugin for Claude Code.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Click Seguros"
+      },
+      "source": "./plugins/click-memory",
+      "category": "productivity",
+      "homepage": "https://github.com/Angel-MercadoCLK/click-ai-devkit"
+    },
+    {
+      "name": "click-review",
+      "description": "Click Seguros PR review and pre-merge checklist plugin for Claude Code.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Click Seguros"
+      },
+      "source": "./plugins/click-review",
+      "category": "productivity",
+      "homepage": "https://github.com/Angel-MercadoCLK/click-ai-devkit"
+    }
+  ]
+}

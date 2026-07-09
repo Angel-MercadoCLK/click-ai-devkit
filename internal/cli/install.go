@@ -29,20 +29,8 @@ func runInstall(cmd *cobra.Command) error {
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome}
 
-	if err := r.RunStep("Copiando plugin click-sdd…", "Plugin click-sdd copiado", func() error {
-		return installer.CopyClickSDDPlugin(cfg)
-	}); err != nil {
-		return err
-	}
-
-	if err := r.RunStep("Copiando plugin click-memory…", "Plugin click-memory copiado", func() error {
-		return installer.CopyClickMemoryPlugin(cfg)
-	}); err != nil {
-		return err
-	}
-
-	if err := r.RunStep("Copiando plugin click-review…", "Plugin click-review copiado", func() error {
-		return installer.CopyClickReviewPlugin(cfg)
+	if err := r.RunStep("Registrando plugins click-sdd, click-memory y click-review…", "Plugins registrados en Claude Code", func() error {
+		return installer.SyncMarketplacePlugins()
 	}); err != nil {
 		return err
 	}

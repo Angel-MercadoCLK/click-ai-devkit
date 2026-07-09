@@ -40,7 +40,7 @@ Per the repo structure in `architecture.md` §4:
 - [ ] `README.md`
 - [ ] `CLAUDE.md` (Click conventions, orchestrator activation rules)
 - [ ] `SECURITY.md` (not yet authored — open item)
-- [ ] Embedded CLI manifest (`manifest.yaml`) — NOT `.claude-plugin/marketplace.json` (dropped for v0.1 per D16)
+- [ ] Embedded CLI manifest (`manifest.yaml`) plus `.claude-plugin/marketplace.json` for the native Claude Code plugin install path (D24 supersedes D16)
 - [ ] Go CLI at `cmd/click/` with `install`, `update`, `doctor`, `uninstall`
 - [ ] `plugins/click-sdd/` — `click-orchestrator.md`, `click-prd-writer.md`, `click-architect.md`, `click-reviewer.md`, `click-memory-curator.md`, and the six `SKILL.md` files (`sdd-explore`, `sdd-prd`, `sdd-design`, `sdd-tasks`, `sdd-code`, `sdd-review`)
 - [ ] `plugins/click-memory/` — `memory-guard` PreToolUse hook, `memory-proposal`/`memory-review` skills, and docs: `memory-policy.md`, `allowed-memory.md`, `forbidden-memory.md`, `engram-setup.md`
@@ -53,7 +53,7 @@ A Click Seguros developer can go from zero to a working, guarded setup:
 
 - [ ] `scoop bucket add click https://github.com/Angel-MercadoCLK/click-ai-devkit` then `scoop install click` succeeds on a clean Windows machine (D23)
 - [ ] `click install` completes without error and:
-  - [ ] copies `click-sdd`, `click-memory`, `click-review` into `~/.claude/plugins/`
+  - [ ] registers and installs `click-sdd`, `click-memory`, `click-review` through the native `claude plugin` CLI
   - [ ] writes/updates `CLAUDE.md` rules (Click conventions + orchestrator activation)
   - [ ] configures the Engram MCP server entry at the pinned version (D8)
   - [ ] registers the `memory-guard` PreToolUse hook in Claude Code settings
@@ -79,7 +79,7 @@ Measured via before/after self-report starting on day one of the canary — not 
 | Go CLI needs ongoing maintenance the team may not be resourced for | Accepted deliberately as the cost of install-UX control (D5); scope kept thin (install/update/doctor/uninstall only) |
 | Upstream Engram changes break compatibility | Engram is pinned per click-ai-devkit release, not floating latest (D8); updates are explicit via `click update` |
 | Devs paste real insurance/PII data into a prompt that then gets summarized into memory | Two-layer defense: human-facing policy docs + deterministic guard, independent of model behavior (D6, D7) |
-| Installation distribution path was ambiguous (marketplace vs. CLI) | Resolved by D16: marketplace.json dropped for v0.1; CLI uses embedded manifest.yaml; native Marketplace is a v0.2-optional path |
+| Installation distribution path was ambiguous (marketplace vs. CLI) | Resolved by D24: ship marketplace.json and have the Go CLI orchestrate the native `claude plugin` install path; embedded manifest.yaml still drives Click's release metadata |
 | Canary too small/short to catch real-world edge cases | Canary scope (3–5 days, 2–3 devs) is a deliberate trade-off per D11; go/no-go gate can extend or repeat the canary if issues surface |
 
 ## 6. Open items (not resolved here — carried forward from the decisions doc)

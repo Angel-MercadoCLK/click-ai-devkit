@@ -226,7 +226,7 @@ Extends `mvp-scope.md` §5.
 | Go CLI needs ongoing maintenance the team may be under-resourced for | Accepted deliberately (D5); scope kept thin (install/update/doctor/uninstall only) | D5; mvp-scope.md §5 |
 | Upstream Engram changes break compatibility | Engram pinned per release, not floating latest; updates explicit via `click update` | D8; mvp-scope.md §5 |
 | Devs paste real data into a prompt later summarized into memory | Two-layer defense: policy docs + deterministic guard, independent of model behavior | D6, D7; mvp-scope.md §5 |
-| Distribution path was ambiguous (marketplace vs. CLI) | Resolved by D16: marketplace.json dropped for v0.1; CLI uses embedded manifest.yaml | D16 |
+| Distribution path was ambiguous (marketplace vs. CLI) | Resolved by D24: ship marketplace.json and have the Go CLI orchestrate the native `claude plugin` install path | D24 |
 | Canary too small/short to catch real-world edge cases | Deliberate trade-off (D11); go/no-go can extend or repeat the canary | D11; mvp-scope.md §5 |
 | Metric is self-reported and subjective | Accepted for v0.1 (no telemetry, per Non-goals); keep the log under a minute so devs actually fill it | vision.md; adoption-plan.md §5 |
 
