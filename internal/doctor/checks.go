@@ -8,6 +8,11 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 )
 
+// EngramChecksCount is the number of doctor checks contributed by Engram (plugin + binary), kept
+// as an exported constant so other packages/tests documenting Run()'s total check count don't have
+// to hardcode a magic number that silently drifts if a check is added or removed here.
+const EngramChecksCount = 2
+
 // CheckResult is the outcome of a single doctor check.
 type CheckResult struct {
 	Name    string
@@ -39,6 +44,8 @@ func Run(cfg installer.Config) Report {
 		checkReviewPlugin(cfg),
 		checkClaudeMD(cfg),
 		checkMemoryGuardHook(cfg),
+		checkEngramPlugin(cfg),
+		checkEngramBinary(cfg),
 	}}
 }
 
@@ -92,6 +99,39 @@ func checkClaudeMD(cfg installer.Config) CheckResult {
 		return CheckResult{Name: name, Healthy: false, Detail: "bloque gestionado ausente en " + cfg.ClaudeMDPath()}
 	}
 	return CheckResult{Name: name, Healthy: true, Detail: "bloque gestionado presente"}
+}
+
+// checkEngramPlugin reports whether the engram@engram plugin is registered and enabled — the
+// mechanism confirmed in Step 0 (spike-e-engram-install.md) that actually wires Engram's tools
+// into a Claude Code session. It does not care whether click or the developer installed it.
+func checkEngramPlugin(cfg installer.Config) CheckResult {
+	const name = "plugin engram"
+
+	ok, err := installer.HasInstalledPluginID(cfg, installer.EngramPluginID)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	if !ok {
+		return CheckResult{Name: name, Healthy: false, Detail: "no registrado en Claude Code"}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: "registrado y habilitado"}
+}
+
+// checkEngramBinary reports whether the Engram binary the plugin's bundled MCP server needs
+// (bare, PATH-resolved `command: "engram"` — confirmed in Step 0) actually resolves to a file on
+// disk. The plugin can be registered and enabled yet still fail to connect if this binary is
+// missing, so this is a separate check from checkEngramPlugin.
+func checkEngramBinary(cfg installer.Config) CheckResult {
+	const name = "engram binary"
+
+	path, ok, err := installer.EngramBinaryResolvable(cfg)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	if !ok {
+		return CheckResult{Name: name, Healthy: false, Detail: "no encontrado en " + path + " (el MCP de engram no podrá conectar)"}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: "resuelto en " + path}
 }
 
 func checkMemoryGuardHook(cfg installer.Config) CheckResult {

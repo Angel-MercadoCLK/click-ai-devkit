@@ -9,6 +9,7 @@ import (
 	"github.com/mattn/go-isatty"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/ui"
 	"github.com/spf13/cobra"
@@ -64,6 +65,22 @@ func runInstall(cmd *cobra.Command) error {
 		return installer.SyncMarketplacePlugins(models)
 	}); err != nil {
 		return err
+	}
+
+	m, err := manifest.Load()
+	if err != nil {
+		return err
+	}
+	engramAlreadyInstalled := false
+	if err := r.RunStep("Instalando Engram (memoria persistente)…", "Engram sincronizado", func() error {
+		var syncErr error
+		engramAlreadyInstalled, syncErr = installer.SyncEngram(cfg, m)
+		return syncErr
+	}); err != nil {
+		return err
+	}
+	if engramAlreadyInstalled {
+		fmt.Fprintln(out, r.Info("Engram ya estaba instalado — se dejó como está, sin reinstalar."))
 	}
 
 	if err := r.RunStep("Actualizando CLAUDE.md…", "CLAUDE.md actualizado", func() error {

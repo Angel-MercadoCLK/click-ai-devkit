@@ -204,9 +204,10 @@ func TestUpdateCommand_ResyncsPluginsAndWritesEngramPin(t *testing.T) {
 		t.Fatalf("update command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
 	}
 
-	if _, err := os.Stat(filepath.Join(home, "mcp", "engram.json")); err != nil {
-		t.Fatalf("update did not write engram MCP config: %v", err)
-	}
+	// click no longer writes an MCP config file itself — Step 0 of Slice 3 proved Claude Code
+	// never reads a hand-rolled <ClaudeHome>/mcp/engram.json; only the engram plugin's own
+	// bundled .mcp.json is actually loaded. `click update` now just re-syncs the engram plugin
+	// (idempotent) and refreshes click's own state bookkeeping file.
 	if _, err := os.Stat(filepath.Join(home, "click-ai-devkit", "engram.json")); err != nil {
 		t.Fatalf("update did not write engram pinned state: %v", err)
 	}

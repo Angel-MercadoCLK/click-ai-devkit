@@ -3,6 +3,7 @@ package doctor
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
@@ -31,6 +32,11 @@ func TestRun_AfterInstall_ReportsHealthy(t *testing.T) {
 	if err := installer.RegisterMemoryGuardHook(cfg); err != nil {
 		t.Fatalf("RegisterMemoryGuardHook() error = %v", err)
 	}
+	binaryPath := filepath.Join(t.TempDir(), "engram.exe")
+	if err := os.WriteFile(binaryPath, []byte("binary"), 0o644); err != nil {
+		t.Fatalf("WriteFile(binary) error = %v", err)
+	}
+	t.Setenv("CLICK_ENGRAM_BINARY_PATH", binaryPath)
 
 	report := Run(cfg)
 
@@ -75,8 +81,9 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	report := Run(cfg)
 
-	if len(report.Checks) != 5 {
-		t.Fatalf("Run() returned %d checks, want 5 (click-sdd plugin, click-memory plugin, click-review plugin, CLAUDE.md, memory-guard hook)", len(report.Checks))
+	const wantChecks = 5 + EngramChecksCount
+	if len(report.Checks) != wantChecks {
+		t.Fatalf("Run() returned %d checks, want %d (click-sdd plugin, click-memory plugin, click-review plugin, CLAUDE.md, memory-guard hook, engram plugin, engram binary)", len(report.Checks), wantChecks)
 	}
 }
 
@@ -92,6 +99,7 @@ func seedInstalledState(t *testing.T, cfg installer.Config) {
 			"click-sdd@click-ai-devkit":    {{}},
 			"click-memory@click-ai-devkit": {{}},
 			"click-review@click-ai-devkit": {{}},
+			installer.EngramPluginID:       {{}},
 		},
 	}
 	data, err := json.Marshal(registry)
@@ -109,6 +117,7 @@ func seedInstalledState(t *testing.T, cfg installer.Config) {
 			"click-sdd@click-ai-devkit":    true,
 			"click-memory@click-ai-devkit": true,
 			"click-review@click-ai-devkit": true,
+			installer.EngramPluginID:       true,
 		},
 	}
 	settingsData, err := json.Marshal(settings)

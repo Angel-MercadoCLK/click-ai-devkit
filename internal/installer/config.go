@@ -78,11 +78,6 @@ func (c Config) SettingsPath() string {
 	return filepath.Join(c.ClaudeHome, "settings.json")
 }
 
-// EngramMCPConfigPath is the durable MCP config Click writes for the pinned Engram binary.
-func (c Config) EngramMCPConfigPath() string {
-	return filepath.Join(c.ClaudeHome, "mcp", "engram.json")
-}
-
 // EngramStatePath stores the Click-managed pinned Engram metadata.
 func (c Config) EngramStatePath() string {
 	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "engram.json")

@@ -57,8 +57,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}); err != nil {
 		return err
 	}
-	if err := r.RunStep(fmt.Sprintf("Actualizando pin de Engram a %s…", m.Engram.Version), "Engram sincronizado", func() error {
-		return installer.ConfigureEngramMCP(cfg, m)
+	if err := r.RunStep(fmt.Sprintf("Sincronizando Engram (pin %s)…", m.Engram.Version), "Engram sincronizado", func() error {
+		_, err := installer.SyncEngram(cfg, m)
+		return err
 	}); err != nil {
 		return err
 	}

@@ -95,6 +95,20 @@ func HasMemoryGuardHook(cfg Config) (bool, error) {
 	return hasHookEntry(getPreToolUseEntries(settings), MemoryGuardToolMatcher, MemoryGuardCommand), nil
 }
 
+// writeJSONFile is a small shared helper for the handful of Click-managed JSON files this package
+// writes (per-phase models, Engram state, ...) that aren't Claude Code's own settings.json shape.
+func writeJSONFile(path string, v any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o600)
+}
+
 func readSettingsFile(path string) (map[string]any, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

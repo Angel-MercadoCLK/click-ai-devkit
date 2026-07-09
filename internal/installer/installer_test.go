@@ -6,8 +6,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
 
 func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
@@ -18,6 +16,8 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 	defer restoreRunner()
 	restoreSource := SetMarketplaceSourceForTests("https://github.com/Angel-MercadoCLK/click-ai-devkit")
 	defer restoreSource()
+	restoreEngramSource := SetEngramMarketplaceSourceForTests("https://github.com/Gentleman-Programming/engram")
+	defer restoreEngramSource()
 
 	if err := Install(cfg, nil); err != nil {
 		t.Fatalf("Install() error = %v", err)
@@ -31,6 +31,11 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 		if !ok {
 			t.Fatalf("Install() did not register %s", plugin)
 		}
+	}
+	if ok, err := HasInstalledPluginID(cfg, EngramPluginID); err != nil {
+		t.Fatalf("HasInstalledPluginID(EngramPluginID) error = %v", err)
+	} else if !ok {
+		t.Fatal("Install() did not register engram@engram")
 	}
 
 	if ok, err := HasManagedBlock(cfg.ClaudeMDPath()); err != nil {
@@ -54,6 +59,8 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 			" --config memory_curator_model=sonnet",
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",
+		"claude plugin marketplace add https://github.com/Gentleman-Programming/engram",
+		"claude plugin install engram@engram",
 	}
 	if got := runner.commandStrings(); !reflect.DeepEqual(got, wantCommands) {
 		t.Fatalf("command order = %#v, want %#v", got, wantCommands)
@@ -127,7 +134,10 @@ func TestUninstall_ReversesInstall(t *testing.T) {
 	}
 }
 
-func TestUninstall_ReversesEngramMCPConfiguredByUpdate(t *testing.T) {
+// TestUninstall_ReversesEngramWhenClickInstalledIt covers the normal case: click's own Install()
+// registered Engram (nothing pre-existing), so Uninstall must fully reverse it, including click's
+// own state bookkeeping file.
+func TestUninstall_ReversesEngramWhenClickInstalledIt(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
 	binaryPath := filepath.Join(t.TempDir(), "engram.exe")
@@ -142,22 +152,53 @@ func TestUninstall_ReversesEngramMCPConfiguredByUpdate(t *testing.T) {
 	if err := Install(cfg, nil); err != nil {
 		t.Fatalf("Install() error = %v", err)
 	}
-	m, err := manifest.Load()
+
+	ok, err := HasInstalledPluginID(cfg, EngramPluginID)
 	if err != nil {
-		t.Fatalf("manifest.Load() error = %v", err)
+		t.Fatalf("HasInstalledPluginID() error = %v", err)
 	}
-	if err := ConfigureEngramMCP(cfg, m); err != nil {
-		t.Fatalf("ConfigureEngramMCP() error = %v", err)
+	if !ok {
+		t.Fatal("Install() did not register engram@engram")
 	}
 
 	if err := Uninstall(cfg); err != nil {
 		t.Fatalf("Uninstall() error = %v", err)
 	}
-	if _, err := os.Stat(cfg.EngramMCPConfigPath()); !os.IsNotExist(err) {
-		t.Fatalf("Uninstall() left the Engram MCP config behind")
+	if ok, err := HasInstalledPluginID(cfg, EngramPluginID); err != nil {
+		t.Fatalf("HasInstalledPluginID() error = %v", err)
+	} else if ok {
+		t.Fatal("Uninstall() left engram@engram registered after click's own Install() added it")
 	}
 	if _, err := os.Stat(cfg.EngramStatePath()); !os.IsNotExist(err) {
 		t.Fatalf("Uninstall() left the Engram state file behind")
+	}
+}
+
+// TestUninstall_RespectsEngramInstalledBeforeClick guards the "many devs already have Engram
+// working" contract at the full Install/Uninstall level: if Engram was already installed before
+// click's Install() ran, Uninstall must leave it registered and running.
+func TestUninstall_RespectsEngramInstalledBeforeClick(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	seedEngramAlreadyInstalled(t, cfg)
+
+	if err := Install(cfg, nil); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if err := Uninstall(cfg); err != nil {
+		t.Fatalf("Uninstall() error = %v", err)
+	}
+
+	ok, err := HasInstalledPluginID(cfg, EngramPluginID)
+	if err != nil {
+		t.Fatalf("HasInstalledPluginID() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("Uninstall() removed a pre-existing Engram install click never owned")
 	}
 }
 

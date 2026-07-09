@@ -45,14 +45,10 @@ func runUninstall(cmd *cobra.Command) error {
 		return err
 	}
 
-	if err := r.RunStep("Limpiando pin de Engram…", "Pin de Engram eliminado", func() error {
-		return installer.RemoveEngramMCP(cfg)
-	}); err != nil {
-		return err
-	}
-
-	if err := r.RunStep("Quitando pin de Engram…", "Pin de Engram eliminado", func() error {
-		return installer.RemoveEngramMCP(cfg)
+	// RemoveEngramPlugin only reverses Engram when click's own state says click installed it —
+	// a pre-existing developer setup is left running untouched.
+	if err := r.RunStep("Quitando Engram (si click lo instaló)…", "Engram procesado", func() error {
+		return installer.RemoveEngramPlugin(cfg)
 	}); err != nil {
 		return err
 	}

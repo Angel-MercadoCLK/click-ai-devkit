@@ -103,7 +103,11 @@ func SetMarketplaceSourceForTests(source string) func() {
 func SyncMarketplacePlugins(models map[modelconfig.Phase]string) error {
 	resolved := modelconfig.Resolve(models)
 	runner := commandRunnerFactory()
-	if err := addMarketplace(runner, marketplaceSource); err != nil {
+	var sparsePaths []string
+	if usesSparseCheckout(marketplaceSource) {
+		sparsePaths = []string{".claude-plugin", "plugins"}
+	}
+	if err := addMarketplace(runner, marketplaceSource, sparsePaths); err != nil {
 		return err
 	}
 	for _, plugin := range managedPlugins {
@@ -148,9 +152,16 @@ func RemoveMarketplacePlugins() error {
 	return nil
 }
 
-// HasInstalledPlugin checks Claude Code's plugin registry files to verify a plugin is actually
-// installed and enabled, instead of just checking for a copied loose folder.
+// HasInstalledPlugin checks Claude Code's plugin registry files to verify one of click's own
+// managed plugins (always under the click-ai-devkit marketplace) is actually installed and
+// enabled, instead of just checking for a copied loose folder.
 func HasInstalledPlugin(cfg Config, plugin string) (bool, error) {
+	return HasInstalledPluginID(cfg, plugin+"@"+marketplaceName)
+}
+
+// HasInstalledPluginID is the general form behind HasInstalledPlugin: it checks an arbitrary
+// plugin@marketplace identifier (e.g. "engram@engram"), not just click's own marketplace.
+func HasInstalledPluginID(cfg Config, pluginID string) (bool, error) {
 	registryData, err := os.ReadFile(cfg.InstalledPluginsPath())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -165,7 +176,6 @@ func HasInstalledPlugin(cfg Config, plugin string) (bool, error) {
 	if err := json.Unmarshal(registryData, &registry); err != nil {
 		return false, fmt.Errorf("installer: parse installed plugins registry: %w", err)
 	}
-	pluginID := plugin + "@" + marketplaceName
 	entries, ok := registry.Plugins[pluginID]
 	if !ok || len(entries) == 0 {
 		return false, nil
@@ -188,10 +198,17 @@ func HasInstalledPlugin(cfg Config, plugin string) (bool, error) {
 	return s.EnabledPlugins[pluginID], nil
 }
 
-func addMarketplace(runner CommandRunner, source string) error {
+// addMarketplace registers a plugin marketplace. sparsePaths, when non-empty, limits the checkout
+// to those paths under the repo root (`--sparse <paths...>`) — only click-ai-devkit's own
+// marketplace needs this (its plugins live under plugins/<name>, alongside .claude-plugin/).
+// Engram's marketplace must NOT be sparse-checked-out: its plugin lives at plugin/claude-code/,
+// not plugins/<name>, so a plugins/-scoped sparse checkout would silently miss it — confirmed
+// against the real CLI in Step 0 (spike-e-engram-install.md).
+func addMarketplace(runner CommandRunner, source string, sparsePaths []string) error {
 	args := []string{"plugin", "marketplace", "add", source}
-	if usesSparseCheckout(source) {
-		args = append(args, "--sparse", ".claude-plugin", "plugins")
+	if len(sparsePaths) > 0 {
+		args = append(args, "--sparse")
+		args = append(args, sparsePaths...)
 	}
 	if err := runner.Run(pluginCLIBinary, args...); err != nil {
 		return fmt.Errorf("installer: add plugin marketplace %q: %w", source, err)
@@ -200,16 +217,27 @@ func addMarketplace(runner CommandRunner, source string) error {
 }
 
 func installMarketplacePlugin(runner CommandRunner, plugin string, extraArgs ...string) error {
-	args := append([]string{"plugin", "install", plugin + "@" + marketplaceName}, extraArgs...)
+	return installPluginID(runner, plugin, marketplaceName, extraArgs...)
+}
+
+func uninstallMarketplacePlugin(runner CommandRunner, plugin string) error {
+	return uninstallPluginID(runner, plugin, marketplaceName)
+}
+
+// installPluginID installs plugin@marketplace, the general form behind installMarketplacePlugin
+// (always click-ai-devkit) and SyncEngramPlugin (always engram).
+func installPluginID(runner CommandRunner, plugin, marketplace string, extraArgs ...string) error {
+	args := append([]string{"plugin", "install", plugin + "@" + marketplace}, extraArgs...)
 	if err := runner.Run(pluginCLIBinary, args...); err != nil {
-		return fmt.Errorf("installer: install plugin %s: %w", plugin, err)
+		return fmt.Errorf("installer: install plugin %s@%s: %w", plugin, marketplace, err)
 	}
 	return nil
 }
 
-func uninstallMarketplacePlugin(runner CommandRunner, plugin string) error {
-	if err := runner.Run(pluginCLIBinary, "plugin", "uninstall", plugin+"@"+marketplaceName); err != nil {
-		return fmt.Errorf("installer: uninstall plugin %s: %w", plugin, err)
+// uninstallPluginID is the general form behind uninstallMarketplacePlugin and RemoveEngramPlugin.
+func uninstallPluginID(runner CommandRunner, plugin, marketplace string) error {
+	if err := runner.Run(pluginCLIBinary, "plugin", "uninstall", plugin+"@"+marketplace); err != nil {
+		return fmt.Errorf("installer: uninstall plugin %s@%s: %w", plugin, marketplace, err)
 	}
 	return nil
 }
@@ -229,41 +257,61 @@ func usesSparseCheckout(source string) bool {
 }
 
 type fakeCommandRunner struct {
-	cfg         Config
-	commands    []commandInvocation
-	plugins     map[string]bool
-	marketplace string
-	lookup      map[string][]byte
+	cfg          Config
+	commands     []commandInvocation
+	plugins      map[string]bool
+	marketplaces map[string]bool
+	lookup       map[string][]byte
 }
 
 func newFakeCommandRunner(cfg Config) *fakeCommandRunner {
-	return &fakeCommandRunner{cfg: cfg, plugins: map[string]bool{}, lookup: map[string][]byte{}}
+	return &fakeCommandRunner{cfg: cfg, plugins: map[string]bool{}, marketplaces: map[string]bool{}, lookup: map[string][]byte{}}
 }
 
+// Run simulates the `claude` CLI well enough for unit tests: it derives the marketplace's
+// registry key from the source the same way the real CLI does (the repo/dir basename — e.g.
+// "click-ai-devkit" from .../click-ai-devkit, "engram" from .../engram, both verified against the
+// real CLI in Step 0), so more than one marketplace (click-ai-devkit AND engram) can coexist in
+// the same fake registry within a single test, matching what `click install` now does for real.
 func (f *fakeCommandRunner) Run(name string, args ...string) error {
 	f.commands = append(f.commands, commandInvocation{Name: name, Args: append([]string(nil), args...)})
 	if name != pluginCLIBinary || len(args) < 2 {
 		return nil
 	}
-	switch strings.Join(args[:3], " ") {
-	case "plugin marketplace add":
-		f.marketplace = marketplaceName
-		return f.writeMarketplaceRegistry(args[3])
-	case "plugin marketplace remove":
-		f.marketplace = ""
-		_ = os.Remove(f.cfg.KnownMarketplacesPath())
-		return nil
+	if len(args) >= 4 && args[0] == "plugin" && args[1] == "marketplace" && args[2] == "add" {
+		source := args[3]
+		key := marketplaceKeyFromSource(source)
+		f.marketplaces[key] = true
+		return f.writeMarketplaceRegistry(key, source)
+	}
+	if len(args) >= 4 && args[0] == "plugin" && args[1] == "marketplace" && args[2] == "remove" {
+		key := args[3]
+		delete(f.marketplaces, key)
+		return f.removeMarketplaceRegistryEntry(key)
 	}
 	if len(args) >= 3 && args[0] == "plugin" && args[1] == "install" {
 		pluginID := args[2]
 		f.plugins[pluginID] = true
-		return f.writePluginRegistry()
+		return f.upsertPluginRegistry(pluginID, true)
 	}
 	if len(args) >= 3 && args[0] == "plugin" && args[1] == "uninstall" {
-		delete(f.plugins, args[2])
-		return f.writePluginRegistry()
+		pluginID := args[2]
+		delete(f.plugins, pluginID)
+		return f.upsertPluginRegistry(pluginID, false)
 	}
 	return nil
+}
+
+// marketplaceKeyFromSource mirrors how the real `claude` CLI names a marketplace after `plugin
+// marketplace add <source>` with no explicit name: the source's basename, minus a trailing
+// ".git" — verified in Step 0 against the real CLI ("Angel-MercadoCLK/click-ai-devkit" ->
+// "click-ai-devkit", "Gentleman-Programming/engram" -> "engram").
+func marketplaceKeyFromSource(source string) string {
+	base := source
+	if idx := strings.LastIndexAny(base, "/\\"); idx != -1 {
+		base = base[idx+1:]
+	}
+	return strings.TrimSuffix(base, ".git")
 }
 
 func (f *fakeCommandRunner) Output(name string, args ...string) ([]byte, error) {
@@ -275,36 +323,91 @@ func (f *fakeCommandRunner) Output(name string, args ...string) ([]byte, error) 
 	return []byte{}, nil
 }
 
-func (f *fakeCommandRunner) writeMarketplaceRegistry(source string) error {
-	data := map[string]any{
-		marketplaceName: map[string]any{
-			"source": map[string]any{
-				"source":             chooseSourceKind(source),
-				pathOrURLKey(source): source,
-			},
-			"installLocation": source,
+func (f *fakeCommandRunner) writeMarketplaceRegistry(key, source string) error {
+	data := map[string]any{}
+	if existing, err := os.ReadFile(f.cfg.KnownMarketplacesPath()); err == nil {
+		_ = json.Unmarshal(existing, &data)
+	}
+	data[key] = map[string]any{
+		"source": map[string]any{
+			"source":             chooseSourceKind(source),
+			pathOrURLKey(source): source,
 		},
+		"installLocation": source,
 	}
 	return writeJSONFile(f.cfg.KnownMarketplacesPath(), data)
 }
 
-func (f *fakeCommandRunner) writePluginRegistry() error {
-	plugins := map[string]any{}
-	enabled := map[string]bool{}
-	for pluginID := range f.plugins {
-		parts := strings.Split(pluginID, "@")
-		pluginName := parts[0]
-		plugins[pluginID] = []map[string]any{{
+func (f *fakeCommandRunner) removeMarketplaceRegistryEntry(key string) error {
+	data := map[string]any{}
+	existing, err := os.ReadFile(f.cfg.KnownMarketplacesPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := json.Unmarshal(existing, &data); err != nil {
+		return err
+	}
+	delete(data, key)
+	if len(data) == 0 {
+		return removeIfExists(f.cfg.KnownMarketplacesPath())
+	}
+	return writeJSONFile(f.cfg.KnownMarketplacesPath(), data)
+}
+
+// upsertPluginRegistry adds or removes exactly pluginID, preserving every other entry already on
+// disk. This matters for tests that seed a pre-existing plugin (e.g. an Engram install a
+// developer already had) directly on disk before exercising Install()/Uninstall(): a naive
+// "rebuild the whole registry from what this fake instance has seen" would silently erase that
+// seeded entry the moment any other plugin gets installed through the same runner.
+func (f *fakeCommandRunner) upsertPluginRegistry(pluginID string, installed bool) error {
+	type pluginsRegistry struct {
+		Version int                         `json:"version"`
+		Plugins map[string][]map[string]any `json:"plugins"`
+	}
+	reg := pluginsRegistry{Version: 2, Plugins: map[string][]map[string]any{}}
+	if data, err := os.ReadFile(f.cfg.InstalledPluginsPath()); err == nil {
+		_ = json.Unmarshal(data, &reg)
+		if reg.Plugins == nil {
+			reg.Plugins = map[string][]map[string]any{}
+		}
+	}
+
+	if installed {
+		pluginName, marketplace, _ := strings.Cut(pluginID, "@")
+		reg.Plugins[pluginID] = []map[string]any{{
 			"scope":       "user",
-			"installPath": filepath.Join(f.cfg.ClaudeHome, "plugins", "cache", marketplaceName, pluginName, "0.1.0"),
+			"installPath": filepath.Join(f.cfg.ClaudeHome, "plugins", "cache", marketplace, pluginName, "0.1.0"),
 			"version":     "0.1.0",
 		}}
-		enabled[pluginID] = true
+	} else {
+		delete(reg.Plugins, pluginID)
+	}
+
+	plugins := map[string]any{}
+	for id, entries := range reg.Plugins {
+		plugins[id] = entries
 	}
 	if err := writeJSONFile(f.cfg.InstalledPluginsPath(), map[string]any{"version": 2, "plugins": plugins}); err != nil {
 		return err
 	}
+
 	settings, _ := readSettingsFile(f.cfg.SettingsPath())
+	enabled := map[string]bool{}
+	if raw, ok := settings["enabledPlugins"].(map[string]any); ok {
+		for id, v := range raw {
+			if b, ok := v.(bool); ok {
+				enabled[id] = b
+			}
+		}
+	}
+	if installed {
+		enabled[pluginID] = true
+	} else {
+		delete(enabled, pluginID)
+	}
 	settings["enabledPlugins"] = enabled
 	return writeSettingsFile(f.cfg.SettingsPath(), settings)
 }

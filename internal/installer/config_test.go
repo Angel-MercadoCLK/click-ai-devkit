@@ -55,11 +55,6 @@ func TestConfig_PluginDirAndClaudeMDPath(t *testing.T) {
 		t.Errorf("ClickReviewPluginDir() = %q, want %q", got, wantReviewPluginDir)
 	}
 
-	wantMCPPath := filepath.Join("some", "home", ".claude", "mcp", "engram.json")
-	if got := cfg.EngramMCPConfigPath(); got != wantMCPPath {
-		t.Errorf("EngramMCPConfigPath() = %q, want %q", got, wantMCPPath)
-	}
-
 	wantStatePath := filepath.Join("some", "home", ".claude", "click-ai-devkit", "engram.json")
 	if got := cfg.EngramStatePath(); got != wantStatePath {
 		t.Errorf("EngramStatePath() = %q, want %q", got, wantStatePath)
