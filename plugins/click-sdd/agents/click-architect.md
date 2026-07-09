@@ -1,6 +1,6 @@
 ---
 name: click-architect
-description: Own the Click Seguros design and tasks phases: define the technical approach, architecture decisions, and ordered implementation tasks.
+description: "Own the Click Seguros design and tasks phases: define the technical approach, architecture decisions, and ordered implementation tasks."
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
 ---

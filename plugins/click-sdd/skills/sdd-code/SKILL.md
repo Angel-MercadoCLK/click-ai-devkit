@@ -1,6 +1,6 @@
 ---
 name: sdd-code
-description: Implement approved Click Seguros tasks with strict TDD by default: failing test first, implementation second, refactor third.
+description: "Implement approved Click Seguros tasks with strict TDD by default: failing test first, implementation second, refactor third."
 ---
 
 ## Workflow

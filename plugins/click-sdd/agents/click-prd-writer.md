@@ -1,6 +1,6 @@
 ---
 name: click-prd-writer
-description: Write the PRD for a Click Seguros change: goals, scope, requirements, and acceptance criteria in English.
+description: "Write the PRD for a Click Seguros change: goals, scope, requirements, and acceptance criteria in English."
 tools: Read, Write, Edit, Glob, Grep
 model: sonnet
 ---
