@@ -173,3 +173,109 @@ needed; this is a confirmation, not a fix.
   unrelated to the install-mechanism work here, but worth flagging: `click doctor`/`click update`
   do not currently compare `engram --version` output against the manifest pin. A future slice could
   add that check now that `EngramBinaryResolvable` already knows the resolved path.
+
+## Binary provisioning (`go install`) — Slice 3b, Step 0
+
+Slice 3's residual/follow-up note above recommended exactly this as the next step: automate binary
+provisioning via `go install`, since it reuses the Go module proxy's own verification instead of
+hand-rolling zip/checksum handling. Before writing any product code, this Step 0 re-verified (with
+ACTUAL command output) that `go install` resolves for this exact module path and the exact pinned
+tag — the earlier spike only confirmed the module path existed via `plugin.json`/`marketplace.json`
+inspection, not that `go install` itself resolves it.
+
+All commands below were run with a **throwaway `GOBIN`** under the OS temp dir
+(`.../AppData/Local/Temp/claude/gobin-verify`, deleted after verification) — never `~/go/bin` or any
+directory already on this machine's real PATH.
+
+### Q1 — Does `go install .../engram/cmd/engram@latest` resolve and produce a binary?
+
+**Yes.**
+
+```
+$ GOBIN=<tmp>/gobin-verify go install github.com/Gentleman-Programming/engram/cmd/engram@latest
+go: downloading github.com/Gentleman-Programming/engram v1.19.0
+exit=0
+
+$ ls -la <tmp>/gobin-verify
+-rwxr-xr-x 1 CLK090 197121 28877824 Jul  9 15:12 engram.exe
+```
+
+`@latest` resolves to **v1.19.0** (newer than the `1.16.1` binary noted as already present on this
+dev machine's PATH in Slice 3 — Engram has kept releasing since then).
+
+### Q2 — Does the manifest-pinned tag (`ENGRAM_VERSION` = `v1.15.3`) resolve for `go install` specifically?
+
+**Yes — no discrepancy.** This was the actual open question Step 0 needed to close: a module's
+git tags and its `go install`-resolvable versions can differ (pre-v1 module semantics, missing
+tags, etc.), and Slice 3's spike never actually ran `go install` against this exact tag.
+
+```
+$ GOBIN=<tmp>/gobin-verify go install github.com/Gentleman-Programming/engram/cmd/engram@v1.15.3
+go: downloading github.com/Gentleman-Programming/engram v1.15.3
+exit=0
+
+$ ls -la <tmp>/gobin-verify
+-rwxr-xr-x 1 CLK090 197121 28006912 Jul  9 15:12 engram.exe
+```
+
+**`v1.15.3` resolves cleanly.** `ENGRAM_VERSION`/`manifest.yaml`'s pin does NOT need to change for
+this slice — the exact command shipped in code (`EngramInstallCommand`/`EnsureEngramBinary`) is:
+
+```
+go install github.com/Gentleman-Programming/engram/cmd/engram@v1.15.3
+```
+
+### Q3 — Does the produced binary actually run?
+
+**Yes**, confirmed both ways:
+
+```
+$ <tmp>/gobin-verify/engram.exe --version
+Update available: 1.15.3 -> 1.19.0
+To update:
+  go install github.com/Gentleman-Programming/engram/cmd/engram@latest
+  or: https://github.com/Gentleman-Programming/engram/releases/latest
+
+engram 1.15.3
+
+$ <tmp>/gobin-verify/engram.exe --help
+Update available: 1.15.3 -> 1.19.0
+...
+engram v1.15.3 — Persistent memory for AI coding agents
+
+Usage:
+  engram <command> [arguments]
+
+Commands:
+  serve [port]       Start HTTP API server (default: 7437)
+  mcp [--tools=PROFILE] [--project=NAME]
+                     Start MCP server (stdio transport, for any AI agent)
+                       Profiles: agent (11 tools), admin (4 tools), all (default, 15)
+  ...
+```
+
+(The "Update available" banner is Engram's own self-update-check line printed to stdout on every
+invocation when a newer release exists — cosmetic, does not affect exit code or `--version`/`--help`
+output correctness.)
+
+### Design conclusions carried into Slice 3b's implementation
+
+1. `EnsureEngramBinary` (`internal/installer/engram.go`) is called from `SyncEngram` right after
+   `SyncEngramPlugin`: if the binary is already resolvable, it's a no-op (idempotent, matches
+   Slice 3's SyncEngram/SyncEngramPlugin discipline); if missing and Go is on PATH, it runs `go
+   install github.com/Gentleman-Programming/engram/cmd/engram@<manifest-pinned version>` through the
+   *same* `CommandRunner` interface already used for `claude plugin ...` (no second command-running
+   abstraction); if Go is missing, or `go install` ran but the binary is still not resolvable
+   afterward (e.g. `GOPATH/bin` itself isn't on PATH), it returns a remediation message and never
+   fails the caller.
+2. PATH resolution itself (`exec.LookPath`) is now behind an injectable `BinaryLookup` interface
+   (factory-injected, same shape as `CommandRunner`) so unit tests can simulate "binary missing",
+   "Go missing", and "go install just made it resolvable" deterministically — no test ever shells
+   out to a real `go install` or touches the real PATH.
+3. `EngramBinaryRemediationMessage` is the single shared text for both `click install`'s non-fatal
+   fallback and `click doctor`'s `checkEngramBinary` Detail — the two call sites are guaranteed to
+   never give a developer conflicting next steps.
+4. Deliberately still NOT done: editing PATH ourselves (dangerous, especially on Windows) and
+   downloading release zips (the fragile path Slice 3 already rejected). `go install` remains the
+   only automated path; Homebrew is mentioned only as manual, user-run guidance in the remediation
+   text.

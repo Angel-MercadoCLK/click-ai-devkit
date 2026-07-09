@@ -2,13 +2,31 @@ package installer
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
+
+// seedResolvableEngramBinary points CLICK_ENGRAM_BINARY_PATH at a real, existing dummy file so
+// EnsureEngramBinary's initial EngramBinaryResolvable check short-circuits as already-resolvable —
+// neutralizing Slice 3b's new go-install provisioning path for tests that only care about
+// SyncEngram's plugin-registration behavior (unrelated to binary provisioning). Without this, these
+// tests would non-deterministically issue (or not issue) an extra `go install` command depending on
+// whether the machine running them happens to have a real `go` toolchain and/or a real `engram`
+// binary on PATH.
+func seedResolvableEngramBinary(t *testing.T) {
+	t.Helper()
+	binaryPath := filepath.Join(t.TempDir(), "engram.exe")
+	if err := os.WriteFile(binaryPath, []byte("binary"), 0o644); err != nil {
+		t.Fatalf("WriteFile(binary) error = %v", err)
+	}
+	t.Setenv(engramBinaryPathEnvOverride, binaryPath)
+}
 
 // TestSyncEngram_InstallsWhenNotPresent covers the common case: a developer who has never touched
 // Engram runs `click install`. SyncEngram must register the Engram marketplace (no --sparse — the
@@ -22,6 +40,7 @@ func TestSyncEngram_InstallsWhenNotPresent(t *testing.T) {
 	defer restoreRunner()
 	restoreSource := SetEngramMarketplaceSourceForTests("https://github.com/Gentleman-Programming/engram")
 	defer restoreSource()
+	seedResolvableEngramBinary(t)
 
 	m, err := manifest.Load()
 	if err != nil {
@@ -84,6 +103,7 @@ func TestSyncEngram_SkipsWhenAlreadyInstalled(t *testing.T) {
 	defer restoreRunner()
 
 	seedEngramAlreadyInstalled(t, cfg)
+	seedResolvableEngramBinary(t)
 
 	m, err := manifest.Load()
 	if err != nil {
@@ -129,6 +149,7 @@ func TestSyncEngram_SecondRunPreservesClickOwnership(t *testing.T) {
 	defer restoreRunner()
 	restoreSource := SetEngramMarketplaceSourceForTests("https://github.com/Gentleman-Programming/engram")
 	defer restoreSource()
+	seedResolvableEngramBinary(t)
 
 	m, err := manifest.Load()
 	if err != nil {
@@ -182,6 +203,7 @@ func TestRemoveEngramPlugin_RemovesWhenClickInstalledIt(t *testing.T) {
 	defer restoreRunner()
 	restoreSource := SetEngramMarketplaceSourceForTests("https://github.com/Gentleman-Programming/engram")
 	defer restoreSource()
+	seedResolvableEngramBinary(t)
 
 	m, err := manifest.Load()
 	if err != nil {
@@ -218,6 +240,7 @@ func TestRemoveEngramPlugin_RespectsPreExistingInstall(t *testing.T) {
 	defer restoreRunner()
 
 	seedEngramAlreadyInstalled(t, cfg)
+	seedResolvableEngramBinary(t)
 
 	m, err := manifest.Load()
 	if err != nil {
@@ -302,6 +325,198 @@ func TestEngramBinaryResolvable_MissingBinary(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("EngramBinaryResolvable() ok = true for a binary path that does not exist on disk")
+	}
+}
+
+// fakeBinaryLookup fakes PATH resolution for EnsureEngramBinary/ResolveEngramBinaryPath's
+// BinaryLookup dependency, the same factory-injected pattern CommandRunner already uses (see
+// plugins.go's commandRunnerFactory). Its map is mutated by fakeGoInstallRunner below to simulate a
+// `go install` run making a previously-missing binary newly resolvable, without ever touching a
+// real developer machine's PATH.
+type fakeBinaryLookup struct {
+	resolved map[string]string
+}
+
+func (f *fakeBinaryLookup) LookPath(name string) (string, error) {
+	if path, ok := f.resolved[name]; ok {
+		return path, nil
+	}
+	return "", errors.New("fakeBinaryLookup: not found: " + name)
+}
+
+// fakeGoInstallRunner is a CommandRunner fake purpose-built for exercising EnsureEngramBinary's
+// `go install` step in isolation: when it sees `go install <module>@<version>`, it writes a dummy
+// binary file at binaryPath and registers it in the shared fakeBinaryLookup, simulating what a real
+// `go install` does to PATH resolution (GOPATH/bin gaining a new binary) — reusing the existing
+// CommandRunner interface rather than inventing a second command-running abstraction.
+type fakeGoInstallRunner struct {
+	commands   []commandInvocation
+	lookup     *fakeBinaryLookup
+	binaryName string
+	binaryPath string
+	failWith   error
+}
+
+func (f *fakeGoInstallRunner) Run(name string, args ...string) error {
+	f.commands = append(f.commands, commandInvocation{Name: name, Args: append([]string(nil), args...)})
+	if f.failWith != nil {
+		return f.failWith
+	}
+	if name == "go" && len(args) > 0 && args[0] == "install" {
+		if err := os.WriteFile(f.binaryPath, []byte("binary"), 0o644); err != nil {
+			return err
+		}
+		f.lookup.resolved[f.binaryName] = f.binaryPath
+	}
+	return nil
+}
+
+func (f *fakeGoInstallRunner) Output(name string, args ...string) ([]byte, error) {
+	f.commands = append(f.commands, commandInvocation{Name: name, Args: append([]string(nil), args...)})
+	return []byte{}, nil
+}
+
+// TestEnsureEngramBinary_AlreadyResolvable_NoInstall covers the idempotent no-op case: the binary
+// is already resolvable (a developer had it on PATH before `click install` ever ran), so no `go
+// install` command is issued at all.
+func TestEnsureEngramBinary_AlreadyResolvable_NoInstall(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	existingPath := filepath.Join(t.TempDir(), "engram.exe")
+	if err := os.WriteFile(existingPath, []byte("binary"), 0o644); err != nil {
+		t.Fatalf("WriteFile(binary) error = %v", err)
+	}
+
+	lookup := &fakeBinaryLookup{resolved: map[string]string{engramBinaryName(): existingPath}}
+	restoreLookup := SetBinaryLookupFactoryForTests(func() BinaryLookup { return lookup })
+	defer restoreLookup()
+
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	path, resolvable, remediation, err := EnsureEngramBinary(cfg, "v1.15.3")
+	if err != nil {
+		t.Fatalf("EnsureEngramBinary() error = %v", err)
+	}
+	if !resolvable {
+		t.Fatal("EnsureEngramBinary() resolvable = false for an already-resolvable binary")
+	}
+	if remediation != "" {
+		t.Fatalf("EnsureEngramBinary() remediation = %q, want empty when already resolvable", remediation)
+	}
+	if path != existingPath {
+		t.Fatalf("EnsureEngramBinary() path = %q, want %q", path, existingPath)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("EnsureEngramBinary() issued commands %#v for an already-resolvable binary, want zero", runner.commands)
+	}
+}
+
+// TestEnsureEngramBinary_MissingWithGoPresent_RunsGoInstall covers the core provisioning path: the
+// binary is missing but Go is on PATH, so EnsureEngramBinary must run exactly
+// `go install github.com/Gentleman-Programming/engram/cmd/engram@<version>` via the CommandRunner
+// interface, then re-check resolvability.
+func TestEnsureEngramBinary_MissingWithGoPresent_RunsGoInstall(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	binaryPath := filepath.Join(t.TempDir(), "engram.exe")
+
+	lookup := &fakeBinaryLookup{resolved: map[string]string{"go": "/usr/bin/go"}}
+	restoreLookup := SetBinaryLookupFactoryForTests(func() BinaryLookup { return lookup })
+	defer restoreLookup()
+
+	runner := &fakeGoInstallRunner{lookup: lookup, binaryName: engramBinaryName(), binaryPath: binaryPath}
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	path, resolvable, remediation, err := EnsureEngramBinary(cfg, "v1.15.3")
+	if err != nil {
+		t.Fatalf("EnsureEngramBinary() error = %v", err)
+	}
+	if !resolvable {
+		t.Fatalf("EnsureEngramBinary() resolvable = false after a successful go install, remediation = %q", remediation)
+	}
+	if remediation != "" {
+		t.Fatalf("EnsureEngramBinary() remediation = %q, want empty after a successful go install", remediation)
+	}
+	if path != binaryPath {
+		t.Fatalf("EnsureEngramBinary() path = %q, want %q", path, binaryPath)
+	}
+
+	want := []commandInvocation{
+		{Name: "go", Args: []string{"install", "github.com/Gentleman-Programming/engram/cmd/engram@v1.15.3"}},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("runner.commands = %#v, want %#v", runner.commands, want)
+	}
+}
+
+// TestEnsureEngramBinary_MissingWithoutGo_ReturnsRemediation covers the "nothing click can safely
+// do" case: no Go toolchain on PATH, so no command is issued at all, and the caller gets back a
+// remediation message with the exact manual next step — not a generic "some message" placeholder.
+func TestEnsureEngramBinary_MissingWithoutGo_ReturnsRemediation(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+
+	lookup := &fakeBinaryLookup{resolved: map[string]string{}}
+	restoreLookup := SetBinaryLookupFactoryForTests(func() BinaryLookup { return lookup })
+	defer restoreLookup()
+
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	_, resolvable, remediation, err := EnsureEngramBinary(cfg, "v1.15.3")
+	if err != nil {
+		t.Fatalf("EnsureEngramBinary() error = %v", err)
+	}
+	if resolvable {
+		t.Fatal("EnsureEngramBinary() resolvable = true when neither the binary nor Go are on PATH")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("EnsureEngramBinary() issued commands %#v when Go is unavailable, want zero", runner.commands)
+	}
+
+	wantCmd := "go install github.com/Gentleman-Programming/engram/cmd/engram@v1.15.3"
+	if !strings.Contains(remediation, wantCmd) {
+		t.Fatalf("remediation = %q, want it to contain the exact command %q", remediation, wantCmd)
+	}
+	if !strings.Contains(remediation, "GOPATH/bin") {
+		t.Fatalf("remediation = %q, want it to mention GOPATH/bin", remediation)
+	}
+	if !strings.Contains(remediation, "brew install gentleman-programming/tap/engram") {
+		t.Fatalf("remediation = %q, want it to mention the brew alternative", remediation)
+	}
+}
+
+// TestEnsureEngramBinary_Idempotent_NoReinstallAfterSuccess is the idempotency regression guard:
+// once a `go install` run has made the binary resolvable, a later call must not re-run it.
+func TestEnsureEngramBinary_Idempotent_NoReinstallAfterSuccess(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	binaryPath := filepath.Join(t.TempDir(), "engram.exe")
+
+	lookup := &fakeBinaryLookup{resolved: map[string]string{"go": "/usr/bin/go"}}
+	restoreLookup := SetBinaryLookupFactoryForTests(func() BinaryLookup { return lookup })
+	defer restoreLookup()
+
+	runner := &fakeGoInstallRunner{lookup: lookup, binaryName: engramBinaryName(), binaryPath: binaryPath}
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, resolvable, remediation, err := EnsureEngramBinary(cfg, "v1.15.3"); err != nil || !resolvable {
+		t.Fatalf("first EnsureEngramBinary() resolvable = %v remediation = %q err = %v, want true/empty/nil", resolvable, remediation, err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("after first EnsureEngramBinary(), commands = %#v, want exactly 1 (the go install)", runner.commands)
+	}
+
+	if _, resolvable, remediation, err := EnsureEngramBinary(cfg, "v1.15.3"); err != nil || !resolvable || remediation != "" {
+		t.Fatalf("second EnsureEngramBinary() resolvable = %v remediation = %q err = %v, want true/empty/nil", resolvable, remediation, err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("second EnsureEngramBinary() issued extra commands %#v, want still exactly 1 (idempotent, no reinstall)", runner.commands)
 	}
 }
 

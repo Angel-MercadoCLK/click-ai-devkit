@@ -82,6 +82,14 @@ func runInstall(cmd *cobra.Command) error {
 	if engramAlreadyInstalled {
 		fmt.Fprintln(out, r.Info("Engram ya estaba instalado — se dejó como está, sin reinstalar."))
 	}
+	// SyncEngram's own EnsureEngramBinary step (Slice 3b) already attempted a `go install` when the
+	// binary was missing and Go was available; this just reports the resulting state to the
+	// developer. It never fails the install — a missing binary/toolchain is surfaced, not fatal.
+	if _, resolvable, err := installer.EngramBinaryResolvable(cfg); err != nil {
+		return err
+	} else if !resolvable {
+		fmt.Fprintln(out, r.Info(installer.EngramBinaryRemediationMessage(m.Engram.Version)))
+	}
 
 	if err := r.RunStep("Actualizando CLAUDE.md…", "CLAUDE.md actualizado", func() error {
 		return installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent)

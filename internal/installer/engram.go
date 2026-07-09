@@ -84,7 +84,11 @@ func SyncEngram(cfg Config, m *manifest.Manifest) (alreadyInstalled bool, err er
 	if err != nil {
 		return false, err
 	}
-	binaryPath, err := ResolveEngramBinaryPath(cfg)
+	// EnsureEngramBinary (Slice 3b) both resolves the binary path AND, when it's missing and Go is
+	// available, attempts to provision it via `go install`. It never fails this call — a missing
+	// binary/toolchain is reported via remediation, not an error — so its own error return here is
+	// reserved for genuine I/O failures resolving state, not "binary not found".
+	binaryPath, _, _, err := EnsureEngramBinary(cfg, m.Engram.Version)
 	if err != nil {
 		return alreadyInstalled, err
 	}
@@ -210,7 +214,7 @@ func ResolveEngramBinaryPath(cfg Config) (string, error) {
 	if override := os.Getenv(engramBinaryPathEnvOverride); override != "" {
 		return filepath.Abs(override)
 	}
-	if path, err := exec.LookPath(engramBinaryName()); err == nil {
+	if path, err := binaryLookupFactory().LookPath(engramBinaryName()); err == nil {
 		return filepath.Abs(path)
 	}
 	return cfg.DefaultEngramBinaryPath(), nil
@@ -237,4 +241,100 @@ func engramBinaryName() string {
 		return "engram.exe"
 	}
 	return "engram"
+}
+
+// BinaryLookup abstracts resolving a binary name on PATH (exec.LookPath), mirroring the same
+// factory-injected pattern CommandRunner already uses for `claude plugin ...` execution (plugins.go).
+// This lets unit tests fake PATH resolution deterministically — including simulating a `go install`
+// run making a previously-missing binary newly resolvable — without ever touching a real developer
+// machine's PATH or its `go` toolchain.
+type BinaryLookup interface {
+	LookPath(file string) (string, error)
+}
+
+type execBinaryLookup struct{}
+
+func (execBinaryLookup) LookPath(file string) (string, error) { return exec.LookPath(file) }
+
+var binaryLookupFactory = func() BinaryLookup { return execBinaryLookup{} }
+
+// SetBinaryLookupFactoryForTests overrides the binary lookup factory for tests and returns a
+// restore function.
+func SetBinaryLookupFactoryForTests(factory func() BinaryLookup) func() {
+	old := binaryLookupFactory
+	binaryLookupFactory = factory
+	return func() { binaryLookupFactory = old }
+}
+
+// engramBinaryModulePath is the Go module path for Engram's CLI/MCP binary. Confirmed resolvable
+// via `go install` in this slice's Step 0 spike (documentacion/spikes/spike-e-engram-install.md):
+// both `@latest` and the manifest-pinned `@v1.15.3` resolve and produce a binary that actually runs.
+const engramBinaryModulePath = "github.com/Gentleman-Programming/engram/cmd/engram"
+
+// EngramInstallCommand is the exact `go install` command line click recommends — and, when the Go
+// toolchain is available, runs itself via EnsureEngramBinary — to provision the Engram binary
+// pinned by this click-ai-devkit release.
+func EngramInstallCommand(version string) string {
+	return fmt.Sprintf("go install %s@%s", engramBinaryModulePath, version)
+}
+
+// EngramBinaryRemediationMessage is the single source of truth for the text shown when the Engram
+// binary cannot be provisioned automatically — either because the Go toolchain isn't on PATH, or
+// because `go install` ran but the binary still isn't resolvable afterward (e.g. GOPATH/bin itself
+// isn't on PATH). Both `click install`'s non-fatal fallback and `click doctor`'s checkEngramBinary
+// share this exact text, so the two call sites never drift apart.
+func EngramBinaryRemediationMessage(version string) string {
+	return fmt.Sprintf(
+		"El binario de engram no se encuentra en el PATH. Instalalo manualmente con:\n"+
+			"  %s\n"+
+			"Después asegurate de que tu directorio de binarios de Go (GOPATH/bin, o GOBIN si lo definiste) esté en el PATH.\n"+
+			"En macOS también podés usar: brew install gentleman-programming/tap/engram",
+		EngramInstallCommand(version),
+	)
+}
+
+// goAvailable reports whether the Go toolchain is resolvable on PATH, via the same injectable
+// BinaryLookup used for the Engram binary itself — click never invokes a second, ad hoc PATH lookup
+// mechanism.
+func goAvailable() bool {
+	_, err := binaryLookupFactory().LookPath("go")
+	return err == nil
+}
+
+// EnsureEngramBinary checks whether the Engram binary the plugin's bundled MCP server needs (bare,
+// PATH-resolved `command: "engram"`, confirmed in Slice 3's Step 0) is already resolvable, and — if
+// not — attempts to provision it via `go install <engramBinaryModulePath>@<version>` when the Go
+// toolchain is itself available on PATH. It never edits PATH, never downloads a release zip, and
+// never fails the caller: when provisioning genuinely can't happen (no Go, or `go install` ran but
+// the binary is still not resolvable afterward), it returns a non-empty remediation message for the
+// caller to surface, and the overall install/update flow continues regardless — a missing dev
+// dependency must never brick `click install`.
+//
+// Idempotent: once the binary is resolvable (whether it always was, or a previous call's `go
+// install` already made it so), a later call issues no command at all.
+func EnsureEngramBinary(cfg Config, version string) (path string, resolvable bool, remediation string, err error) {
+	path, resolvable, err = EngramBinaryResolvable(cfg)
+	if err != nil {
+		return "", false, "", err
+	}
+	if resolvable {
+		return path, true, "", nil
+	}
+	if !goAvailable() {
+		return path, false, EngramBinaryRemediationMessage(version), nil
+	}
+
+	runner := commandRunnerFactory()
+	// Best-effort: any failure here (network, module-proxy hiccup, etc.) is folded into the same
+	// "still not resolvable" remediation path below rather than propagated as a hard error.
+	_ = runner.Run("go", "install", engramBinaryModulePath+"@"+version)
+
+	path, resolvable, err = EngramBinaryResolvable(cfg)
+	if err != nil {
+		return "", false, "", err
+	}
+	if !resolvable {
+		return path, false, EngramBinaryRemediationMessage(version), nil
+	}
+	return path, true, "", nil
 }

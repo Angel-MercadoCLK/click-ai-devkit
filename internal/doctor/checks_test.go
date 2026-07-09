@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
 
 func TestRun_BeforeInstall_ReportsUnhealthy(t *testing.T) {
@@ -84,6 +86,41 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	const wantChecks = 5 + EngramChecksCount
 	if len(report.Checks) != wantChecks {
 		t.Fatalf("Run() returned %d checks, want %d (click-sdd plugin, click-memory plugin, click-review plugin, CLAUDE.md, memory-guard hook, engram plugin, engram binary)", len(report.Checks), wantChecks)
+	}
+}
+
+// TestCheckEngramBinary_ReportsRemediationWhenMissing guards the shared-message contract from
+// Slice 3b: when the engram binary is missing, doctor's Detail must include the exact same `go
+// install` remediation command that `click install`'s own non-fatal provisioning fallback shows
+// (installer.EngramBinaryRemediationMessage) — not a bare "missing" note that leaves the developer
+// guessing the next step.
+func TestCheckEngramBinary_ReportsRemediationWhenMissing(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	t.Setenv("CLICK_ENGRAM_BINARY_PATH", filepath.Join(t.TempDir(), "does-not-exist", "engram.exe"))
+
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "engram binary" {
+			continue
+		}
+		checked = true
+		if c.Healthy {
+			t.Fatal("checkEngramBinary reports healthy for a binary path that does not exist on disk")
+		}
+		wantCmd := installer.EngramInstallCommand(m.Engram.Version)
+		if !strings.Contains(c.Detail, wantCmd) {
+			t.Fatalf("checkEngramBinary Detail = %q, want it to contain the remediation command %q", c.Detail, wantCmd)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include an "engram binary" check`)
 	}
 }
 

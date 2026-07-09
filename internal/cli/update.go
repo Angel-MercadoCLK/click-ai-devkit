@@ -63,6 +63,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}); err != nil {
 		return err
 	}
+	// Same non-fatal binary-provisioning report as `click install` (Slice 3b): SyncEngram already
+	// attempted `go install` internally when needed; this just surfaces the resulting state.
+	if _, resolvable, err := installer.EngramBinaryResolvable(cfg); err != nil {
+		return err
+	} else if !resolvable {
+		fmt.Fprintln(out, r.Info(installer.EngramBinaryRemediationMessage(m.Engram.Version)))
+	}
 
 	fmt.Fprintln(out, r.Info("Update completo."))
 	return nil

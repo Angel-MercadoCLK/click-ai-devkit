@@ -6,6 +6,7 @@ package doctor
 
 import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
 
 // EngramChecksCount is the number of doctor checks contributed by Engram (plugin + binary), kept
@@ -120,7 +121,12 @@ func checkEngramPlugin(cfg installer.Config) CheckResult {
 // checkEngramBinary reports whether the Engram binary the plugin's bundled MCP server needs
 // (bare, PATH-resolved `command: "engram"` — confirmed in Step 0) actually resolves to a file on
 // disk. The plugin can be registered and enabled yet still fail to connect if this binary is
-// missing, so this is a separate check from checkEngramPlugin.
+// missing, so this is a separate check from checkEngramPlugin. This check is read-only (NFR-012:
+// `click doctor` never mutates state) — it never attempts to provision the binary itself, unlike
+// `click install`'s EnsureEngramBinary. When missing, the Detail includes the exact same
+// remediation `go install` command that `click install`'s own non-fatal provisioning fallback shows
+// (installer.EngramBinaryRemediationMessage), so doctor and install never give a developer
+// conflicting instructions.
 func checkEngramBinary(cfg installer.Config) CheckResult {
 	const name = "engram binary"
 
@@ -128,10 +134,19 @@ func checkEngramBinary(cfg installer.Config) CheckResult {
 	if err != nil {
 		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
 	}
-	if !ok {
-		return CheckResult{Name: name, Healthy: false, Detail: "no encontrado en " + path + " (el MCP de engram no podrá conectar)"}
+	if ok {
+		return CheckResult{Name: name, Healthy: true, Detail: "resuelto en " + path}
 	}
-	return CheckResult{Name: name, Healthy: true, Detail: "resuelto en " + path}
+
+	version := ""
+	if m, mErr := manifest.Load(); mErr == nil {
+		version = m.Engram.Version
+	}
+	return CheckResult{
+		Name:    name,
+		Healthy: false,
+		Detail:  "no encontrado en " + path + " (el MCP de engram no podrá conectar). " + installer.EngramBinaryRemediationMessage(version),
+	}
 }
 
 func checkMemoryGuardHook(cfg installer.Config) CheckResult {
