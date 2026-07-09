@@ -3,9 +3,11 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/doctor"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -47,6 +49,12 @@ func runDoctor(cmd *cobra.Command) error {
 		}
 	}
 
+	modelsLine, err := formatModelsLine(cfg)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, r.Info(modelsLine))
+
 	if !report.Healthy() {
 		fmt.Fprintln(out, r.Fail("click-ai-devkit no está instalado correctamente"))
 		return errUnhealthy
@@ -54,4 +62,26 @@ func runDoctor(cmd *cobra.Command) error {
 
 	fmt.Fprintln(out, r.Success("click-ai-devkit está instalado correctamente"))
 	return nil
+}
+
+// formatModelsLine reports the click-sdd per-phase models currently configured (D25): the
+// persisted models.json selection if `click install`/`click update` ever ran, or an explicit
+// "defaults" line otherwise, in modelconfig.Phases order for a stable, readable report.
+func formatModelsLine(cfg installer.Config) (string, error) {
+	models, found, err := installer.LoadModels(cfg)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "Modelos por fase de click-sdd: defaults", nil
+	}
+	parts := make([]string, 0, len(modelconfig.Phases))
+	for _, phase := range modelconfig.Phases {
+		model, ok := models[phase]
+		if !ok || model == "" {
+			model = modelconfig.Defaults()[phase]
+		}
+		parts = append(parts, string(phase)+"="+model)
+	}
+	return "Modelos por fase de click-sdd: " + strings.Join(parts, ", "), nil
 }

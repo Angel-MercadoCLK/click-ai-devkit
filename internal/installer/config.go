@@ -87,3 +87,9 @@ func (c Config) EngramMCPConfigPath() string {
 func (c Config) EngramStatePath() string {
 	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "engram.json")
 }
+
+// ModelsPath stores the per-phase click-sdd model selection (D25) so `click update` can re-apply
+// the same choices and `click doctor` can report them.
+func (c Config) ModelsPath() string {
+	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "models.json")
+}

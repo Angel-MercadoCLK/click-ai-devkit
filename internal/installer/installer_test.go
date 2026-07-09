@@ -19,7 +19,7 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 	restoreSource := SetMarketplaceSourceForTests("https://github.com/Angel-MercadoCLK/click-ai-devkit")
 	defer restoreSource()
 
-	if err := Install(cfg); err != nil {
+	if err := Install(cfg, nil); err != nil {
 		t.Fatalf("Install() error = %v", err)
 	}
 
@@ -46,7 +46,12 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 
 	wantCommands := []string{
 		"claude plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins",
-		"claude plugin install click-sdd@click-ai-devkit",
+		"claude plugin install click-sdd@click-ai-devkit" +
+			" --config orchestrator_model=opus" +
+			" --config prd_writer_model=opus" +
+			" --config architect_model=opus" +
+			" --config reviewer_model=opus" +
+			" --config memory_curator_model=sonnet",
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",
 	}
@@ -62,10 +67,10 @@ func TestInstall_TwiceIsIdempotent(t *testing.T) {
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
 
-	if err := Install(cfg); err != nil {
+	if err := Install(cfg, nil); err != nil {
 		t.Fatalf("first Install() error = %v", err)
 	}
-	if err := Install(cfg); err != nil {
+	if err := Install(cfg, nil); err != nil {
 		t.Fatalf("second Install() error = %v", err)
 	}
 
@@ -94,7 +99,7 @@ func TestUninstall_ReversesInstall(t *testing.T) {
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
 
-	if err := Install(cfg); err != nil {
+	if err := Install(cfg, nil); err != nil {
 		t.Fatalf("Install() error = %v", err)
 	}
 	if err := Uninstall(cfg); err != nil {
@@ -134,7 +139,7 @@ func TestUninstall_ReversesEngramMCPConfiguredByUpdate(t *testing.T) {
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
 
-	if err := Install(cfg); err != nil {
+	if err := Install(cfg, nil); err != nil {
 		t.Fatalf("Install() error = %v", err)
 	}
 	m, err := manifest.Load()
@@ -175,13 +180,13 @@ func TestInstallThenUninstallThenInstallAgain_Succeeds(t *testing.T) {
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
 
-	if err := Install(cfg); err != nil {
+	if err := Install(cfg, nil); err != nil {
 		t.Fatalf("first Install() error = %v", err)
 	}
 	if err := Uninstall(cfg); err != nil {
 		t.Fatalf("Uninstall() error = %v", err)
 	}
-	if err := Install(cfg); err != nil {
+	if err := Install(cfg, nil); err != nil {
 		t.Fatalf("re-Install() after uninstall error = %v", err)
 	}
 

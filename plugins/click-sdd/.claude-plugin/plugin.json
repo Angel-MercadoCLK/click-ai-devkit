@@ -4,5 +4,37 @@
   "description": "Click Seguros SDD workflow plugin for Claude Code.",
   "author": {
     "name": "Click Seguros"
+  },
+  "userConfig": {
+    "orchestrator_model": {
+      "type": "string",
+      "title": "Orchestrator model",
+      "description": "Model alias click-orchestrator resolves at runtime for every Agent delegation (sonnet/opus/haiku/fable/full-id/inherit).",
+      "default": "opus"
+    },
+    "prd_writer_model": {
+      "type": "string",
+      "title": "PRD writer model",
+      "description": "Model alias click-prd-writer resolves at runtime for every Agent delegation (sonnet/opus/haiku/fable/full-id/inherit).",
+      "default": "opus"
+    },
+    "architect_model": {
+      "type": "string",
+      "title": "Architect model",
+      "description": "Model alias click-architect resolves at runtime for every Agent delegation (sonnet/opus/haiku/fable/full-id/inherit).",
+      "default": "opus"
+    },
+    "reviewer_model": {
+      "type": "string",
+      "title": "Reviewer model",
+      "description": "Model alias click-reviewer resolves at runtime for every Agent delegation (sonnet/opus/haiku/fable/full-id/inherit).",
+      "default": "opus"
+    },
+    "memory_curator_model": {
+      "type": "string",
+      "title": "Memory curator model",
+      "description": "Model alias click-memory-curator resolves at runtime for every Agent delegation (sonnet/opus/haiku/fable/full-id/inherit).",
+      "default": "sonnet"
+    }
   }
 }

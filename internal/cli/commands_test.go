@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
 func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
@@ -235,12 +236,109 @@ func TestInstallCommand_IssuesMarketplaceCommandsInOrder(t *testing.T) {
 	}
 	want := []string{
 		"claude plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins",
-		"claude plugin install click-sdd@click-ai-devkit",
+		"claude plugin install click-sdd@click-ai-devkit" +
+			" --config orchestrator_model=opus" +
+			" --config prd_writer_model=opus" +
+			" --config architect_model=opus" +
+			" --config reviewer_model=opus" +
+			" --config memory_curator_model=sonnet",
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",
 	}
 	if !reflect.DeepEqual(runner.commands[:4], want) {
 		t.Fatalf("runner.commands[:4] = %#v, want %#v", runner.commands[:4], want)
+	}
+}
+
+// TestInstallCommand_NonTTY_PersistsDefaultModels guards D25's persistence contract for the
+// non-interactive path (which every test in this file exercises, since execRoot writes to a
+// bytes.Buffer, not a real terminal): a plain `click install` with no flags must still write
+// models.json with the five defaults, so `click doctor`/`click update` have something to read.
+func TestInstallCommand_NonTTY_PersistsDefaultModels(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "install"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+
+	got, found, err := installer.LoadModels(installer.Config{ClaudeHome: home})
+	if err != nil {
+		t.Fatalf("LoadModels() error = %v", err)
+	}
+	if !found {
+		t.Fatal("LoadModels() found = false after install, want true")
+	}
+	want := modelconfig.Defaults()
+	for phase, model := range want {
+		if got[phase] != model {
+			t.Errorf("persisted models[%s] = %q, want default %q", phase, got[phase], model)
+		}
+	}
+}
+
+// TestUpdateCommand_ReappliesPersistedModels guards the "click update re-passes the same --config
+// flags" contract: a non-default model selection saved by a previous install must be re-emitted
+// verbatim on the next update, not silently reset to defaults.
+func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "install"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+
+	custom := map[modelconfig.Phase]string{
+		modelconfig.PhaseOrchestrator:  "haiku",
+		modelconfig.PhasePRDWriter:     "sonnet",
+		modelconfig.PhaseArchitect:     "haiku",
+		modelconfig.PhaseReviewer:      "sonnet",
+		modelconfig.PhaseMemoryCurator: "haiku",
+	}
+	if err := installer.SaveModels(installer.Config{ClaudeHome: home}, custom); err != nil {
+		t.Fatalf("SaveModels() error = %v", err)
+	}
+
+	if _, err := execRoot(t, home, "update"); err != nil {
+		t.Fatalf("update command error = %v", err)
+	}
+
+	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
+		" --config orchestrator_model=haiku" +
+		" --config prd_writer_model=sonnet" +
+		" --config architect_model=haiku" +
+		" --config reviewer_model=sonnet" +
+		" --config memory_curator_model=haiku"
+	if !contains(runner.commands, wantCommand) {
+		t.Fatalf("update command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
+	}
+}
+
+// TestDoctorCommand_ReportsConfiguredModels guards the doctor-output contract: it must report the
+// configured per-phase models (or "defaults" pre-install) rather than staying silent about D25.
+func TestDoctorCommand_ReportsConfiguredModels(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "install"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+
+	out, err := execRoot(t, home, "doctor")
+	if err != nil {
+		t.Fatalf("doctor command error = %v", err)
+	}
+	if !strings.Contains(out, "Modelos por fase de click-sdd") {
+		t.Fatalf("doctor output = %q, want it to report configured models", out)
+	}
+	if !strings.Contains(out, "orchestrator=opus") {
+		t.Fatalf("doctor output = %q, want it to report orchestrator=opus", out)
 	}
 }
 

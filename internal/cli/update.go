@@ -5,6 +5,7 @@ import (
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -30,8 +31,19 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Re-apply whatever per-phase models `click install` saved (D25), so `click update` never
+	// silently resets a developer's choice back to defaults. A models.json-less home (installed
+	// before this feature existed, or never installed) falls back to defaults.
+	models, found, err := installer.LoadModels(cfg)
+	if err != nil {
+		return err
+	}
+	if !found {
+		models = modelconfig.Defaults()
+	}
+
 	if err := r.RunStep("Re-sincronizando plugins click-sdd, click-memory y click-review…", "Plugins sincronizados en Claude Code", func() error {
-		return installer.SyncMarketplacePlugins()
+		return installer.SyncMarketplacePlugins(models)
 	}); err != nil {
 		return err
 	}

@@ -40,6 +40,30 @@ You are the default Click Seguros orchestrator for feature work.
 - You do not invent business requirements that the user did not provide.
 - You do not persist memory directly unless the curator confirms it is durable technical knowledge.
 
+## Model routing
+
+- click-sdd's five phase agents (click-orchestrator, click-prd-writer, click-architect,
+  click-reviewer, click-memory-curator) each accept a per-phase model override, chosen once at
+  `click install` time and stored as this plugin's `userConfig`
+  (`orchestrator_model`, `prd_writer_model`, `architect_model`, `reviewer_model`,
+  `memory_curator_model`). Defaults: orchestrator/prd_writer/architect/reviewer = `opus`,
+  memory_curator = `sonnet`.
+- Once per session, before your first `Agent` delegation, read the resolved choice from
+  `pluginConfigs["click-sdd@click-ai-devkit"].options` in Claude Code's `settings.json` and cache
+  the phase→model map for the rest of the session.
+- Pass the resolved alias as the `model` param on every `Agent` tool delegation you make to a
+  phase agent — `click-sdd-explore`, `click-sdd-prd`, `click-sdd-design`, `click-sdd-tasks`,
+  `click-sdd-code`, `click-sdd-review`, and `click-memory-curator` all resolve back to one of the
+  five phases above. If a session's `settings.json` has no `pluginConfigs` entry for
+  `click-sdd@click-ai-devkit` yet (e.g. an install predating this feature), fall back to the
+  defaults listed above rather than failing the delegation.
+- Do not rely on agent frontmatter to resolve the model for you: every phase agent's `model:`
+  field stays plain (`sonnet`/`inherit`, not a `${user_config...}` placeholder) because Claude Code
+  does not materialize that syntax in frontmatter. You are the only place the per-phase choice is
+  actually applied.
+- Accepted `model:` values across this flow are `sonnet`, `opus`, `haiku`, `fable`, a full model
+  id, or `inherit`.
+
 ## Quality bar
 
 - Keep explanations practical and short.

@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
 const (
@@ -93,17 +95,43 @@ func SetMarketplaceSourceForTests(source string) func() {
 // SyncMarketplacePlugins uses the official Claude Code plugin CLI to register the marketplace and
 // install the three Click-managed plugins. This is the real activation path — copying loose plugin
 // folders never loaded anything in Claude Code.
-func SyncMarketplacePlugins() error {
+//
+// models is the resolved per-phase click-sdd model selection (D25): it is always run through
+// modelconfig.Resolve first, so a nil or partial map still installs click-sdd with a fully
+// self-describing --config flag set (defaults fill any gap). click-memory and click-review never
+// receive --config flags — they have no userConfig schema.
+func SyncMarketplacePlugins(models map[modelconfig.Phase]string) error {
+	resolved := modelconfig.Resolve(models)
 	runner := commandRunnerFactory()
 	if err := addMarketplace(runner, marketplaceSource); err != nil {
 		return err
 	}
 	for _, plugin := range managedPlugins {
-		if err := installMarketplacePlugin(runner, plugin); err != nil {
+		var extraArgs []string
+		if plugin == "click-sdd" {
+			extraArgs = clickSDDConfigArgs(resolved)
+		}
+		if err := installMarketplacePlugin(runner, plugin, extraArgs...); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// clickSDDConfigArgs builds the `--config <phase>_model=<alias>` flag pairs for
+// `claude plugin install click-sdd@click-ai-devkit`, one pair per phase in modelconfig.Phases
+// order (verified against the real CLI in Step 0: repeated `--config key=value` flags land in
+// settings.json's pluginConfigs["click-sdd@click-ai-devkit"].options).
+func clickSDDConfigArgs(resolved map[modelconfig.Phase]string) []string {
+	args := make([]string, 0, len(modelconfig.Phases)*2)
+	for _, phase := range modelconfig.Phases {
+		model, ok := resolved[phase]
+		if !ok || model == "" {
+			continue
+		}
+		args = append(args, "--config", phase.ConfigKey()+"="+model)
+	}
+	return args
 }
 
 // RemoveMarketplacePlugins uninstalls the three Click-managed plugins and removes the marketplace.
@@ -171,8 +199,9 @@ func addMarketplace(runner CommandRunner, source string) error {
 	return nil
 }
 
-func installMarketplacePlugin(runner CommandRunner, plugin string) error {
-	if err := runner.Run(pluginCLIBinary, "plugin", "install", plugin+"@"+marketplaceName); err != nil {
+func installMarketplacePlugin(runner CommandRunner, plugin string, extraArgs ...string) error {
+	args := append([]string{"plugin", "install", plugin + "@" + marketplaceName}, extraArgs...)
+	if err := runner.Run(pluginCLIBinary, args...); err != nil {
 		return fmt.Errorf("installer: install plugin %s: %w", plugin, err)
 	}
 	return nil

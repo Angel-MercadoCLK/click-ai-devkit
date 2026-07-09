@@ -6,14 +6,21 @@
 // CLAUDE.md block and wires the memory-guard hook.
 package installer
 
+import "github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
+
 // Install performs click-ai-devkit's current install flow: it registers the Click marketplace,
 // installs the three managed plugins through Claude Code, and
 // writes the managed CLAUDE.md block into cfg.ClaudeHome. Slice 2 also registers the
 // memory-guard PreToolUse hook in settings.json. It does not print anything itself — internal/cli
 // wraps each step with ui.Renderer.RunStep for styled output (tech-spec.md §2.1). Idempotent:
 // running Install twice against the same cfg leaves the same end state as running it once.
-func Install(cfg Config) error {
-	if err := SyncMarketplacePlugins(); err != nil {
+//
+// models is the per-phase click-sdd model selection (D25); pass nil to install with defaults
+// (modelconfig.Resolve fills every phase). Install does not persist models to disk — that's
+// internal/cli's job (installer.SaveModels), matching how RegisterMemoryGuardHook et al. are also
+// orchestrated from the cli layer rather than bundled here.
+func Install(cfg Config, models map[modelconfig.Phase]string) error {
+	if err := SyncMarketplacePlugins(models); err != nil {
 		return err
 	}
 	if err := WriteManagedBlock(cfg.ClaudeMDPath(), DefaultManagedContent); err != nil {
