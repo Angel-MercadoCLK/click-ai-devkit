@@ -47,6 +47,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}); err != nil {
 		return err
 	}
+	// Symmetric with `click install`: re-applying the per-phase model routing config without also
+	// re-persisting it to disk left models.json stale (or entirely absent, on a home where it was
+	// never written) after `click update` — a real asymmetry bug between the two commands.
+	if err := r.RunStep("Guardando modelos por fase de click-sdd…", "Modelos por fase guardados", func() error {
+		return installer.SaveModels(cfg, models)
+	}); err != nil {
+		return err
+	}
 	if err := r.RunStep("Actualizando CLAUDE.md…", "CLAUDE.md sincronizado", func() error {
 		return installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent)
 	}); err != nil {
@@ -69,6 +77,18 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	} else if !resolvable {
 		fmt.Fprintln(out, r.Info(installer.EngramBinaryRemediationMessage(m.Engram.Version)))
+	}
+
+	context7AlreadyPresent := false
+	if err := r.RunStep("Sincronizando Context7 (documentación de librerías)…", "Context7 sincronizado", func() error {
+		var syncErr error
+		context7AlreadyPresent, syncErr = installer.SyncContext7(cfg)
+		return syncErr
+	}); err != nil {
+		return err
+	}
+	if context7AlreadyPresent {
+		fmt.Fprintln(out, r.Info("Context7 ya estaba configurado — se dejó como está, sin reinstalar."))
 	}
 
 	fmt.Fprintln(out, r.Info("Update completo."))

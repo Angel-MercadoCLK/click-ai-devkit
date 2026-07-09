@@ -1,7 +1,8 @@
 // Package doctor owns click's read-only environment/health checks: verifying that the installed
-// plugins are actually registered in Claude Code, that the managed CLAUDE.md block exists, and
-// that the memory-guard hook is registered (tech-spec.md §2.1 "click doctor"). Checks in this
-// package never mutate state — `click doctor` is read-only by design (NFR-012).
+// plugins are actually registered in Claude Code, that the managed CLAUDE.md block exists, that
+// the memory-guard hook is registered, and that Context7 is registered as a user-scope MCP server
+// (tech-spec.md §2.1 "click doctor"). Checks in this package never mutate state — `click doctor`
+// is read-only by design (NFR-012).
 package doctor
 
 import (
@@ -13,6 +14,10 @@ import (
 // as an exported constant so other packages/tests documenting Run()'s total check count don't have
 // to hardcode a magic number that silently drifts if a check is added or removed here.
 const EngramChecksCount = 2
+
+// Context7ChecksCount is the number of doctor checks contributed by Context7, kept as an exported
+// constant for the same reason as EngramChecksCount.
+const Context7ChecksCount = 1
 
 // CheckResult is the outcome of a single doctor check.
 type CheckResult struct {
@@ -47,6 +52,7 @@ func Run(cfg installer.Config) Report {
 		checkMemoryGuardHook(cfg),
 		checkEngramPlugin(cfg),
 		checkEngramBinary(cfg),
+		checkContext7(cfg),
 	}}
 }
 
@@ -147,6 +153,23 @@ func checkEngramBinary(cfg installer.Config) CheckResult {
 		Healthy: false,
 		Detail:  "no encontrado en " + path + " (el MCP de engram no podrá conectar). " + installer.EngramBinaryRemediationMessage(version),
 	}
+}
+
+// checkContext7 reports whether Context7 is registered as a user-scope MCP server, read directly
+// from Claude Code's own user config file (installer.HasContext7) — matching checkEngramPlugin's
+// pure-file-read approach so `click doctor` never shells out to the real `claude` CLI (NFR-012:
+// read-only by design).
+func checkContext7(cfg installer.Config) CheckResult {
+	const name = "context7 MCP"
+
+	ok, err := installer.HasContext7(cfg)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	if !ok {
+		return CheckResult{Name: name, Healthy: false, Detail: "no registrado como servidor MCP de usuario"}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: "registrado (scope user, https://mcp.context7.com/mcp)"}
 }
 
 func checkMemoryGuardHook(cfg installer.Config) CheckResult {

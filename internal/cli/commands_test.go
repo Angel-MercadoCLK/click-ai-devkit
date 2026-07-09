@@ -53,9 +53,62 @@ func (r *testCommandRunner) Run(name string, args ...string) error {
 		return r.writeSettings()
 	case len(args) >= 4 && args[0] == "plugin" && args[1] == "marketplace" && args[2] == "remove":
 		return nil
+	case len(args) >= 3 && args[0] == "mcp" && args[1] == "add":
+		return r.upsertMCPServer(args[len(args)-2], args[len(args)-1])
+	case len(args) >= 3 && args[0] == "mcp" && args[1] == "remove":
+		return r.removeMCPServer(args[2])
 	default:
 		return nil
 	}
+}
+
+// upsertMCPServer/removeMCPServer simulate `claude mcp add/remove`'s effect on Claude Code's own
+// user-scope config file — the same file installer.HasContext7 reads directly (confirmed against
+// the real CLI in documentacion/spikes/spike-g-context7.md), mirroring the equivalent simulation
+// already used by installer package's own fakeCommandRunner (internal/installer/plugins.go).
+func (r *testCommandRunner) context7ConfigPath() string {
+	return filepath.Join(r.home, ".claude.json")
+}
+
+func (r *testCommandRunner) upsertMCPServer(name, url string) error {
+	data := map[string]any{}
+	if existing, err := os.ReadFile(r.context7ConfigPath()); err == nil {
+		_ = json.Unmarshal(existing, &data)
+	}
+	servers, _ := data["mcpServers"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	servers[name] = map[string]any{"type": "http", "url": url}
+	data["mcpServers"] = servers
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(r.context7ConfigPath(), raw, 0o600)
+}
+
+func (r *testCommandRunner) removeMCPServer(name string) error {
+	data := map[string]any{}
+	existing, err := os.ReadFile(r.context7ConfigPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := json.Unmarshal(existing, &data); err != nil {
+		return err
+	}
+	if servers, ok := data["mcpServers"].(map[string]any); ok {
+		delete(servers, name)
+		data["mcpServers"] = servers
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(r.context7ConfigPath(), raw, 0o600)
 }
 
 func (r *testCommandRunner) Output(name string, args ...string) ([]byte, error) {
@@ -210,6 +263,44 @@ func TestUpdateCommand_ResyncsPluginsAndWritesEngramPin(t *testing.T) {
 	// (idempotent) and refreshes click's own state bookkeeping file.
 	if _, err := os.Stat(filepath.Join(home, "click-ai-devkit", "engram.json")); err != nil {
 		t.Fatalf("update did not write engram pinned state: %v", err)
+	}
+}
+
+// TestUpdateCommand_PersistsModelsJson is a regression test for an asymmetry bug: `click install`
+// both applies AND saves models.json (installer.SaveModels), but `click update` only re-applied
+// the per-phase model routing config without re-persisting it to disk. On a home where
+// models.json was never written (e.g. install predates this feature, or the file was lost),
+// `click update` must still leave models.json present and readable afterward, exactly like
+// `click install` does.
+func TestUpdateCommand_PersistsModelsJson(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	binaryPath := filepath.Join(t.TempDir(), "engram.exe")
+	if err := os.WriteFile(binaryPath, []byte("binary"), 0o644); err != nil {
+		t.Fatalf("WriteFile(binary) error = %v", err)
+	}
+	t.Setenv("CLICK_ENGRAM_BINARY_PATH", binaryPath)
+
+	// No prior `click install` ran, so models.json does not exist yet — exercises update's own
+	// fallback-to-defaults path (installer.LoadModels found=false), which must still persist.
+	if _, err := execRoot(t, home, "update"); err != nil {
+		t.Fatalf("update command error = %v", err)
+	}
+
+	got, found, err := installer.LoadModels(installer.Config{ClaudeHome: home})
+	if err != nil {
+		t.Fatalf("LoadModels() error = %v", err)
+	}
+	if !found {
+		t.Fatal("LoadModels() found = false after `click update`, want true — update must persist models.json like install does")
+	}
+	want := modelconfig.Defaults()
+	for phase, model := range want {
+		if got[phase] != model {
+			t.Errorf("persisted models[%s] = %q, want default %q", phase, got[phase], model)
+		}
 	}
 }
 

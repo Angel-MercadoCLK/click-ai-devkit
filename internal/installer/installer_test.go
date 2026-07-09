@@ -61,6 +61,7 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 		"claude plugin install click-review@click-ai-devkit",
 		"claude plugin marketplace add https://github.com/Gentleman-Programming/engram",
 		"claude plugin install engram@engram",
+		"claude mcp add --transport http --scope user context7 https://mcp.context7.com/mcp",
 	}
 	if got := runner.commandStrings(); !reflect.DeepEqual(got, wantCommands) {
 		t.Fatalf("command order = %#v, want %#v", got, wantCommands)

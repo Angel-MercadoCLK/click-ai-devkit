@@ -36,18 +36,20 @@ type CommandRunner interface {
 	Output(name string, args ...string) ([]byte, error)
 }
 
-type execCommandRunner struct{ claudeHome string }
+type execCommandRunner struct{ claudeConfigDirOverride string }
 
-// commandEnv builds the environment for the spawned `claude` process. When click is redirected to
-// a non-default Claude home (via CLICK_CLAUDE_HOME), it MUST propagate that to the claude CLI via
-// CLAUDE_CONFIG_DIR so plugin registration lands in the same directory as click's own files — and,
-// critically, so a test/override run never installs plugins into the developer's real ~/.claude.
-// In production the resolved home is ~/.claude, which is already claude's default: a harmless no-op.
+// commandEnv builds the environment for the spawned `claude` process. We set CLAUDE_CONFIG_DIR ONLY
+// when CLICK_CLAUDE_HOME is explicitly set (tests / power-users) — to redirect the claude subprocess
+// to the same throwaway dir click's own files use. In the real (no-override) case we leave it UNSET
+// so claude uses its TRUE defaults. This matters: claude stores user-scope MCP servers in
+// <home>/.claude.json (home root), NOT <config-dir>/.claude.json — so forcing CLAUDE_CONFIG_DIR=~/.claude
+// would make `claude mcp add` (Context7) land where a normal Claude Code session never reads it.
+// Plugins live in <config-dir>/plugins either way, so they were and remain unaffected.
 func (r execCommandRunner) commandEnv() []string {
-	if r.claudeHome == "" {
-		return nil // inherit the parent environment unchanged
+	if r.claudeConfigDirOverride == "" {
+		return nil // real case: let claude resolve its own default config locations
 	}
-	return append(os.Environ(), "CLAUDE_CONFIG_DIR="+r.claudeHome)
+	return append(os.Environ(), "CLAUDE_CONFIG_DIR="+r.claudeConfigDirOverride)
 }
 
 func (r execCommandRunner) Run(name string, args ...string) error {
@@ -66,8 +68,9 @@ func (r execCommandRunner) Output(name string, args ...string) ([]byte, error) {
 
 var (
 	commandRunnerFactory = func() CommandRunner {
-		home, _ := ResolveClaudeHome()
-		return execCommandRunner{claudeHome: home}
+		// Only the EXPLICIT override redirects the claude subprocess; a real run leaves
+		// CLAUDE_CONFIG_DIR unset so claude uses its own defaults (see commandEnv).
+		return execCommandRunner{claudeConfigDirOverride: os.Getenv(claudeHomeEnvOverride)}
 	}
 	marketplaceSource = defaultMarketplaceSource()
 )
@@ -299,6 +302,17 @@ func (f *fakeCommandRunner) Run(name string, args ...string) error {
 		delete(f.plugins, pluginID)
 		return f.upsertPluginRegistry(pluginID, false)
 	}
+	if len(args) >= 3 && args[0] == "mcp" && args[1] == "add" {
+		// args tail is always "<name> <url>" regardless of transport/scope flags in between —
+		// mirrors the exact `claude mcp add --transport http --scope user <name> <url>` shape.
+		mcpName := args[len(args)-2]
+		mcpURL := args[len(args)-1]
+		return f.upsertMCPServer(mcpName, mcpURL)
+	}
+	if len(args) >= 3 && args[0] == "mcp" && args[1] == "remove" {
+		mcpName := args[2]
+		return f.removeMCPServer(mcpName)
+	}
 	return nil
 }
 
@@ -410,6 +424,45 @@ func (f *fakeCommandRunner) upsertPluginRegistry(pluginID string, installed bool
 	}
 	settings["enabledPlugins"] = enabled
 	return writeSettingsFile(f.cfg.SettingsPath(), settings)
+}
+
+// upsertMCPServer simulates `claude mcp add ... <name> <url>`'s effect on Claude Code's own
+// user-scope config file (cfg.Context7ConfigPath — CLAUDE_CONFIG_DIR/.claude.json's top-level
+// mcpServers key, confirmed against the real CLI in Step 0 of this slice), so HasContext7's
+// pure-file-read can observe it deterministically in tests without ever shelling out.
+func (f *fakeCommandRunner) upsertMCPServer(name, url string) error {
+	data := map[string]any{}
+	if existing, err := os.ReadFile(f.cfg.Context7ConfigPath()); err == nil {
+		_ = json.Unmarshal(existing, &data)
+	}
+	servers, _ := data["mcpServers"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	servers[name] = map[string]any{"type": "http", "url": url}
+	data["mcpServers"] = servers
+	return writeJSONFile(f.cfg.Context7ConfigPath(), data)
+}
+
+// removeMCPServer simulates `claude mcp remove <name>`'s effect on the same user-scope config
+// file upsertMCPServer writes.
+func (f *fakeCommandRunner) removeMCPServer(name string) error {
+	data := map[string]any{}
+	existing, err := os.ReadFile(f.cfg.Context7ConfigPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := json.Unmarshal(existing, &data); err != nil {
+		return err
+	}
+	if servers, ok := data["mcpServers"].(map[string]any); ok {
+		delete(servers, name)
+		data["mcpServers"] = servers
+	}
+	return writeJSONFile(f.cfg.Context7ConfigPath(), data)
 }
 
 func chooseSourceKind(source string) string {

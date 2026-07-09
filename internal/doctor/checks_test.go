@@ -39,6 +39,7 @@ func TestRun_AfterInstall_ReportsHealthy(t *testing.T) {
 		t.Fatalf("WriteFile(binary) error = %v", err)
 	}
 	t.Setenv("CLICK_ENGRAM_BINARY_PATH", binaryPath)
+	seedContext7Registered(t, cfg)
 
 	report := Run(cfg)
 
@@ -83,9 +84,9 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	report := Run(cfg)
 
-	const wantChecks = 5 + EngramChecksCount
+	const wantChecks = 5 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (click-sdd plugin, click-memory plugin, click-review plugin, CLAUDE.md, memory-guard hook, engram plugin, engram binary)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d (click-sdd plugin, click-memory plugin, click-review plugin, CLAUDE.md, memory-guard hook, engram plugin, engram binary, context7 MCP)", len(report.Checks), wantChecks)
 	}
 }
 
@@ -121,6 +122,70 @@ func TestCheckEngramBinary_ReportsRemediationWhenMissing(t *testing.T) {
 	}
 	if !checked {
 		t.Fatal(`Run() did not include an "engram binary" check`)
+	}
+}
+
+// TestCheckContext7_ReportsMissingByDefault guards the "not registered yet" case: a fresh
+// ClaudeHome where `click install` never ran (or context7 was never synced) must report
+// unhealthy, not silently skip the check.
+func TestCheckContext7_ReportsMissingByDefault(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "context7 MCP" {
+			continue
+		}
+		checked = true
+		if c.Healthy {
+			t.Fatal("checkContext7 reports healthy on a fresh home with no context7 registration")
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "context7 MCP" check`)
+	}
+}
+
+// TestCheckContext7_ReportsHealthyWhenRegistered covers the "registered" case, reading directly
+// from Claude Code's own user config file (the same file `claude mcp add --scope user` writes,
+// per documentacion/spikes/spike-g-context7.md) rather than shelling out — matching every other
+// check in this package.
+func TestCheckContext7_ReportsHealthyWhenRegistered(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	seedContext7Registered(t, cfg)
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "context7 MCP" {
+			continue
+		}
+		checked = true
+		if !c.Healthy {
+			t.Fatalf("checkContext7 reports unhealthy for a registered context7: %s", c.Detail)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "context7 MCP" check`)
+	}
+}
+
+func seedContext7Registered(t *testing.T, cfg installer.Config) {
+	t.Helper()
+	data := map[string]any{
+		"mcpServers": map[string]any{
+			"context7": map[string]any{"type": "http", "url": "https://mcp.context7.com/mcp"},
+		},
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("json.Marshal(context7 config) error = %v", err)
+	}
+	if err := os.WriteFile(cfg.Context7ConfigPath(), raw, 0o600); err != nil {
+		t.Fatalf("WriteFile(Context7ConfigPath) error = %v", err)
 	}
 }
 

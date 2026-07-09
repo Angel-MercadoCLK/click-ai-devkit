@@ -82,6 +82,18 @@ func runInstall(cmd *cobra.Command) error {
 	if engramAlreadyInstalled {
 		fmt.Fprintln(out, r.Info("Engram ya estaba instalado — se dejó como está, sin reinstalar."))
 	}
+
+	context7AlreadyPresent := false
+	if err := r.RunStep("Registrando Context7 (documentación de librerías)…", "Context7 sincronizado", func() error {
+		var syncErr error
+		context7AlreadyPresent, syncErr = installer.SyncContext7(cfg)
+		return syncErr
+	}); err != nil {
+		return err
+	}
+	if context7AlreadyPresent {
+		fmt.Fprintln(out, r.Info("Context7 ya estaba configurado — se dejó como está, sin reinstalar."))
+	}
 	// SyncEngram's own EnsureEngramBinary step (Slice 3b) already attempted a `go install` when the
 	// binary was missing and Go was available; this just reports the resulting state to the
 	// developer. It never fails the install — a missing binary/toolchain is surfaced, not fatal.

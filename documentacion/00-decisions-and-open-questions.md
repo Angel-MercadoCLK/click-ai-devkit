@@ -1,7 +1,7 @@
 # click-ai-devkit — Decisions & Open Questions
 
 > Living document. Tracks what we lock in while shaping the idea, before generating
-> PRD / tech-spec / implementation plan. Last updated: 2026-07-07.
+> PRD / tech-spec / implementation plan. Last updated: 2026-07-09.
 > Language policy: all artifacts in English (conversation stays in Spanish).
 
 ## 1. Vision summary (from initial brief)
@@ -57,6 +57,8 @@ User Request → ClickOrchestrator → click-sdd-explore → click-sdd-prd → c
 | D22 | Pre-build spikes | **DONE.** Spike A → `spikes/spike-a-engram-packaging.md` (Engram = Go MCP binary + CC plugin; pin the binary). Spike B → `spikes/spike-b-pretooluse-contract.md` (hook CAN redact; fail-closed needs `exit 2`; matcher = plugin-scoped, verify at runtime). | Done |
 | D23 | Scoop bucket location | **Same repo, not separate.** The scoop manifest publishes into a `bucket/` folder inside `click-ai-devkit` itself (not a dedicated `scoop-bucket` repo). Fewer repos/secrets for a small pilot. Homebrew still needs its own `homebrew-click` repo later (Homebrew's tap-shortname constraint, not a choice) — D17 unchanged. | Confirmed (signed by user) |
 | D24 | Plugin activation path | **Reverse D16** — ship `.claude-plugin/marketplace.json` and have `click install` use the native `claude plugin` CLI to register/install `click-sdd`, `click-memory`, and `click-review`. Loose-folder copying never loaded in Claude Code (Spike C). | Confirmed |
+| D25 | Per-phase model routing | **Store + apply.** The user picks a model per SDD phase at install; stored in `click-sdd`'s `userConfig` → `settings.json` `pluginConfigs["click-sdd@click-ai-devkit"].options` (e.g. `orchestrator_model=opus`). The `click-orchestrator` reads that map once per session and passes the resolved alias as the **per-invocation `model`** on every `Agent` delegation (which overrides the agent's frontmatter, per sub-agents.md). Agent frontmatter stays plain — NOT `${user_config}` interpolation (verified fragile, Spike D). Defaults: orchestrator/prd-writer/architect/reviewer = opus, memory-curator = sonnet. | Confirmed (signed by user) |
+| D26 | Context7 auto-install | **`click install` also provisions Context7 as a user-scope HTTP MCP via `claude mcp add`, idempotent + respectful, mirroring Engram.** Registered with `claude mcp add --transport http --scope user context7 https://mcp.context7.com/mcp` right after the Engram sync step; presence is probed by reading Claude Code's own user-scope config file directly (`<ClaudeHome>/.claude.json`'s `mcpServers` key) rather than shelling out, so `click doctor` stays subprocess-free; install ownership is decided once and preserved on every later `click install`/`click update` run, exactly mirroring the ownership guard `SyncEngram` uses (D8/Spike E); `click uninstall` only removes it when click's own state says click registered it. Verified end-to-end against the real `claude` CLI (spike-g-context7.md), including click's own compiled binary driving the full install → doctor → uninstall lifecycle against a throwaway `CLAUDE_CONFIG_DIR`. | Confirmed |
 
 > **Owner note:** v0.1 repos live under the personal work account `Angel-MercadoCLK`
 > (click-ai-devkit — which also hosts the scoop bucket per D23 — and, later, homebrew-click);

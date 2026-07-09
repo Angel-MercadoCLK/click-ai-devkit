@@ -53,6 +53,14 @@ func runUninstall(cmd *cobra.Command) error {
 		return err
 	}
 
+	// RemoveContext7 mirrors RemoveEngramPlugin's exact respect-ownership contract: only removes
+	// Context7 when click's own state says click registered it.
+	if err := r.RunStep("Quitando Context7 (si click lo instaló)…", "Context7 procesado", func() error {
+		return installer.RemoveContext7(cfg)
+	}); err != nil {
+		return err
+	}
+
 	fmt.Fprintln(out, r.Info("Desinstalación completa."))
 	return nil
 }

@@ -34,6 +34,9 @@ func Install(cfg Config, models map[modelconfig.Phase]string) error {
 	if _, err := SyncEngram(cfg, m); err != nil {
 		return err
 	}
+	if _, err := SyncContext7(cfg); err != nil {
+		return err
+	}
 	if err := WriteManagedBlock(cfg.ClaudeMDPath(), DefaultManagedContent); err != nil {
 		return err
 	}
@@ -54,6 +57,9 @@ func Uninstall(cfg Config) error {
 		return err
 	}
 	if err := RemoveEngramPlugin(cfg); err != nil {
+		return err
+	}
+	if err := RemoveContext7(cfg); err != nil {
 		return err
 	}
 	if err := StripManagedBlock(cfg.ClaudeMDPath()); err != nil {

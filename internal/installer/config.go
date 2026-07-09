@@ -88,3 +88,31 @@ func (c Config) EngramStatePath() string {
 func (c Config) ModelsPath() string {
 	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "models.json")
 }
+
+// Context7ConfigPath is Claude Code's own user-scope config file — the same file our runner's
+// `claude mcp add --scope user ...` writes to, whose top-level `mcpServers` key holds user-scope
+// MCP entries. It MUST mirror exactly where the claude subprocess writes (see execCommandRunner):
+//   - with CLICK_CLAUDE_HOME override set → <override>/.claude.json (CLAUDE_CONFIG_DIR is forced there)
+//   - real run (no override)             → <OS home>/.claude.json (home ROOT, NOT <ClaudeHome>/.claude.json)
+// Getting this wrong caused a real bug: `<ClaudeHome>/.claude.json` (= ~/.claude/.claude.json) is a
+// file a normal Claude Code session never reads, so HasContext7 always reported "missing" on a real
+// machine. Reading the file directly keeps HasContext7 a pure filesystem read (no `claude mcp get`).
+func (c Config) Context7ConfigPath() string {
+	// In production ClaudeHome is <home>/.claude, but claude stores user-scope MCP config at
+	// <home>/.claude.json (home ROOT) — a real run does NOT force CLAUDE_CONFIG_DIR (see
+	// execCommandRunner.commandEnv), so `claude mcp add` lands there. Under a CLICK_CLAUDE_HOME
+	// override (tests/power-users) ClaudeHome is an arbitrary dir and claude, with
+	// CLAUDE_CONFIG_DIR pointed at it, writes <dir>/.claude.json INSIDE it. Distinguish the two by
+	// whether ClaudeHome is the default "~/.claude" (basename ".claude") vs an override dir. This
+	// keeps HasContext7 a hermetic, env-free filesystem read that mirrors where the runner writes.
+	if filepath.Base(c.ClaudeHome) == ".claude" {
+		return filepath.Join(filepath.Dir(c.ClaudeHome), ".claude.json")
+	}
+	return filepath.Join(c.ClaudeHome, ".claude.json")
+}
+
+// Context7StatePath stores click's own bookkeeping about the Context7 MCP install — specifically
+// install ownership — mirroring EngramStatePath's shape and purpose.
+func (c Config) Context7StatePath() string {
+	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "context7.json")
+}

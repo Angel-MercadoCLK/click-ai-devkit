@@ -41,8 +41,10 @@ macOS/Linux is scaffolded in `.goreleaser.yaml` but deferred — see `documentac
 - A managed block in `~/.claude/CLAUDE.md`, delimited by markers so it can be inserted, replaced,
   or fully removed without touching the rest of the file.
 - The `memory-guard` PreToolUse hook entry in `~/.claude/settings.json`.
-- A pinned Engram MCP entry (`~/.claude/mcp/engram.json`) plus a small state file recording the
-  pinned version — written by `click update` (see the table above).
+- Engram installed as a Claude Code plugin (`engram@engram`), idempotent and respectful of a
+  pre-existing setup; its binary is provisioned via `go install` when missing. A small click state
+  file records what click itself installed, so `uninstall` never removes a dev's pre-existing Engram.
+- Context7 registered as a user-scope HTTP MCP via `claude mcp add` — also idempotent and respectful.
 
 ## memory-guard
 
