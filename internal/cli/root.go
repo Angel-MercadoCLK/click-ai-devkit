@@ -13,15 +13,20 @@ import (
 // this flag is the explicit, highest-priority override).
 const noColorFlag = "no-color"
 
-// NewRootCommand builds click's root cobra command with every Slice 1 subcommand wired in.
+// NewRootCommand builds click's root cobra command with every Slice 1 subcommand wired in, plus
+// a default no-arg action: bare `click` on an interactive TTY launches the standing menu
+// (internal/menu); otherwise (non-TTY, CI, or --no-interactive) it prints help and exits 0 — see
+// rootdefault.go's interactive() gate.
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:     "click",
 		Short:   "click-ai-devkit installer/manager for Claude Code plugins + Engram",
 		Version: version.Version,
+		RunE:    runRootDefault,
 	}
 
 	root.PersistentFlags().Bool(noColorFlag, false, "Disable colored output (also honors the NO_COLOR env var)")
+	root.Flags().Bool(noInteractiveFlag, false, "Skip the interactive menu on bare `click`; print help instead")
 
 	root.AddCommand(
 		newInstallCommand(),
@@ -29,6 +34,7 @@ func NewRootCommand() *cobra.Command {
 		newDoctorCommand(),
 		newUninstallCommand(),
 		newMemoryGuardCommand(),
+		newConfigureModelsCommand(),
 	)
 
 	return root

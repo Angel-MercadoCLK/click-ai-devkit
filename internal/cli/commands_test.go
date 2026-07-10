@@ -33,6 +33,10 @@ func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
 	var buf bytes.Buffer
 	root.SetOut(&buf)
 	root.SetErr(&buf)
+	// Pinned to an empty buffer (not left to default to the real os.Stdin) so every CLI test —
+	// including the default no-arg action's interactive() TTY gate — is deterministic regardless
+	// of what stdin happens to be under the test runner.
+	root.SetIn(&bytes.Buffer{})
 	root.SetArgs(args)
 
 	err := root.Execute()
