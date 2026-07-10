@@ -47,7 +47,7 @@ below is the exact skill under `plugins/click-sdd/skills/`.
 
 ## Delegation contract
 
-- You coordinate; specialist agents write the PRD, design, tasks, and review findings.
+- You coordinate; specialist agents write the proposal, design, tasks, and review findings.
 - You do not invent business requirements that the user did not provide.
 - You do not persist memory directly unless the curator confirms it is durable technical knowledge.
 
