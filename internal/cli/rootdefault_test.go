@@ -126,12 +126,15 @@ func TestRootCommand_ExplicitSubcommands_StillDispatch(t *testing.T) {
 	}
 }
 
-// --- error/usage printing: a failing command must be reported to the user exactly once, with no
-// --- irrelevant usage dump — whether invoked directly or dispatched from the standing menu.
+// --- error/usage printing: a failing command must be reported to the user exactly once. Runtime
+// --- failures (RunE returns an error) must never get an irrelevant usage dump — whether invoked
+// --- directly or dispatched from the standing menu. Genuine flag-parse/usage errors (unknown
+// --- flag, bad flag value) must still show the Usage: block, exactly like pre-SilenceUsage cobra.
 // --- Regression tests for R4-001 (double "Error:" print + irrelevant root usage dump on
-// --- menu-dispatched failures).
+// --- menu-dispatched runtime failures) and RR1-001 (global SilenceUsage over-suppressed genuine
+// --- flag-parse/usage errors too, which must keep showing Usage:).
 
-func TestRootCommand_DirectSubcommandFailure_PrintsErrorExactlyOnceNoUsage(t *testing.T) {
+func TestRootCommand_UnknownFlag_PrintsErrorAndUsage(t *testing.T) {
 	home := t.TempDir()
 	out, err := execRoot(t, home, "install", "--this-flag-does-not-exist")
 	if err == nil {
@@ -140,12 +143,68 @@ func TestRootCommand_DirectSubcommandFailure_PrintsErrorExactlyOnceNoUsage(t *te
 	if n := strings.Count(out, "Error:"); n != 1 {
 		t.Fatalf("output contains %d \"Error:\" line(s), want exactly 1:\n%s", n, out)
 	}
-	if strings.Contains(out, "Usage:") {
-		t.Fatalf("output contains a Usage: dump, want none on a runtime/parse failure:\n%s", out)
+	if !strings.Contains(out, "Usage:") {
+		t.Fatalf("output contains no Usage: block, want one on a genuine flag-parse error:\n%s", out)
 	}
 }
 
-func TestDispatch_SubcommandFailure_PrintsErrorExactlyOnceNoUsageDump(t *testing.T) {
+func TestRootCommand_BadFlagValue_PrintsErrorAndUsage(t *testing.T) {
+	home := t.TempDir()
+	out, err := execRoot(t, home, "--no-color=not-a-bool")
+	if err == nil {
+		t.Fatal("`click --no-color=not-a-bool` error = nil, want a non-nil error (bad bool value)")
+	}
+	if n := strings.Count(out, "Error:"); n != 1 {
+		t.Fatalf("output contains %d \"Error:\" line(s), want exactly 1:\n%s", n, out)
+	}
+	if !strings.Contains(out, "Usage:") {
+		t.Fatalf("output contains no Usage: block, want one on a genuine flag-parse error:\n%s", out)
+	}
+}
+
+// doctor.go self-silences (cmd.SilenceErrors = true) and reports failure via its own Fail lines
+// instead of cobra's generic "Error: ..." print — deliberate, pre-existing, and out of scope here
+// — so these two tests assert the two things this fix actually governs: the failure is genuinely
+// reported (non-nil error, non-empty output) and no irrelevant Usage: block leaks through.
+
+func TestRootCommand_DirectSubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsage(t *testing.T) {
+	home := t.TempDir()
+	out, err := execRoot(t, home, "doctor")
+	if err == nil {
+		t.Fatal("`click doctor` on an empty home error = nil, want the expected unhealthy error")
+	}
+	if !strings.Contains(out, "click-ai-devkit no está instalado correctamente") {
+		t.Fatalf("output missing doctor's own unhealthy report, want exactly one failure report:\n%s", out)
+	}
+	if strings.Contains(out, "Usage:") {
+		t.Fatalf("output contains a Usage: dump, want none on a runtime failure:\n%s", out)
+	}
+}
+
+func TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+
+	parent := &cobra.Command{}
+	var buf bytes.Buffer
+	parent.SetOut(&buf)
+	parent.SetErr(&buf)
+	parent.SetIn(&bytes.Buffer{})
+
+	err := dispatch(parent, []string{"doctor"})
+	if err == nil {
+		t.Fatal("dispatch() error = nil, want the expected unhealthy error from `doctor` on an empty home")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "click-ai-devkit no está instalado correctamente") {
+		t.Fatalf("dispatch() output missing doctor's own unhealthy report, want exactly one failure report:\n%s", out)
+	}
+	if strings.Contains(out, "Usage:") {
+		t.Fatalf("dispatch() output contains a Usage: dump, want none on a runtime failure:\n%s", out)
+	}
+}
+
+func TestDispatch_FlagError_PrintsUsage(t *testing.T) {
 	parent := &cobra.Command{}
 	var buf bytes.Buffer
 	parent.SetOut(&buf)
@@ -157,11 +216,8 @@ func TestDispatch_SubcommandFailure_PrintsErrorExactlyOnceNoUsageDump(t *testing
 		t.Fatal("dispatch() error = nil, want a non-nil error for an unknown flag")
 	}
 	out := buf.String()
-	if n := strings.Count(out, "Error:"); n != 1 {
-		t.Fatalf("dispatch() output contains %d \"Error:\" line(s), want exactly 1:\n%s", n, out)
-	}
-	if strings.Contains(out, "Usage:") {
-		t.Fatalf("dispatch() output contains a Usage: dump, want none on a runtime/parse failure:\n%s", out)
+	if !strings.Contains(out, "Usage:") {
+		t.Fatalf("dispatch() output contains no Usage: block, want one on a genuine flag-parse error:\n%s", out)
 	}
 }
 
