@@ -5,25 +5,39 @@ import (
 	"testing"
 )
 
-func TestDefaults_MatchesD25(t *testing.T) {
-	want := map[Phase]string{
-		PhaseOrchestrator:  "opus",
-		PhasePRDWriter:     "opus",
-		PhaseArchitect:     "opus",
-		PhaseReviewer:      "opus",
-		PhaseMemoryCurator: "sonnet",
+// wantDefaults mirrors the real 13-phase SDD taxonomy's default model assignment: opus for the
+// architecturally-heavy phases (propose, design, verify), haiku for the cheap/mechanical phases
+// (archive, onboard), sonnet for everything else.
+func wantDefaults() map[Phase]string {
+	return map[Phase]string{
+		PhaseExplore:    "sonnet",
+		PhasePropose:    "opus",
+		PhaseSpec:       "sonnet",
+		PhaseDesign:     "opus",
+		PhaseTasks:      "sonnet",
+		PhaseApply:      "sonnet",
+		PhaseVerify:     "opus",
+		PhaseArchive:    "haiku",
+		PhaseOnboard:    "haiku",
+		PhaseJDJudgeA:   "sonnet",
+		PhaseJDJudgeB:   "sonnet",
+		PhaseJDFixAgent: "sonnet",
+		PhaseDefault:    "sonnet",
 	}
-	if got := Defaults(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("Defaults() = %#v, want %#v", got, want)
+}
+
+func TestDefaults_MatchesRealTaxonomy(t *testing.T) {
+	if got := Defaults(); !reflect.DeepEqual(got, wantDefaults()) {
+		t.Fatalf("Defaults() = %#v, want %#v", got, wantDefaults())
 	}
 }
 
 func TestDefaults_ReturnsFreshMapEachCall(t *testing.T) {
 	a := Defaults()
-	a[PhaseOrchestrator] = "haiku"
+	a[PhasePropose] = "haiku"
 	b := Defaults()
-	if b[PhaseOrchestrator] != "opus" {
-		t.Fatalf("Defaults() mutation leaked across calls: b[orchestrator] = %q, want %q", b[PhaseOrchestrator], "opus")
+	if b[PhasePropose] != "opus" {
+		t.Fatalf("Defaults() mutation leaked across calls: b[propose] = %q, want %q", b[PhasePropose], "opus")
 	}
 }
 
@@ -46,37 +60,18 @@ func TestResolve(t *testing.T) {
 		{
 			name: "single override wins, others keep default",
 			overrides: map[Phase]string{
-				PhaseOrchestrator: "haiku",
+				PhaseApply: "haiku",
 			},
-			want: map[Phase]string{
-				PhaseOrchestrator:  "haiku",
-				PhasePRDWriter:     "opus",
-				PhaseArchitect:     "opus",
-				PhaseReviewer:      "opus",
-				PhaseMemoryCurator: "sonnet",
-			},
-		},
-		{
-			name: "all five overridden",
-			overrides: map[Phase]string{
-				PhaseOrchestrator:  "sonnet",
-				PhasePRDWriter:     "haiku",
-				PhaseArchitect:     "sonnet",
-				PhaseReviewer:      "haiku",
-				PhaseMemoryCurator: "opus",
-			},
-			want: map[Phase]string{
-				PhaseOrchestrator:  "sonnet",
-				PhasePRDWriter:     "haiku",
-				PhaseArchitect:     "sonnet",
-				PhaseReviewer:      "haiku",
-				PhaseMemoryCurator: "opus",
-			},
+			want: func() map[Phase]string {
+				w := wantDefaults()
+				w[PhaseApply] = "haiku"
+				return w
+			}(),
 		},
 		{
 			name: "empty-string override is ignored, default kept",
 			overrides: map[Phase]string{
-				PhaseOrchestrator: "",
+				PhaseApply: "",
 			},
 			want: Defaults(),
 		},
@@ -84,6 +79,20 @@ func TestResolve(t *testing.T) {
 			name: "unknown phase key in overrides is ignored",
 			overrides: map[Phase]string{
 				Phase("not_a_real_phase"): "opus",
+			},
+			want: Defaults(),
+		},
+		{
+			// D-migration: Resolve must silently drop old (pre-realignment) phase keys instead of
+			// treating them as valid overrides — a stale caller passing the invented 5-phase
+			// taxonomy must not corrupt the resolved map.
+			name: "old-taxonomy phase keys are ignored",
+			overrides: map[Phase]string{
+				Phase("orchestrator"):   "opus",
+				Phase("prd_writer"):     "opus",
+				Phase("architect"):      "opus",
+				Phase("reviewer"):       "opus",
+				Phase("memory_curator"): "sonnet",
 			},
 			want: Defaults(),
 		},
@@ -100,18 +109,27 @@ func TestResolve(t *testing.T) {
 }
 
 func TestResolve_DoesNotMutateOverridesOrLeakIntoLaterCalls(t *testing.T) {
-	overrides := map[Phase]string{PhaseOrchestrator: "haiku"}
+	overrides := map[Phase]string{PhaseApply: "haiku"}
 	_ = Resolve(overrides)
 	again := Resolve(nil)
-	if again[PhaseOrchestrator] != "opus" {
-		t.Fatalf("Resolve(nil) after a prior override call = %q, want default %q", again[PhaseOrchestrator], "opus")
+	if again[PhaseApply] != "sonnet" {
+		t.Fatalf("Resolve(nil) after a prior override call = %q, want default %q", again[PhaseApply], "sonnet")
 	}
 }
 
 func TestPhases_FixedOrder(t *testing.T) {
-	want := []Phase{PhaseOrchestrator, PhasePRDWriter, PhaseArchitect, PhaseReviewer, PhaseMemoryCurator}
+	want := []Phase{
+		PhaseExplore, PhasePropose, PhaseSpec, PhaseDesign, PhaseTasks, PhaseApply, PhaseVerify,
+		PhaseArchive, PhaseOnboard, PhaseJDJudgeA, PhaseJDJudgeB, PhaseJDFixAgent, PhaseDefault,
+	}
 	if !reflect.DeepEqual(Phases, want) {
 		t.Fatalf("Phases = %#v, want %#v", Phases, want)
+	}
+}
+
+func TestPhases_HasThirteenPhases(t *testing.T) {
+	if got := len(Phases); got != 13 {
+		t.Fatalf("len(Phases) = %d, want 13", got)
 	}
 }
 
@@ -120,11 +138,19 @@ func TestPhase_ConfigKey(t *testing.T) {
 		phase Phase
 		want  string
 	}{
-		{PhaseOrchestrator, "orchestrator_model"},
-		{PhasePRDWriter, "prd_writer_model"},
-		{PhaseArchitect, "architect_model"},
-		{PhaseReviewer, "reviewer_model"},
-		{PhaseMemoryCurator, "memory_curator_model"},
+		{PhaseExplore, "explore_model"},
+		{PhasePropose, "propose_model"},
+		{PhaseSpec, "spec_model"},
+		{PhaseDesign, "design_model"},
+		{PhaseTasks, "tasks_model"},
+		{PhaseApply, "apply_model"},
+		{PhaseVerify, "verify_model"},
+		{PhaseArchive, "archive_model"},
+		{PhaseOnboard, "onboard_model"},
+		{PhaseJDJudgeA, "jd_judge_a_model"},
+		{PhaseJDJudgeB, "jd_judge_b_model"},
+		{PhaseJDFixAgent, "jd_fix_agent_model"},
+		{PhaseDefault, "default_model"},
 	}
 	for _, tt := range tests {
 		if got := tt.phase.ConfigKey(); got != tt.want {

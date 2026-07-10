@@ -50,6 +50,7 @@ func Run(cfg installer.Config) Report {
 		checkReviewPlugin(cfg),
 		checkClaudeMD(cfg),
 		checkMemoryGuardHook(cfg),
+		checkModelsConfig(cfg),
 		checkEngramPlugin(cfg),
 		checkEngramBinary(cfg),
 		checkContext7(cfg),
@@ -170,6 +171,27 @@ func checkContext7(cfg installer.Config) CheckResult {
 		return CheckResult{Name: name, Healthy: false, Detail: "no registrado como servidor MCP de usuario"}
 	}
 	return CheckResult{Name: name, Healthy: true, Detail: "registrado (scope user, https://mcp.context7.com/mcp)"}
+}
+
+// checkModelsConfig reports whether cfg.ModelsPath() holds a stale (pre-taxonomy-realignment or
+// otherwise outdated schema_version) models.json. It only READS the file via installer.IsStale —
+// never installer.MigrateIfStale — so `click doctor` stays read-only (NFR-012). An absent file is
+// healthy: it just means defaults will be generated on the next `click install`/`click update`.
+func checkModelsConfig(cfg installer.Config) CheckResult {
+	const name = "models.json schema"
+
+	stale, err := installer.IsStale(cfg)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	if stale {
+		return CheckResult{
+			Name:    name,
+			Healthy: false,
+			Detail:  "models.json usa una taxonomía o schema desactualizado — se regenerará (con backup en models.json.bak) en el próximo `click update`",
+		}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: "actualizado (o aún no generado)"}
 }
 
 func checkMemoryGuardHook(cfg installer.Config) CheckResult {

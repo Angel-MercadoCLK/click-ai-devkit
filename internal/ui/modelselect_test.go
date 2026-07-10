@@ -54,29 +54,30 @@ func TestModelSelectModel_Update_ArrowsMoveCursorAndWrap(t *testing.T) {
 func TestModelSelectModel_Update_RightCyclesModelForCursorRowOnly(t *testing.T) {
 	m := NewModelSelectModel()
 	phase := modelconfig.Phases[0]
-	if m.Selection[phase] != "opus" {
-		t.Fatalf("precondition: Selection[%s] = %q, want opus", phase, m.Selection[phase])
+	// modelconfig.Phases[0] is "explore", whose default (per the real SDD taxonomy) is sonnet.
+	if m.Selection[phase] != "sonnet" {
+		t.Fatalf("precondition: Selection[%s] = %q, want sonnet", phase, m.Selection[phase])
 	}
 	otherPhase := modelconfig.Phases[1]
 	otherBefore := m.Selection[otherPhase]
 
 	m, _ = updateModel(m, keyMsg("right"))
-	if m.Selection[phase] != "sonnet" {
-		t.Fatalf("Selection[%s] after one right = %q, want sonnet", phase, m.Selection[phase])
+	if m.Selection[phase] != "haiku" {
+		t.Fatalf("Selection[%s] after one right = %q, want haiku", phase, m.Selection[phase])
 	}
 	if m.Selection[otherPhase] != otherBefore {
 		t.Fatalf("Selection[%s] changed to %q after cycling a different row, want unchanged %q", otherPhase, m.Selection[otherPhase], otherBefore)
 	}
 
 	m, _ = updateModel(m, keyMsg("right"))
-	if m.Selection[phase] != "haiku" {
-		t.Fatalf("Selection[%s] after two rights = %q, want haiku", phase, m.Selection[phase])
+	if m.Selection[phase] != "opus" {
+		t.Fatalf("Selection[%s] after two rights = %q, want opus", phase, m.Selection[phase])
 	}
 
-	// cycle wraps back to opus after the last option.
+	// cycle wraps back to sonnet after the last option.
 	m, _ = updateModel(m, keyMsg("right"))
-	if m.Selection[phase] != "opus" {
-		t.Fatalf("Selection[%s] after three rights (full cycle) = %q, want opus", phase, m.Selection[phase])
+	if m.Selection[phase] != "sonnet" {
+		t.Fatalf("Selection[%s] after three rights (full cycle) = %q, want sonnet", phase, m.Selection[phase])
 	}
 }
 
@@ -85,8 +86,8 @@ func TestModelSelectModel_Update_LeftCyclesBackward(t *testing.T) {
 	phase := modelconfig.Phases[0]
 
 	m, _ = updateModel(m, keyMsg("left"))
-	if m.Selection[phase] != "haiku" {
-		t.Fatalf("Selection[%s] after one left (wrap backward) = %q, want haiku", phase, m.Selection[phase])
+	if m.Selection[phase] != "opus" {
+		t.Fatalf("Selection[%s] after one left (wrap backward) = %q, want opus", phase, m.Selection[phase])
 	}
 }
 

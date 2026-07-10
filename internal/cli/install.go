@@ -48,6 +48,15 @@ func runInstall(cmd *cobra.Command) error {
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome}
 
+	// Same D8 "never clobber a working setup without a backup" safety net `click update` already
+	// has: a stale (pre-realignment or otherwise outdated schema_version) models.json left over from
+	// a previous install gets backed up to models.json.bak FIRST, then fully regenerated below by
+	// SaveModels — old per-phase overrides are never preserved/merged. A missing or already-current
+	// file is a safe no-op (no spurious .bak on a fresh install).
+	if _, err := installer.MigrateIfStale(cfg); err != nil {
+		return err
+	}
+
 	models := modelconfig.Defaults()
 	if !isNonInteractiveInstall(cmd, out) {
 		selection, cancelled, err := runModelSelectTUI(cmd)

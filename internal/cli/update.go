@@ -31,6 +31,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Confirmed migration behavior for the real-SDD-taxonomy realignment: a stale (pre-realignment
+	// or otherwise outdated schema_version) models.json is backed up to models.json.bak FIRST,
+	// then fully regenerated with new-taxonomy defaults — old per-phase overrides are never
+	// preserved/merged (D8). A missing or already-current file is a no-op here.
+	if _, err := installer.MigrateIfStale(cfg); err != nil {
+		return err
+	}
+
 	// Re-apply whatever per-phase models `click install` saved (D25), so `click update` never
 	// silently resets a developer's choice back to defaults. A models.json-less home (installed
 	// before this feature existed, or never installed) falls back to defaults.
