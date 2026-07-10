@@ -279,3 +279,163 @@ Zero dead keys remain anywhere under `plugins/click-sdd/` (grep-confirmed). Corr
 
 ### Next Recommended
 Commit/open PR3. Once the 3-PR chain lands, the whole change is ready for `sdd-archive`.
+
+---
+
+## Fix round 1 — 3 CONFIRMED findings from adversarial review, applied across the stacked chain
+
+Applied by a single writer, TDD RED→GREEN, one fix per owning branch, each propagated forward via
+merge before the next fix (PR1 → PR2 → PR3). All three merges were clean, no conflicts.
+
+### R3-001 (CRITICAL, PR1 `feat/model-config-taxonomy-realignment`) — install migrated before cancel check
+**Bug**: `internal/cli/install.go` called `installer.MigrateIfStale(cfg)` unconditionally before the
+interactive model-select TUI's cancel check, so cancelling the TUI still backed up and regenerated a
+stale `models.json` — cancel ≠ no changes.
+
+**Fix**: extracted the migrate+select sequence into `resolveInstallModels(cmd, out, r, cfg,
+nonInteractive, selector modelSelector)` (`internal/cli/install.go`). Migration now only runs once the
+install is known to proceed (non-interactive, or interactive-confirmed); an interactive cancel returns
+before `MigrateIfStale` is ever called, leaving disk untouched. `nonInteractive` is computed once by
+the caller and passed in, so tests can force the interactive branch without needing a real TTY.
+
+**Test evidence**: new `TestInstallCommand_InteractiveCancel_LeavesModelsUntouched`
+(`internal/cli/commands_test.go`) — seeds a stale legacy `models.json`, injects a fake selector
+returning `cancelled=true`, asserts no `.bak` created and `models.json` bytes byte-for-byte unchanged.
+RED confirmed (compile error, `resolveInstallModels` undefined) before implementation, GREEN after.
+Pre-existing `TestInstallCommand_MigratesStaleModelsBeforeOverwriting` and
+`TestInstallCommand_FreshInstall_NoBackupCreated` still pass — non-interactive migration behavior
+unchanged. Commit `d40da32`.
+
+### R4-001 (CRITICAL, PR2 `feat/interactive-menu`) — menu-dispatched failures double-printed
+**Bug**: `dispatch()` (`internal/cli/rootdefault.go`) runs a fresh `NewRootCommand().Execute()` per
+menu action; on failure the inner root auto-printed "Error: ..." (+ usage, unless the subcommand
+self-silenced like `doctor`), then the error propagated up through `runMenuLoop` →
+`runRootDefault`'s RunE → the outer live root's own `Execute()`, which printed a second redundant
+"Error: ..." line plus a dump of root's own irrelevant usage block.
+
+**Fix**: `root.SilenceUsage = true` set globally in `NewRootCommand()` (`internal/cli/root.go`) —
+usage dumps belong to genuine flag-parse errors, not runtime failures, and this applies uniformly to
+both the outer live root and every fresh root `dispatch()` builds. For the double-error-print,
+`dispatch()` now wraps any inner `Execute()` failure in a new sentinel `*errMenuDispatchFailed`
+(`internal/cli/rootdefault.go`); `runRootDefault` calls a new `silenceIfAlreadyReported(cmd, err)`
+helper that sets `cmd.SilenceErrors = true` only when the error is `errors.As`-detected as
+already-reported, so the outer root's own `ExecuteC` skips its redundant print. Non-dispatch errors
+(e.g. a `launchMenu`/bubbletea failure that nobody has shown yet) are left unsilenced and still get
+cobra's normal single auto-print.
+
+**Test evidence** (`internal/cli/rootdefault_test.go`, all RED→GREEN):
+- `TestRootCommand_DirectSubcommandFailure_PrintsErrorExactlyOnceNoUsage` — `click install
+  --this-flag-does-not-exist` direct invocation: exactly one `"Error:"` line, no `"Usage:"` dump.
+- `TestDispatch_SubcommandFailure_PrintsErrorExactlyOnceNoUsageDump` — same assertion via `dispatch()`
+  directly.
+- `TestSilenceIfAlreadyReported_DispatchError_SilencesRoot` /
+  `TestSilenceIfAlreadyReported_OtherError_LeavesRootUnsilenced` — unit coverage of the silencing
+  decision in isolation.
+- `TestErrMenuDispatchFailed_UnwrapsToOriginalError` — `errors.Is`/`Unwrap` contract.
+- Pre-existing `TestRootCommand_UnknownSubcommand_ReturnsError` and
+  `TestRootCommand_ExplicitSubcommands_StillDispatch` still pass unmodified — unknown-command
+  visibility and direct-invocation exit codes are untouched. Commit `7deb235`.
+
+### R2-001 (CRITICAL, PR3 `feat/skill-content-taxonomy`) — click-prd-writer.md self-contradictory
+**Bug**: `plugins/click-sdd/agents/click-prd-writer.md`'s frontmatter description, `# Role`, and
+`## Responsibilities` all said "PRD", while `## Phase mapping` said the agent owns the `propose`
+phase whose skill writes "the proposal artifact" — no sentence reconciled the two terms, and "prd" is
+not a phase in the 13-phase taxonomy.
+
+**Fix**: terminology-only, behavioral instructions unchanged (output expectations already matched
+`propose/SKILL.md` almost verbatim). Added one explicit reconciling statement in `# Role` ("The PRD is
+this plugin's name for the proposal artifact that phase produces") and reworded `# Role`/frontmatter
+description/`## Responsibilities` to reference the `propose` phase and "proposal" instead of bare
+"PRD". Also fixed the related WARNING R2-002 (same one-line terminology cleanup, same PR):
+`click-orchestrator.md:50` "specialist agents write the PRD, design, tasks..." → "...write the
+proposal, design, tasks...".
+
+**Test evidence**: no Go tests apply to `.md` content. Ran `go test ./internal/installer/ -run
+Lockstep -v` — `TestClickSDDSkills_LockstepWithModelconfigPhases` PASS, confirming nothing broke.
+Full `go build ./...`, `go vet ./...`, `go test ./... -count=1` also clean. Commit `c464b8f`.
+
+### Verification (on final tip branch `feat/skill-content-taxonomy`, after all 3 merges + fixes)
+- `go build ./...` — clean.
+- `go vet ./...` — clean.
+- `go test ./... -count=1` — all 9 packages `ok` (audit, cli, doctor, guard, installer, manifest,
+  menu, modelconfig, ui).
+- `gofmt -l` on every touched file — clean.
+- All three branches pushed to `origin`: `feat/model-config-taxonomy-realignment` (`1acda9c..d40da32`),
+  `feat/interactive-menu` (`4386c8f..7deb235`), `feat/skill-content-taxonomy` (`4435e4a..c464b8f`).
+  No merge conflicts at any propagation step (PR1→PR2, PR2→PR3).
+
+### Next Recommended
+`sdd-verify` (re-verify the fix round), then `sdd-archive` once confirmed.
+
+---
+
+## Fix round 2 (FINAL) — RR1-001 (CRITICAL) — global SilenceUsage over-suppressed genuine flag-parse errors
+
+**Bug**: round 1's fix for R4-001 set `root.SilenceUsage = true` globally in `NewRootCommand()`
+(`internal/cli/root.go`). Correct effect: no usage dump on RUNTIME failures. Regression: cobra's own
+post-execute usage print (`ExecuteC` in `command.go`) gates solely on `SilenceUsage`, with no
+visibility into *why* `execute()` failed — so genuine flag-parse/usage errors (unknown flag, bad flag
+value) also lost their `Usage:` block, a real UX regression from pre-fix cobra. The round-1 regression
+test `TestRootCommand_DirectSubcommandFailure_PrintsErrorExactlyOnceNoUsage` used an unknown-flag
+scenario (`install --this-flag-does-not-exist`) and asserted `!strings.Contains(out, "Usage:")`,
+locking in the wrong behavior.
+
+**Fix**: added `root.SetFlagErrorFunc(...)` in `internal/cli/root.go`. Verified against the vendored
+cobra v1.10.2 source (`command.go`): `FlagErrorFunc` runs precisely when `pflag` fails to parse
+(`execute()`: `err = c.ParseFlags(a); if err != nil { return c.FlagErrorFunc()(c, err) }`), before RunE
+ever executes, and is inherited by every child command via `cmd.parent.FlagErrorFunc()` walk-up — so
+it covers every subcommand, not just the bare root. The func explicitly writes `cmd.UsageString()`
+then returns the original error unchanged, so cobra's normal single `"Error: ..."` line still prints
+via its usual `ExecuteC` path (gated only by `SilenceErrors`, untouched). `root.SilenceUsage = true`
+is kept for the generic post-execute path, so RunE runtime failures (and menu-dispatched failures via
+`dispatch()`'s inner fresh root) still get zero usage dump, unchanged from round 1.
+
+**Test evidence** (`internal/cli/rootdefault_test.go`, all RED→GREEN — confirmed by reverting the
+`root.go` fix and re-running: all three new/updated Usage-asserting tests failed as expected before
+the fix, passed after):
+1. Flag-parse/usage errors → Usage shown: `TestRootCommand_UnknownFlag_PrintsErrorAndUsage` (renamed
+   from the regressed `TestRootCommand_DirectSubcommandFailure_PrintsErrorExactlyOnceNoUsage`,
+   scenario unchanged — `install --this-flag-does-not-exist` — assertion flipped to expect `Usage:`)
+   and new `TestRootCommand_BadFlagValue_PrintsErrorAndUsage` (`--no-color=not-a-bool`, a bad bool
+   flag value). Both assert exactly one `"Error:"` line AND a `Usage:` block present.
+2. Runtime failures of a subcommand → no usage, reported once:
+   `TestRootCommand_DirectSubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsage` (`doctor` on an
+   empty home). Doctor self-silences (`cmd.SilenceErrors = true`, pre-existing, out of scope) and
+   reports via its own Fail lines rather than cobra's literal `"Error:"`, so this test asserts the
+   doctor unhealthy report is present exactly once and no `Usage:` leaks through — the two things this
+   fix actually governs.
+3. Menu-dispatched failures → still exactly one legible error, no usage dump:
+   `TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump` — retargeted from the
+   regressed unknown-flag scenario to a genuine runtime failure (`dispatch(parent, ["doctor"])` on an
+   empty home), preserving the original test's real intent (no usage dump on a runtime failure routed
+   through `dispatch()`). New `TestDispatch_FlagError_PrintsUsage` locks in the fixed, symmetric
+   behavior for the flag-error case via `dispatch()` (unknown flag → `Usage:` present), confirming
+   `FlagErrorFunc` is inherited by the fresh root `dispatch()` builds. `errMenuDispatchFailed` +
+   `silenceIfAlreadyReported` machinery untouched; `TestSilenceIfAlreadyReported_*` and
+   `TestErrMenuDispatchFailed_UnwrapsToOriginalError` still pass unmodified.
+4. Unknown COMMAND (`click bogus-typo`) → error visible, non-zero exit: pre-existing
+   `TestRootCommand_UnknownSubcommand_ReturnsError` passes unmodified — this path never touches
+   `FlagErrorFunc` (root's own RunE returns a manual error after successful flag parsing), and
+   `root.SilenceUsage` behavior for it is unchanged from round 1.
+
+**Manual binary verification** (built `cmd/click`, real process, not `go test`):
+- `click install --this-flag-does-not-exist` → prints full `Usage:` block (flags list) followed by
+  `Error: unknown flag: --this-flag-does-not-exist`, exit 1.
+- `click doctor` on an empty `CLICK_CLAUDE_HOME` → prints only doctor's own `[FAIL]`/`[OK]` report
+  lines and the final `[FAIL] click-ai-devkit no está instalado correctamente`, NO `Usage:` block,
+  exit 1.
+
+**Verification on final tip (`feat/skill-content-taxonomy`, after merge)**:
+- `go build ./...` — clean.
+- `go vet ./...` — clean.
+- `go test ./... -count=1` — all 9 packages `ok` (audit, cli, doctor, guard, installer, manifest,
+  menu, modelconfig, ui).
+- `gofmt -l` on both touched files (`internal/cli/root.go`, `internal/cli/rootdefault_test.go`) —
+  clean.
+- Fixed on `feat/interactive-menu` (commit `0bfa31e`), merged forward into `feat/skill-content-taxonomy`
+  (merge commit, clean, no conflicts). Both branches pushed to `origin`:
+  `feat/interactive-menu` (`7deb235..0bfa31e`), `feat/skill-content-taxonomy` (`c464b8f..524fd7d`).
+
+### Next Recommended
+`sdd-verify` (scoped re-review of this fix diff against the review ledger), then `sdd-archive` once
+confirmed — this is the final adversarial-review round per the fix-round-2 instructions.
