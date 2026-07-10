@@ -25,6 +25,13 @@ func NewRootCommand() *cobra.Command {
 		RunE:    runRootDefault,
 	}
 
+	// Usage dumps belong to genuine usage errors (unknown flags), never to runtime failures — and
+	// cobra can't tell the two apart on its own, so a runtime error (e.g. a failed `click install`)
+	// would otherwise get an irrelevant block of root usage text dumped after it. This applies to
+	// every root built by NewRootCommand, including the fresh one dispatch() spins up per menu
+	// action (rootdefault.go), so a menu-dispatched failure never prints one either.
+	root.SilenceUsage = true
+
 	root.PersistentFlags().Bool(noColorFlag, false, "Disable colored output (also honors the NO_COLOR env var)")
 	root.Flags().Bool(noInteractiveFlag, false, "Skip the interactive menu on bare `click`; print help instead")
 

@@ -126,6 +126,73 @@ func TestRootCommand_ExplicitSubcommands_StillDispatch(t *testing.T) {
 	}
 }
 
+// --- error/usage printing: a failing command must be reported to the user exactly once, with no
+// --- irrelevant usage dump — whether invoked directly or dispatched from the standing menu.
+// --- Regression tests for R4-001 (double "Error:" print + irrelevant root usage dump on
+// --- menu-dispatched failures).
+
+func TestRootCommand_DirectSubcommandFailure_PrintsErrorExactlyOnceNoUsage(t *testing.T) {
+	home := t.TempDir()
+	out, err := execRoot(t, home, "install", "--this-flag-does-not-exist")
+	if err == nil {
+		t.Fatal("`click install --this-flag-does-not-exist` error = nil, want a non-nil error")
+	}
+	if n := strings.Count(out, "Error:"); n != 1 {
+		t.Fatalf("output contains %d \"Error:\" line(s), want exactly 1:\n%s", n, out)
+	}
+	if strings.Contains(out, "Usage:") {
+		t.Fatalf("output contains a Usage: dump, want none on a runtime/parse failure:\n%s", out)
+	}
+}
+
+func TestDispatch_SubcommandFailure_PrintsErrorExactlyOnceNoUsageDump(t *testing.T) {
+	parent := &cobra.Command{}
+	var buf bytes.Buffer
+	parent.SetOut(&buf)
+	parent.SetErr(&buf)
+	parent.SetIn(&bytes.Buffer{})
+
+	err := dispatch(parent, []string{"install", "--this-flag-does-not-exist"})
+	if err == nil {
+		t.Fatal("dispatch() error = nil, want a non-nil error for an unknown flag")
+	}
+	out := buf.String()
+	if n := strings.Count(out, "Error:"); n != 1 {
+		t.Fatalf("dispatch() output contains %d \"Error:\" line(s), want exactly 1:\n%s", n, out)
+	}
+	if strings.Contains(out, "Usage:") {
+		t.Fatalf("dispatch() output contains a Usage: dump, want none on a runtime/parse failure:\n%s", out)
+	}
+}
+
+func TestSilenceIfAlreadyReported_DispatchError_SilencesRoot(t *testing.T) {
+	cmd := &cobra.Command{}
+	err := &errMenuDispatchFailed{err: errors.New("boom")}
+	silenceIfAlreadyReported(cmd, err)
+	if !cmd.SilenceErrors {
+		t.Fatal("cmd.SilenceErrors = false after a dispatch-originated error, want true (avoid a second, redundant print by the outer live root's own Execute())")
+	}
+}
+
+func TestSilenceIfAlreadyReported_OtherError_LeavesRootUnsilenced(t *testing.T) {
+	cmd := &cobra.Command{}
+	silenceIfAlreadyReported(cmd, errors.New("launch menu failed"))
+	if cmd.SilenceErrors {
+		t.Fatal("cmd.SilenceErrors = true for a non-dispatch error, want false (this error was never shown yet, so cobra's own single auto-print must still run)")
+	}
+}
+
+func TestErrMenuDispatchFailed_UnwrapsToOriginalError(t *testing.T) {
+	inner := errors.New("boom")
+	wrapped := &errMenuDispatchFailed{err: inner}
+	if !errors.Is(wrapped, inner) {
+		t.Fatal("errors.Is(wrapped, inner) = false, want true (Unwrap must expose the original error)")
+	}
+	if wrapped.Error() != inner.Error() {
+		t.Fatalf("wrapped.Error() = %q, want %q", wrapped.Error(), inner.Error())
+	}
+}
+
 // --- dispatch(): pure-ish helper that runs a fresh command tree for the chosen menu action. ---
 
 func TestDispatch_RunsFreshCommandTreeAgainstProvidedStreams(t *testing.T) {

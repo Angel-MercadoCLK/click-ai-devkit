@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -44,7 +45,33 @@ func runRootDefault(cmd *cobra.Command, args []string) error {
 	dispatchFn := func(args []string) error {
 		return dispatch(cmd, args)
 	}
-	return runMenuLoop(launchMenu, dispatchFn)
+	err := runMenuLoop(launchMenu, dispatchFn)
+	// A dispatch-originated failure has already been shown to the user exactly once (either
+	// cobra's own single "Error: ..." line from dispatch()'s inner Execute() call, or the
+	// subcommand's own self-silenced report, e.g. `doctor`'s Fail lines). Without this, the outer
+	// live root's own Execute() would print the same error a second, confusing time once it
+	// propagates back up through this RunE (R4-001).
+	silenceIfAlreadyReported(cmd, err)
+	return err
+}
+
+// errMenuDispatchFailed wraps an error already surfaced to the user by dispatch()'s inner
+// Execute() call, so runRootDefault can tell it apart from an error nobody has reported yet (e.g.
+// a launchMenu/bubbletea failure) and silence the outer live root's own redundant auto-print.
+type errMenuDispatchFailed struct{ err error }
+
+func (e *errMenuDispatchFailed) Error() string { return e.err.Error() }
+func (e *errMenuDispatchFailed) Unwrap() error { return e.err }
+
+// silenceIfAlreadyReported sets cmd.SilenceErrors when err was already shown to the user once by
+// dispatch(), so the outer live root's own ExecuteC doesn't print it again. Any other error (e.g.
+// launchMenu failing before ever reaching dispatch) is left alone: it still needs cobra's normal
+// single auto-print, since nothing else has reported it yet.
+func silenceIfAlreadyReported(cmd *cobra.Command, err error) {
+	var dispatchErr *errMenuDispatchFailed
+	if errors.As(err, &dispatchErr) {
+		cmd.SilenceErrors = true
+	}
 }
 
 // runMenuLoop is the standing menu's control-flow: it launches the menu, and — if the user chose
@@ -82,7 +109,10 @@ func dispatch(cmd *cobra.Command, args []string) error {
 	fresh.SetErr(cmd.ErrOrStderr())
 	fresh.SetIn(cmd.InOrStdin())
 	fresh.SetArgs(args)
-	return fresh.Execute()
+	if err := fresh.Execute(); err != nil {
+		return &errMenuDispatchFailed{err: err}
+	}
+	return nil
 }
 
 // interactive decides whether bare `click` should launch the standing menu. It must resolve to
