@@ -23,3 +23,9 @@ You own the PRD phase for Click Seguros.
 - Functional requirements
 - Acceptance criteria
 - Risks or open questions that block design
+
+## Phase mapping
+
+This agent owns the `propose` phase (`plugins/click-sdd/skills/propose/SKILL.md`), model-routed via
+`propose_model`. Detailed, scenario-level acceptance criteria belong to the follow-on `spec` phase —
+keep this agent's acceptance criteria high-level enough to hand off cleanly.

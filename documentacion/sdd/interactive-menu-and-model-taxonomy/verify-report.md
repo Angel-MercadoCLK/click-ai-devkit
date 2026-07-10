@@ -227,3 +227,55 @@ independently against source, not trusted from apply-progress.
 ## Next Recommended
 Proceed to commit/open PR2. `sdd-archive` is NOT yet appropriate for the whole change (Work Unit 3 —
 skill/agent content + taxonomy-lockstep test — remains a separate future PR). No CRITICAL blockers.
+
+---
+
+## Work Unit 3 (PR3 of 3) — skill/agent content + taxonomy-lockstep test
+
+**Verdict: PASS. Ready to commit/open PR3.** Independent verification (sdd-verify, opus). Engram MCP
+unavailable this run; persisted to this file.
+
+### Inventory (verified from filesystem, not trusted from the report)
+- Skills: 13 dirs = 12 phase dirs (`explore, propose, spec, design, tasks, apply, verify, archive,
+  onboard, jd-judge-a, jd-judge-b, jd-fix-agent`) + `agent-builder` (untouched meta-skill). 6 `sdd-*`
+  dirs deleted, 6 renamed + 6 net-new. `default` intentionally has no skill dir.
+- Agents: 5 files, all modified. Matches the apply report's corrected inventory (7 skills / 5 agents),
+  NOT the stale launch assumption (5 skills / 2 agents). Self-correction confirmed accurate.
+
+### Build / test / format evidence
+- `go build ./...` clean; `go vet ./...` clean.
+- `go test ./... -count=1` — all 9 packages `ok`, no regressions.
+- Lockstep tests genuinely PASS (verbose-confirmed, not skipped/vacuous):
+  `TestClickSDDSkills_LockstepWithModelconfigPhases` iterates `modelconfig.Phases`, skips only
+  `default` via an explicit `phasesWithoutDedicatedSkill` map, and `os.ReadFile`s each `<phase>/SKILL.md`
+  — renaming `apply` back to `sdd-code` would make ReadFile fail → `t.Errorf`. Inverse orphan guard
+  and plugin.json key-lockstep also real (both-direction set comparison). Not tautological.
+- `gofmt -l` clean on both touched Go files.
+
+### Content quality (spot-checked)
+- Frontmatter matches repo convention (`name` + `description`) across all new/rewritten files;
+  voice consistent with untouched `agent-builder`. Zero TODO/lorem/placeholder (grep-confirmed).
+- `jd-judge-a`/`jd-judge-b`: correct near-mirror blind-pair files; accurately describe the real
+  convergence protocol (no cross-reading, converge before confirm, hand BLOCKER/CRITICAL to fix agent).
+- `jd-fix-agent`: correctly scoped to converged findings only, minimal changes, 2-round budget.
+- `apply`: description byte-identical to old `sdd-code` — clean rename, strict-TDD content correct.
+- `sdd-prd → propose` (not spec): NO content gap. `propose` = problem/scope/requirements/high-level
+  acceptance criteria + open questions; `spec` (net-new) = full verifiable acceptance-criteria
+  scenarios read downstream by `tasks`/`verify`. Clean separation, explicit handoff, no overlap.
+
+### click-orchestrator.md bug fix — VERIFIED REAL
+Old `HEAD` "Model routing" referenced 5 dead keys (`orchestrator_model, prd_writer_model,
+architect_model, reviewer_model, memory_curator_model`) removed by PR1. Current version lists exactly
+the 13 real `<phase>_model` keys, matching `plugin.json` userConfig 1:1 and `modelconfig.Phases`.
+Zero dead keys remain anywhere under `plugins/click-sdd/` (grep-confirmed). Correct handling of
+`click-memory-curator` (not a phase → routes on `archive_model`).
+
+### Findings
+- CRITICAL: none.
+- WARNING: none.
+- SUGGESTION (S1): lockstep test guards phase↔skill-dir↔plugin.json, but agent `.md` taxonomy
+  references are unguarded by any test (inherent — agents aren't phases). Future taxonomy drift in
+  agent files would not be caught automatically. Non-blocking.
+
+### Next Recommended
+Commit/open PR3. Once the 3-PR chain lands, the whole change is ready for `sdd-archive`.

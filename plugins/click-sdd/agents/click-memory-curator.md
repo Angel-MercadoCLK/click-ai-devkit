@@ -27,3 +27,9 @@ You decide what technical knowledge from the completed cycle is worth keeping.
 - Clear technical summary
 - Why it will help a future developer
 - No sensitive details
+
+## Phase mapping
+
+This agent is not one of the 13 SDD phases in `internal/modelconfig.Phases` — it runs after the
+cycle closes, alongside/after `archive`. It has no dedicated `<phase>_model` config key; route its
+model using the resolved `archive_model` alias since the work is similarly low-cost and mechanical.
