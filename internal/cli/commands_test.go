@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
@@ -248,6 +250,63 @@ func TestInstallCommand_MigratesStaleModelsBeforeOverwriting(t *testing.T) {
 	}
 	if stale {
 		t.Fatal("models.json is still stale after `click install`, want migrated to current schema")
+	}
+}
+
+// TestInstallCommand_InteractiveCancel_LeavesModelsUntouched guards that cancelling the interactive
+// model-selection TUI leaves any existing (even stale) models.json completely untouched: cancel must
+// mean "no changes", not "migrated then abandoned". Regression test for R3-001, where MigrateIfStale
+// ran unconditionally before the cancel check, so a cancelled install still backed up and regenerated
+// a stale models.json.
+func TestInstallCommand_InteractiveCancel_LeavesModelsUntouched(t *testing.T) {
+	home := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home}
+	legacyRaw, err := json.Marshal(map[string]string{
+		"orchestrator":   "haiku",
+		"prd_writer":     "opus",
+		"architect":      "opus",
+		"reviewer":       "opus",
+		"memory_curator": "sonnet",
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal(legacy) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(cfg.ModelsPath(), legacyRaw, 0o600); err != nil {
+		t.Fatalf("WriteFile(legacy models.json) error = %v", err)
+	}
+
+	cmd := NewRootCommand()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	r := rendererFor(cmd, &buf)
+
+	cancelledSelector := func(*cobra.Command) (map[modelconfig.Phase]string, bool, error) {
+		return nil, true, nil
+	}
+
+	// nonInteractive=false forces the interactive branch regardless of the test's non-TTY buffer,
+	// so the fake selector's cancel is what actually gets exercised.
+	_, cancelled, err := resolveInstallModels(cmd, &buf, r, cfg, false, cancelledSelector)
+	if err != nil {
+		t.Fatalf("resolveInstallModels() error = %v", err)
+	}
+	if !cancelled {
+		t.Fatal("resolveInstallModels() cancelled = false, want true")
+	}
+
+	if _, err := os.Stat(cfg.ModelsPath() + ".bak"); !os.IsNotExist(err) {
+		t.Fatalf("Stat(models.json.bak) error = %v, want no backup created on interactive cancel", err)
+	}
+	got, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) error = %v", err)
+	}
+	if string(got) != string(legacyRaw) {
+		t.Fatalf("models.json = %q, want unchanged legacy content %q (cancel must leave disk untouched)", got, legacyRaw)
 	}
 }
 
