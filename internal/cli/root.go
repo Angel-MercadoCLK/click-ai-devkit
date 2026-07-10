@@ -25,12 +25,30 @@ func NewRootCommand() *cobra.Command {
 		RunE:    runRootDefault,
 	}
 
-	// Usage dumps belong to genuine usage errors (unknown flags), never to runtime failures — and
-	// cobra can't tell the two apart on its own, so a runtime error (e.g. a failed `click install`)
-	// would otherwise get an irrelevant block of root usage text dumped after it. This applies to
+	// Usage dumps belong to genuine usage errors (unknown flags, bad flag values), never to runtime
+	// failures — and cobra's own generic post-execute usage print (ExecuteC in command.go) can't
+	// tell the two apart: it gates solely on SilenceUsage, with no visibility into *why* execute()
+	// failed. Silencing it globally here handles the runtime-failure case (e.g. a failed `click
+	// install`), so no irrelevant block of root usage text gets dumped after it — this applies to
 	// every root built by NewRootCommand, including the fresh one dispatch() spins up per menu
-	// action (rootdefault.go), so a menu-dispatched failure never prints one either.
+	// action (rootdefault.go), so a menu-dispatched runtime failure never prints one either.
 	root.SilenceUsage = true
+
+	// FlagErrorFunc runs precisely (and only) when pflag fails to parse the command line — unknown
+	// flag, missing value, bad value type — before RunE ever executes (command.go's execute():
+	// `err = c.ParseFlags(a); if err != nil { return c.FlagErrorFunc()(c, err) }`). That makes it
+	// the correct discrimination point for restoring the pre-SilenceUsage usage dump on genuine
+	// usage errors without reintroducing it for runtime failures: the generic SilenceUsage gate
+	// above still swallows cobra's own post-execute usage print for every error, so this explicitly
+	// writes the usage block itself for flag-parse errors only, then returns the original error
+	// unchanged so cobra's normal single "Error: ..." line still prints via its usual path.
+	// FlagErrorFunc is inherited by every child command that doesn't set its own (cobra walks up
+	// via cmd.parent.FlagErrorFunc(), see command.go), so this covers `click install
+	// --bad-flag` and every other subcommand, not just the bare root.
+	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		cmd.Println(cmd.UsageString())
+		return err
+	})
 
 	root.PersistentFlags().Bool(noColorFlag, false, "Disable colored output (also honors the NO_COLOR env var)")
 	root.Flags().Bool(noInteractiveFlag, false, "Skip the interactive menu on bare `click`; print help instead")
