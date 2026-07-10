@@ -13,6 +13,18 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
+// seedResolvableEngram makes EnsureEngramBinary see Engram as already resolvable, so install-driven
+// CLI tests are deterministic regardless of the host PATH. Without it, install issues a `go install`
+// on any host with `go` but no `engram` (e.g. CI) — passing locally (dev has engram) but failing CI.
+func seedResolvableEngram(t *testing.T) {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "engram")
+	if err := os.WriteFile(bin, []byte("stub"), 0o755); err != nil {
+		t.Fatalf("seed engram binary: %v", err)
+	}
+	t.Setenv("CLICK_ENGRAM_BINARY_PATH", bin)
+}
+
 func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
@@ -168,6 +180,7 @@ func TestInstallCommand_Succeeds(t *testing.T) {
 }
 
 func TestDoctorCommand_AfterInstall_Succeeds(t *testing.T) {
+	seedResolvableEngram(t)
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -193,6 +206,7 @@ func TestDoctorCommand_BeforeInstall_ReturnsError(t *testing.T) {
 }
 
 func TestUninstallCommand_ReversesInstall(t *testing.T) {
+	seedResolvableEngram(t)
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -413,6 +427,7 @@ func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
 // TestDoctorCommand_ReportsConfiguredModels guards the doctor-output contract: it must report the
 // configured per-phase models (or "defaults" pre-install) rather than staying silent about D25.
 func TestDoctorCommand_ReportsConfiguredModels(t *testing.T) {
+	seedResolvableEngram(t)
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
