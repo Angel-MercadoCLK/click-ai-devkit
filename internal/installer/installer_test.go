@@ -8,9 +8,25 @@ import (
 	"testing"
 )
 
+// seedResolvableEngram makes EnsureEngramBinary see the Engram binary as already resolvable, so the
+// full-install composition tests are deterministic REGARDLESS of the machine's PATH. Without this,
+// EnsureEngramBinary issues a `go install` (recorded by the fake runner) on any host that has `go`
+// but not `engram` on PATH — e.g. CI — making the command-order assertions pass locally (dev has
+// engram) but fail in CI. It points CLICK_ENGRAM_BINARY_PATH at a real stub file because
+// EngramBinaryResolvable os.Stat()s the path.
+func seedResolvableEngram(t *testing.T) {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), engramBinaryName())
+	if err := os.WriteFile(bin, []byte("stub"), 0o755); err != nil {
+		t.Fatalf("seed engram binary: %v", err)
+	}
+	t.Setenv(engramBinaryPathEnvOverride, bin)
+}
+
 func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
+	seedResolvableEngram(t)
 	runner := newFakeCommandRunner(cfg)
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
@@ -71,6 +87,7 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 func TestInstall_TwiceIsIdempotent(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
+	seedResolvableEngram(t)
 	runner := newFakeCommandRunner(cfg)
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
@@ -103,6 +120,7 @@ func TestInstall_TwiceIsIdempotent(t *testing.T) {
 func TestUninstall_ReversesInstall(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
+	seedResolvableEngram(t)
 	runner := newFakeCommandRunner(cfg)
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
@@ -141,6 +159,7 @@ func TestUninstall_ReversesInstall(t *testing.T) {
 func TestUninstall_ReversesEngramWhenClickInstalledIt(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
+	seedResolvableEngram(t)
 	binaryPath := filepath.Join(t.TempDir(), "engram.exe")
 	if err := os.WriteFile(binaryPath, []byte("binary"), 0o644); err != nil {
 		t.Fatalf("WriteFile(binary) error = %v", err)
@@ -181,6 +200,7 @@ func TestUninstall_ReversesEngramWhenClickInstalledIt(t *testing.T) {
 func TestUninstall_RespectsEngramInstalledBeforeClick(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
+	seedResolvableEngram(t)
 	runner := newFakeCommandRunner(cfg)
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
@@ -206,6 +226,7 @@ func TestUninstall_RespectsEngramInstalledBeforeClick(t *testing.T) {
 func TestUninstall_NoopWhenAlreadyUninstalled(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
+	seedResolvableEngram(t)
 	runner := newFakeCommandRunner(cfg)
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
@@ -218,6 +239,7 @@ func TestUninstall_NoopWhenAlreadyUninstalled(t *testing.T) {
 func TestInstallThenUninstallThenInstallAgain_Succeeds(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}
+	seedResolvableEngram(t)
 	runner := newFakeCommandRunner(cfg)
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
