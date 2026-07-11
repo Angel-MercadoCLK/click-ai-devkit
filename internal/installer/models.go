@@ -16,18 +16,37 @@ const CurrentModelsSchemaVersion = 2
 
 // modelsFile is the on-disk shape SaveModels writes and LoadModels/IsStale read, wrapping the
 // per-phase model map with a schema_version so a stale (pre-realignment or otherwise outdated)
-// file can be detected without guessing from key names alone.
+// file can be detected without guessing from key names alone. Profile is an OPTIONAL top-level
+// field (design D2): it carries the active orchestration profile name
+// (modelconfig.ProfileName) so `click update`/`click doctor` can re-apply/report it, using the
+// SAME file as the per-phase map rather than a second persistence path. It is intentionally
+// omitempty and does NOT participate in schema_version — an existing v2 file written before this
+// field existed still parses cleanly with Profile == "" (back-compat; see LoadModelsWithProfile).
 type modelsFile struct {
 	SchemaVersion int               `json:"schema_version"`
+	Profile       string            `json:"profile,omitempty"`
 	Models        map[string]string `json:"models"`
 }
 
 // SaveModels persists the resolved per-phase click-sdd model selection to cfg.ModelsPath(), so
 // `click update` can re-apply the same --config flags and `click doctor` can report what's
-// configured. It always writes the current schema_version and overwrites any previous file.
+// configured. It always writes the current schema_version and overwrites any previous file. It
+// writes no profile field — equivalent to SaveModelsWithProfile(cfg, "", models). Kept alongside
+// SaveModelsWithProfile so existing callers (install.go, update.go, configuremodels.go and their
+// tests) keep compiling unchanged; PR2b/PR3 migrate them to the profile-aware form.
 func SaveModels(cfg Config, models map[modelconfig.Phase]string) error {
+	return SaveModelsWithProfile(cfg, "", models)
+}
+
+// SaveModelsWithProfile persists the resolved per-phase click-sdd model selection AND the active
+// orchestration profile name to cfg.ModelsPath() in one file (design D2):
+// {"schema_version":2,"profile":"cost-saver","models":{...}}. An empty profile name is written as
+// an absent "profile" key (omitempty), matching what a pre-profile SaveModels call already
+// produces.
+func SaveModelsWithProfile(cfg Config, profile modelconfig.ProfileName, models map[modelconfig.Phase]string) error {
 	data := modelsFile{
 		SchemaVersion: CurrentModelsSchemaVersion,
+		Profile:       string(profile),
 		Models:        make(map[string]string, len(models)),
 	}
 	for phase, model := range models {
@@ -39,29 +58,40 @@ func SaveModels(cfg Config, models map[modelconfig.Phase]string) error {
 	return nil
 }
 
-// LoadModels reads the per-phase model selection written by SaveModels. It returns
-// (nil, false, nil) when models.json doesn't exist yet (e.g. before the first `click install`),
-// so callers can distinguish "never configured" from a real read/parse error. LoadModels does not
-// itself detect or migrate a stale (pre-realignment) file — callers that care should check
-// IsStale/MigrateIfStale first; a stale file simply round-trips through the current wrapper shape
-// with an empty (or partial) Models map.
+// LoadModels reads the per-phase model selection written by SaveModels/SaveModelsWithProfile. It
+// returns (nil, false, nil) when models.json doesn't exist yet (e.g. before the first
+// `click install`), so callers can distinguish "never configured" from a real read/parse error.
+// LoadModels does not itself detect or migrate a stale (pre-realignment) file — callers that care
+// should check IsStale/MigrateIfStale first; a stale file simply round-trips through the current
+// wrapper shape with an empty (or partial) Models map. It discards the profile field; callers that
+// need it should use LoadModelsWithProfile.
 func LoadModels(cfg Config) (map[modelconfig.Phase]string, bool, error) {
+	_, models, found, err := LoadModelsWithProfile(cfg)
+	return models, found, err
+}
+
+// LoadModelsWithProfile reads the per-phase model selection AND the active orchestration profile
+// name written by SaveModelsWithProfile (or SaveModels, whose files simply have no profile key —
+// design D2's back-compat guarantee: a pre-existing v2 file with no "profile" field loads cleanly
+// with an empty ProfileName, which callers resolve to balanced via modelconfig.ResolveProfile("")).
+// It returns (_, nil, false, nil) when models.json doesn't exist yet.
+func LoadModelsWithProfile(cfg Config) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
 	data, err := os.ReadFile(cfg.ModelsPath())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, false, nil
+			return "", nil, false, nil
 		}
-		return nil, false, fmt.Errorf("installer: read models.json: %w", err)
+		return "", nil, false, fmt.Errorf("installer: read models.json: %w", err)
 	}
 	var wrapper modelsFile
 	if err := json.Unmarshal(data, &wrapper); err != nil {
-		return nil, false, fmt.Errorf("installer: parse models.json: %w", err)
+		return "", nil, false, fmt.Errorf("installer: parse models.json: %w", err)
 	}
 	models := make(map[modelconfig.Phase]string, len(wrapper.Models))
 	for k, v := range wrapper.Models {
 		models[modelconfig.Phase(k)] = v
 	}
-	return models, true, nil
+	return modelconfig.ProfileName(wrapper.Profile), models, true, nil
 }
 
 // oldTaxonomyPhaseKeys are the five invented phase names models.json (and modelconfig.go) used

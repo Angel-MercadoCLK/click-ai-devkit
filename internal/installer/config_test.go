@@ -65,3 +65,26 @@ func TestConfig_PluginDirAndClaudeMDPath(t *testing.T) {
 		t.Errorf("ClaudeMDPath() = %q, want %q", got, wantClaudeMD)
 	}
 }
+
+// TestConfig_ProfileArtifactPath guards the per-profile artifact file path PR2b's
+// profile_artifacts.go will read/write: <ClaudeHome>/click-ai-devkit/profiles/<name>.json.
+func TestConfig_ProfileArtifactPath(t *testing.T) {
+	cfg := Config{ClaudeHome: filepath.Join("some", "home", ".claude")}
+
+	want := filepath.Join("some", "home", ".claude", "click-ai-devkit", "profiles", "cost-saver.json")
+	if got := cfg.ProfileArtifactPath("cost-saver"); got != want {
+		t.Errorf("ProfileArtifactPath(%q) = %q, want %q", "cost-saver", got, want)
+	}
+}
+
+// TestConfig_ProfileAgentsDir guards the per-profile agent-substrate directory PR2b's
+// profile_artifacts.go will write generated markdown agents under:
+// <ClaudeHome>/click-ai-devkit/profiles/<name>/agents.
+func TestConfig_ProfileAgentsDir(t *testing.T) {
+	cfg := Config{ClaudeHome: filepath.Join("some", "home", ".claude")}
+
+	want := filepath.Join("some", "home", ".claude", "click-ai-devkit", "profiles", "cost-saver", "agents")
+	if got := cfg.ProfileAgentsDir("cost-saver"); got != want {
+		t.Errorf("ProfileAgentsDir(%q) = %q, want %q", "cost-saver", got, want)
+	}
+}
