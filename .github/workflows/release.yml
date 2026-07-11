@@ -57,11 +57,20 @@ jobs:
       # v0.1: the scoop manifest is published into THIS repo (bucket/ folder), so the default
       # Actions GITHUB_TOKEN is enough — no SCOOP_BUCKET_TOKEN secret to create or manage.
       # brews publishing is skip_upload=true (deferred fast-follow, D17) so no HOMEBREW_TAP_TOKEN yet.
+      #
+      # --skip=validate: the "Prepare release manifest values" step above INTENTIONALLY patches
+      # internal/manifest/manifest.yaml (click_version from the tag, engram version from
+      # ENGRAM_VERSION) so the built binary embeds the right values. That patch leaves the tree
+      # "dirty", and a plain `goreleaser release` ABORTS on a dirty tree (goreleaser.com/errors/dirty).
+      # This is exactly what broke the first v0.2.0 attempt. Skipping `validate` (the git-clean +
+      # on-tag checks) is safe here because this job ONLY runs on a `v*` tag push, checks out that
+      # exact tag with full history, and the sole modification is our own deterministic manifest
+      # patch — so any `git tag vX && git push --tags` now releases cleanly with no manual pre-bump.
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean
+          args: release --clean --skip=validate
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
