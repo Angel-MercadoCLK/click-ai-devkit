@@ -41,14 +41,20 @@ type ModelSelectModel struct {
 	Cancelled bool
 }
 
-// NewModelSelectModel builds a ModelSelectModel with every phase pre-selected to its D25 default.
+// NewModelSelectModel builds a ModelSelectModel with every phase pre-selected to its D25 default —
+// equivalent to NewModelSelectModelForProfile(modelconfig.ProfileBalanced), since "balanced" IS
+// Defaults() verbatim (design D1).
 func NewModelSelectModel() ModelSelectModel {
-	defaults := modelconfig.Defaults()
-	selection := make(map[modelconfig.Phase]string, len(defaults))
-	for phase, model := range defaults {
-		selection[phase] = model
-	}
-	return ModelSelectModel{Selection: selection}
+	return NewModelSelectModelForProfile(modelconfig.ProfileBalanced)
+}
+
+// NewModelSelectModelForProfile builds a ModelSelectModel pre-filled from the named profile's
+// resolved preset map (design D4): the profile-select step seeds this screen with that preset's own
+// values instead of always starting from Defaults(), while the developer stays free to tweak any
+// individual phase before confirming. An empty/unknown/"custom" name resolves to balanced, matching
+// modelconfig.ResolveProfile's own fallback.
+func NewModelSelectModelForProfile(profile modelconfig.ProfileName) ModelSelectModel {
+	return ModelSelectModel{Selection: modelconfig.ResolveForProfile(string(profile), nil)}
 }
 
 // Init satisfies tea.Model. The selection screen needs no startup command.

@@ -39,19 +39,22 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Re-apply whatever per-phase models `click install` saved (D25), so `click update` never
-	// silently resets a developer's choice back to defaults. A models.json-less home (installed
-	// before this feature existed, or never installed) falls back to defaults.
-	models, found, err := installer.LoadModels(cfg)
+	// Re-apply whatever per-phase models AND active orchestration profile `click install` saved
+	// (D25 / design D4), so `click update` never silently resets a developer's choice back to
+	// defaults, and never silently drops the profile label back to "balanced" either. A
+	// models.json-less home (installed before this feature existed, or never installed) falls back
+	// to balanced + Defaults(). No interactive prompt here — update always re-applies, it never asks.
+	profile, models, found, err := installer.LoadModelsWithProfile(cfg)
 	if err != nil {
 		return err
 	}
 	if !found {
+		profile = modelconfig.ProfileBalanced
 		models = modelconfig.Defaults()
 	}
 
 	if err := r.RunStep("Re-sincronizando plugins click-sdd, click-memory y click-review…", "Plugins sincronizados en Claude Code", func() error {
-		return installer.SyncMarketplacePlugins(models)
+		return installer.SyncMarketplacePlugins(models, profile)
 	}); err != nil {
 		return err
 	}
@@ -59,7 +62,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// re-persisting it to disk left models.json stale (or entirely absent, on a home where it was
 	// never written) after `click update` — a real asymmetry bug between the two commands.
 	if err := r.RunStep("Guardando modelos por fase de click-sdd…", "Modelos por fase guardados", func() error {
-		return installer.SaveModels(cfg, models)
+		return installer.SaveModelsWithProfile(cfg, profile, models)
 	}); err != nil {
 		return err
 	}

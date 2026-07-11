@@ -18,9 +18,14 @@ import (
 // yesFlag / nonInteractiveFlag both skip click install's interactive model-selection TUI and
 // install click-sdd with D25's default per-phase models. Two names are accepted (--yes is the
 // short everyday form, --non-interactive is explicit for CI/scripts) but they mean the same thing.
+//
+// profileFlag lets a non-interactive/scripted install pick a built-in orchestration profile
+// (design D4) without going through the interactive profile-select TUI; an empty or unrecognized
+// value falls back to "balanced" (modelconfig.ResolveProfile's own fallback rule).
 const (
 	yesFlag            = "yes"
 	nonInteractiveFlag = "non-interactive"
+	profileFlag        = "profile"
 )
 
 func newInstallCommand() *cobra.Command {
@@ -33,6 +38,7 @@ func newInstallCommand() *cobra.Command {
 	}
 	cmd.Flags().Bool(yesFlag, false, "Skip the interactive model-selection screen; install click-sdd with default per-phase models")
 	cmd.Flags().Bool(nonInteractiveFlag, false, "Alias for --yes")
+	cmd.Flags().String(profileFlag, "", "Perfil de orquestación a usar (balanced/cost-saver/quality); default balanced. En instalación no interactiva selecciona el preset directamente; en la interactiva sólo precarga el editor por fase inicial.")
 	return cmd
 }
 
@@ -48,7 +54,8 @@ func runInstall(cmd *cobra.Command) error {
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome}
 
-	models, cancelled, err := resolveInstallModels(cmd, out, r, cfg, isNonInteractiveInstall(cmd, out), runModelSelectTUI)
+	profileFlagValue, _ := cmd.Flags().GetString(profileFlag)
+	profile, models, cancelled, err := resolveInstallModels(cmd, out, r, cfg, isNonInteractiveInstall(cmd, out), profileFlagValue, runInstallSelectTUI)
 	if err != nil {
 		return err
 	}
@@ -57,7 +64,7 @@ func runInstall(cmd *cobra.Command) error {
 	}
 
 	if err := r.RunStep("Registrando plugins click-sdd, click-memory y click-review…", "Plugins registrados en Claude Code", func() error {
-		return installer.SyncMarketplacePlugins(models)
+		return installer.SyncMarketplacePlugins(models, profile)
 	}); err != nil {
 		return err
 	}
@@ -111,7 +118,7 @@ func runInstall(cmd *cobra.Command) error {
 	}
 
 	if err := r.RunStep("Guardando modelos por fase de click-sdd…", "Modelos por fase guardados", func() error {
-		return installer.SaveModels(cfg, models)
+		return installer.SaveModelsWithProfile(cfg, profile, models)
 	}); err != nil {
 		return err
 	}
@@ -138,45 +145,59 @@ func isNonInteractiveInstall(cmd *cobra.Command, out io.Writer) bool {
 	return !(isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd()))
 }
 
-// modelSelector matches runModelSelectTUI's signature so resolveInstallModels can be driven by a
-// fake selector in tests (a real bubbletea program can't be exercised headlessly).
-type modelSelector func(cmd *cobra.Command) (map[modelconfig.Phase]string, bool, error)
+// installSelector drives the two-step interactive flow (profile-select, then the per-phase editor
+// seeded from that profile) and matches runInstallSelectTUI's signature so resolveInstallModels can
+// be driven by a fake selector in tests (a real bubbletea program can't be exercised headlessly).
+type installSelector func(cmd *cobra.Command) (profile modelconfig.ProfileName, models map[modelconfig.Phase]string, cancelled bool, err error)
 
-// resolveInstallModels decides the per-phase model set for `click install` and performs the D8
-// stale-migration safety net at the correct point in the flow.
+// resolveInstallModels decides the active orchestration profile AND the per-phase model set for
+// `click install`, and performs the D8 stale-migration safety net at the correct point in the flow.
 //
-// Cancel must mean "no changes": if the developer cancels the interactive TUI, models.json must be
-// left byte-for-byte untouched, so MigrateIfStale only runs once we know the install is actually
+// Cancel must mean "no changes": if the developer cancels either interactive step, models.json must
+// be left byte-for-byte untouched, so MigrateIfStale only runs once we know the install is actually
 // proceeding — non-interactive installs always proceed, and interactive installs only proceed past
 // the cancel check. Both proceeding paths (interactive-confirmed and non-interactive) still migrate
 // before the fresh models get written, preserving the existing "never clobber without a backup"
 // behavior.
-func resolveInstallModels(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg installer.Config, nonInteractive bool, selector modelSelector) (models map[modelconfig.Phase]string, cancelled bool, err error) {
+//
+// CRITICAL non-TTY/CI safety (carried over unchanged from before profiles existed): the
+// non-interactive branch below NEVER calls selector — it resolves synchronously from profileFlagValue
+// (default/unknown -> "balanced") with no prompt, so a non-TTY `click install` can never hang.
+//
+// The label actually returned is resolved via modelconfig.EffectiveProfileName for the interactive
+// path: a preset the developer left untouched keeps its own name, but a hand-tweaked preset (or an
+// explicit "custom" pick) downgrades to "custom" — the persisted `profile` field must never claim a
+// preset name the final per-phase map no longer matches. The non-interactive path never needs this
+// downgrade: modelconfig.ResolveProfile(profileFlagValue).Models is always emitted verbatim, with no
+// per-phase editor step to diverge from it.
+func resolveInstallModels(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg installer.Config, nonInteractive bool, profileFlagValue string, selector installSelector) (profile modelconfig.ProfileName, models map[modelconfig.Phase]string, cancelled bool, err error) {
 	if nonInteractive {
 		if _, err := installer.MigrateIfStale(cfg); err != nil {
-			return nil, false, err
+			return "", nil, false, err
 		}
-		return modelconfig.Defaults(), false, nil
+		resolved := modelconfig.ResolveProfile(profileFlagValue)
+		return resolved.Name, resolved.Models, false, nil
 	}
 
-	selection, cancelled, err := selector(cmd)
+	chosenProfile, selection, cancelled, err := selector(cmd)
 	if err != nil {
-		return nil, false, err
+		return "", nil, false, err
 	}
 	if cancelled {
 		fmt.Fprintln(out, r.Info("Instalación cancelada."))
-		return nil, true, nil
+		return "", nil, true, nil
 	}
 
 	if _, err := installer.MigrateIfStale(cfg); err != nil {
-		return nil, false, err
+		return "", nil, false, err
 	}
-	return selection, false, nil
+	return modelconfig.EffectiveProfileName(chosenProfile, selection), selection, false, nil
 }
 
-// runModelSelectTUI drives ui.ModelSelectModel through a real bubbletea program attached to cmd's
-// in/out, and returns the developer's final per-phase selection. Only reached when
-// isNonInteractiveInstall has already confirmed out is a real terminal.
+// runModelSelectTUI drives ui.ModelSelectModel (with no profile seeding) through a real bubbletea
+// program attached to cmd's in/out, and returns the developer's final per-phase selection. Kept
+// standalone (not folded into runInstallSelectTUI) because configuremodels.go's "Configure models"
+// menu entry reuses exactly this single-step screen — it deliberately has no profile-select step.
 func runModelSelectTUI(cmd *cobra.Command) (map[modelconfig.Phase]string, bool, error) {
 	program := tea.NewProgram(ui.NewModelSelectModel(),
 		tea.WithInput(cmd.InOrStdin()),
@@ -191,4 +212,41 @@ func runModelSelectTUI(cmd *cobra.Command) (map[modelconfig.Phase]string, bool, 
 		return nil, true, nil
 	}
 	return result.Selection, false, nil
+}
+
+// runInstallSelectTUI drives ui.ProfileSelectModel then ui.ModelSelectModel (seeded from the chosen
+// profile, or from Defaults() when "custom" was picked) through real bubbletea programs attached to
+// cmd's in/out, and returns the developer's final profile + per-phase selection. Only reached when
+// isNonInteractiveInstall has already confirmed out is a real terminal.
+func runInstallSelectTUI(cmd *cobra.Command) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+	profileProgram := tea.NewProgram(ui.NewProfileSelectModel(),
+		tea.WithInput(cmd.InOrStdin()),
+		tea.WithOutput(cmd.OutOrStdout()),
+	)
+	finalProfile, err := profileProgram.Run()
+	if err != nil {
+		return "", nil, false, fmt.Errorf("cli: run profile selection TUI: %w", err)
+	}
+	profileResult := finalProfile.(ui.ProfileSelectModel)
+	if profileResult.Cancelled {
+		return "", nil, true, nil
+	}
+
+	seed := ui.NewModelSelectModel()
+	if profileResult.Selected != modelconfig.ProfileCustom {
+		seed = ui.NewModelSelectModelForProfile(profileResult.Selected)
+	}
+	modelProgram := tea.NewProgram(seed,
+		tea.WithInput(cmd.InOrStdin()),
+		tea.WithOutput(cmd.OutOrStdout()),
+	)
+	finalModel, err := modelProgram.Run()
+	if err != nil {
+		return "", nil, false, fmt.Errorf("cli: run model selection TUI: %w", err)
+	}
+	modelResult := finalModel.(ui.ModelSelectModel)
+	if modelResult.Cancelled {
+		return "", nil, true, nil
+	}
+	return profileResult.Selected, modelResult.Selection, false, nil
 }

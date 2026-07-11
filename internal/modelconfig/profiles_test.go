@@ -164,6 +164,63 @@ func TestResolveForProfile_EmptyStringOverrideIgnored(t *testing.T) {
 	}
 }
 
+// TestEffectiveProfileName_PresetUnmodified_KeepsPresetLabel guards the label-consistency rule
+// (install-update-doctor-ux spec, PR3): a preset the developer left untouched must persist under its
+// own name.
+func TestEffectiveProfileName_PresetUnmodified_KeepsPresetLabel(t *testing.T) {
+	for _, name := range []ProfileName{ProfileBalanced, ProfileCostSaver, ProfileQuality} {
+		t.Run(string(name), func(t *testing.T) {
+			models := ResolveProfile(string(name)).Models
+			got := EffectiveProfileName(name, models)
+			if got != name {
+				t.Fatalf("EffectiveProfileName(%q, unmodified preset) = %q, want %q", name, got, name)
+			}
+		})
+	}
+}
+
+// TestEffectiveProfileName_TweakedPreset_DowngradesToCustom guards the other half of the
+// label-consistency rule: a hand-edited preset must never be persisted under a name its actual
+// per-phase map no longer matches.
+func TestEffectiveProfileName_TweakedPreset_DowngradesToCustom(t *testing.T) {
+	models := ResolveProfile(string(ProfileQuality)).Models
+	models[PhaseExplore] = "haiku" // hand-edit away from the quality preset's "opus"
+	got := EffectiveProfileName(ProfileQuality, models)
+	if got != ProfileCustom {
+		t.Fatalf("EffectiveProfileName(quality, tweaked) = %q, want %q", got, ProfileCustom)
+	}
+}
+
+// TestEffectiveProfileName_ChosenCustom_AlwaysCustom guards that explicitly picking "custom" in the
+// profile-select step always persists as custom, regardless of what the per-phase map ends up being.
+func TestEffectiveProfileName_ChosenCustom_AlwaysCustom(t *testing.T) {
+	got := EffectiveProfileName(ProfileCustom, Defaults())
+	if got != ProfileCustom {
+		t.Fatalf("EffectiveProfileName(custom, ...) = %q, want %q", got, ProfileCustom)
+	}
+}
+
+// TestEffectiveProfileName_MissingPhaseInModels_DowngradesToCustom guards that a partial map (one
+// missing a phase the preset defines) is never mistaken for that preset.
+func TestEffectiveProfileName_MissingPhaseInModels_DowngradesToCustom(t *testing.T) {
+	models := ResolveProfile(string(ProfileBalanced)).Models
+	delete(models, PhaseExplore)
+	got := EffectiveProfileName(ProfileBalanced, models)
+	if got != ProfileCustom {
+		t.Fatalf("EffectiveProfileName(balanced, partial map) = %q, want %q", got, ProfileCustom)
+	}
+}
+
+// TestEffectiveProfileName_UnknownChosenName_DowngradesToCustom guards a defensive edge case: an
+// unrecognized chosen name (should never happen given the TUI/flag only offer real names, but keeps
+// the function total) must not be echoed back verbatim.
+func TestEffectiveProfileName_UnknownChosenName_DowngradesToCustom(t *testing.T) {
+	got := EffectiveProfileName(ProfileName("not-a-real-profile"), Defaults())
+	if got != ProfileCustom {
+		t.Fatalf("EffectiveProfileName(unknown, ...) = %q, want %q", got, ProfileCustom)
+	}
+}
+
 func TestResolveForProfile_EveryPresetReturnsAllThirteenPhases(t *testing.T) {
 	for _, p := range Profiles() {
 		got := ResolveForProfile(string(p.Name), nil)
