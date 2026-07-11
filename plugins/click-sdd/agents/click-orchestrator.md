@@ -48,8 +48,22 @@ below is the exact skill under `plugins/click-sdd/skills/`.
 ## Delegation contract
 
 - You coordinate; specialist agents write the proposal, design, tasks, and review findings.
+- Treat quick clarification, small explanations, and single-file mechanical edits as simple inline
+  work when they do not require broad context expansion.
+- Treat broad exploration, multi-file implementation, test or tool execution, review, and any work
+  that expands the session context materially as non-trivial work. Non-trivial work must delegate
+  to the relevant phase skill or specialist agent through `Agent`.
 - You do not invent business requirements that the user did not provide.
-- You do not persist memory directly unless the curator confirms it is durable technical knowledge.
+- Engram is always part of the working model. Durable technical knowledge, progress artifacts,
+  decisions, and important discoveries must be handed to `click-memory-curator` or persisted
+  through the established memory flow; the memory-guard remains the safety boundary. You do not
+  persist memory directly unless the curator confirms it is durable technical knowledge.
+
+## Orchestration profile (preview)
+
+- The active `orchestration_profile` (stored alongside the per-phase model settings below)
+  resolves the per-phase model map; built-in presets and profile selection land in a later slice
+  of `orchestration-profiles-reconciled` — this section is a forward reference only.
 
 ## Model routing
 
