@@ -28,3 +28,10 @@ You translate approved requirements into a technical plan.
 - Break work into small, reviewable steps.
 - Put tests close to the behavior they protect.
 - Highlight dependencies between tasks.
+
+## Phase mapping
+
+This agent owns two phases: `design` (`plugins/click-sdd/skills/design/SKILL.md`, model-routed via
+`design_model`) and `tasks` (`plugins/click-sdd/skills/tasks/SKILL.md`, model-routed via
+`tasks_model`). `design` reads the approved `propose` output; `tasks` reads both `spec` and
+`design` before producing the ordered task list.

@@ -502,3 +502,198 @@ both verify-flagged WARNINGs (W2, W3) from the PR2 verify report are now resolve
 fully green across all batches, gofmt clean, no regressions. Ready for PR2 review/merge. Work Unit
 3 (`plugins/click-sdd/skills/*`, `agents/*.md`, taxonomy-lockstep test) remains next — fresh
 `sdd-apply` run should start there.
+
+---
+
+## Work Unit 3 (PR3 of 3, stacked-to-main chain): skill/agent content + taxonomy-lockstep test
+
+**Scope**: `plugins/click-sdd/skills/*` content renamed/rewritten to the real 13-phase taxonomy,
+`plugins/click-sdd/agents/*.md` content updated to reference the new taxonomy correctly, and a new
+Go lockstep test guaranteeing `modelconfig.Phases` and the on-disk plugin content never drift apart
+again. Branch is `feat/interactive-menu` (PR2 already open, contains PR1+PR2 code — untouched here).
+No changes to `internal/menu`, `internal/cli/rootdefault.go`, `internal/modelconfig`, or
+`internal/installer/models.go` — all still exactly as PR1/PR2 left them.
+
+### Persistence note
+Engram MCP tools (`mem_search`/`mem_get_observation`/`mem_save`) were not available in this
+sub-agent's tool set either — same as WU1/WU2. Progress persisted here as a file per the launch
+prompt's fallback instruction; this section is appended, all prior sections left intact.
+
+### Mode
+Strict TDD Mode for the lockstep test (Go code): RED confirmed (test written against the OLD skill
+directory names, failed as expected) before renaming/creating the skill directories that make it
+GREEN. Content authoring (SKILL.md/agent .md prose) is not itself "tested" in the traditional
+sense, matching the launch prompt's framing.
+
+### Inventory correction (verified, not assumed)
+The launch prompt's assumed inventory (5 skills, 2 agent files) was **stale/incomplete** — verified
+by reading the actual directories:
+- **Skills (7, not 5)**: `sdd-explore`, `sdd-design`, `sdd-prd`, `sdd-tasks`, `sdd-review`,
+  `sdd-code`, `agent-builder`.
+- **Agents (5, not 2)**: `click-architect.md`, `click-memory-curator.md`, `click-orchestrator.md`,
+  `click-prd-writer.md`, `click-reviewer.md`. `click-orchestrator.md`'s "Model routing" section
+  still referenced the OLD 5-phase config keys (`orchestrator_model`, `prd_writer_model`,
+  `architect_model`, `reviewer_model`, `memory_curator_model`) that PR1 already removed from
+  `plugin.json` — a real, pre-existing drift bug, now fixed.
+
+### Old -> new skill mapping (with rationale)
+- `sdd-explore` -> `explore` — direct rename, minor touch-up (added Inputs/outputs section).
+- `sdd-prd` -> `propose` — **PRD maps to `propose`, not `spec`**. Rationale: `sdd-prd`'s workflow
+  (restate problem/outcome, in/out scope, functional requirements, unresolved questions) is the
+  foundational, scope-defining document — exactly what `propose` produces per `plugin.json`'s own
+  description ("drafts scope, approach, risks, and rollback plan"). `spec`'s job (per taxonomy) is
+  narrower and downstream: turn an *already-approved* proposal into verifiable acceptance-criteria
+  *scenarios*. `sdd-prd`'s step 4 ("add acceptance criteria") is a high-level nod to this, not a
+  full scenario-writing workflow, so `spec` was written as gap-filling net-new content instead of
+  force-splitting `sdd-prd` into two half-finished files.
+- `sdd-design` -> `design` — direct rename, minor touch-up (reads proposal directly now, notes it
+  runs in parallel with `spec`, not sequentially after it).
+- `sdd-tasks` -> `tasks` — direct rename, minor touch-up (now explicitly reads both `spec` and
+  `design`, matching the real dependency graph).
+- `sdd-code` -> `apply` — direct rename. This is the closest 1:1 match in the whole inventory:
+  `sdd-code`'s description ("Implement approved tasks with strict TDD by default: failing test
+  first...") is *exactly* what `apply` does. The launch prompt's assumed inventory didn't list
+  `sdd-code` at all — its omission means this excellent match would have been missed and `apply`
+  would have been written as pure net-new instead of a much stronger rename+touch-up.
+- `sdd-review` -> `verify` — direct rename (closest conceptual match, as the launch prompt itself
+  suggested), minor touch-up (adds CRITICAL/WARNING/SUGGESTION classification language matching
+  this repo's own verify-report.md convention).
+- `agent-builder` -> **left untouched, not renamed**. It is a general-purpose meta-skill for
+  scaffolding new Claude Code sub-agents, not one of the 13 SDD phases — out of scope for the
+  taxonomy realignment.
+
+### Net-new skills (written from scratch, using the rewritten 6 as the style/format template)
+`spec`, `archive`, `onboard`, `jd-judge-a`, `jd-judge-b`, `jd-fix-agent` — all follow the exact
+existing frontmatter shape (`name`, `description` only) and body shape (`## Workflow`, `## Inputs
+and outputs`, `## Rules`) established by the other files in this plugin. `jd-judge-a`/`jd-judge-b`
+are intentionally near-mirror files (blind-pair review — each explicitly must never read the
+other's output before submitting its own findings); `jd-fix-agent` consumes only the converged
+findings list, never the full original diff, to keep the fix pass scoped.
+
+### `default`-phase decision (explicit, not silently skipped)
+**No skill directory was created for `default`.** It is a catch-all model assignment for any
+delegation not covered by a specific phase workflow (already documented this way in
+`modelconfig.go`'s package doc and `plugin.json`'s `default_model` description from PR1) — it has
+no distinct instructional content of its own to author. This decision is encoded directly in the
+lockstep test itself (`phasesWithoutDedicatedSkill` map in `plugins_lockstep_test.go`), not just a
+silently-skipped loop iteration — the test would fail loudly if `default` were ever removed from
+that exemption map without a skill directory being added.
+
+### Agent content updates
+- `click-orchestrator.md`: rewrote "Flow" (now lists the real chain: `explore -> propose ->
+  spec/design -> tasks -> apply -> verify -> archive`, plus `onboard` and the Judgment Day trio) and
+  "Model routing" (now lists all 13 real `<phase>_model` config keys instead of the 5 dead ones;
+  explicitly notes `click-memory-curator` has no dedicated phase/config key and should route on
+  `archive_model`'s resolved alias since it runs alongside/after `archive`).
+- `click-prd-writer.md`, `click-architect.md`, `click-reviewer.md`, `click-memory-curator.md`: each
+  got a short new "## Phase mapping" section stating exactly which of the 13 phases (or, for the
+  curator, which adjacent phase) it owns and which `<phase>_model` key applies. No responsibilities
+  changed — only the taxonomy references were corrected/clarified.
+
+### Files Changed
+| File | Action | What Was Done |
+|------|--------|----------------|
+| `plugins/click-sdd/skills/explore/SKILL.md` | Renamed (from `sdd-explore`) + touched up | `name: explore`, added Inputs/outputs |
+| `plugins/click-sdd/skills/propose/SKILL.md` | Renamed (from `sdd-prd`) + rewritten | `name: propose`, reframed around the proposal artifact, hands off to `spec`+`design` |
+| `plugins/click-sdd/skills/design/SKILL.md` | Renamed (from `sdd-design`) + touched up | `name: design`, reads proposal directly, notes parallel with `spec` |
+| `plugins/click-sdd/skills/tasks/SKILL.md` | Renamed (from `sdd-tasks`) + touched up | `name: tasks`, reads `spec`+`design` |
+| `plugins/click-sdd/skills/apply/SKILL.md` | Renamed (from `sdd-code`) + touched up | `name: apply`, reads `tasks`+`spec`+`design`, hands off to `verify` |
+| `plugins/click-sdd/skills/verify/SKILL.md` | Renamed (from `sdd-review`) + rewritten | `name: verify`, CRITICAL/WARNING/SUGGESTION classification, hands off to `archive` |
+| `plugins/click-sdd/skills/spec/SKILL.md` | Created (net-new) | Acceptance-criteria scenario writer, reads proposal |
+| `plugins/click-sdd/skills/archive/SKILL.md` | Created (net-new) | Closes a verified change, persists final state |
+| `plugins/click-sdd/skills/onboard/SKILL.md` | Created (net-new) | Guided pedagogical walkthrough, produces no artifacts |
+| `plugins/click-sdd/skills/jd-judge-a/SKILL.md` | Created (net-new) | Blind judge A, independent findings ledger |
+| `plugins/click-sdd/skills/jd-judge-b/SKILL.md` | Created (net-new) | Blind judge B, independent findings ledger |
+| `plugins/click-sdd/skills/jd-fix-agent/SKILL.md` | Created (net-new) | Fixes only converged BLOCKER/CRITICAL findings |
+| `plugins/click-sdd/agents/click-orchestrator.md` | Modified | Flow + Model routing sections rewritten for the 13-phase taxonomy |
+| `plugins/click-sdd/agents/click-prd-writer.md` | Modified | Added "Phase mapping" -> `propose` |
+| `plugins/click-sdd/agents/click-architect.md` | Modified | Added "Phase mapping" -> `design` + `tasks` |
+| `plugins/click-sdd/agents/click-reviewer.md` | Modified | Added "Phase mapping" -> `verify`, notes Judgment Day is separate |
+| `plugins/click-sdd/agents/click-memory-curator.md` | Modified | Added "Phase mapping" -> not a phase, routes on `archive_model` |
+| `internal/installer/plugins_lockstep_test.go` | Created | 3 tests: phase->skill-dir lockstep, no-orphan-dir guard, plugin.json key lockstep |
+| `internal/installer/plugins_test.go` | Modified | `TestClickSDDPlugin_ManifestAndFilesAreStructurallyValid`'s expected file list updated to the new/renamed skill paths |
+
+`plugins/click-sdd/.claude-plugin/plugin.json` — **not modified this batch**: verified it has no
+skill-path references at all (only `userConfig` with the 13 `<phase>_model` keys, already correct
+since PR1) — nothing to update.
+
+### TDD Cycle Evidence
+| Unit | Test File | Layer | RED | GREEN | REFACTOR |
+|------|-----------|-------|-----|-------|----------|
+| Phase -> skill-directory lockstep (`TestClickSDDSkills_LockstepWithModelconfigPhases`) | `internal/installer/plugins_lockstep_test.go` | Unit (filesystem-backed) | Written first against the OLD `sdd-*` directory names; ran and confirmed FAIL: 12 missing-file errors (explore, propose, spec, design, tasks, apply, verify, archive, onboard, jd-judge-a, jd-judge-b, jd-fix-agent) | Renamed 6 dirs + created 6 net-new dirs; `go test -run TestClickSDDSkills -v` -> PASS | None needed |
+| No-orphan-directory guard (`TestClickSDDSkills_NoOrphanPhaseDirectories`) | same file | Unit | Same RED run also caught 6 stale `sdd-*` orphan directories | Same rename fixed both directions at once; PASS | None needed |
+| plugin.json key lockstep (`TestClickSDDPluginJSON_ConfigKeysMatchModelconfigPhasesExactly`) | same file | Unit | Written and run — passed immediately, since PR1 already aligned `plugin.json`'s 13 keys to `modelconfig.Phases`; confirmed this is genuinely new coverage (no other test parses `plugin.json` off disk against `Phases`), not a false-positive tautology | N/A (already GREEN) | None needed |
+| Manifest structural test realignment (`TestClickSDDPlugin_ManifestAndFilesAreStructurallyValid`) | `internal/installer/plugins_test.go` | Unit (pre-existing, updated) | Confirmed this would FAIL against the new directory names before updating its expected-file list (old list pointed at now-deleted `sdd-*` paths) | Updated the list to the new 12 phase dirs + `agent-builder`; PASS | None needed |
+
+### Test Summary
+- **Total tests written this batch**: 3 new (`TestClickSDDSkills_LockstepWithModelconfigPhases`,
+  `TestClickSDDSkills_NoOrphanPhaseDirectories`, `TestClickSDDPluginJSON_ConfigKeysMatchModelconfigPhasesExactly`).
+- **Total tests modified**: 1 (`TestClickSDDPlugin_ManifestAndFilesAreStructurallyValid` expected-file list).
+- **Total tests passing**: full `go test ./... -count=1` green, all 9 packages `ok` — no regressions
+  to WU1's 12/12, WU2's 9/9, or the WU2 follow-up's 2/2 sub-tasks.
+- **Layers used**: Unit only (filesystem-backed assertions + JSON parsing), consistent with the
+  existing `plugins_test.go` structural-validation style in this package.
+- **Duplication check**: confirmed `TestSyncMarketplacePlugins_PassesPerPhaseConfigFlagsForClickSDD`
+  (PR1, `plugins_config_test.go`) only asserts the in-memory `--config` flags `clickSDDConfigArgs`
+  emits from `modelconfig.Phases` directly — it never reads `plugin.json` off disk. The new
+  `TestClickSDDPluginJSON_ConfigKeysMatchModelconfigPhasesExactly` is therefore genuinely
+  non-duplicate coverage of the on-disk manifest.
+
+### Deviations from Design / Launch Prompt
+- The launch prompt's assumed skill/agent inventory was stale (see "Inventory correction" above).
+  Proceeded using the verified real inventory rather than the assumed one, per the launch prompt's
+  own instruction to "verify" rather than assume.
+- `sdd-prd` was mapped to `propose` rather than `spec` (see rationale above) — the launch prompt
+  left this an open decision ("read its current content to decide which single new phase it best
+  maps to"), so this is a resolved decision, not a deviation from an explicit instruction.
+- `sdd-code` was discovered and mapped to `apply` as a rename+touch-up rather than being written as
+  net-new — a stronger outcome than the launch prompt's assumed inventory would have produced, not a
+  scope reduction (the `apply` skill still exists, is still substantive, and is still real content).
+
+### Issues Found
+None. `gofmt -l` is clean (zero output) on every Go file touched/created this batch
+(`internal/installer/plugins_lockstep_test.go`, `internal/installer/plugins_test.go`) — verified
+directly after re-confirming a transient stale-cache false-positive during an earlier check resolved
+itself on re-run.
+
+### Verification (Work Unit 3 boundary)
+- `go build ./...` — clean, no errors.
+- `go vet ./...` — clean, no findings.
+- `go test ./... -count=1` — all 9 packages `ok`: `audit`, `cli`, `doctor`, `guard`, `installer`,
+  `manifest`, `menu`, `modelconfig`, `ui` (`cmd/click`, `internal/version`, `plugins/click-stub`
+  have no test files, as before). New lockstep tests genuinely PASS (not skipped) as part of this
+  run.
+- `gofmt -l internal/installer/plugins_lockstep_test.go internal/installer/plugins_test.go` — empty
+  output (clean).
+- `plugins/click-sdd/.claude-plugin/plugin.json` — re-validated as parseable JSON (unchanged this
+  batch).
+- Sanity-read every new/rewritten `SKILL.md`/agent `.md` file directly: valid frontmatter, no
+  leftover TODO/lorem-ipsum (grep-confirmed), consistent voice with the pre-existing 6 files, no
+  stale references to `click-sdd-*`-prefixed skill names or the 5 dead `*_model` config keys
+  anywhere under `plugins/click-sdd/` (grep-confirmed).
+
+### Workload / PR Boundary
+- Mode: stacked-to-main chained PR slice (PR3 of 3 — the LAST slice of this chain).
+- Current work unit: Work Unit 3 — `plugins/click-sdd/skills/*` content, `agents/*.md` content,
+  taxonomy-lockstep test.
+- Boundary: starts at PR2's merged/ready state (menu + root default action, but skill/agent content
+  still on the dead 5-phase taxonomy); ends at a fully-compiling, fully-green repo where every
+  `modelconfig.Phase` has real skill content (except the explicitly-exempted `default`), every
+  agent file correctly references the 13-phase taxonomy, and a lockstep test permanently guards
+  against this drift recurring.
+- Rollback: `git revert` this slice restores the `sdd-*`-named skill directories and the stale
+  agent-file taxonomy references; PR1/PR2 code is untouched and unaffected either way.
+- Estimated review budget impact: 18 skill/agent files touched (6 renamed+rewritten, 6 net-new, 5
+  agent content updates, 1 unrelated skill untouched) + 1 new test file + 1 test-file update — all
+  content/prose + one small, mechanical Go test file. No production runtime code changed. Larger
+  file *count* than WU1/WU2 but each individual diff is small and mechanically reviewable (frontmatter
+  rename + short prose sections); recommend reviewing skill-by-skill rather than as one large diff.
+
+## Status (final)
+Work Unit 1: 12/12 sub-tasks complete + install.go gap fix complete. Work Unit 2: 9/9 sub-tasks
+complete + follow-up 2/2 (W2, W3 resolved). Work Unit 3: all planned sub-tasks complete — skill
+directories renamed/rewritten (6) + net-new (6), all 5 agent files updated, taxonomy-lockstep test
+written RED-first and now GREEN, manifest structural test realigned. `go test ./...` fully green
+across all three work units, `gofmt -l` clean on every touched file, no regressions. This was the
+last slice of the 3-PR stacked-to-main chain — ready for PR3 review/merge, then the whole chain is
+ready for `sdd-verify`/`sdd-archive` at the change level.

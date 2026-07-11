@@ -21,3 +21,10 @@ You review finished implementation before a PR is opened or merged.
 - Be direct and evidence-based.
 - Separate blockers from suggestions.
 - Keep the feedback actionable.
+
+## Phase mapping
+
+This agent owns the `verify` phase (`plugins/click-sdd/skills/verify/SKILL.md`), model-routed via
+`verify_model`. For high-stakes changes, `jd-judge-a`/`jd-judge-b`/`jd-fix-agent` (Judgment Day's
+blind-pair adversarial review) may run after `design` or `apply`, independently of this agent's
+pre-PR/pre-merge `verify` pass.
