@@ -208,3 +208,297 @@ Strict TDD Mode. RED confirmed before implementation.
 Work Unit 1: 12/12 sub-tasks complete + install.go gap fix complete. `go test ./...` green across
 both batches. Ready for PR1 review/merge. Work Unit 2 (menu) is next — fresh `sdd-apply` run
 should start there.
+
+---
+
+## Work Unit 2 (PR2 of 3, stacked-to-main chain): standing `internal/menu` + `root.go` default action
+
+**Scope**: new `internal/menu` package (bubbletea Model/Update/View + pure `ActionArgs` dispatch),
+`root.go` default no-arg action with a TTY-safe `interactive()` gate, and a new hidden
+`configure-models` subcommand backing the menu's "Configure models" item. Work Unit 1's taxonomy
+code (`internal/modelconfig`, `models.json` migration, doctor/update/install wiring) is untouched.
+Work Unit 3 (`plugins/click-sdd/skills/*` content, `agents/*.md` content, taxonomy-lockstep test)
+remains explicitly out of scope.
+
+### Persistence note
+Engram MCP tools (`mem_search`/`mem_get_observation`/`mem_save`) were not available in this
+sub-agent's tool set for this run either — same as Work Unit 1. Progress persisted here as a file
+per the launch prompt's fallback instruction.
+
+### Mode
+Strict TDD Mode (confirmed repo policy). Every unit of behavior below followed RED → GREEN.
+
+### Completed Tasks
+- [x] `internal/menu/menu.go`: new package hosting the standing menu's bubbletea `Model`
+      (`Cursor`, `Chosen`, `StatusMsg`), the fixed `Items` list (5 active items + 7 inert
+      "coming soon" placeholders + Quit), and the pure `ActionArgs(action string) []string`
+      dispatch-mapping function.
+- [x] j/k (and arrow key) cursor navigation with wraparound; inert items are not skipped (no
+      special-casing in cursor math, per design decision 4).
+- [x] Enter on an active item sets `Chosen` to that item's action and returns `tea.Quit`; Enter on
+      an inert item sets a transient `StatusMsg` ("coming soon — not implemented yet") and stays
+      in the menu (no quit, no dispatch).
+- [x] q/esc/ctrl+c set `Chosen = ActionQuit` and quit; `ActionArgs(ActionQuit)` and any unknown
+      action return `nil` — the caller treats that as "nothing to dispatch, exit cleanly."
+- [x] `View()` renders a static placeholder header line (see Simplification below), every item
+      label, and a `(coming soon)` suffix + dimmed style on inert rows.
+- [x] `internal/cli/rootdefault.go`: `runRootDefault` (root's new `RunE`) — bare `click` on a real
+      TTY launches the menu program, then (after it returns) maps `Chosen` via
+      `menu.ActionArgs` and dispatches through `dispatch()`; non-TTY prints help and returns nil
+      (exit 0, no hang). An unrecognized subcommand token (`args` non-empty when root's `RunE`
+      fires) returns the same `unknown command %q for %q` shape cobra itself used before root had
+      a `RunE` — this explicit guard was required because giving root a `RunE` at all disables
+      cobra's own unknown-subcommand rejection.
+- [x] `interactive(noInteractive bool, out io.Writer, in io.Reader) bool`: false when
+      `--no-interactive` is set, `CI` env var is set, stdout isn't a real terminal, or stdin isn't
+      a real terminal (checked independently — bubbletea starves on piped stdin even with a TTY
+      stdout). Takes `io.Writer`/`io.Reader`, never touches `os.Stdout`/`os.Stdin` directly.
+- [x] `dispatch(cmd *cobra.Command, args []string) error`: runs a **fresh**
+      `NewRootCommand()` instance (not the live, already-executing root) attached to the caller's
+      own `Out`/`Err`/`In` streams, avoiding flag-state re-entrancy.
+- [x] `internal/cli/configuremodels.go`: new hidden `click configure-models` subcommand backing
+      the menu's "Configure models" item — reuses `install.go`'s existing `runModelSelectTUI`
+      (the same `internal/ui.ModelSelectModel` screen WU1 already relabeled to 13 phases; **not
+      rebuilt**) and persists the result via `installer.SaveModels`. Registered on root
+      (`Hidden: true`) so it's reachable both from the menu's dispatch path and directly
+      (`click configure-models`) for scripts. Guarded by the same `isTerminalWriter` TTY check so
+      it can never spin up a real bubbletea program against non-terminal output even when invoked
+      directly outside the menu.
+- [x] `internal/cli/root.go`: registered `RunE: runRootDefault`, added the `--no-interactive` flag
+      (local to root, not `PersistentFlags`, so it never collides with `install`'s own
+      `--yes`/`--non-interactive` local flags), and added `newConfigureModelsCommand()` to
+      `root.AddCommand(...)`. Explicit subcommands (`install`, `update`, `doctor`, `uninstall`,
+      `memory-guard`) were not touched beyond this registration — their own `RunE` functions are
+      unchanged.
+- [x] `internal/cli/commands_test.go`: `execRoot`'s test helper now pins `root.SetIn(&bytes.Buffer{})`
+      (previously left unset, defaulting to the real `os.Stdin`) so every CLI test — including the
+      new default-action TTY gate — is deterministic regardless of the test runner's actual stdin.
+
+### Files Changed
+| File | Action | What Was Done |
+|------|--------|----------------|
+| `internal/menu/menu.go` | Created | Standing menu `Model`/`Update`/`View`, `Items`, `ActionArgs` |
+| `internal/menu/menu_test.go` | Created | Cursor nav, active/inert Enter behavior, quit keys, View content, ActionArgs mapping — all headless (no real bubbletea program) |
+| `internal/cli/rootdefault.go` | Created | `runRootDefault`, `interactive()`, `isTerminalWriter`/`isTerminalReader`, `dispatch()` |
+| `internal/cli/rootdefault_test.go` | Created | interactive()/isTerminal* branch coverage, non-TTY no-hang root test, unknown-subcommand-still-errors test, dispatch() unit tests |
+| `internal/cli/configuremodels.go` | Created | Hidden `configure-models` subcommand, TTY-guarded, reuses `runModelSelectTUI` + `installer.SaveModels` |
+| `internal/cli/root.go` | Modified | Wired `RunE`, `--no-interactive` flag, registered `configure-models` |
+| `internal/cli/commands_test.go` | Modified | `execRoot` now pins `SetIn` to an empty buffer |
+
+### TDD Cycle Evidence
+| Unit | Test File | Layer | RED | GREEN | REFACTOR |
+|------|-----------|-------|-----|-------|----------|
+| `internal/menu` Model/Update/View/ActionArgs | `internal/menu/menu_test.go` | Unit | ✅ Written first, confirmed fail (undefined `NewModel`/`Items`/`Item`/`Model`/`ActionQuit`, package didn't exist) | ✅ `go test ./internal/menu/...` passed after `menu.go` | ➖ None needed |
+| `interactive()` + `isTerminalWriter`/`isTerminalReader` + `dispatch()` + root default action + `configure-models` | `internal/cli/rootdefault_test.go` | Unit + cobra-command level | ✅ Written first, confirmed fail (undefined `interactive`/`isTerminalWriter`/`isTerminalReader`/`dispatch`, build failed) | ✅ `go test ./internal/cli/...` passed after `rootdefault.go`, `configuremodels.go`, and `root.go` wiring | ➖ None needed |
+
+### Test Summary
+- **Total tests written this batch**: 12 in `internal/menu/menu_test.go` + 14 in
+  `internal/cli/rootdefault_test.go` = 26 new tests, plus the `execRoot` helper fix that benefits
+  every existing CLI test.
+- **Total tests passing**: full `go test ./... -count=1` green (see verification below), including
+  every prior Work Unit 1 test.
+- **Layers used**: Unit (menu Update/dispatch logic tested headless) + cobra-command level (root
+  default action exercised through `execRoot`'s `bytes.Buffer` streams, never a real TTY).
+- **No real bubbletea program was ever spun up in tests** — `menu.Model.Update`/`View` are tested
+  as plain Go values via a `updateModel` helper (mirrors the existing pattern in
+  `internal/ui/modelselect_test.go`); `runRootDefault`'s `tea.NewProgram(...).Run()` call is only
+  reached when `interactive()` returns true, and every test forces the non-TTY branch via
+  `bytes.Buffer` streams, so that branch is never exercised in the test suite by construction.
+
+### Simplification — updates-indicator is a static placeholder
+The proposal's "update-indicator display" requirement is satisfied **structurally only**: the
+menu header (`headerVersion` const in `internal/menu/menu.go`) is a static string
+(`"click-ai-devkit (updates: not checked)"`), not a real update-availability check. No
+network/version-compare logic was implemented — this was explicitly out of scope per the launch
+prompt. Flagging this clearly as a known simplification for a future task to wire real data into
+the same header position.
+
+### Deviations from Design
+- **"Configure models" needed a new dispatch target that didn't exist before.** The design's
+  dispatch pattern (`ActionArgs(chosen) []string` → fresh `NewRootCommand().SetArgs(args).Execute()`)
+  assumes every active menu item maps to an *existing* cobra subcommand. `install`/`update`/
+  `doctor`/`uninstall` already existed, but there was no standalone command for "pick per-phase
+  models and save them" — that flow previously only existed inline inside `click install`. Rather
+  than special-case "Configure models" outside the uniform dispatch mechanism (which the design
+  explicitly wants to keep pure/testable), a new hidden `click configure-models` subcommand was
+  added so the *same* `ActionArgs`/`dispatch()` pattern covers it too. This is an additive,
+  backward-compatible extension of the design's Affected Areas list (`internal/cli/root.go` already
+  listed as "Modified"), not a deviation from the dispatch mechanism itself.
+- **Explicit guard added for the unknown-subcommand case.** Giving `root` a `RunE` disables
+  cobra's own default "unknown command" rejection for unmatched subcommand tokens (cobra only
+  applies that check when the command itself has no `Run`/`RunE`). `runRootDefault` restores the
+  prior UX explicitly (`args non-empty → return the same error shape cobra used to produce`) so
+  `click <typo>` keeps failing loudly instead of silently falling through to help text. Not called
+  out in the design doc, but necessary to avoid a real regression.
+- **`interactive()`'s true-TTY branch has no dedicated unit test** — only the false branch (the
+  safety-critical one) is exercised deterministically via `bytes.Buffer`/`os.Pipe`, matching the
+  pre-existing convention already used by `install.go`'s `isNonInteractiveInstall` (which also has
+  no true-TTY unit test). A genuine positive TTY assertion would require a real pseudo-terminal,
+  which isn't portable across this repo's Windows/CI test environment.
+
+### Issues Found
+None new. `gofmt -l` is clean on every file created or modified in this batch
+(`internal/menu/menu.go`, `internal/menu/menu_test.go`, `internal/cli/rootdefault.go`,
+`internal/cli/rootdefault_test.go`, `internal/cli/configuremodels.go`, `internal/cli/root.go`,
+`internal/cli/commands_test.go`) — verified directly, zero output.
+
+### Verification (Work Unit 2 boundary)
+- `go build ./...` — clean, no errors.
+- `go vet ./...` — clean, no findings.
+- `go test ./... -count=1` — all packages `ok`: `audit`, `cli`, `doctor`, `guard`, `installer`,
+  `manifest`, `menu` (new), `modelconfig`, `ui` (`cmd/click`, `internal/version`,
+  `plugins/click-stub` have no test files, as before).
+- `gofmt -l` — clean on every file created/touched this batch (see Issues Found).
+
+### Workload / PR Boundary
+- Mode: stacked-to-main chained PR slice (PR2 of 3).
+- Current work unit: Work Unit 2 — standing `internal/menu` TUI + `root.go` default action +
+  `configure-models` dispatch target.
+- Boundary: starts at PR1's merged taxonomy realignment (no menu code, no default root action);
+  ends at a fully-compiling, fully-green repo where bare `click` on a TTY opens a navigable menu
+  wired to real `install`/`update`/`doctor`/`uninstall`/`configure-models` commands, with inert
+  placeholders and a safe non-TTY/CI fallback. No `plugins/click-sdd/skills/*` or `agents/*.md`
+  content changes — those remain PR3.
+- Rollback: `git revert` this slice cleanly restores root to its Work-Unit-1 subcommand-only
+  behavior (`RunE` removed, `internal/menu` and the two new `internal/cli` files disappear); PR3
+  does not exist yet, so there is no cross-slice coupling.
+- Estimated review budget impact: 3 new files (`internal/menu/menu.go` ~215 lines,
+  `internal/cli/rootdefault.go` ~100 lines, `internal/cli/configuremodels.go` ~55 lines) + 2 new
+  test files + small edits to `root.go` and `commands_test.go`. Larger than Work Unit 1's
+  mechanical taxonomy swap since this introduces new architecture (a second bubbletea program +
+  the dispatch mechanism), but self-contained to `internal/menu` and `internal/cli` with no
+  changes to `internal/installer`/`internal/doctor`/`internal/modelconfig`.
+
+## Remaining Tasks (next apply run — Work Unit 3)
+- [ ] `plugins/click-sdd/skills/*` content: rename/rewrite skills to match the real 13-phase
+      taxonomy (`explore, propose, spec, design, tasks, apply, verify, archive, onboard,
+      jd-judge-a, jd-judge-b, jd-fix-agent, default`).
+- [ ] `agents/*.md` content updates to match the same taxonomy.
+- [ ] Taxonomy-lockstep test (explicitly deferred from WU1 and WU2 — would fail until this
+      content lands).
+
+## Status (updated)
+Work Unit 1: 12/12 sub-tasks complete + install.go gap fix complete. Work Unit 2: 9/9 sub-tasks
+complete — `internal/menu` package + `root.go` default action + `configure-models` dispatch
+target, all TDD RED→GREEN, `go test ./...` fully green. Ready for PR2 review/merge. Work Unit 3
+(`plugins/click-sdd/skills/*`, `agents/*.md`, taxonomy-lockstep test) is next — fresh `sdd-apply`
+run should start there.
+
+---
+
+## Work Unit 2 — follow-up (loop-back + i18n), same PR2 slice
+
+**Scope**: two verify-flagged WARNINGs from the PR2 verify report (W2, W3) closed. No new files;
+`internal/menu` and `internal/cli` remain the only touched packages. Work Unit 1's taxonomy code
+and Work Unit 3 (`plugins/click-sdd/skills/*`, `agents/*.md`, taxonomy-lockstep test) are still
+untouched.
+
+### Persistence note
+Engram MCP tools (`mem_search`/`mem_get_observation`/`mem_save`) were not available in this
+sub-agent's tool set for this run either — same as WU1/WU2. Progress persisted here as a file per
+the launch prompt's fallback instruction; this section is appended, all prior sections (Work Unit
+1, Batch 2, Work Unit 2) are left intact.
+
+### Mode
+Strict TDD Mode (confirmed repo policy). Both fixes below followed RED → GREEN.
+
+### Completed Tasks
+- [x] W2 fix — menu loops back after dispatching an active item instead of exiting the process.
+      Added `runMenuLoop(launchMenu func() (string, error), dispatchFn func([]string) error) error`
+      in `internal/cli/rootdefault.go`: launches the menu, dispatches the chosen action if any,
+      then re-launches the menu again, repeating until `menu.ActionQuit` (or any chosen value that
+      maps to no dispatch args via `menu.ActionArgs`) or an error from either `launchMenu` or
+      `dispatchFn`. `runRootDefault` now builds `launchMenu`/`dispatchFn` closures over the real
+      `tea.NewProgram(...).Run()` + `dispatch()` calls and delegates control-flow to
+      `runMenuLoop` — the fresh-factory `dispatch()` pattern from Work Unit 2 is unchanged, only
+      the surrounding control-flow now loops.
+- [x] W3 fix — unified all menu-visible text to Spanish in `internal/menu/menu.go`: item labels
+      (`Iniciar instalación`, `Actualizar herramientas`, `Configurar modelos`, `Ejecutar
+      diagnóstico`, `Desinstalar`, `Salir`), inert placeholders (`Presets de instalación`, `Crear
+      tu propio agente`, `Sincronizar configuración`, `Actualizar + Sincronizar`, `Gestionar
+      backups`, `Plugins de la comunidad OpenCode`, `Perfiles SDD de OpenCode`), the
+      updates-indicator header (`headerVersion` → `"click-ai-devkit (actualizaciones: sin
+      verificar)"`), the `(coming soon)` view suffix → `(próximamente)`, and the transient
+      `comingSoonMsg` → `"próximamente — todavía no implementado"`. The pre-existing Spanish
+      footer (`j/k mover · enter seleccionar · q/esc salir`) was already correct and untouched.
+      Code identifiers and comments were left in English per repo convention — only user-visible
+      strings changed.
+
+### Files Changed
+| File | Action | What Was Done |
+|------|--------|----------------|
+| `internal/cli/rootdefault.go` | Modified | Added `runMenuLoop`; `runRootDefault` now builds `launchMenu`/`dispatchFn` closures and delegates to it instead of a single launch-then-dispatch-once call |
+| `internal/cli/rootdefault_test.go` | Modified | Added 5 new `TestRunMenuLoop_*` tests (quit-immediately, dispatch-then-loop-until-quit, launchMenu error, dispatchFn error, empty-chosen) — all pure, injected-function tests, no real bubbletea program |
+| `internal/menu/menu.go` | Modified | Translated `Items` labels, `headerVersion`, `comingSoonMsg`, and the `View()` inert-suffix string to Spanish |
+| `internal/menu/menu_test.go` | Modified | `TestModel_View_InertItemsShowComingSoonSuffix` now asserts the `(próximamente)` suffix instead of the old English `(coming soon)` string |
+
+### TDD Cycle Evidence
+| Unit | Test File | Layer | RED | GREEN | REFACTOR |
+|------|-----------|-------|-----|-------|----------|
+| `runMenuLoop` control-flow (loop-back after dispatch) | `internal/cli/rootdefault_test.go` | Unit (pure, injected functions) | ✅ Written first, confirmed fail: `go test ./internal/cli/... -run TestRunMenuLoop` → 5x `undefined: runMenuLoop` build failure | ✅ Implemented `runMenuLoop` + rewired `runRootDefault`; `go test ./internal/cli/... -run TestRunMenuLoop -v` → 5/5 PASS | ➖ None needed — single small pure function |
+| Spanish `(próximamente)` inert-item suffix | `internal/menu/menu_test.go` | Unit | ✅ Changed test assertion first, confirmed fail: `TestModel_View_InertItemsShowComingSoonSuffix` FAIL (View() still rendered `(coming soon)`) | ✅ Translated `menu.go` strings; `go test ./internal/menu/...` → PASS | ➖ None needed — literal string swap |
+
+### Test Summary
+- **Total tests written this batch**: 5 new (`TestRunMenuLoop_QuitImmediatelyReturnsNilWithoutDispatching`,
+  `TestRunMenuLoop_DispatchesThenLoopsBackToMenuUntilQuit`,
+  `TestRunMenuLoop_LaunchMenuErrorStopsLoopWithoutDispatching`,
+  `TestRunMenuLoop_DispatchErrorStopsLoopWithoutRelaunching`, `TestRunMenuLoop_EmptyChosenReturnsNil`);
+  1 existing test updated (`TestModel_View_InertItemsShowComingSoonSuffix`, Spanish assertion).
+- **Total tests passing**: full `go test ./... -count=1` green, all 9 packages `ok` (no regressions
+  to WU1's 12/12 or WU2's 9/9 sub-tasks — `TestRootCommand_NoArgs_NonTTY_PrintsHelpAndExitsCleanly`,
+  `TestRootCommand_UnknownSubcommand_ReturnsError`, all `TestInteractive_*`/`TestIsTerminal*`
+  re-run explicitly and confirmed still passing).
+- **Layers used**: Unit only — `runMenuLoop` is tested as a pure function with injected
+  `launchMenu`/`dispatchFn` closures (same pattern already used for `dispatch()` in WU2), no real
+  bubbletea program spun up.
+- **No real bubbletea program was ever spun up in tests** — same invariant as WU2; `runRootDefault`'s
+  `tea.NewProgram(...).Run()` call is only reached when `interactive()` returns true, still
+  unreachable in the test suite by construction (non-TTY branch forced via `bytes.Buffer`/`os.Pipe`
+  everywhere).
+
+### Deviations from Design
+- None from the original design doc. This batch resolves two WARNINGs the WU2 verify report
+  itself flagged as non-blocking-but-worth-confirming (W2 loop-back UX, W3 language consistency);
+  the user explicitly confirmed loop-back is the correct spec-intended behavior ("Active Item
+  Dispatch — ... then return to menu") before this batch started.
+- `runMenuLoop`'s signature takes `dispatchFn func([]string) error` (args already resolved) rather
+  than `func(action string) error` — this keeps `menu.ActionArgs` resolution (and the "nothing to
+  dispatch" nil-args short-circuit) inside `runMenuLoop` itself, matching where `runRootDefault`
+  previously did that resolution, and keeps the injected `dispatchFn` a thin wrapper over the
+  real `dispatch()` helper.
+
+### Issues Found
+None. `gofmt -l` is clean (zero output) on every file touched this batch (`internal/cli/rootdefault.go`,
+`internal/cli/rootdefault_test.go`, `internal/menu/menu.go`, `internal/menu/menu_test.go`) —
+verified directly.
+
+### Verification (this follow-up batch)
+- `go build ./...` — clean, no errors.
+- `go vet ./...` — clean, no findings.
+- `go test ./... -count=1` — all 9 packages `ok`: `audit`, `cli`, `doctor`, `guard`, `installer`,
+  `manifest`, `menu`, `modelconfig`, `ui`.
+- `gofmt -l internal/menu/menu.go internal/menu/menu_test.go internal/cli/rootdefault.go internal/cli/rootdefault_test.go` — empty output (clean).
+- Regression re-run: `TestRootCommand_NoArgs_NonTTY_PrintsHelpAndExitsCleanly`,
+  `TestRootCommand_UnknownSubcommand_ReturnsError`, all `TestInteractive_*`, all `TestIsTerminal*`
+  — all PASS, confirming the non-TTY no-hang guarantee and the unknown-subcommand-rejection fix
+  from WU2 are intact.
+
+### Workload / PR Boundary
+- Mode: stacked-to-main chained PR slice (PR2 of 3) — same slice as Work Unit 2, this is a
+  same-PR follow-up closing verify WARNINGs, not a new work unit.
+- Boundary: starts at WU2's committed-ready state (select-and-exit, mixed-language menu); ends at
+  loop-back-until-quit control-flow + fully Spanish menu UI, still 0 new files, small diff on top
+  of WU2 (`rootdefault.go` +~20 lines, `rootdefault_test.go` +~115 lines of tests,
+  `menu.go`/`menu_test.go` string-only edits).
+- Rollback: `git revert` this follow-up cleanly restores WU2's select-and-exit + mixed-language
+  behavior without touching WU1 or requiring WU3 to exist.
+- Estimated review budget impact: small — mechanical control-flow extraction + string literal
+  translation, no new architecture, stays well inside PR2's existing review budget.
+
+## Status (updated again)
+Work Unit 1: 12/12 sub-tasks complete + install.go gap fix complete. Work Unit 2: 9/9 sub-tasks
+complete. Work Unit 2 follow-up: 2/2 sub-tasks complete (loop-back control-flow, Spanish i18n) —
+both verify-flagged WARNINGs (W2, W3) from the PR2 verify report are now resolved. `go test ./...`
+fully green across all batches, gofmt clean, no regressions. Ready for PR2 review/merge. Work Unit
+3 (`plugins/click-sdd/skills/*`, `agents/*.md`, taxonomy-lockstep test) remains next — fresh
+`sdd-apply` run should start there.
