@@ -102,6 +102,47 @@ func ResolveForProfile(name string, overrides map[Phase]string) map[Phase]string
 	return resolveOnto(ResolveProfile(name).Models, overrides)
 }
 
+// EffectiveProfileName returns the label that should actually be persisted alongside a resolved
+// per-phase map: chosen itself when models is byte-for-byte identical to chosen's own built-in
+// preset map, or ProfileCustom when the developer picked "custom" outright, hand-tweaked a preset's
+// per-phase editor away from its own values, or passed an unrecognized name. This is the single
+// source of truth for the label-consistency rule (install-update-doctor-ux spec): the persisted
+// `profile` field must never claim a preset name the actual per-phase map no longer matches.
+func EffectiveProfileName(chosen ProfileName, models map[Phase]string) ProfileName {
+	preset, ok := presetModels(chosen)
+	if !ok {
+		return ProfileCustom
+	}
+	if !modelsEqual(preset, models) {
+		return ProfileCustom
+	}
+	return chosen
+}
+
+// presetModels returns the built-in preset's Models map for name, and whether name names a real
+// built-in preset (i.e. not "custom", empty, or unknown — Profiles() deliberately excludes those).
+func presetModels(name ProfileName) (map[Phase]string, bool) {
+	for _, p := range Profiles() {
+		if p.Name == name {
+			return p.Models, true
+		}
+	}
+	return nil, false
+}
+
+// modelsEqual reports whether a and b hold exactly the same phase->model entries.
+func modelsEqual(a, b map[Phase]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for phase, model := range a {
+		if b[phase] != model {
+			return false
+		}
+	}
+	return true
+}
+
 // resolveOnto merges overrides onto base: any known phase with a non-empty value in overrides
 // wins, every other phase keeps base's value. Empty-string values are ignored, and unknown phase
 // keys are silently dropped. The returned map is always a fresh copy — it never aliases base or

@@ -149,6 +149,38 @@ func TestModelSelectModel_View_RendersAllPhaseRows(t *testing.T) {
 	}
 }
 
+// TestNewModelSelectModelForProfile_SeedsFromProfilePreset guards design D4's seeding contract:
+// picking a preset in the profile-select step must pre-fill this screen with that preset's own
+// values, not the D25 defaults.
+func TestNewModelSelectModelForProfile_SeedsFromProfilePreset(t *testing.T) {
+	m := NewModelSelectModelForProfile(modelconfig.ProfileQuality)
+	want := modelconfig.ResolveForProfile(string(modelconfig.ProfileQuality), nil)
+	for phase, model := range want {
+		if got := m.Selection[phase]; got != model {
+			t.Errorf("Selection[%s] = %q, want quality preset %q", phase, got, model)
+		}
+	}
+	if m.Cursor != 0 {
+		t.Errorf("initial Cursor = %d, want 0", m.Cursor)
+	}
+	if m.Confirmed || m.Cancelled {
+		t.Errorf("initial state Confirmed=%v Cancelled=%v, want both false", m.Confirmed, m.Cancelled)
+	}
+}
+
+// TestNewModelSelectModelForProfile_Balanced_MatchesDefaults guards that seeding from "balanced"
+// still matches Defaults() verbatim (design D1: balanced IS Defaults()) — the same invariant
+// TestNewModelSelectModel_StartsWithDefaultsPreSelected already covers for the plain constructor.
+func TestNewModelSelectModelForProfile_Balanced_MatchesDefaults(t *testing.T) {
+	m := NewModelSelectModelForProfile(modelconfig.ProfileBalanced)
+	want := modelconfig.Defaults()
+	for phase, model := range want {
+		if got := m.Selection[phase]; got != model {
+			t.Errorf("Selection[%s] = %q, want default %q", phase, got, model)
+		}
+	}
+}
+
 func keyMsg(key string) tea.KeyMsg {
 	switch key {
 	case "up":

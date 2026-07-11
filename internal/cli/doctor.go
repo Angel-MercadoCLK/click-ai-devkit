@@ -55,6 +55,12 @@ func runDoctor(cmd *cobra.Command) error {
 	}
 	fmt.Fprintln(out, r.Info(modelsLine))
 
+	profileLine, err := formatProfileLine(cfg)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, r.Info(profileLine))
+
 	if !report.Healthy() {
 		fmt.Fprintln(out, r.Fail("click-ai-devkit no está instalado correctamente"))
 		return errUnhealthy
@@ -84,4 +90,23 @@ func formatModelsLine(cfg installer.Config) (string, error) {
 		parts = append(parts, string(phase)+"="+model)
 	}
 	return "Modelos por fase de click-sdd: " + strings.Join(parts, ", "), nil
+}
+
+// formatProfileLine reports the active orchestration profile (design D4 / install-update-doctor-ux
+// spec's "Doctor Reports Active Profile" requirement): the persisted profile label if `click
+// install`/`click update` ever ran, or an explicit "balanced (defaults)" line otherwise. This is a
+// pure read via installer.LoadModelsWithProfile — it never writes to models.json, keeping `click
+// doctor` strictly read-only (NFR-012), consistent with formatModelsLine above.
+func formatProfileLine(cfg installer.Config) (string, error) {
+	profile, _, found, err := installer.LoadModelsWithProfile(cfg)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "Perfil de orquestación: balanced (defaults)", nil
+	}
+	if profile == "" {
+		profile = modelconfig.ProfileBalanced
+	}
+	return "Perfil de orquestación: " + string(profile), nil
 }

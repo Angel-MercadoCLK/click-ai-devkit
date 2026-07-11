@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -284,13 +285,13 @@ func TestInstallCommand_InteractiveCancel_LeavesModelsUntouched(t *testing.T) {
 	cmd.SetErr(&buf)
 	r := rendererFor(cmd, &buf)
 
-	cancelledSelector := func(*cobra.Command) (map[modelconfig.Phase]string, bool, error) {
-		return nil, true, nil
+	cancelledSelector := func(*cobra.Command) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+		return "", nil, true, nil
 	}
 
 	// nonInteractive=false forces the interactive branch regardless of the test's non-TTY buffer,
 	// so the fake selector's cancel is what actually gets exercised.
-	_, cancelled, err := resolveInstallModels(cmd, &buf, r, cfg, false, cancelledSelector)
+	_, _, cancelled, err := resolveInstallModels(cmd, &buf, r, cfg, false, "", cancelledSelector)
 	if err != nil {
 		t.Fatalf("resolveInstallModels() error = %v", err)
 	}
@@ -496,6 +497,177 @@ func TestInstallCommand_IssuesMarketplaceCommandsInOrder(t *testing.T) {
 	}
 }
 
+// TestInstallCommand_NonTTY_DoesNotHangAndResolvesToBalanced guards the CRITICAL non-TTY/CI safety
+// contract (design D4): a non-interactive `click install` with no --profile flag must return
+// immediately — never block waiting for interactive input — and must persist the "balanced" profile
+// label alongside its (Defaults()-equal) per-phase map. execRoot always wires stdin/stdout to a
+// bytes.Buffer (never a real terminal), so isNonInteractiveInstall's TTY check already forces the
+// non-interactive branch on every test in this file; this test makes that safety property explicit
+// with its own elapsed-time assertion instead of relying on it implicitly.
+func TestInstallCommand_NonTTY_DoesNotHangAndResolvesToBalanced(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	start := time.Now()
+	if _, err := execRoot(t, home, "install"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("install command took %s on a non-TTY buffer, want it to return immediately without blocking on interactive input", elapsed)
+	}
+
+	profile, models, found, err := installer.LoadModelsWithProfile(installer.Config{ClaudeHome: home})
+	if err != nil {
+		t.Fatalf("LoadModelsWithProfile() error = %v", err)
+	}
+	if !found {
+		t.Fatal("LoadModelsWithProfile() found = false after install, want true")
+	}
+	if profile != modelconfig.ProfileBalanced {
+		t.Fatalf("persisted profile = %q, want %q", profile, modelconfig.ProfileBalanced)
+	}
+	if !reflect.DeepEqual(models, modelconfig.Defaults()) {
+		t.Fatalf("persisted models = %#v, want Defaults() %#v", models, modelconfig.Defaults())
+	}
+}
+
+// TestInstallCommand_ProfileFlag_NonInteractive_PersistsChosenProfile guards --profile's
+// non-interactive contract: the flag selects a built-in preset with no prompt, and BOTH the emitted
+// --config flags AND the persisted models.json profile field must reflect it.
+func TestInstallCommand_ProfileFlag_NonInteractive_PersistsChosenProfile(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	restoreSource := installer.SetMarketplaceSourceForTests("https://github.com/Angel-MercadoCLK/click-ai-devkit")
+	defer restoreSource()
+
+	if _, err := execRoot(t, home, "install", "--profile", "cost-saver"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+
+	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
+		" --config orchestration_profile=cost-saver" +
+		" --config explore_model=haiku" +
+		" --config propose_model=opus" +
+		" --config spec_model=haiku" +
+		" --config design_model=opus" +
+		" --config tasks_model=haiku" +
+		" --config apply_model=haiku" +
+		" --config verify_model=opus" +
+		" --config archive_model=haiku" +
+		" --config onboard_model=haiku" +
+		" --config jd_judge_a_model=haiku" +
+		" --config jd_judge_b_model=haiku" +
+		" --config jd_fix_agent_model=haiku" +
+		" --config default_model=haiku"
+	if !contains(runner.commands, wantCommand) {
+		t.Fatalf("install command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
+	}
+
+	profile, _, found, err := installer.LoadModelsWithProfile(installer.Config{ClaudeHome: home})
+	if err != nil {
+		t.Fatalf("LoadModelsWithProfile() error = %v", err)
+	}
+	if !found {
+		t.Fatal("LoadModelsWithProfile() found = false after install, want true")
+	}
+	if profile != modelconfig.ProfileCostSaver {
+		t.Fatalf("persisted profile = %q, want %q", profile, modelconfig.ProfileCostSaver)
+	}
+}
+
+// TestInstallCommand_ProfileFlag_UnknownValue_FallsBackToBalanced guards that an unrecognized
+// --profile value never hangs or errors — it silently falls back to balanced, matching
+// modelconfig.ResolveProfile's own fallback rule.
+func TestInstallCommand_ProfileFlag_UnknownValue_FallsBackToBalanced(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "install", "--profile", "not-a-real-profile"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+
+	profile, _, found, err := installer.LoadModelsWithProfile(installer.Config{ClaudeHome: home})
+	if err != nil {
+		t.Fatalf("LoadModelsWithProfile() error = %v", err)
+	}
+	if !found {
+		t.Fatal("LoadModelsWithProfile() found = false after install, want true")
+	}
+	if profile != modelconfig.ProfileBalanced {
+		t.Fatalf("persisted profile = %q, want %q (unknown --profile falls back)", profile, modelconfig.ProfileBalanced)
+	}
+}
+
+// TestResolveInstallModels_Interactive_PresetUnmodified_PersistsPresetLabel and
+// TestResolveInstallModels_Interactive_TweakedPreset_PersistsCustomLabel guard the label-consistency
+// rule end to end through resolveInstallModels: a preset the developer left untouched keeps its own
+// name, but a hand-tweaked preset downgrades to "custom" so the persisted label never claims values
+// the map no longer holds.
+func TestResolveInstallModels_Interactive_PresetUnmodified_PersistsPresetLabel(t *testing.T) {
+	home := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home}
+	cmd := NewRootCommand()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	r := rendererFor(cmd, &buf)
+
+	unmodified := modelconfig.ResolveProfile(string(modelconfig.ProfileQuality)).Models
+	selector := func(*cobra.Command) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+		return modelconfig.ProfileQuality, unmodified, false, nil
+	}
+
+	profile, models, cancelled, err := resolveInstallModels(cmd, &buf, r, cfg, false, "", selector)
+	if err != nil {
+		t.Fatalf("resolveInstallModels() error = %v", err)
+	}
+	if cancelled {
+		t.Fatal("resolveInstallModels() cancelled = true, want false")
+	}
+	if profile != modelconfig.ProfileQuality {
+		t.Fatalf("resolveInstallModels() profile = %q, want %q (unmodified preset keeps its own label)", profile, modelconfig.ProfileQuality)
+	}
+	if !reflect.DeepEqual(models, unmodified) {
+		t.Fatalf("resolveInstallModels() models = %#v, want %#v", models, unmodified)
+	}
+}
+
+func TestResolveInstallModels_Interactive_TweakedPreset_PersistsCustomLabel(t *testing.T) {
+	home := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home}
+	cmd := NewRootCommand()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	r := rendererFor(cmd, &buf)
+
+	tweaked := modelconfig.ResolveProfile(string(modelconfig.ProfileQuality)).Models
+	tweaked[modelconfig.PhaseExplore] = "haiku" // hand-edit away from quality's "opus"
+	selector := func(*cobra.Command) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+		return modelconfig.ProfileQuality, tweaked, false, nil
+	}
+
+	profile, models, cancelled, err := resolveInstallModels(cmd, &buf, r, cfg, false, "", selector)
+	if err != nil {
+		t.Fatalf("resolveInstallModels() error = %v", err)
+	}
+	if cancelled {
+		t.Fatal("resolveInstallModels() cancelled = true, want false")
+	}
+	if profile != modelconfig.ProfileCustom {
+		t.Fatalf("resolveInstallModels() profile = %q, want %q (tweaked preset downgrades to custom)", profile, modelconfig.ProfileCustom)
+	}
+	if !reflect.DeepEqual(models, tweaked) {
+		t.Fatalf("resolveInstallModels() models = %#v, want %#v (tweaked values must still be preserved)", models, tweaked)
+	}
+}
+
 // TestInstallCommand_NonTTY_PersistsDefaultModels guards D25's persistence contract for the
 // non-interactive path (which every test in this file exercises, since execRoot writes to a
 // bytes.Buffer, not a real terminal): a plain `click install` with no flags must still write
@@ -651,6 +823,54 @@ func TestUpdateCommand_MigratesStaleModelsBeforeReapplying(t *testing.T) {
 	}
 }
 
+// TestUpdateCommand_ReappliesPersistedProfile guards the "active profile re-applied on update" spec
+// scenario: a non-balanced profile chosen at install time must be re-emitted (and re-persisted)
+// verbatim on the next `click update`, with no interactive prompt.
+func TestUpdateCommand_ReappliesPersistedProfile(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "install", "--profile", "quality"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+
+	if _, err := execRoot(t, home, "update"); err != nil {
+		t.Fatalf("update command error = %v", err)
+	}
+
+	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
+		" --config orchestration_profile=quality" +
+		" --config explore_model=opus" +
+		" --config propose_model=opus" +
+		" --config spec_model=opus" +
+		" --config design_model=opus" +
+		" --config tasks_model=opus" +
+		" --config apply_model=opus" +
+		" --config verify_model=opus" +
+		" --config archive_model=haiku" +
+		" --config onboard_model=haiku" +
+		" --config jd_judge_a_model=opus" +
+		" --config jd_judge_b_model=opus" +
+		" --config jd_fix_agent_model=opus" +
+		" --config default_model=opus"
+	if !contains(runner.commands, wantCommand) {
+		t.Fatalf("update command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
+	}
+
+	profile, _, found, err := installer.LoadModelsWithProfile(installer.Config{ClaudeHome: home})
+	if err != nil {
+		t.Fatalf("LoadModelsWithProfile() error = %v", err)
+	}
+	if !found {
+		t.Fatal("LoadModelsWithProfile() found = false after update, want true")
+	}
+	if profile != modelconfig.ProfileQuality {
+		t.Fatalf("persisted profile after update = %q, want %q", profile, modelconfig.ProfileQuality)
+	}
+}
+
 // TestDoctorCommand_ReportsConfiguredModels guards the doctor-output contract: it must report the
 // configured per-phase models (or "defaults" pre-install) rather than staying silent about D25.
 func TestDoctorCommand_ReportsConfiguredModels(t *testing.T) {
@@ -673,6 +893,59 @@ func TestDoctorCommand_ReportsConfiguredModels(t *testing.T) {
 	}
 	if !strings.Contains(out, "propose=opus") {
 		t.Fatalf("doctor output = %q, want it to report propose=opus", out)
+	}
+}
+
+// TestDoctorCommand_ReportsActiveProfile guards the "doctor reports active profile" spec
+// requirement: the persisted orchestration profile name must appear in `click doctor`'s output.
+func TestDoctorCommand_ReportsActiveProfile(t *testing.T) {
+	seedResolvableEngram(t)
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "install", "--profile", "cost-saver"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+
+	out, err := execRoot(t, home, "doctor")
+	if err != nil {
+		t.Fatalf("doctor command error = %v", err)
+	}
+	if !strings.Contains(out, "Perfil de orquestación: cost-saver") {
+		t.Fatalf("doctor output = %q, want it to report the active profile cost-saver", out)
+	}
+}
+
+// TestDoctorCommand_DoesNotMutateModelsJson guards NFR-012 / the read-only contract carried over
+// from PR2: `click doctor`'s new profile-reporting line must never write to models.json.
+func TestDoctorCommand_DoesNotMutateModelsJson(t *testing.T) {
+	seedResolvableEngram(t)
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "install", "--profile", "quality"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+	cfg := installer.Config{ClaudeHome: home}
+	before, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) error = %v", err)
+	}
+
+	if _, err := execRoot(t, home, "doctor"); err != nil {
+		t.Fatalf("doctor command error = %v", err)
+	}
+
+	after, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) error = %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("models.json changed after `click doctor`, want byte-for-byte unchanged (doctor must stay read-only)\nbefore: %s\nafter:  %s", before, after)
 	}
 }
 
