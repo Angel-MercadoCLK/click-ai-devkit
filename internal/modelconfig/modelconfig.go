@@ -74,17 +74,7 @@ func Defaults() map[Phase]string {
 // on-disk config might still carry — are silently dropped rather than treated as valid overrides.
 // The returned map is always a fresh copy — it never aliases overrides or a cached Defaults() map.
 func Resolve(overrides map[Phase]string) map[Phase]string {
-	resolved := Defaults()
-	for phase, model := range overrides {
-		if model == "" {
-			continue
-		}
-		if _, known := resolved[phase]; !known {
-			continue
-		}
-		resolved[phase] = model
-	}
-	return resolved
+	return resolveOnto(Defaults(), overrides)
 }
 
 // ConfigKey returns the plugin.json userConfig field name for this phase (e.g. "apply_model" or

@@ -294,6 +294,140 @@ func TestMigrateIfStale_StaleFile_BacksUpThenRegenerates(t *testing.T) {
 	}
 }
 
+// TestSaveModelsWithProfile_ThenLoadModelsWithProfile_RoundTrips guards design D2's persistence
+// shape: the active profile name rides IN models.json as one optional top-level field, alongside
+// the existing per-phase map — no second file, no schema_version bump.
+func TestSaveModelsWithProfile_ThenLoadModelsWithProfile_RoundTrips(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	models := modelconfig.ResolveProfile(string(modelconfig.ProfileCostSaver)).Models
+
+	if err := SaveModelsWithProfile(cfg, modelconfig.ProfileCostSaver, models); err != nil {
+		t.Fatalf("SaveModelsWithProfile() error = %v", err)
+	}
+
+	gotProfile, gotModels, found, err := LoadModelsWithProfile(cfg)
+	if err != nil {
+		t.Fatalf("LoadModelsWithProfile() error = %v", err)
+	}
+	if !found {
+		t.Fatal("LoadModelsWithProfile() found = false right after SaveModelsWithProfile(), want true")
+	}
+	if gotProfile != modelconfig.ProfileCostSaver {
+		t.Fatalf("LoadModelsWithProfile() profile = %q, want %q", gotProfile, modelconfig.ProfileCostSaver)
+	}
+	if !reflect.DeepEqual(gotModels, models) {
+		t.Fatalf("LoadModelsWithProfile() models = %#v, want %#v", gotModels, models)
+	}
+}
+
+// TestSaveModelsWithProfile_WritesProfileField guards the exact on-disk shape:
+// {"schema_version":2,"profile":"cost-saver","models":{...}}.
+func TestSaveModelsWithProfile_WritesProfileField(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	if err := SaveModelsWithProfile(cfg, modelconfig.ProfileCostSaver, modelconfig.Defaults()); err != nil {
+		t.Fatalf("SaveModelsWithProfile() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) error = %v", err)
+	}
+	var wrapper struct {
+		SchemaVersion int    `json:"schema_version"`
+		Profile       string `json:"profile"`
+	}
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
+		t.Fatalf("json.Unmarshal(models.json) error = %v", err)
+	}
+	if wrapper.SchemaVersion != CurrentModelsSchemaVersion {
+		t.Fatalf("models.json schema_version = %d, want %d (adding profile must NOT bump schema_version)", wrapper.SchemaVersion, CurrentModelsSchemaVersion)
+	}
+	if wrapper.Profile != string(modelconfig.ProfileCostSaver) {
+		t.Fatalf("models.json profile = %q, want %q", wrapper.Profile, modelconfig.ProfileCostSaver)
+	}
+}
+
+// TestSaveModels_OmitsProfileField guards that the existing (profile-unaware) SaveModels callers
+// keep writing a file with no "profile" key at all, rather than an empty-string one — the field is
+// omitempty, so a plain SaveModels() call must round-trip through LoadModelsWithProfile() as an
+// absent profile.
+func TestSaveModels_OmitsProfileField(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	if err := SaveModels(cfg, modelconfig.Defaults()); err != nil {
+		t.Fatalf("SaveModels() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) error = %v", err)
+	}
+	var wrapper map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
+		t.Fatalf("json.Unmarshal(models.json) error = %v", err)
+	}
+	if _, present := wrapper["profile"]; present {
+		t.Fatalf("models.json has a %q key after plain SaveModels(), want it omitted entirely", "profile")
+	}
+}
+
+// TestLoadModelsWithProfile_V2FileWithoutProfileField_ResolvesToBalanced_NoError guards back-compat
+// (design D2): a valid v2 models.json written before this change (no "profile" key at all) must
+// load cleanly with an empty ProfileName, which callers resolve to balanced via
+// modelconfig.ResolveProfile("") — no error, and critically no migration/staleness is triggered by
+// the missing field.
+func TestLoadModelsWithProfile_V2FileWithoutProfileField_ResolvesToBalanced_NoError(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	// Simulate a pre-existing v2 file written by the OLD (profile-unaware) SaveModels — no
+	// "profile" key present at all, exactly like models written before this change.
+	if err := SaveModels(cfg, modelconfig.Defaults()); err != nil {
+		t.Fatalf("SaveModels() error = %v", err)
+	}
+
+	gotProfile, gotModels, found, err := LoadModelsWithProfile(cfg)
+	if err != nil {
+		t.Fatalf("LoadModelsWithProfile() error = %v, want nil for a v2 file with no profile field", err)
+	}
+	if !found {
+		t.Fatal("LoadModelsWithProfile() found = false for an existing v2 file, want true")
+	}
+	if resolved := modelconfig.ResolveProfile(string(gotProfile)); resolved.Name != modelconfig.ProfileBalanced {
+		t.Fatalf("modelconfig.ResolveProfile(%q).Name = %q, want %q (missing profile field must resolve to balanced)", gotProfile, resolved.Name, modelconfig.ProfileBalanced)
+	}
+	if !reflect.DeepEqual(gotModels, modelconfig.Defaults()) {
+		t.Fatalf("LoadModelsWithProfile() models = %#v, want %#v", gotModels, modelconfig.Defaults())
+	}
+}
+
+// TestIsStale_ExistingV2FileWithoutProfileField_NotStale_NoBackup is the explicit regression guard
+// the task calls for: adding the optional profile field must NOT make IsStale/MigrateIfStale treat
+// a pre-existing v2-without-profile file as stale, and MigrateIfStale must not touch it (no .bak
+// written).
+func TestIsStale_ExistingV2FileWithoutProfileField_NotStale_NoBackup(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	if err := SaveModels(cfg, modelconfig.Defaults()); err != nil {
+		t.Fatalf("SaveModels() error = %v", err)
+	}
+
+	stale, err := IsStale(cfg)
+	if err != nil {
+		t.Fatalf("IsStale() error = %v, want nil", err)
+	}
+	if stale {
+		t.Fatal("IsStale() = true for an existing v2-without-profile models.json, want false")
+	}
+
+	migrated, err := MigrateIfStale(cfg)
+	if err != nil {
+		t.Fatalf("MigrateIfStale() error = %v, want nil", err)
+	}
+	if migrated {
+		t.Fatal("MigrateIfStale() migrated = true for an existing v2-without-profile models.json, want false")
+	}
+	if _, err := os.Stat(cfg.ModelsPath() + ".bak"); !os.IsNotExist(err) {
+		t.Fatalf("MigrateIfStale() created a .bak backup for a v2-without-profile file, want none (err = %v)", err)
+	}
+}
+
 func writeLegacyModelsFile(t *testing.T, cfg Config, legacy map[string]string) {
 	t.Helper()
 	raw, err := json.Marshal(legacy)

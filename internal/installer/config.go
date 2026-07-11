@@ -89,11 +89,30 @@ func (c Config) ModelsPath() string {
 	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "models.json")
 }
 
+// ProfileArtifactPath is where a named orchestration profile's generic RuntimeProfile JSON
+// artifact lives (design D2, salvaged by PR2b's profile_artifacts.go as substrate for the
+// separate agent-builder-flow change). It is a DIFFERENT file from ModelsPath(): ModelsPath()
+// holds the single active profile + resolved map this change's install/update/doctor flow reads
+// and writes; ProfileArtifactPath(name) holds one JSON artifact per profile, keyed by name, and is
+// not itself the active-profile store.
+func (c Config) ProfileArtifactPath(name string) string {
+	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "profiles", name+".json")
+}
+
+// ProfileAgentsDir is where PR2b's profile_artifacts.go writes generated markdown agent files for
+// a named profile (RenderMarkdownAgent/SaveMarkdownAgent substrate). Unwired to any UI in this
+// change — see the orchestration-profiles-reconciled spec's explicit out-of-scope agent-creation
+// boundary.
+func (c Config) ProfileAgentsDir(name string) string {
+	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "profiles", name, "agents")
+}
+
 // Context7ConfigPath is Claude Code's own user-scope config file — the same file our runner's
 // `claude mcp add --scope user ...` writes to, whose top-level `mcpServers` key holds user-scope
 // MCP entries. It MUST mirror exactly where the claude subprocess writes (see execCommandRunner):
 //   - with CLICK_CLAUDE_HOME override set → <override>/.claude.json (CLAUDE_CONFIG_DIR is forced there)
 //   - real run (no override)             → <OS home>/.claude.json (home ROOT, NOT <ClaudeHome>/.claude.json)
+//
 // Getting this wrong caused a real bug: `<ClaudeHome>/.claude.json` (= ~/.claude/.claude.json) is a
 // file a normal Claude Code session never reads, so HasContext7 always reported "missing" on a real
 // machine. Reading the file directly keeps HasContext7 a pure filesystem read (no `claude mcp get`).
