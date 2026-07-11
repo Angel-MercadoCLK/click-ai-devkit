@@ -6,6 +6,12 @@
     "name": "Click Seguros"
   },
   "userConfig": {
+    "orchestration_profile": {
+      "type": "string",
+      "title": "Orchestration profile",
+      "description": "Named preset for all 13 per-phase models at once (balanced, cost-saver, quality, or custom for a hand-tuned selection).",
+      "default": "balanced"
+    },
     "explore_model": {
       "type": "string",
       "title": "Explore model",
