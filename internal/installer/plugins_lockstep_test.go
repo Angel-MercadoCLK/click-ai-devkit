@@ -77,12 +77,14 @@ func TestClickSDDSkills_NoOrphanPhaseDirectories(t *testing.T) {
 
 // TestClickSDDPluginJSON_ConfigKeysMatchModelconfigPhasesExactly guards the other half of the
 // taxonomy lockstep: plugins/click-sdd/.claude-plugin/plugin.json's userConfig keys must be exactly
-// the set of ConfigKey() values for modelconfig.Phases — no missing phase, no leftover/stale key
-// from an old taxonomy. TestSyncMarketplacePlugins_PassesPerPhaseConfigFlagsForClickSDD (in
-// plugins_config_test.go) already guards that SyncMarketplacePlugins emits the right --config flags
-// from modelconfig.Phases directly; it does not read plugin.json off disk, so this test is not a
-// duplicate — it is the only test that verifies the on-disk plugin.json manifest itself stays in
-// lockstep with modelconfig.Phases.
+// the set of ConfigKey() values for modelconfig.Phases, PLUS modelconfig.ProfileConfigKey (design
+// D3's "orchestration_profile" field, coexisting alongside the 13 per-phase fields as just another
+// --config key) — no missing phase, no leftover/stale key from an old taxonomy or a name that isn't
+// either the profile key or a real phase's ConfigKey(). TestSyncMarketplacePlugins_
+// PassesPerPhaseConfigFlagsForClickSDD (in plugins_config_test.go) already guards that
+// SyncMarketplacePlugins emits the right --config flags from modelconfig.Phases directly; it does
+// not read plugin.json off disk, so this test is not a duplicate — it is the only test that verifies
+// the on-disk plugin.json manifest itself stays in lockstep with modelconfig.Phases.
 func TestClickSDDPluginJSON_ConfigKeysMatchModelconfigPhasesExactly(t *testing.T) {
 	data := mustReadRepoFile(t, "plugins", "click-sdd", ".claude-plugin", "plugin.json")
 
@@ -93,7 +95,7 @@ func TestClickSDDPluginJSON_ConfigKeysMatchModelconfigPhasesExactly(t *testing.T
 		t.Fatalf("plugin.json parse error = %v", err)
 	}
 
-	wantKeys := map[string]bool{}
+	wantKeys := map[string]bool{modelconfig.ProfileConfigKey: true}
 	for _, phase := range modelconfig.Phases {
 		wantKeys[phase.ConfigKey()] = true
 	}

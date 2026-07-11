@@ -474,6 +474,7 @@ func TestInstallCommand_IssuesMarketplaceCommandsInOrder(t *testing.T) {
 	want := []string{
 		"claude plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins",
 		"claude plugin install click-sdd@click-ai-devkit" +
+			" --config orchestration_profile=balanced" +
 			" --config explore_model=sonnet" +
 			" --config propose_model=opus" +
 			" --config spec_model=sonnet" +
@@ -561,6 +562,7 @@ func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
 	}
 
 	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
+		" --config orchestration_profile=balanced" +
 		" --config explore_model=haiku" +
 		" --config propose_model=sonnet" +
 		" --config spec_model=haiku" +
@@ -630,6 +632,7 @@ func TestUpdateCommand_MigratesStaleModelsBeforeReapplying(t *testing.T) {
 	}
 
 	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
+		" --config orchestration_profile=balanced" +
 		" --config explore_model=sonnet" +
 		" --config propose_model=opus" +
 		" --config spec_model=sonnet" +
