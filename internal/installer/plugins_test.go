@@ -46,6 +46,52 @@ func TestClickSDDPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
 	})
 }
 
+func TestClickSDDPlugin_DeclaresDefaultOrchestrationProfile(t *testing.T) {
+	type configField struct {
+		Type        string `json:"type"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Default     string `json:"default"`
+	}
+	type pluginManifest struct {
+		UserConfig map[string]configField `json:"userConfig"`
+	}
+
+	data := mustReadRepoFile(t, "plugins", "click-sdd", ".claude-plugin", "plugin.json")
+	var manifest pluginManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("plugin.json parse error = %v", err)
+	}
+	field, ok := manifest.UserConfig["orchestration_profile"]
+	if !ok {
+		t.Fatal("click-sdd plugin.json missing orchestration_profile userConfig")
+	}
+	if field.Type != "string" || field.Default != "default" {
+		t.Fatalf("orchestration_profile = %+v, want string default profile", field)
+	}
+	if !strings.Contains(field.Description, "runtime profile") {
+		t.Fatalf("orchestration_profile description = %q, want it to explain runtime profile resolution", field.Description)
+	}
+}
+
+func TestClickOrchestrator_DocumentsRuntimeProfileAndDelegationPolicy(t *testing.T) {
+	content := string(mustReadRepoFile(t, "plugins", "click-sdd", "agents", "click-orchestrator.md"))
+	required := []string{
+		"## Runtime profile resolution",
+		"orchestration_profile",
+		"built-in `default` profile",
+		"simple inline work",
+		"non-trivial work",
+		"must delegate",
+		"Engram is always part of the working model",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(content, fragment) {
+			t.Fatalf("click-orchestrator.md missing %q", fragment)
+		}
+	}
+}
+
 func TestClickMemoryPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
 	assertPluginStructure(t, filepath.Join("plugins", "click-memory"), "click-memory", []string{
 		filepath.Join("skills", "memory-proposal", "SKILL.md"),

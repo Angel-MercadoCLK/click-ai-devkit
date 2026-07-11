@@ -6,6 +6,12 @@
     "name": "Click Seguros"
   },
   "userConfig": {
+    "orchestration_profile": {
+      "type": "string",
+      "title": "Orchestration profile",
+      "description": "Active runtime profile resolved by click-orchestrator before delegation. Built-in default is always available; custom profile artifacts can be activated by name.",
+      "default": "default"
+    },
     "orchestrator_model": {
       "type": "string",
       "title": "Orchestrator model",

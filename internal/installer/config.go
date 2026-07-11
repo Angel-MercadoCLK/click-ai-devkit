@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
 // claudeHomeEnvOverride lets tests (and power users) point click at a directory other than the
@@ -89,11 +91,30 @@ func (c Config) ModelsPath() string {
 	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "models.json")
 }
 
+// ProfilePath stores the active click-sdd orchestration profile so `click update` can re-apply it
+// and `click doctor` can report it alongside per-phase models.
+func (c Config) ProfilePath() string {
+	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "profile.json")
+}
+
+// ProfileArtifactPath stores the full descriptor for a custom orchestration profile. The active
+// profile pointer remains ProfilePath(); this file is the reusable profile-level configuration
+// artifact a builder flow can create and later activate.
+func (c Config) ProfileArtifactPath(profile modelconfig.ProfileName) string {
+	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "profiles", string(profile), "profile.json")
+}
+
+// ProfileAgentsDir stores markdown agents created as part of a custom orchestration profile.
+func (c Config) ProfileAgentsDir(profile modelconfig.ProfileName) string {
+	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "profiles", string(profile), "agents")
+}
+
 // Context7ConfigPath is Claude Code's own user-scope config file — the same file our runner's
 // `claude mcp add --scope user ...` writes to, whose top-level `mcpServers` key holds user-scope
 // MCP entries. It MUST mirror exactly where the claude subprocess writes (see execCommandRunner):
 //   - with CLICK_CLAUDE_HOME override set → <override>/.claude.json (CLAUDE_CONFIG_DIR is forced there)
 //   - real run (no override)             → <OS home>/.claude.json (home ROOT, NOT <ClaudeHome>/.claude.json)
+//
 // Getting this wrong caused a real bug: `<ClaudeHome>/.claude.json` (= ~/.claude/.claude.json) is a
 // file a normal Claude Code session never reads, so HasContext7 always reported "missing" on a real
 // machine. Reading the file directly keeps HasContext7 a pure filesystem read (no `claude mcp get`).

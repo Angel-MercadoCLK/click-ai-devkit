@@ -20,27 +20,29 @@ var phaseLabels = map[modelconfig.Phase]string{
 	modelconfig.PhaseMemoryCurator: "memory_curator",
 }
 
-// ModelSelectModel is the bubbletea model that drives `click install`'s interactive per-phase
-// model selection screen (D25): one row per click-sdd phase agent, defaults pre-selected. Arrow
-// keys (or j/k) move the cursor between rows; left/right (or h/l) cycle the highlighted row's
-// model through modelconfig.Models. Pressing enter immediately — with no edits — confirms all
-// five defaults in one key, matching the "accept all defaults with one key" requirement; pressing
-// enter after edits confirms whatever is currently selected. Esc/q/ctrl+c cancels the install.
+// ModelSelectModel is the bubbletea model that drives `click install`'s interactive profile-aware
+// click-sdd configuration screen: the profile row is first, then one row per phase agent with the
+// active profile's defaults pre-selected. Arrow keys (or j/k) move the cursor between rows;
+// left/right (or h/l) cycles profiles on the profile row and models on phase rows. Pressing enter
+// immediately confirms the active profile defaults; pressing enter after edits confirms the current
+// profile plus per-phase overrides. Esc/q/ctrl+c cancels the install.
 type ModelSelectModel struct {
 	Cursor    int
+	Profile   modelconfig.RuntimeProfile
 	Selection map[modelconfig.Phase]string
 	Confirmed bool
 	Cancelled bool
 }
 
-// NewModelSelectModel builds a ModelSelectModel with every phase pre-selected to its D25 default.
+// NewModelSelectModel builds a ModelSelectModel with the built-in default profile selected and every
+// phase pre-selected from that profile before any per-phase adjustments.
 func NewModelSelectModel() ModelSelectModel {
-	defaults := modelconfig.Defaults()
-	selection := make(map[modelconfig.Phase]string, len(defaults))
-	for phase, model := range defaults {
+	profile := modelconfig.ResolveProfile("")
+	selection := make(map[modelconfig.Phase]string, len(profile.Models))
+	for phase, model := range profile.Models {
 		selection[phase] = model
 	}
-	return ModelSelectModel{Selection: selection}
+	return ModelSelectModel{Profile: profile, Selection: selection}
 }
 
 // Init satisfies tea.Model. The selection screen needs no startup command.
@@ -88,12 +90,16 @@ func (m ModelSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *ModelSelectModel) moveCursor(delta int) {
-	n := len(modelconfig.Phases)
+	n := len(modelconfig.Phases) + 1
 	m.Cursor = ((m.Cursor+delta)%n + n) % n
 }
 
 func (m *ModelSelectModel) cycleCurrent(delta int) {
-	phase := modelconfig.Phases[m.Cursor]
+	if m.Cursor == 0 {
+		m.cycleProfile(delta)
+		return
+	}
+	phase := modelconfig.Phases[m.Cursor-1]
 	n := len(modelconfig.Models)
 	idx := 0
 	for i, model := range modelconfig.Models {
@@ -106,20 +112,41 @@ func (m *ModelSelectModel) cycleCurrent(delta int) {
 	m.Selection[phase] = modelconfig.Models[idx]
 }
 
+func (m *ModelSelectModel) cycleProfile(delta int) {
+	profiles := modelconfig.Profiles()
+	if len(profiles) < 2 {
+		return
+	}
+	idx := 0
+	for i, profile := range profiles {
+		if profile.Name == m.Profile.Name {
+			idx = i
+			break
+		}
+	}
+	idx = ((idx+delta)%len(profiles) + len(profiles)) % len(profiles)
+	m.Profile = profiles[idx]
+	m.Selection = modelconfig.ResolveForProfile(m.Profile, nil)
+}
+
 // View satisfies tea.Model, rendering one row per phase with a cursor marker and the currently
 // selected model, plus a short Spanish key-help line (D10: dev-facing CLI text may be Spanish).
 func (m ModelSelectModel) View() string {
 	var b strings.Builder
-	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Elegí el modelo por fase para click-sdd"))
+	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Elegí el perfil y los modelos para click-sdd"))
 	b.WriteString("\n\n")
 
+	profileLine := fmt.Sprintf("%s%-24s %s", markerForCursor(m.Cursor, 0), "Perfil de orquestación", m.Profile.Name)
+	if m.Cursor == 0 {
+		profileLine = styleRenderer.NewStyle().Foreground(lipgloss.Color("6")).Render(profileLine)
+	}
+	b.WriteString(profileLine)
+	b.WriteString("\n")
+
 	for i, phase := range modelconfig.Phases {
-		marker := "  "
-		if i == m.Cursor {
-			marker = "> "
-		}
-		line := fmt.Sprintf("%s%-16s %s", marker, phaseLabels[phase], m.Selection[phase])
-		if i == m.Cursor {
+		cursor := i + 1
+		line := fmt.Sprintf("%s%-24s %s", markerForCursor(m.Cursor, cursor), phaseLabels[phase], m.Selection[phase])
+		if cursor == m.Cursor {
 			line = styleRenderer.NewStyle().Foreground(lipgloss.Color("6")).Render(line)
 		}
 		b.WriteString(line)
@@ -128,7 +155,14 @@ func (m ModelSelectModel) View() string {
 
 	b.WriteString("\n")
 	b.WriteString(styleRenderer.NewStyle().Faint(true).Render(
-		"↑/↓ mover · ←/→ cambiar modelo · enter confirmar (sin cambios = defaults) · q/esc cancelar",
+		"↑/↓ mover · ←/→ cambiar perfil/modelo · enter confirmar (sin cambios = defaults) · q/esc cancelar",
 	))
 	return b.String()
+}
+
+func markerForCursor(current, row int) string {
+	if current == row {
+		return "> "
+	}
+	return "  "
 }

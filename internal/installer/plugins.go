@@ -104,7 +104,13 @@ func SetMarketplaceSourceForTests(source string) func() {
 // self-describing --config flag set (defaults fill any gap). click-memory and click-review never
 // receive --config flags — they have no userConfig schema.
 func SyncMarketplacePlugins(models map[modelconfig.Phase]string) error {
-	resolved := modelconfig.Resolve(models)
+	return SyncMarketplacePluginsForProfile(modelconfig.ResolveProfile(""), models)
+}
+
+// SyncMarketplacePluginsForProfile installs Click's managed plugins with the active click-sdd
+// orchestration profile resolved first, then per-phase model overrides layered on top.
+func SyncMarketplacePluginsForProfile(profile modelconfig.RuntimeProfile, models map[modelconfig.Phase]string) error {
+	resolved := modelconfig.ResolveForProfile(profile, models)
 	runner := commandRunnerFactory()
 	var sparsePaths []string
 	if usesSparseCheckout(marketplaceSource) {
@@ -116,7 +122,7 @@ func SyncMarketplacePlugins(models map[modelconfig.Phase]string) error {
 	for _, plugin := range managedPlugins {
 		var extraArgs []string
 		if plugin == "click-sdd" {
-			extraArgs = clickSDDConfigArgs(resolved)
+			extraArgs = clickSDDConfigArgs(profile, resolved)
 		}
 		if err := installMarketplacePlugin(runner, plugin, extraArgs...); err != nil {
 			return err
@@ -129,8 +135,9 @@ func SyncMarketplacePlugins(models map[modelconfig.Phase]string) error {
 // `claude plugin install click-sdd@click-ai-devkit`, one pair per phase in modelconfig.Phases
 // order (verified against the real CLI in Step 0: repeated `--config key=value` flags land in
 // settings.json's pluginConfigs["click-sdd@click-ai-devkit"].options).
-func clickSDDConfigArgs(resolved map[modelconfig.Phase]string) []string {
-	args := make([]string, 0, len(modelconfig.Phases)*2)
+func clickSDDConfigArgs(profile modelconfig.RuntimeProfile, resolved map[modelconfig.Phase]string) []string {
+	args := make([]string, 0, len(modelconfig.Phases)*2+2)
+	args = append(args, "--config", modelconfig.ProfileConfigKey+"="+string(profile.Name))
 	for _, phase := range modelconfig.Phases {
 		model, ok := resolved[phase]
 		if !ok || model == "" {

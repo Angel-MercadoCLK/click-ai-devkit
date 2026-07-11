@@ -48,9 +48,10 @@ func runInstall(cmd *cobra.Command) error {
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome}
 
-	models := modelconfig.Defaults()
+	profile := modelconfig.ResolveProfile("")
+	models := modelconfig.ResolveForProfile(profile, nil)
 	if !isNonInteractiveInstall(cmd, out) {
-		selection, cancelled, err := runModelSelectTUI(cmd)
+		selectedProfile, selection, cancelled, err := runModelSelectTUI(cmd)
 		if err != nil {
 			return err
 		}
@@ -58,11 +59,12 @@ func runInstall(cmd *cobra.Command) error {
 			fmt.Fprintln(out, r.Info("Instalación cancelada."))
 			return nil
 		}
+		profile = selectedProfile
 		models = selection
 	}
 
 	if err := r.RunStep("Registrando plugins click-sdd, click-memory y click-review…", "Plugins registrados en Claude Code", func() error {
-		return installer.SyncMarketplacePlugins(models)
+		return installer.SyncMarketplacePluginsForProfile(profile, models)
 	}); err != nil {
 		return err
 	}
@@ -120,6 +122,11 @@ func runInstall(cmd *cobra.Command) error {
 	}); err != nil {
 		return err
 	}
+	if err := r.RunStep("Guardando perfil de orquestación de click-sdd…", "Perfil de orquestación guardado", func() error {
+		return installer.SaveProfile(cfg, profile)
+	}); err != nil {
+		return err
+	}
 
 	fmt.Fprintln(out, r.Info("Instalación completa."))
 	return nil
@@ -146,18 +153,18 @@ func isNonInteractiveInstall(cmd *cobra.Command, out io.Writer) bool {
 // runModelSelectTUI drives ui.ModelSelectModel through a real bubbletea program attached to cmd's
 // in/out, and returns the developer's final per-phase selection. Only reached when
 // isNonInteractiveInstall has already confirmed out is a real terminal.
-func runModelSelectTUI(cmd *cobra.Command) (map[modelconfig.Phase]string, bool, error) {
+func runModelSelectTUI(cmd *cobra.Command) (modelconfig.RuntimeProfile, map[modelconfig.Phase]string, bool, error) {
 	program := tea.NewProgram(ui.NewModelSelectModel(),
 		tea.WithInput(cmd.InOrStdin()),
 		tea.WithOutput(cmd.OutOrStdout()),
 	)
 	finalModel, err := program.Run()
 	if err != nil {
-		return nil, false, fmt.Errorf("cli: run model selection TUI: %w", err)
+		return modelconfig.RuntimeProfile{}, nil, false, fmt.Errorf("cli: run model selection TUI: %w", err)
 	}
 	result := finalModel.(ui.ModelSelectModel)
 	if result.Cancelled {
-		return nil, true, nil
+		return modelconfig.RuntimeProfile{}, nil, true, nil
 	}
-	return result.Selection, false, nil
+	return result.Profile, result.Selection, false, nil
 }

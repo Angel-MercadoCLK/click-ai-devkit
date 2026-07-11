@@ -1,0 +1,44 @@
+# click-ai-devkit — contributor guide
+
+`click-ai-devkit` is a Go CLI (`click`) that installs Click Seguros's Codex system
+(orchestrator, SDD flow, plugins, memory-guard, pinned Engram) into a developer's `~/.Codex`.
+
+## Build & test
+
+```
+go build ./...
+go test ./...
+```
+
+**STRICT TDD is mandatory for any Go change.** Write a failing test first (red), then the
+minimal implementation to make it pass (green). Do not skip this — see D13 in
+`documentacion/00-decisions-and-open-questions.md`.
+
+Tests must never touch the real `~/.Codex`. Use the `CLICK_CLAUDE_HOME` env var override
+(`t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())`) — see `internal/installer/config.go` and its
+tests for the established pattern.
+
+## Language
+
+All artifacts and code comments are in English: docs, README, code, commit messages, PR
+descriptions, and any string literal in source.
+
+## Commits
+
+Conventional commits. No AI attribution in commit messages.
+
+## Decisions
+
+Locked decisions (D1–D22) live in `documentacion/00-decisions-and-open-questions.md`. Read it
+before changing behavior or docs — do not contradict a locked decision.
+
+In particular: ship and maintain `.Codex-plugin/marketplace.json` because Codex only loads
+the Click plugins through the native `Codex plugin` registry flow (D24 supersedes D16).
+
+## Plugins
+
+The three plugins (`plugins/click-sdd/`, `plugins/click-memory/`, `plugins/click-review/`) are
+served through the repo marketplace manifest. When adding or changing plugin files, keep
+`.Codex-plugin/marketplace.json` and the native `Codex plugin` install flow consistent.
+(`internal/installer/plugins.go`), the relevant `internal/doctor` check, and their tests
+together — these four stay in sync by convention, not by a generated check.

@@ -49,6 +49,12 @@ func runDoctor(cmd *cobra.Command) error {
 		}
 	}
 
+	profileLine, err := formatProfileLine(cfg)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, r.Info(profileLine))
+
 	modelsLine, err := formatModelsLine(cfg)
 	if err != nil {
 		return err
@@ -62,6 +68,17 @@ func runDoctor(cmd *cobra.Command) error {
 
 	fmt.Fprintln(out, r.Success("click-ai-devkit está instalado correctamente"))
 	return nil
+}
+
+func formatProfileLine(cfg installer.Config) (string, error) {
+	profile, found, err := installer.LoadProfile(cfg)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "Perfil de orquestación activo: default", nil
+	}
+	return "Perfil de orquestación activo: " + string(profile.Name), nil
 }
 
 // formatModelsLine reports the click-sdd per-phase models currently configured (D25): the

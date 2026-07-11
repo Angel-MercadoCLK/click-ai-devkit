@@ -318,6 +318,33 @@ func TestUpdateCommand_PersistsModelsJson(t *testing.T) {
 	}
 }
 
+func TestUpdateCommand_PersistsDefaultProfile(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	binaryPath := filepath.Join(t.TempDir(), "engram.exe")
+	if err := os.WriteFile(binaryPath, []byte("binary"), 0o644); err != nil {
+		t.Fatalf("WriteFile(binary) error = %v", err)
+	}
+	t.Setenv("CLICK_ENGRAM_BINARY_PATH", binaryPath)
+
+	if _, err := execRoot(t, home, "update"); err != nil {
+		t.Fatalf("update command error = %v", err)
+	}
+
+	profile, found, err := installer.LoadProfile(installer.Config{ClaudeHome: home})
+	if err != nil {
+		t.Fatalf("LoadProfile() error = %v", err)
+	}
+	if !found {
+		t.Fatal("LoadProfile() found = false after `click update`, want true")
+	}
+	if profile.Name != modelconfig.ProfileDefault {
+		t.Fatalf("persisted profile = %q, want %q", profile.Name, modelconfig.ProfileDefault)
+	}
+}
+
 func TestRootCommand_VersionDefaultsToDev(t *testing.T) {
 	home := t.TempDir()
 	out, err := execRoot(t, home, "--version")
@@ -343,6 +370,7 @@ func TestInstallCommand_IssuesMarketplaceCommandsInOrder(t *testing.T) {
 	want := []string{
 		"claude plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins",
 		"claude plugin install click-sdd@click-ai-devkit" +
+			" --config orchestration_profile=default" +
 			" --config orchestrator_model=opus" +
 			" --config prd_writer_model=opus" +
 			" --config architect_model=opus" +
@@ -385,6 +413,28 @@ func TestInstallCommand_NonTTY_PersistsDefaultModels(t *testing.T) {
 	}
 }
 
+func TestInstallCommand_NonTTY_PersistsDefaultProfile(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "install"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+
+	profile, found, err := installer.LoadProfile(installer.Config{ClaudeHome: home})
+	if err != nil {
+		t.Fatalf("LoadProfile() error = %v", err)
+	}
+	if !found {
+		t.Fatal("LoadProfile() found = false after install, want true")
+	}
+	if profile.Name != modelconfig.ProfileDefault {
+		t.Fatalf("persisted profile = %q, want %q", profile.Name, modelconfig.ProfileDefault)
+	}
+}
+
 // TestUpdateCommand_ReappliesPersistedModels guards the "click update re-passes the same --config
 // flags" contract: a non-default model selection saved by a previous install must be re-emitted
 // verbatim on the next update, not silently reset to defaults.
@@ -414,6 +464,7 @@ func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
 	}
 
 	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
+		" --config orchestration_profile=default" +
 		" --config orchestrator_model=haiku" +
 		" --config prd_writer_model=sonnet" +
 		" --config architect_model=haiku" +
@@ -446,6 +497,26 @@ func TestDoctorCommand_ReportsConfiguredModels(t *testing.T) {
 	}
 	if !strings.Contains(out, "orchestrator=opus") {
 		t.Fatalf("doctor output = %q, want it to report orchestrator=opus", out)
+	}
+}
+
+func TestDoctorCommand_ReportsActiveProfile(t *testing.T) {
+	seedResolvableEngram(t)
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "install"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+
+	out, err := execRoot(t, home, "doctor")
+	if err != nil {
+		t.Fatalf("doctor command error = %v", err)
+	}
+	if !strings.Contains(out, "Perfil de orquestación activo: default") {
+		t.Fatalf("doctor output = %q, want it to report the active default profile", out)
 	}
 }
 

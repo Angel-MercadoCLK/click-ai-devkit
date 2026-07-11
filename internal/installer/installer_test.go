@@ -68,6 +68,7 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 	wantCommands := []string{
 		"claude plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins",
 		"claude plugin install click-sdd@click-ai-devkit" +
+			" --config orchestration_profile=default" +
 			" --config orchestrator_model=opus" +
 			" --config prd_writer_model=opus" +
 			" --config architect_model=opus" +

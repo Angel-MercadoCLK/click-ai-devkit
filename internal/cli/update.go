@@ -31,19 +31,23 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Re-apply whatever per-phase models `click install` saved (D25), so `click update` never
+	// Re-apply the orchestration profile and per-phase models `click install` saved, so `click update` never
 	// silently resets a developer's choice back to defaults. A models.json-less home (installed
-	// before this feature existed, or never installed) falls back to defaults.
+	// before this feature existed, or never installed) falls back to the active profile defaults.
+	profile, _, err := installer.LoadProfile(cfg)
+	if err != nil {
+		return err
+	}
 	models, found, err := installer.LoadModels(cfg)
 	if err != nil {
 		return err
 	}
 	if !found {
-		models = modelconfig.Defaults()
+		models = modelconfig.ResolveForProfile(profile, nil)
 	}
 
 	if err := r.RunStep("Re-sincronizando plugins click-sdd, click-memory y click-review…", "Plugins sincronizados en Claude Code", func() error {
-		return installer.SyncMarketplacePlugins(models)
+		return installer.SyncMarketplacePluginsForProfile(profile, models)
 	}); err != nil {
 		return err
 	}
@@ -52,6 +56,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// never written) after `click update` — a real asymmetry bug between the two commands.
 	if err := r.RunStep("Guardando modelos por fase de click-sdd…", "Modelos por fase guardados", func() error {
 		return installer.SaveModels(cfg, models)
+	}); err != nil {
+		return err
+	}
+	if err := r.RunStep("Guardando perfil de orquestación de click-sdd…", "Perfil de orquestación guardado", func() error {
+		return installer.SaveProfile(cfg, profile)
 	}); err != nil {
 		return err
 	}

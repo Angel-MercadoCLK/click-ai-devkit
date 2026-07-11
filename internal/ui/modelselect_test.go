@@ -11,6 +11,9 @@ import (
 
 func TestNewModelSelectModel_StartsWithDefaultsPreSelected(t *testing.T) {
 	m := NewModelSelectModel()
+	if m.Profile.Name != modelconfig.ProfileDefault {
+		t.Fatalf("initial Profile.Name = %q, want %q", m.Profile.Name, modelconfig.ProfileDefault)
+	}
 	want := modelconfig.Defaults()
 	for phase, model := range want {
 		if got := m.Selection[phase]; got != model {
@@ -22,6 +25,17 @@ func TestNewModelSelectModel_StartsWithDefaultsPreSelected(t *testing.T) {
 	}
 	if m.Confirmed || m.Cancelled {
 		t.Errorf("initial state Confirmed=%v Cancelled=%v, want both false", m.Confirmed, m.Cancelled)
+	}
+}
+
+func TestNewModelSelectModel_ProfileSelectionResolvesDefaultsBeforeOverrides(t *testing.T) {
+	m := NewModelSelectModel()
+	want := modelconfig.ResolveForProfile(m.Profile, nil)
+
+	for phase, model := range want {
+		if got := m.Selection[phase]; got != model {
+			t.Errorf("initial Selection[%s] = %q, want profile default %q", phase, got, model)
+		}
 	}
 }
 
@@ -40,7 +54,7 @@ func TestModelSelectModel_Update_ArrowsMoveCursorAndWrap(t *testing.T) {
 
 	// up from row 0 must wrap to the last phase row.
 	m, _ = updateModel(m, keyMsg("up"))
-	if want := len(modelconfig.Phases) - 1; m.Cursor != want {
+	if want := len(modelconfig.Phases); m.Cursor != want {
 		t.Fatalf("Cursor after wrapping up = %d, want %d", m.Cursor, want)
 	}
 
@@ -53,6 +67,7 @@ func TestModelSelectModel_Update_ArrowsMoveCursorAndWrap(t *testing.T) {
 
 func TestModelSelectModel_Update_RightCyclesModelForCursorRowOnly(t *testing.T) {
 	m := NewModelSelectModel()
+	m, _ = updateModel(m, keyMsg("down"))
 	phase := modelconfig.Phases[0]
 	if m.Selection[phase] != "opus" {
 		t.Fatalf("precondition: Selection[%s] = %q, want opus", phase, m.Selection[phase])
@@ -82,6 +97,7 @@ func TestModelSelectModel_Update_RightCyclesModelForCursorRowOnly(t *testing.T) 
 
 func TestModelSelectModel_Update_LeftCyclesBackward(t *testing.T) {
 	m := NewModelSelectModel()
+	m, _ = updateModel(m, keyMsg("down"))
 	phase := modelconfig.Phases[0]
 
 	m, _ = updateModel(m, keyMsg("left"))
@@ -141,6 +157,14 @@ func TestModelSelectModel_Update_IgnoresNonKeyMessages(t *testing.T) {
 func TestModelSelectModel_View_RendersAllPhaseRows(t *testing.T) {
 	m := NewModelSelectModel()
 	view := m.View()
+	profileLabel := "Perfil de orquestación"
+	phaseLabel := "orchestrator"
+	if !strings.Contains(view, profileLabel) || !strings.Contains(view, string(modelconfig.ProfileDefault)) {
+		t.Fatalf("View() missing active profile row %q/default:\n%s", profileLabel, view)
+	}
+	if strings.Index(view, profileLabel) > strings.Index(view, phaseLabel) {
+		t.Fatalf("View() renders profile row after phase rows, want profile first:\n%s", view)
+	}
 	for _, model := range m.Selection {
 		if !strings.Contains(view, model) {
 			t.Errorf("View() missing selected model %q:\n%s", model, view)

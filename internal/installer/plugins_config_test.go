@@ -39,6 +39,7 @@ func TestSyncMarketplacePlugins_PassesPerPhaseConfigFlagsForClickSDD(t *testing.
 		}},
 		{Name: "claude", Args: []string{
 			"plugin", "install", "click-sdd@click-ai-devkit",
+			"--config", "orchestration_profile=default",
 			"--config", "orchestrator_model=opus",
 			"--config", "prd_writer_model=sonnet",
 			"--config", "architect_model=opus",
@@ -70,11 +71,42 @@ func TestSyncMarketplacePlugins_DefaultsWhenModelsNil(t *testing.T) {
 
 	wantClickSDD := commandInvocation{Name: "claude", Args: []string{
 		"plugin", "install", "click-sdd@click-ai-devkit",
+		"--config", "orchestration_profile=default",
 		"--config", "orchestrator_model=opus",
 		"--config", "prd_writer_model=opus",
 		"--config", "architect_model=opus",
 		"--config", "reviewer_model=opus",
 		"--config", "memory_curator_model=sonnet",
+	}}
+	if !reflect.DeepEqual(runner.commands[1], wantClickSDD) {
+		t.Fatalf("runner.commands[1] = %#v, want %#v", runner.commands[1], wantClickSDD)
+	}
+}
+
+func TestSyncMarketplacePluginsForProfile_UsesProfileNameAndDefaults(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreSource := SetMarketplaceSourceForTests("https://github.com/Angel-MercadoCLK/click-ai-devkit")
+	defer restoreSource()
+
+	profile := modelconfig.DefaultProfile()
+	profile.Models[modelconfig.PhaseOrchestrator] = "sonnet"
+	profile.Models[modelconfig.PhaseMemoryCurator] = "opus"
+
+	if err := SyncMarketplacePluginsForProfile(profile, nil); err != nil {
+		t.Fatalf("SyncMarketplacePluginsForProfile(profile, nil) error = %v", err)
+	}
+
+	wantClickSDD := commandInvocation{Name: "claude", Args: []string{
+		"plugin", "install", "click-sdd@click-ai-devkit",
+		"--config", "orchestration_profile=default",
+		"--config", "orchestrator_model=sonnet",
+		"--config", "prd_writer_model=opus",
+		"--config", "architect_model=opus",
+		"--config", "reviewer_model=opus",
+		"--config", "memory_curator_model=opus",
 	}}
 	if !reflect.DeepEqual(runner.commands[1], wantClickSDD) {
 		t.Fatalf("runner.commands[1] = %#v, want %#v", runner.commands[1], wantClickSDD)
