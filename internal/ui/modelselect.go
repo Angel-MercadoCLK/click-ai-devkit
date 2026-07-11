@@ -13,18 +13,26 @@ import (
 // phaseLabels gives each modelconfig.Phase a short, human-readable row label for the model
 // selection screen. Kept here (not in modelconfig) because it's presentation, not domain data.
 var phaseLabels = map[modelconfig.Phase]string{
-	modelconfig.PhaseOrchestrator:  "orchestrator",
-	modelconfig.PhasePRDWriter:     "prd_writer",
-	modelconfig.PhaseArchitect:     "architect",
-	modelconfig.PhaseReviewer:      "reviewer",
-	modelconfig.PhaseMemoryCurator: "memory_curator",
+	modelconfig.PhaseExplore:    "explore",
+	modelconfig.PhasePropose:    "propose",
+	modelconfig.PhaseSpec:       "spec",
+	modelconfig.PhaseDesign:     "design",
+	modelconfig.PhaseTasks:      "tasks",
+	modelconfig.PhaseApply:      "apply",
+	modelconfig.PhaseVerify:     "verify",
+	modelconfig.PhaseArchive:    "archive",
+	modelconfig.PhaseOnboard:    "onboard",
+	modelconfig.PhaseJDJudgeA:   "jd-judge-a",
+	modelconfig.PhaseJDJudgeB:   "jd-judge-b",
+	modelconfig.PhaseJDFixAgent: "jd-fix-agent",
+	modelconfig.PhaseDefault:    "default",
 }
 
 // ModelSelectModel is the bubbletea model that drives `click install`'s interactive per-phase
-// model selection screen (D25): one row per click-sdd phase agent, defaults pre-selected. Arrow
+// model selection screen (D25): one row per click-sdd SDD phase, defaults pre-selected. Arrow
 // keys (or j/k) move the cursor between rows; left/right (or h/l) cycle the highlighted row's
 // model through modelconfig.Models. Pressing enter immediately — with no edits — confirms all
-// five defaults in one key, matching the "accept all defaults with one key" requirement; pressing
+// defaults in one key, matching the "accept all defaults with one key" requirement; pressing
 // enter after edits confirms whatever is currently selected. Esc/q/ctrl+c cancels the install.
 type ModelSelectModel struct {
 	Cursor    int

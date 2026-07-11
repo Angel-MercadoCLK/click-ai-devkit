@@ -84,9 +84,77 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	report := Run(cfg)
 
-	const wantChecks = 5 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 6 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (click-sdd plugin, click-memory plugin, click-review plugin, CLAUDE.md, memory-guard hook, engram plugin, engram binary, context7 MCP)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d (click-sdd plugin, click-memory plugin, click-review plugin, CLAUDE.md, memory-guard hook, models.json schema, engram plugin, engram binary, context7 MCP)", len(report.Checks), wantChecks)
+	}
+}
+
+// TestCheckModelsConfig_AbsentFile_ReportsHealthy guards the "absent = healthy" contract from the
+// taxonomy-migration spec: a home where `click install` never ran must not be flagged unhealthy for
+// models.json — it just means defaults will be generated on the next install/update.
+func TestCheckModelsConfig_AbsentFile_ReportsHealthy(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "models.json schema" {
+			continue
+		}
+		checked = true
+		if !c.Healthy {
+			t.Fatalf("checkModelsConfig reports unhealthy for an absent models.json: %s", c.Detail)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "models.json schema" check`)
+	}
+}
+
+// TestCheckModelsConfig_StaleFile_ReportsUnhealthy guards doctor's detection of a stale
+// (pre-taxonomy-realignment) models.json, and that doctor never mutates it (NFR-012: read-only) —
+// the raw file content must be unchanged after Run().
+func TestCheckModelsConfig_StaleFile_ReportsUnhealthy(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	legacy := map[string]string{"orchestrator": "opus", "prd_writer": "opus", "architect": "opus", "reviewer": "opus", "memory_curator": "sonnet"}
+	rawBefore, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("json.Marshal(legacy) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(cfg.ModelsPath(), rawBefore, 0o600); err != nil {
+		t.Fatalf("WriteFile(legacy models.json) error = %v", err)
+	}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "models.json schema" {
+			continue
+		}
+		checked = true
+		if c.Healthy {
+			t.Fatal("checkModelsConfig reports healthy for a stale legacy models.json, want unhealthy")
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "models.json schema" check`)
+	}
+
+	rawAfter, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) after Run() error = %v", err)
+	}
+	if string(rawAfter) != string(rawBefore) {
+		t.Fatalf("Run() mutated models.json (doctor must be read-only, NFR-012): before=%s after=%s", rawBefore, rawAfter)
+	}
+	if _, err := os.Stat(cfg.ModelsPath() + ".bak"); !os.IsNotExist(err) {
+		t.Fatalf("Run() created a .bak backup file (doctor must be read-only, NFR-012), err = %v", err)
 	}
 }
 

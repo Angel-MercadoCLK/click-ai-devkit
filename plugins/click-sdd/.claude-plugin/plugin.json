@@ -6,34 +6,82 @@
     "name": "Click Seguros"
   },
   "userConfig": {
-    "orchestrator_model": {
+    "explore_model": {
       "type": "string",
-      "title": "Orchestrator model",
-      "description": "Model alias click-orchestrator resolves at runtime for every Agent delegation (sonnet/opus/haiku/fable/full-id/inherit).",
+      "title": "Explore model",
+      "description": "Model alias for the explore phase (investigates a topic, reads the codebase, compares approaches; no files created).",
+      "default": "sonnet"
+    },
+    "propose_model": {
+      "type": "string",
+      "title": "Propose model",
+      "description": "Model alias for the propose phase (drafts scope, approach, risks, and rollback plan).",
       "default": "opus"
     },
-    "prd_writer_model": {
+    "spec_model": {
       "type": "string",
-      "title": "PRD writer model",
-      "description": "Model alias click-prd-writer resolves at runtime for every Agent delegation (sonnet/opus/haiku/fable/full-id/inherit).",
+      "title": "Spec model",
+      "description": "Model alias for the spec phase (writes acceptance-criteria scenarios from the proposal).",
+      "default": "sonnet"
+    },
+    "design_model": {
+      "type": "string",
+      "title": "Design model",
+      "description": "Model alias for the design phase (architecture and technical decisions from the proposal).",
       "default": "opus"
     },
-    "architect_model": {
+    "tasks_model": {
       "type": "string",
-      "title": "Architect model",
-      "description": "Model alias click-architect resolves at runtime for every Agent delegation (sonnet/opus/haiku/fable/full-id/inherit).",
+      "title": "Tasks model",
+      "description": "Model alias for the tasks phase (breaks spec and design into an ordered, implementable task list).",
+      "default": "sonnet"
+    },
+    "apply_model": {
+      "type": "string",
+      "title": "Apply model",
+      "description": "Model alias for the apply phase (implements tasks against specs and design).",
+      "default": "sonnet"
+    },
+    "verify_model": {
+      "type": "string",
+      "title": "Verify model",
+      "description": "Model alias for the verify phase (validates the implementation against specs and reports findings).",
       "default": "opus"
     },
-    "reviewer_model": {
+    "archive_model": {
       "type": "string",
-      "title": "Reviewer model",
-      "description": "Model alias click-reviewer resolves at runtime for every Agent delegation (sonnet/opus/haiku/fable/full-id/inherit).",
-      "default": "opus"
+      "title": "Archive model",
+      "description": "Model alias for the archive phase (closes a change and persists final state).",
+      "default": "haiku"
     },
-    "memory_curator_model": {
+    "onboard_model": {
       "type": "string",
-      "title": "Memory curator model",
-      "description": "Model alias click-memory-curator resolves at runtime for every Agent delegation (sonnet/opus/haiku/fable/full-id/inherit).",
+      "title": "Onboard model",
+      "description": "Model alias for the onboard phase (guided, pedagogical walkthrough of the SDD workflow).",
+      "default": "haiku"
+    },
+    "jd_judge_a_model": {
+      "type": "string",
+      "title": "Judgment Day judge A model",
+      "description": "Model alias for Judgment Day's blind judge A (adversarial review).",
+      "default": "sonnet"
+    },
+    "jd_judge_b_model": {
+      "type": "string",
+      "title": "Judgment Day judge B model",
+      "description": "Model alias for Judgment Day's blind judge B (adversarial review).",
+      "default": "sonnet"
+    },
+    "jd_fix_agent_model": {
+      "type": "string",
+      "title": "Judgment Day fix agent model",
+      "description": "Model alias for Judgment Day's fix agent (applies surgical fixes from confirmed issues).",
+      "default": "sonnet"
+    },
+    "default_model": {
+      "type": "string",
+      "title": "Default model",
+      "description": "Model alias used as the fallback for any delegation not covered by a specific phase.",
       "default": "sonnet"
     }
   }

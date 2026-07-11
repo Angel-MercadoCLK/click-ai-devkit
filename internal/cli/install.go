@@ -48,17 +48,12 @@ func runInstall(cmd *cobra.Command) error {
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome}
 
-	models := modelconfig.Defaults()
-	if !isNonInteractiveInstall(cmd, out) {
-		selection, cancelled, err := runModelSelectTUI(cmd)
-		if err != nil {
-			return err
-		}
-		if cancelled {
-			fmt.Fprintln(out, r.Info("Instalación cancelada."))
-			return nil
-		}
-		models = selection
+	models, cancelled, err := resolveInstallModels(cmd, out, r, cfg, isNonInteractiveInstall(cmd, out), runModelSelectTUI)
+	if err != nil {
+		return err
+	}
+	if cancelled {
+		return nil
 	}
 
 	if err := r.RunStep("Registrando plugins click-sdd, click-memory y click-review…", "Plugins registrados en Claude Code", func() error {
@@ -141,6 +136,42 @@ func isNonInteractiveInstall(cmd *cobra.Command, out io.Writer) bool {
 		return true
 	}
 	return !(isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd()))
+}
+
+// modelSelector matches runModelSelectTUI's signature so resolveInstallModels can be driven by a
+// fake selector in tests (a real bubbletea program can't be exercised headlessly).
+type modelSelector func(cmd *cobra.Command) (map[modelconfig.Phase]string, bool, error)
+
+// resolveInstallModels decides the per-phase model set for `click install` and performs the D8
+// stale-migration safety net at the correct point in the flow.
+//
+// Cancel must mean "no changes": if the developer cancels the interactive TUI, models.json must be
+// left byte-for-byte untouched, so MigrateIfStale only runs once we know the install is actually
+// proceeding — non-interactive installs always proceed, and interactive installs only proceed past
+// the cancel check. Both proceeding paths (interactive-confirmed and non-interactive) still migrate
+// before the fresh models get written, preserving the existing "never clobber without a backup"
+// behavior.
+func resolveInstallModels(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg installer.Config, nonInteractive bool, selector modelSelector) (models map[modelconfig.Phase]string, cancelled bool, err error) {
+	if nonInteractive {
+		if _, err := installer.MigrateIfStale(cfg); err != nil {
+			return nil, false, err
+		}
+		return modelconfig.Defaults(), false, nil
+	}
+
+	selection, cancelled, err := selector(cmd)
+	if err != nil {
+		return nil, false, err
+	}
+	if cancelled {
+		fmt.Fprintln(out, r.Info("Instalación cancelada."))
+		return nil, true, nil
+	}
+
+	if _, err := installer.MigrateIfStale(cfg); err != nil {
+		return nil, false, err
+	}
+	return selection, false, nil
 }
 
 // runModelSelectTUI drives ui.ModelSelectModel through a real bubbletea program attached to cmd's
