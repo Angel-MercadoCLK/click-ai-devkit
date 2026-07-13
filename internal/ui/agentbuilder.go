@@ -31,6 +31,7 @@ type AgentBuilderModel struct {
 	Spec           agentbuilder.AgentSpec
 	ThemeIndex     int
 	PreviewContent string
+	FinalMarkdown  string
 	PreviewError   string
 	EditingPreview bool
 	Confirmed      bool
@@ -254,8 +255,14 @@ func (m AgentBuilderModel) updatePreview(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd)
 func (m AgentBuilderModel) updatePreviewEdit(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if keyName(keyMsg) == "enter" {
 		m.PreviewContent = m.input
+		m.FinalMarkdown = ""
 		m.input = ""
 		m.EditingPreview = false
+		if err := validateAgentBuilderFinalMarkdown(m.PreviewContent); err != nil {
+			m.PreviewError = err.Error()
+			return m, nil
+		}
+		m.PreviewError = ""
 		return m, nil
 	}
 	m.updateInput(keyMsg)
@@ -275,6 +282,7 @@ func (m AgentBuilderModel) updatePlacement(keyMsg tea.KeyMsg) (tea.Model, tea.Cm
 			return m, nil
 		}
 		m.Spec.Placement = agentBuilderPlacementOptions[m.cursor].placement
+		m.FinalMarkdown = m.PreviewContent
 		m.Confirmed = true
 		m.Step = StepDone
 		return m, tea.Quit
@@ -386,6 +394,46 @@ func validateAgentBuilderThemeAnswer(themeIndex int, answer string) error {
 	return nil
 }
 
+func validateAgentBuilderFinalMarkdown(content string) error {
+	if strings.TrimSpace(content) == "" {
+		return fmt.Errorf("agentbuilder: final markdown is required")
+	}
+	normalized := strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", "\n"), "\r", "\n")
+	if !strings.HasPrefix(normalized, "---\n") {
+		return fmt.Errorf("agentbuilder: final markdown must start with YAML frontmatter")
+	}
+	rest := strings.TrimPrefix(normalized, "---\n")
+	frontmatterEnd := strings.Index(rest, "\n---\n")
+	if frontmatterEnd < 0 {
+		return fmt.Errorf("agentbuilder: final markdown must close YAML frontmatter")
+	}
+	frontmatter := rest[:frontmatterEnd]
+	body := rest[frontmatterEnd+len("\n---\n"):]
+	for _, field := range []string{"name", "description", "model", "tools"} {
+		if !frontmatterHasNonBlankField(frontmatter, field) {
+			return fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
+		}
+	}
+	for _, heading := range []string{"# Role", "## Tasks", "## Triggers", "## Hard Rules", "## SDD Integration", "## Tone", "## Domain Knowledge", "## Good Output"} {
+		if !strings.Contains(body, heading+"\n") {
+			return fmt.Errorf("agentbuilder: final markdown missing %s section", heading)
+		}
+	}
+	return nil
+}
+
+func frontmatterHasNonBlankField(frontmatter, field string) bool {
+	prefix := field + ":"
+	for _, line := range strings.Split(frontmatter, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		return strings.TrimSpace(strings.TrimPrefix(line, prefix)) != ""
+	}
+	return false
+}
+
 func (m *AgentBuilderModel) moveCursor(delta, size int) {
 	if size == 0 {
 		m.cursor = 0
@@ -410,6 +458,7 @@ func (m *AgentBuilderModel) updateInput(keyMsg tea.KeyMsg) {
 
 func (m *AgentBuilderModel) refreshPreview() {
 	content, err := agentbuilder.RenderAgentMarkdown(m.Spec)
+	m.FinalMarkdown = ""
 	if err != nil {
 		m.PreviewError = err.Error()
 		m.PreviewContent = fmt.Sprintf("No se pudo generar el preview: %v", err)
@@ -424,6 +473,10 @@ func (m *AgentBuilderModel) validatePreviewSpec() error {
 	if err != nil {
 		m.PreviewError = err.Error()
 		m.PreviewContent = fmt.Sprintf("No se pudo generar el preview: %v", err)
+		return err
+	}
+	if err := validateAgentBuilderFinalMarkdown(m.PreviewContent); err != nil {
+		m.PreviewError = err.Error()
 		return err
 	}
 	m.PreviewError = ""

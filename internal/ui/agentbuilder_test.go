@@ -364,6 +364,52 @@ func TestAgentBuilderModel_PreviewActionsAndEditUsesEditedText(t *testing.T) {
 	}
 }
 
+func TestAgentBuilderModel_EditedPreviewConfirmsAsFinalMarkdown(t *testing.T) {
+	m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+	edited := strings.Replace(m.PreviewContent, "Protect production data", "Protect production indexes", 1)
+
+	m, _ = updateAgentBuilderModel(m, keyMsg("down"))
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	m = clearAgentBuilderInput(t, m)
+	m = typeAgentBuilderText(t, m, edited)
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+
+	m, _ = updateAgentBuilderModel(m, keyMsg("up"))
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	if m.Step != StepPlacement {
+		t.Fatalf("edited native preview install ended at Step=%v PreviewError=%q, want StepPlacement", m.Step, m.PreviewError)
+	}
+	m, cmd := updateAgentBuilderModel(m, keyMsg("enter"))
+	if !m.Confirmed || m.Step != StepDone || cmd == nil {
+		t.Fatalf("edited native preview did not confirm: Confirmed=%v Step=%v cmd=%v", m.Confirmed, m.Step, cmd)
+	}
+	if m.FinalMarkdown != edited {
+		t.Fatalf("FinalMarkdown = %q, want edited preview content", m.FinalMarkdown)
+	}
+}
+
+func TestAgentBuilderModel_InvalidEditedPreviewCannotConfirm(t *testing.T) {
+	m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+
+	m, _ = updateAgentBuilderModel(m, keyMsg("down"))
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	m = clearAgentBuilderInput(t, m)
+	m = typeAgentBuilderText(t, m, "edited markdown body")
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+
+	m, _ = updateAgentBuilderModel(m, keyMsg("up"))
+	m, cmd := updateAgentBuilderModel(m, keyMsg("enter"))
+	if m.Confirmed || m.Step != StepPreview || cmd != nil {
+		t.Fatalf("invalid edited preview advanced: Confirmed=%v Step=%v cmd=%v", m.Confirmed, m.Step, cmd)
+	}
+	if m.PreviewError == "" {
+		t.Fatal("PreviewError empty after invalid edited preview, want validation error")
+	}
+	if m.FinalMarkdown != "" {
+		t.Fatalf("FinalMarkdown = %q, want empty for invalid edited preview", m.FinalMarkdown)
+	}
+}
+
 func TestAgentBuilderModel_InvalidSpecCannotConfirm(t *testing.T) {
 	t.Run("tampered blank required metadata stays at preview", func(t *testing.T) {
 		m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
