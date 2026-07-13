@@ -128,7 +128,33 @@ func TestTargetPathPersonalDefaultsToUserClaudeAgentsDir(t *testing.T) {
 	wantPath(t, got, filepath.Join(home, ".claude", "agents", "release-helper.md"))
 }
 
-func TestTargetPathShareableWithMarketplaceUsesClickSDDAgentsForPhaseSupport(t *testing.T) {
+func TestTargetPathShareableWithRegisteredClickSDDUsesClickSDDAgentsForPhaseSupport(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".claude-plugin"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".claude-plugin", "marketplace.json"), []byte(`{"plugins":[{"name":"click-sdd","source":"./plugins/click-sdd"}]}`), 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin"), 0o755); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json"), []byte(`{"name":"click-sdd"}`), 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+	spec := validAgentSpec()
+	spec.SDDMode = SDDPhaseSupport
+	spec.Placement = PlacementShareable
+
+	got, err := TargetPath(spec, "", repoRoot)
+	if err != nil {
+		t.Fatalf("TargetPath() error = %v", err)
+	}
+
+	wantPath(t, got, filepath.Join(repoRoot, "plugins", "click-sdd", "agents", "release-helper.md"))
+}
+
+func TestTargetPathShareableWithUnregisteredClickSDDReturnsScaffoldPath(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".claude-plugin"), 0o755); err != nil {
 		t.Fatalf("os.MkdirAll() error = %v", err)
@@ -145,7 +171,7 @@ func TestTargetPathShareableWithMarketplaceUsesClickSDDAgentsForPhaseSupport(t *
 		t.Fatalf("TargetPath() error = %v", err)
 	}
 
-	wantPath(t, got, filepath.Join(repoRoot, "plugins", "click-sdd", "agents", "release-helper.md"))
+	wantPath(t, got, filepath.Join(repoRoot, "plugins", "click-release-helper", "agents", "release-helper.md"))
 }
 
 func TestTargetPathShareableWithoutMarketplaceReturnsScaffoldPath(t *testing.T) {
@@ -307,6 +333,77 @@ func TestInstallShareablePhaseSupportWithoutMarketplaceScaffoldsLoadablePlugin(t
 	}
 	if len(marketplace.Plugins) != 1 || marketplace.Plugins[0].Name != pluginName || marketplace.Plugins[0].Source != "./plugins/click-release-helper" {
 		t.Fatalf("marketplace plugins = %+v, want registration for %s", marketplace.Plugins, pluginName)
+	}
+}
+
+func TestInstallShareablePhaseSupportWithUnregisteredClickSDDScaffoldsLoadablePlugin(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	spec := validAgentSpec()
+	spec.SDDMode = SDDPhaseSupport
+	spec.Phase = modelconfig.PhaseApply
+	spec.Placement = PlacementShareable
+	writer := newFakeFileWriter()
+	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(`{"plugins":[]}`)
+
+	gotPath, err := Install(spec, "", repoRoot, writer)
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	pluginName := "click-release-helper"
+	agentPath := filepath.Join(repoRoot, "plugins", pluginName, "agents", "release-helper.md")
+	pluginManifestPath := filepath.Join(repoRoot, "plugins", pluginName, ".claude-plugin", "plugin.json")
+	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
+	wantPath(t, gotPath, agentPath)
+
+	for _, path := range []string{agentPath, pluginManifestPath, marketplacePath} {
+		if _, ok := writer.files[path]; !ok {
+			t.Fatalf("Install() did not write %s; writes=%v", path, writer.writePaths)
+		}
+	}
+}
+
+func TestInstallShareablePhaseSupportWithMissingClickSDDManifestScaffoldsLoadablePlugin(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	spec := validAgentSpec()
+	spec.SDDMode = SDDPhaseSupport
+	spec.Phase = modelconfig.PhaseApply
+	spec.Placement = PlacementShareable
+	writer := newFakeFileWriter()
+	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(`{"plugins":[{"name":"click-sdd","source":"./plugins/click-sdd"}]}`)
+
+	gotPath, err := Install(spec, "", repoRoot, writer)
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	pluginName := "click-release-helper"
+	agentPath := filepath.Join(repoRoot, "plugins", pluginName, "agents", "release-helper.md")
+	pluginManifestPath := filepath.Join(repoRoot, "plugins", pluginName, ".claude-plugin", "plugin.json")
+	wantPath(t, gotPath, agentPath)
+	if _, ok := writer.files[pluginManifestPath]; !ok {
+		t.Fatalf("Install() did not write standalone plugin manifest; writes=%v", writer.writePaths)
+	}
+}
+
+func TestInstallShareablePhaseSupportWithRegisteredClickSDDUsesClickSDDAgents(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	spec := validAgentSpec()
+	spec.SDDMode = SDDPhaseSupport
+	spec.Phase = modelconfig.PhaseApply
+	spec.Placement = PlacementShareable
+	writer := newFakeFileWriter()
+	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(`{"plugins":[{"name":"click-sdd","source":"./plugins/click-sdd"}]}`)
+	writer.files[filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json")] = []byte(`{"name":"click-sdd"}`)
+
+	gotPath, err := Install(spec, "", repoRoot, writer)
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	wantPath(t, gotPath, filepath.Join(repoRoot, "plugins", "click-sdd", "agents", "release-helper.md"))
+	if _, ok := writer.files[filepath.Join(repoRoot, "plugins", "click-release-helper", ".claude-plugin", "plugin.json")]; ok {
+		t.Fatal("Install() scaffolded a standalone plugin even though click-sdd is registered and loadable")
 	}
 }
 

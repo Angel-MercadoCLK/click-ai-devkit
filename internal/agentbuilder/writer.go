@@ -114,11 +114,12 @@ func installTargetPath(spec AgentSpec, claudeHome, repoRoot string, w FileWriter
 		return "", fmt.Errorf("agentbuilder: repo root is required for shareable placement")
 	}
 	if spec.SDDMode == SDDPhaseSupport {
-		marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
-		if _, err := w.ReadFile(marketplacePath); err == nil {
+		ok, err := hasLoadableClickSDDPlugin(repoRoot, w)
+		if err != nil {
+			return "", err
+		}
+		if ok {
 			return filepath.Join(repoRoot, "plugins", "click-sdd", "agents", spec.Name+".md"), nil
-		} else if !os.IsNotExist(err) {
-			return "", fmt.Errorf("agentbuilder: inspect marketplace manifest: %w", err)
 		}
 	}
 	return filepath.Join(repoRoot, "plugins", standalonePluginName(spec), "agents", spec.Name+".md"), nil
@@ -139,13 +140,35 @@ func resolveClaudeHome(claudeHome string) (string, error) {
 }
 
 func shareableTargetPath(spec AgentSpec, repoRoot string) (string, error) {
-	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
-	if _, err := os.Stat(marketplacePath); err == nil && spec.SDDMode == SDDPhaseSupport {
-		return filepath.Join(repoRoot, "plugins", "click-sdd", "agents", spec.Name+".md"), nil
-	} else if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("agentbuilder: inspect marketplace manifest: %w", err)
+	if spec.SDDMode == SDDPhaseSupport {
+		ok, err := hasLoadableClickSDDPlugin(repoRoot, osFileWriter{})
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return filepath.Join(repoRoot, "plugins", "click-sdd", "agents", spec.Name+".md"), nil
+		}
 	}
 	return filepath.Join(repoRoot, "plugins", "click-"+spec.Name, "agents", spec.Name+".md"), nil
+}
+
+func hasLoadableClickSDDPlugin(repoRoot string, w FileWriter) (bool, error) {
+	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
+	marketplace, err := loadMarketplaceManifest(w, marketplacePath)
+	if err != nil {
+		return false, err
+	}
+	if !marketplace.HasPlugin("click-sdd") {
+		return false, nil
+	}
+	pluginManifestPath := filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json")
+	if _, err := w.ReadFile(pluginManifestPath); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("agentbuilder: inspect click-sdd plugin manifest: %w", err)
+	}
+	return true, nil
 }
 
 func validateAgentName(name string) error {
@@ -316,6 +339,15 @@ func (m *marketplaceManifest) UpsertPlugin(plugin marketplacePlugin) {
 		}
 	}
 	m.Plugins = append(m.Plugins, plugin)
+}
+
+func (m marketplaceManifest) HasPlugin(name string) bool {
+	for _, plugin := range m.Plugins {
+		if plugin.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func writeMarkdownSection(b *strings.Builder, level, title, body string) {
