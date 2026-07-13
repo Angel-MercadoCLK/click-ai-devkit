@@ -21,9 +21,9 @@ func TestProfiles_BalancedEqualsDefaults(t *testing.T) {
 	t.Fatal("Profiles() did not contain a \"balanced\" profile")
 }
 
-// TestProfiles_EveryPresetHasAllThirteenPhases guards against a preset table silently missing a
-// phase (e.g. a copy-paste table that only re-keys 5 phases instead of all 13).
-func TestProfiles_EveryPresetHasAllThirteenPhases(t *testing.T) {
+// TestProfiles_EveryPresetHasAllEighteenPhases guards against a preset table silently missing a
+// phase (e.g. a copy-paste table that only re-keys 5 phases instead of all 18).
+func TestProfiles_EveryPresetHasAllEighteenPhases(t *testing.T) {
 	for _, p := range Profiles() {
 		if len(p.Models) != len(Phases) {
 			t.Fatalf("Profiles(): profile %q has %d phases, want %d", p.Name, len(p.Models), len(Phases))
@@ -54,19 +54,24 @@ func TestProfiles_ContainsExpectedNames(t *testing.T) {
 // considers essential.
 func TestProfiles_CostSaverKeepsOpusOnlyOnHighestStakesPhases(t *testing.T) {
 	want := map[Phase]string{
-		PhaseExplore:    "haiku",
-		PhasePropose:    "opus",
-		PhaseSpec:       "haiku",
-		PhaseDesign:     "opus",
-		PhaseTasks:      "haiku",
-		PhaseApply:      "haiku",
-		PhaseVerify:     "opus",
-		PhaseArchive:    "haiku",
-		PhaseOnboard:    "haiku",
-		PhaseJDJudgeA:   "haiku",
-		PhaseJDJudgeB:   "haiku",
-		PhaseJDFixAgent: "haiku",
-		PhaseDefault:    "haiku",
+		PhaseExplore:           "haiku",
+		PhasePropose:           "opus",
+		PhaseSpec:              "haiku",
+		PhaseDesign:            "opus",
+		PhaseTasks:             "haiku",
+		PhaseApply:             "haiku",
+		PhaseVerify:            "opus",
+		PhaseArchive:           "haiku",
+		PhaseOnboard:           "haiku",
+		PhaseJDJudgeA:          "haiku",
+		PhaseJDJudgeB:          "haiku",
+		PhaseJDFixAgent:        "haiku",
+		PhaseReviewRisk:        "haiku",
+		PhaseReviewReadability: "haiku",
+		PhaseReviewReliability: "haiku",
+		PhaseReviewResilience:  "haiku",
+		PhaseReviewRefuter:     "haiku",
+		PhaseDefault:           "haiku",
 	}
 	got := ResolveProfile(string(ProfileCostSaver)).Models
 	if !reflect.DeepEqual(got, want) {
@@ -79,19 +84,24 @@ func TestProfiles_CostSaverKeepsOpusOnlyOnHighestStakesPhases(t *testing.T) {
 // onboard) — i.e. quality never spends more than balanced already considers unnecessary.
 func TestProfiles_QualityKeepsHaikuOnlyWhereDefaultsAlreadyDoes(t *testing.T) {
 	want := map[Phase]string{
-		PhaseExplore:    "opus",
-		PhasePropose:    "opus",
-		PhaseSpec:       "opus",
-		PhaseDesign:     "opus",
-		PhaseTasks:      "opus",
-		PhaseApply:      "opus",
-		PhaseVerify:     "opus",
-		PhaseArchive:    "haiku",
-		PhaseOnboard:    "haiku",
-		PhaseJDJudgeA:   "opus",
-		PhaseJDJudgeB:   "opus",
-		PhaseJDFixAgent: "opus",
-		PhaseDefault:    "opus",
+		PhaseExplore:           "opus",
+		PhasePropose:           "opus",
+		PhaseSpec:              "opus",
+		PhaseDesign:            "opus",
+		PhaseTasks:             "opus",
+		PhaseApply:             "opus",
+		PhaseVerify:            "opus",
+		PhaseArchive:           "haiku",
+		PhaseOnboard:           "haiku",
+		PhaseJDJudgeA:          "opus",
+		PhaseJDJudgeB:          "opus",
+		PhaseJDFixAgent:        "opus",
+		PhaseReviewRisk:        "opus",
+		PhaseReviewReadability: "opus",
+		PhaseReviewReliability: "opus",
+		PhaseReviewResilience:  "opus",
+		PhaseReviewRefuter:     "opus",
+		PhaseDefault:           "opus",
 	}
 	got := ResolveProfile(string(ProfileQuality)).Models
 	if !reflect.DeepEqual(got, want) {
@@ -221,7 +231,7 @@ func TestEffectiveProfileName_UnknownChosenName_DowngradesToCustom(t *testing.T)
 	}
 }
 
-func TestResolveForProfile_EveryPresetReturnsAllThirteenPhases(t *testing.T) {
+func TestResolveForProfile_EveryPresetReturnsAllEighteenPhases(t *testing.T) {
 	for _, p := range Profiles() {
 		got := ResolveForProfile(string(p.Name), nil)
 		if len(got) != len(Phases) {

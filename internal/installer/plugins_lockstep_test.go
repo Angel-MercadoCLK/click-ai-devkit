@@ -11,12 +11,17 @@ import (
 
 // phasesWithoutDedicatedSkill lists modelconfig.Phase values that are deliberately EXEMPT from
 // having their own `plugins/click-sdd/skills/<phase>/SKILL.md` directory. "default" is a catch-all
-// model assignment for delegation that isn't covered by a specific SDD phase workflow — it is not a
-// distinct phase with its own instructional content, so it intentionally has no skill directory.
-// Any phase added to modelconfig.Phases in the future must either get a skill directory or be added
-// here explicitly — this test never silently skips a phase.
+// model assignment for delegation that isn't covered by a specific SDD phase workflow, and the
+// review-* phases are review roles consumed by the review/orchestrator flow rather than standalone
+// click-sdd skills. Any phase added to modelconfig.Phases in the future must either get a skill
+// directory or be added here explicitly — this test never silently skips a phase.
 var phasesWithoutDedicatedSkill = map[modelconfig.Phase]bool{
-	modelconfig.PhaseDefault: true,
+	modelconfig.PhaseReviewRisk:        true,
+	modelconfig.PhaseReviewReadability: true,
+	modelconfig.PhaseReviewReliability: true,
+	modelconfig.PhaseReviewResilience:  true,
+	modelconfig.PhaseReviewRefuter:     true,
+	modelconfig.PhaseDefault:           true,
 }
 
 // TestClickSDDSkills_LockstepWithModelconfigPhases guards the taxonomy realignment (interactive-
@@ -78,7 +83,7 @@ func TestClickSDDSkills_NoOrphanPhaseDirectories(t *testing.T) {
 // TestClickSDDPluginJSON_ConfigKeysMatchModelconfigPhasesExactly guards the other half of the
 // taxonomy lockstep: plugins/click-sdd/.claude-plugin/plugin.json's userConfig keys must be exactly
 // the set of ConfigKey() values for modelconfig.Phases, PLUS modelconfig.ProfileConfigKey (design
-// D3's "orchestration_profile" field, coexisting alongside the 13 per-phase fields as just another
+// D3's "orchestration_profile" field, coexisting alongside the 18 per-phase fields as just another
 // --config key) — no missing phase, no leftover/stale key from an old taxonomy or a name that isn't
 // either the profile key or a real phase's ConfigKey(). TestSyncMarketplacePlugins_
 // PassesPerPhaseConfigFlagsForClickSDD (in plugins_config_test.go) already guards that

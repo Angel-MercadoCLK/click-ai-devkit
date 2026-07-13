@@ -81,6 +81,11 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 			" --config jd_judge_a_model=sonnet" +
 			" --config jd_judge_b_model=sonnet" +
 			" --config jd_fix_agent_model=sonnet" +
+			" --config review_risk_model=sonnet" +
+			" --config review_readability_model=sonnet" +
+			" --config review_reliability_model=sonnet" +
+			" --config review_resilience_model=sonnet" +
+			" --config review_refuter_model=sonnet" +
 			" --config default_model=sonnet",
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",

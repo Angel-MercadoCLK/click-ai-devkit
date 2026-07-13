@@ -13,19 +13,24 @@ import (
 // phaseLabels gives each modelconfig.Phase a short, human-readable row label for the model
 // selection screen. Kept here (not in modelconfig) because it's presentation, not domain data.
 var phaseLabels = map[modelconfig.Phase]string{
-	modelconfig.PhaseExplore:    "explore",
-	modelconfig.PhasePropose:    "propose",
-	modelconfig.PhaseSpec:       "spec",
-	modelconfig.PhaseDesign:     "design",
-	modelconfig.PhaseTasks:      "tasks",
-	modelconfig.PhaseApply:      "apply",
-	modelconfig.PhaseVerify:     "verify",
-	modelconfig.PhaseArchive:    "archive",
-	modelconfig.PhaseOnboard:    "onboard",
-	modelconfig.PhaseJDJudgeA:   "jd-judge-a",
-	modelconfig.PhaseJDJudgeB:   "jd-judge-b",
-	modelconfig.PhaseJDFixAgent: "jd-fix-agent",
-	modelconfig.PhaseDefault:    "default",
+	modelconfig.PhaseExplore:           "explore",
+	modelconfig.PhasePropose:           "propose",
+	modelconfig.PhaseSpec:              "spec",
+	modelconfig.PhaseDesign:            "design",
+	modelconfig.PhaseTasks:             "tasks",
+	modelconfig.PhaseApply:             "apply",
+	modelconfig.PhaseVerify:            "verify",
+	modelconfig.PhaseArchive:           "archive",
+	modelconfig.PhaseOnboard:           "onboard",
+	modelconfig.PhaseJDJudgeA:          "jd-judge-a",
+	modelconfig.PhaseJDJudgeB:          "jd-judge-b",
+	modelconfig.PhaseJDFixAgent:        "jd-fix-agent",
+	modelconfig.PhaseReviewRisk:        "review-risk",
+	modelconfig.PhaseReviewReadability: "review-readability",
+	modelconfig.PhaseReviewReliability: "review-reliability",
+	modelconfig.PhaseReviewResilience:  "review-resilience",
+	modelconfig.PhaseReviewRefuter:     "review-refuter",
+	modelconfig.PhaseDefault:           "default",
 }
 
 // ModelSelectModel is the bubbletea model that drives `click install`'s interactive per-phase

@@ -74,19 +74,17 @@ func runDoctor(cmd *cobra.Command) error {
 // persisted models.json selection if `click install`/`click update` ever ran, or an explicit
 // "defaults" line otherwise, in modelconfig.Phases order for a stable, readable report.
 func formatModelsLine(cfg installer.Config) (string, error) {
-	models, found, err := installer.LoadModels(cfg)
+	profile, models, found, err := installer.LoadModelsWithProfile(cfg)
 	if err != nil {
 		return "", err
 	}
 	if !found {
 		return "Modelos por fase de click-sdd: defaults", nil
 	}
+	resolved := modelconfig.ResolveForProfile(string(profile), models)
 	parts := make([]string, 0, len(modelconfig.Phases))
 	for _, phase := range modelconfig.Phases {
-		model, ok := models[phase]
-		if !ok || model == "" {
-			model = modelconfig.Defaults()[phase]
-		}
+		model := resolved[phase]
 		parts = append(parts, string(phase)+"="+model)
 	}
 	return "Modelos por fase de click-sdd: " + strings.Join(parts, ", "), nil

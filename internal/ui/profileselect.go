@@ -32,7 +32,7 @@ var profileDescriptions = map[modelconfig.ProfileName]string{
 
 // ProfileSelectModel is the bubbletea model that drives `click install`'s profile-select step
 // (design D4): one row per built-in profile plus "custom", shown BEFORE the per-phase editor so a
-// developer can pick a preset in one keystroke instead of tuning all 13 phases by hand. Follows
+// developer can pick a preset in one keystroke instead of tuning all 18 phases by hand. Follows
 // ModelSelectModel's exact keymap (j/k or arrow up/down to move, enter to confirm, esc/q/ctrl+c to
 // cancel) for a consistent feel across both install screens.
 type ProfileSelectModel struct {

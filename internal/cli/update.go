@@ -50,8 +50,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 	if !found {
 		profile = modelconfig.ProfileBalanced
-		models = modelconfig.Defaults()
 	}
+	models = modelconfig.ResolveForProfile(string(profile), models)
 
 	if err := r.RunStep("Re-sincronizando plugins click-sdd, click-memory y click-review…", "Plugins sincronizados en Claude Code", func() error {
 		return installer.SyncMarketplacePlugins(models, profile)

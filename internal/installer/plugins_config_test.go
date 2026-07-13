@@ -14,7 +14,7 @@ import (
 // --config flags — they have no userConfig schema.
 //
 // It also guards design D3: the FIRST --config flag on click-sdd must always be
-// `orchestration_profile=<name>`, ahead of the 13 per-phase flags — SyncMarketplacePlugins's
+// `orchestration_profile=<name>`, ahead of the 18 per-phase flags — SyncMarketplacePlugins's
 // trailing variadic profile argument (see plugins.go) is how a caller opts into a non-balanced
 // profile without breaking the two existing 1-arg callers (cli/install.go, cli/update.go; PR3
 // migrates them to actually pass the selected profile through).
@@ -27,19 +27,24 @@ func TestSyncMarketplacePlugins_PassesPerPhaseConfigFlagsForClickSDD(t *testing.
 	defer restoreSource()
 
 	models := map[modelconfig.Phase]string{
-		modelconfig.PhaseExplore:    "sonnet",
-		modelconfig.PhasePropose:    "opus",
-		modelconfig.PhaseSpec:       "sonnet",
-		modelconfig.PhaseDesign:     "opus",
-		modelconfig.PhaseTasks:      "sonnet",
-		modelconfig.PhaseApply:      "haiku",
-		modelconfig.PhaseVerify:     "opus",
-		modelconfig.PhaseArchive:    "haiku",
-		modelconfig.PhaseOnboard:    "haiku",
-		modelconfig.PhaseJDJudgeA:   "sonnet",
-		modelconfig.PhaseJDJudgeB:   "sonnet",
-		modelconfig.PhaseJDFixAgent: "sonnet",
-		modelconfig.PhaseDefault:    "sonnet",
+		modelconfig.PhaseExplore:           "sonnet",
+		modelconfig.PhasePropose:           "opus",
+		modelconfig.PhaseSpec:              "sonnet",
+		modelconfig.PhaseDesign:            "opus",
+		modelconfig.PhaseTasks:             "sonnet",
+		modelconfig.PhaseApply:             "haiku",
+		modelconfig.PhaseVerify:            "opus",
+		modelconfig.PhaseArchive:           "haiku",
+		modelconfig.PhaseOnboard:           "haiku",
+		modelconfig.PhaseJDJudgeA:          "sonnet",
+		modelconfig.PhaseJDJudgeB:          "sonnet",
+		modelconfig.PhaseJDFixAgent:        "sonnet",
+		modelconfig.PhaseReviewRisk:        "opus",
+		modelconfig.PhaseReviewReadability: "sonnet",
+		modelconfig.PhaseReviewReliability: "haiku",
+		modelconfig.PhaseReviewResilience:  "sonnet",
+		modelconfig.PhaseReviewRefuter:     "opus",
+		modelconfig.PhaseDefault:           "sonnet",
 	}
 
 	if err := SyncMarketplacePlugins(models, modelconfig.ProfileCostSaver); err != nil {
@@ -66,6 +71,11 @@ func TestSyncMarketplacePlugins_PassesPerPhaseConfigFlagsForClickSDD(t *testing.
 			"--config", "jd_judge_a_model=sonnet",
 			"--config", "jd_judge_b_model=sonnet",
 			"--config", "jd_fix_agent_model=sonnet",
+			"--config", "review_risk_model=opus",
+			"--config", "review_readability_model=sonnet",
+			"--config", "review_reliability_model=haiku",
+			"--config", "review_resilience_model=sonnet",
+			"--config", "review_refuter_model=opus",
 			"--config", "default_model=sonnet",
 		}},
 		{Name: "claude", Args: []string{"plugin", "install", "click-memory@click-ai-devkit"}},
@@ -106,6 +116,11 @@ func TestSyncMarketplacePlugins_DefaultsWhenModelsNil(t *testing.T) {
 		"--config", "jd_judge_a_model=sonnet",
 		"--config", "jd_judge_b_model=sonnet",
 		"--config", "jd_fix_agent_model=sonnet",
+		"--config", "review_risk_model=sonnet",
+		"--config", "review_readability_model=sonnet",
+		"--config", "review_reliability_model=sonnet",
+		"--config", "review_resilience_model=sonnet",
+		"--config", "review_refuter_model=sonnet",
 		"--config", "default_model=sonnet",
 	}}
 	if !reflect.DeepEqual(runner.commands[1], wantClickSDD) {
