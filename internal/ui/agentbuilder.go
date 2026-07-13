@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -64,6 +65,8 @@ var agentBuilderThemePrompts = []struct {
 }
 
 var agentBuilderPreviewActions = []string{"Instalar", "Editar", "Regenerar", "Volver"}
+
+var agentBuilderGeneratedNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 
 var agentBuilderPlacementOptions = []struct {
 	label     string
@@ -143,9 +146,16 @@ func (m AgentBuilderModel) updateEngine(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) 
 
 func (m AgentBuilderModel) updateDescription(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if keyName(keyMsg) == "enter" {
-		m.Spec.Description = strings.TrimSpace(m.input)
-		m.Spec.Name = deriveAgentName(m.Spec.Description)
+		description := strings.TrimSpace(m.input)
+		name := deriveAgentName(description)
+		if err := validateAgentBuilderGeneratedName(name); err != nil {
+			m.PreviewError = err.Error()
+			return m, nil
+		}
+		m.Spec.Description = description
+		m.Spec.Name = name
 		m.input = ""
+		m.PreviewError = ""
 		m.Step = StepSDDMode
 		m.cursor = 0
 		return m, nil
@@ -189,8 +199,13 @@ func (m AgentBuilderModel) updatePhase(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m AgentBuilderModel) updateThemes(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if keyName(keyMsg) == "enter" {
 		answer := strings.TrimSpace(m.input)
+		if err := validateAgentBuilderThemeAnswer(m.ThemeIndex, answer); err != nil {
+			m.PreviewError = err.Error()
+			return m, nil
+		}
 		agentBuilderThemePrompts[m.ThemeIndex].apply(&m.Spec, answer)
 		m.input = ""
+		m.PreviewError = ""
 		if m.ThemeIndex == len(agentBuilderThemePrompts)-1 {
 			m.refreshPreview()
 			m.Step = StepPreview
@@ -268,14 +283,14 @@ func (m AgentBuilderModel) View() string {
 	case StepEngine:
 		return m.renderList("Elegí el motor del agente", engineLabels(m.engines), "↑/↓ mover · enter confirmar · q/esc cancelar")
 	case StepDescription:
-		return renderInput("Describí el agente que querés crear", m.input)
+		return renderInputWithError("Describí el agente que querés crear", m.input, m.PreviewError)
 	case StepSDDMode:
 		return m.renderList("Elegí la integración SDD", sddModeLabels(), "↑/↓ mover · enter confirmar · q/esc cancelar")
 	case StepPhase:
 		return m.renderList("Elegí la fase SDD que este agente va a apoyar", phaseLabelsForAgentBuilder(), "↑/↓ mover · enter confirmar · q/esc cancelar")
 	case StepThemes:
 		prompt := agentBuilderThemePrompts[m.ThemeIndex]
-		return renderInput(fmt.Sprintf("%d/9 · %s", m.ThemeIndex+1, prompt.title), m.input)
+		return renderInputWithError(fmt.Sprintf("%d/9 · %s", m.ThemeIndex+1, prompt.title), m.input, m.PreviewError)
 	case StepPreview:
 		if m.EditingPreview {
 			return renderInput("Editá el Markdown final", m.input)
@@ -329,13 +344,42 @@ func (m AgentBuilderModel) renderPreview() string {
 }
 
 func renderInput(title, value string) string {
+	return renderInputWithError(title, value, "")
+}
+
+func renderInputWithError(title, value, errorMessage string) string {
 	var b strings.Builder
 	b.WriteString(styleRenderer.NewStyle().Bold(true).Render(title))
 	b.WriteString("\n\n")
+	if errorMessage != "" {
+		b.WriteString(styleRenderer.NewStyle().Foreground(lipgloss.Color("9")).Render(errorMessage))
+		b.WriteString("\n\n")
+	}
 	b.WriteString(value)
 	b.WriteString("\n\n")
 	b.WriteString(styleRenderer.NewStyle().Faint(true).Render("escribí tu respuesta · enter continuar · esc cancelar"))
 	return b.String()
+}
+
+func validateAgentBuilderGeneratedName(name string) error {
+	if !agentBuilderGeneratedNamePattern.MatchString(name) {
+		return fmt.Errorf("agentbuilder: invalid generated agent name %q; use ASCII letters or numbers in the description", name)
+	}
+	return nil
+}
+
+func validateAgentBuilderThemeAnswer(themeIndex int, answer string) error {
+	switch themeIndex {
+	case 4:
+		if strings.TrimSpace(answer) == "" {
+			return fmt.Errorf("agentbuilder: agent frontmatter field tools is required")
+		}
+	case 5:
+		if strings.TrimSpace(answer) == "" {
+			return fmt.Errorf("agentbuilder: agent frontmatter field model is required")
+		}
+	}
+	return nil
 }
 
 func (m *AgentBuilderModel) moveCursor(delta, size int) {

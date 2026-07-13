@@ -223,6 +223,78 @@ func TestAgentBuilderModel_ThemesPopulateSpecSequentially(t *testing.T) {
 	}
 }
 
+func TestAgentBuilderModel_RequiredThemeFieldsMustBeCorrectedBeforePreview(t *testing.T) {
+	m := advanceToThemes(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+	for _, answer := range validAgentBuilderThemeAnswers()[:4] {
+		m = typeAgentBuilderText(t, m, answer)
+		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	}
+	if m.ThemeIndex != 4 {
+		t.Fatalf("ThemeIndex before tools = %d, want 4", m.ThemeIndex)
+	}
+
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	if m.Step != StepThemes || m.ThemeIndex != 4 {
+		t.Fatalf("blank tools advanced to Step/ThemeIndex = %v/%d, want StepThemes/4", m.Step, m.ThemeIndex)
+	}
+	if m.PreviewError == "" {
+		t.Fatal("PreviewError empty after blank tools, want required-field error")
+	}
+	m = typeAgentBuilderText(t, m, "Read, Grep, Bash")
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	if m.Step != StepThemes || m.ThemeIndex != 5 || m.Spec.Tools != "Read, Grep, Bash" {
+		t.Fatalf("corrected tools state = Step %v ThemeIndex %d Tools %q, want StepThemes/5/corrected", m.Step, m.ThemeIndex, m.Spec.Tools)
+	}
+
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	if m.Step != StepThemes || m.ThemeIndex != 5 {
+		t.Fatalf("blank model advanced to Step/ThemeIndex = %v/%d, want StepThemes/5", m.Step, m.ThemeIndex)
+	}
+	m = typeAgentBuilderText(t, m, "sonnet")
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	for _, answer := range validAgentBuilderThemeAnswers()[6:] {
+		m = typeAgentBuilderText(t, m, answer)
+		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	}
+
+	if m.Step != StepPreview || m.PreviewError != "" {
+		t.Fatalf("corrected required fields ended at Step=%v PreviewError=%q, want preview without error", m.Step, m.PreviewError)
+	}
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	m, cmd := updateAgentBuilderModel(m, keyMsg("enter"))
+	if !m.Confirmed || m.Step != StepDone || cmd == nil {
+		t.Fatalf("corrected required fields did not confirm: Confirmed=%v Step=%v cmd=%v", m.Confirmed, m.Step, cmd)
+	}
+}
+
+func TestAgentBuilderModel_InvalidGeneratedNameCanBeCorrectedBeforePreview(t *testing.T) {
+	m := NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})
+	m = typeAgentBuilderText(t, m, "Ñandú migration reviewer")
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+
+	if m.Step != StepDescription {
+		t.Fatalf("invalid generated name advanced to Step=%v, want StepDescription", m.Step)
+	}
+	if m.PreviewError == "" {
+		t.Fatal("PreviewError empty after invalid generated name, want validation error")
+	}
+
+	m = clearAgentBuilderInput(t, m)
+	m = typeAgentBuilderText(t, m, "Nandu migration reviewer")
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	if m.Step != StepSDDMode || m.Spec.Name != "nandu-migration-reviewer" || m.PreviewError != "" {
+		t.Fatalf("corrected generated name state = Step %v Name %q PreviewError %q, want SDD mode/nandu-migration-reviewer/no error", m.Step, m.Spec.Name, m.PreviewError)
+	}
+
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	m = completeAnswersToPreview(t, m, validAgentBuilderThemeAnswers())
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	m, cmd := updateAgentBuilderModel(m, keyMsg("enter"))
+	if !m.Confirmed || m.Step != StepDone || cmd == nil {
+		t.Fatalf("corrected generated name did not confirm: Confirmed=%v Step=%v cmd=%v", m.Confirmed, m.Step, cmd)
+	}
+}
+
 func TestAgentBuilderModel_PreviewActionsAndEditUsesEditedText(t *testing.T) {
 	m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
 	view := m.View()
@@ -271,25 +343,17 @@ func TestAgentBuilderModel_PreviewActionsAndEditUsesEditedText(t *testing.T) {
 }
 
 func TestAgentBuilderModel_InvalidSpecCannotConfirm(t *testing.T) {
-	t.Run("blank required metadata stays at preview", func(t *testing.T) {
-		m := completeAnswersToPreview(t, advanceToThemes(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})), []string{
-			"Protect production data",
-			"Review SQL migrations and rollback plans",
-			"Before merging schema changes",
-			"Never approve destructive migrations without backup",
-			"",
-			"sonnet",
-			"Direct and careful",
-			"Postgres, RLS, Supabase migrations",
-			"A concise risk report with blockers",
-		})
+	t.Run("tampered blank required metadata stays at preview", func(t *testing.T) {
+		m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+		m.Spec.Tools = ""
+		m.PreviewError = ""
 
-		if m.PreviewError == "" {
-			t.Fatal("PreviewError empty for blank tools, want validation error")
-		}
 		m, cmd := updateAgentBuilderModel(m, keyMsg("enter"))
 		if m.Confirmed || m.Step != StepPreview || cmd != nil {
 			t.Fatalf("invalid preview install advanced: Confirmed=%v Step=%v cmd=%v", m.Confirmed, m.Step, cmd)
+		}
+		if m.PreviewError == "" {
+			t.Fatal("PreviewError empty for blank tools, want validation error")
 		}
 		m, cmd = updateAgentBuilderModel(m, keyMsg("enter"))
 		if m.Confirmed || cmd != nil {
@@ -297,19 +361,17 @@ func TestAgentBuilderModel_InvalidSpecCannotConfirm(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid generated name stays at preview", func(t *testing.T) {
-		m := NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})
-		m = typeAgentBuilderText(t, m, "Ñandú migration reviewer")
-		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
-		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
-		m = completeAnswersToPreview(t, m, validAgentBuilderThemeAnswers())
+	t.Run("tampered invalid generated name stays at preview", func(t *testing.T) {
+		m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+		m.Spec.Name = "ñandú-migration-reviewer"
+		m.PreviewError = ""
 
-		if m.PreviewError == "" {
-			t.Fatal("PreviewError empty for accented generated name, want validation error")
-		}
 		m, cmd := updateAgentBuilderModel(m, keyMsg("enter"))
 		if m.Confirmed || m.Step != StepPreview || cmd != nil {
 			t.Fatalf("invalid name install advanced: Confirmed=%v Step=%v cmd=%v", m.Confirmed, m.Step, cmd)
+		}
+		if m.PreviewError == "" {
+			t.Fatal("PreviewError empty for accented generated name, want validation error")
 		}
 		m, cmd = updateAgentBuilderModel(m, keyMsg("enter"))
 		if m.Confirmed || cmd != nil {
