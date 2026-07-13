@@ -1,7 +1,7 @@
 package modelconfig
 
 // ProfileName identifies one of the built-in orchestration profiles a developer can select at
-// install time instead of tuning all 13 phases by hand, or "custom" for a hand-tuned selection
+// install time instead of tuning all 18 phases by hand, or "custom" for a hand-tuned selection
 // that doesn't match any built-in preset.
 type ProfileName string
 
@@ -21,7 +21,7 @@ const (
 )
 
 // ProfileConfigKey is the plugin.json userConfig field name (and the `--config` flag key) that
-// carries the active profile name, alongside the 13 per-phase `<phase>_model` keys.
+// carries the active profile name, alongside the 18 per-phase `<phase>_model` keys.
 const ProfileConfigKey = "orchestration_profile"
 
 // RuntimeProfile is a named, fully-resolved per-phase model map.
@@ -45,19 +45,24 @@ func Profiles() []RuntimeProfile {
 // what balanced itself already deems essential.
 func costSaverDefaults() map[Phase]string {
 	return map[Phase]string{
-		PhaseExplore:    "haiku",
-		PhasePropose:    "opus",
-		PhaseSpec:       "haiku",
-		PhaseDesign:     "opus",
-		PhaseTasks:      "haiku",
-		PhaseApply:      "haiku",
-		PhaseVerify:     "opus",
-		PhaseArchive:    "haiku",
-		PhaseOnboard:    "haiku",
-		PhaseJDJudgeA:   "haiku",
-		PhaseJDJudgeB:   "haiku",
-		PhaseJDFixAgent: "haiku",
-		PhaseDefault:    "haiku",
+		PhaseExplore:           "haiku",
+		PhasePropose:           "opus",
+		PhaseSpec:              "haiku",
+		PhaseDesign:            "opus",
+		PhaseTasks:             "haiku",
+		PhaseApply:             "haiku",
+		PhaseVerify:            "opus",
+		PhaseArchive:           "haiku",
+		PhaseOnboard:           "haiku",
+		PhaseJDJudgeA:          "haiku",
+		PhaseJDJudgeB:          "haiku",
+		PhaseJDFixAgent:        "haiku",
+		PhaseReviewRisk:        "haiku",
+		PhaseReviewReadability: "haiku",
+		PhaseReviewReliability: "haiku",
+		PhaseReviewResilience:  "haiku",
+		PhaseReviewRefuter:     "haiku",
+		PhaseDefault:           "haiku",
 	}
 }
 
@@ -66,19 +71,24 @@ func costSaverDefaults() map[Phase]string {
 // already deems unnecessary.
 func qualityDefaults() map[Phase]string {
 	return map[Phase]string{
-		PhaseExplore:    "opus",
-		PhasePropose:    "opus",
-		PhaseSpec:       "opus",
-		PhaseDesign:     "opus",
-		PhaseTasks:      "opus",
-		PhaseApply:      "opus",
-		PhaseVerify:     "opus",
-		PhaseArchive:    "haiku",
-		PhaseOnboard:    "haiku",
-		PhaseJDJudgeA:   "opus",
-		PhaseJDJudgeB:   "opus",
-		PhaseJDFixAgent: "opus",
-		PhaseDefault:    "opus",
+		PhaseExplore:           "opus",
+		PhasePropose:           "opus",
+		PhaseSpec:              "opus",
+		PhaseDesign:            "opus",
+		PhaseTasks:             "opus",
+		PhaseApply:             "opus",
+		PhaseVerify:            "opus",
+		PhaseArchive:           "haiku",
+		PhaseOnboard:           "haiku",
+		PhaseJDJudgeA:          "opus",
+		PhaseJDJudgeB:          "opus",
+		PhaseJDFixAgent:        "opus",
+		PhaseReviewRisk:        "opus",
+		PhaseReviewReadability: "opus",
+		PhaseReviewReliability: "opus",
+		PhaseReviewResilience:  "opus",
+		PhaseReviewRefuter:     "opus",
+		PhaseDefault:           "opus",
 	}
 }
 
@@ -94,7 +104,7 @@ func ResolveProfile(name string) RuntimeProfile {
 	return RuntimeProfile{Name: ProfileBalanced, Models: Defaults()}
 }
 
-// ResolveForProfile resolves the full 13-phase model map for the named profile (falling back to
+// ResolveForProfile resolves the full 18-phase model map for the named profile (falling back to
 // balanced per ResolveProfile's rules), then layers per-phase overrides on top using the same
 // semantics Resolve uses against Defaults(): empty-string values and unknown phase keys in
 // overrides are silently dropped, every other phase keeps the profile's value.

@@ -5,24 +5,29 @@ import (
 	"testing"
 )
 
-// wantDefaults mirrors the real 13-phase SDD taxonomy's default model assignment: opus for the
+// wantDefaults mirrors the real 18-phase SDD taxonomy's default model assignment: opus for the
 // architecturally-heavy phases (propose, design, verify), haiku for the cheap/mechanical phases
 // (archive, onboard), sonnet for everything else.
 func wantDefaults() map[Phase]string {
 	return map[Phase]string{
-		PhaseExplore:    "sonnet",
-		PhasePropose:    "opus",
-		PhaseSpec:       "sonnet",
-		PhaseDesign:     "opus",
-		PhaseTasks:      "sonnet",
-		PhaseApply:      "sonnet",
-		PhaseVerify:     "opus",
-		PhaseArchive:    "haiku",
-		PhaseOnboard:    "haiku",
-		PhaseJDJudgeA:   "sonnet",
-		PhaseJDJudgeB:   "sonnet",
-		PhaseJDFixAgent: "sonnet",
-		PhaseDefault:    "sonnet",
+		PhaseExplore:           "sonnet",
+		PhasePropose:           "opus",
+		PhaseSpec:              "sonnet",
+		PhaseDesign:            "opus",
+		PhaseTasks:             "sonnet",
+		PhaseApply:             "sonnet",
+		PhaseVerify:            "opus",
+		PhaseArchive:           "haiku",
+		PhaseOnboard:           "haiku",
+		PhaseJDJudgeA:          "sonnet",
+		PhaseJDJudgeB:          "sonnet",
+		PhaseJDFixAgent:        "sonnet",
+		PhaseReviewRisk:        "sonnet",
+		PhaseReviewReadability: "sonnet",
+		PhaseReviewReliability: "sonnet",
+		PhaseReviewResilience:  "sonnet",
+		PhaseReviewRefuter:     "sonnet",
+		PhaseDefault:           "sonnet",
 	}
 }
 
@@ -120,16 +125,18 @@ func TestResolve_DoesNotMutateOverridesOrLeakIntoLaterCalls(t *testing.T) {
 func TestPhases_FixedOrder(t *testing.T) {
 	want := []Phase{
 		PhaseExplore, PhasePropose, PhaseSpec, PhaseDesign, PhaseTasks, PhaseApply, PhaseVerify,
-		PhaseArchive, PhaseOnboard, PhaseJDJudgeA, PhaseJDJudgeB, PhaseJDFixAgent, PhaseDefault,
+		PhaseArchive, PhaseOnboard, PhaseJDJudgeA, PhaseJDJudgeB, PhaseJDFixAgent,
+		PhaseReviewRisk, PhaseReviewReadability, PhaseReviewReliability, PhaseReviewResilience,
+		PhaseReviewRefuter, PhaseDefault,
 	}
 	if !reflect.DeepEqual(Phases, want) {
 		t.Fatalf("Phases = %#v, want %#v", Phases, want)
 	}
 }
 
-func TestPhases_HasThirteenPhases(t *testing.T) {
-	if got := len(Phases); got != 13 {
-		t.Fatalf("len(Phases) = %d, want 13", got)
+func TestPhases_HasEighteenPhases(t *testing.T) {
+	if got := len(Phases); got != 18 {
+		t.Fatalf("len(Phases) = %d, want 18", got)
 	}
 }
 
@@ -150,6 +157,11 @@ func TestPhase_ConfigKey(t *testing.T) {
 		{PhaseJDJudgeA, "jd_judge_a_model"},
 		{PhaseJDJudgeB, "jd_judge_b_model"},
 		{PhaseJDFixAgent, "jd_fix_agent_model"},
+		{PhaseReviewRisk, "review_risk_model"},
+		{PhaseReviewReadability, "review_readability_model"},
+		{PhaseReviewReliability, "review_reliability_model"},
+		{PhaseReviewResilience, "review_resilience_model"},
+		{PhaseReviewRefuter, "review_refuter_model"},
 		{PhaseDefault, "default_model"},
 	}
 	for _, tt := range tests {

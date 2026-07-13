@@ -488,6 +488,11 @@ func TestInstallCommand_IssuesMarketplaceCommandsInOrder(t *testing.T) {
 			" --config jd_judge_a_model=sonnet" +
 			" --config jd_judge_b_model=sonnet" +
 			" --config jd_fix_agent_model=sonnet" +
+			" --config review_risk_model=sonnet" +
+			" --config review_readability_model=sonnet" +
+			" --config review_reliability_model=sonnet" +
+			" --config review_resilience_model=sonnet" +
+			" --config review_refuter_model=sonnet" +
 			" --config default_model=sonnet",
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",
@@ -562,6 +567,11 @@ func TestInstallCommand_ProfileFlag_NonInteractive_PersistsChosenProfile(t *test
 		" --config jd_judge_a_model=haiku" +
 		" --config jd_judge_b_model=haiku" +
 		" --config jd_fix_agent_model=haiku" +
+		" --config review_risk_model=haiku" +
+		" --config review_readability_model=haiku" +
+		" --config review_reliability_model=haiku" +
+		" --config review_resilience_model=haiku" +
+		" --config review_refuter_model=haiku" +
 		" --config default_model=haiku"
 	if !contains(runner.commands, wantCommand) {
 		t.Fatalf("install command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
@@ -745,19 +755,24 @@ func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
 	}
 
 	custom := map[modelconfig.Phase]string{
-		modelconfig.PhaseExplore:    "haiku",
-		modelconfig.PhasePropose:    "sonnet",
-		modelconfig.PhaseSpec:       "haiku",
-		modelconfig.PhaseDesign:     "sonnet",
-		modelconfig.PhaseTasks:      "haiku",
-		modelconfig.PhaseApply:      "sonnet",
-		modelconfig.PhaseVerify:     "haiku",
-		modelconfig.PhaseArchive:    "sonnet",
-		modelconfig.PhaseOnboard:    "sonnet",
-		modelconfig.PhaseJDJudgeA:   "haiku",
-		modelconfig.PhaseJDJudgeB:   "haiku",
-		modelconfig.PhaseJDFixAgent: "haiku",
-		modelconfig.PhaseDefault:    "haiku",
+		modelconfig.PhaseExplore:           "haiku",
+		modelconfig.PhasePropose:           "sonnet",
+		modelconfig.PhaseSpec:              "haiku",
+		modelconfig.PhaseDesign:            "sonnet",
+		modelconfig.PhaseTasks:             "haiku",
+		modelconfig.PhaseApply:             "sonnet",
+		modelconfig.PhaseVerify:            "haiku",
+		modelconfig.PhaseArchive:           "sonnet",
+		modelconfig.PhaseOnboard:           "sonnet",
+		modelconfig.PhaseJDJudgeA:          "haiku",
+		modelconfig.PhaseJDJudgeB:          "haiku",
+		modelconfig.PhaseJDFixAgent:        "haiku",
+		modelconfig.PhaseReviewRisk:        "opus",
+		modelconfig.PhaseReviewReadability: "sonnet",
+		modelconfig.PhaseReviewReliability: "haiku",
+		modelconfig.PhaseReviewResilience:  "opus",
+		modelconfig.PhaseReviewRefuter:     "sonnet",
+		modelconfig.PhaseDefault:           "haiku",
 	}
 	if err := installer.SaveModelsWithProfile(installer.Config{ClaudeHome: home}, modelconfig.ProfileCustom, custom); err != nil {
 		t.Fatalf("SaveModelsWithProfile() error = %v", err)
@@ -781,6 +796,11 @@ func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
 		" --config jd_judge_a_model=haiku" +
 		" --config jd_judge_b_model=haiku" +
 		" --config jd_fix_agent_model=haiku" +
+		" --config review_risk_model=opus" +
+		" --config review_readability_model=sonnet" +
+		" --config review_reliability_model=haiku" +
+		" --config review_resilience_model=opus" +
+		" --config review_refuter_model=sonnet" +
 		" --config default_model=haiku"
 	if !contains(runner.commands, wantCommand) {
 		t.Fatalf("update command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
@@ -851,6 +871,11 @@ func TestUpdateCommand_MigratesStaleModelsBeforeReapplying(t *testing.T) {
 		" --config jd_judge_a_model=sonnet" +
 		" --config jd_judge_b_model=sonnet" +
 		" --config jd_fix_agent_model=sonnet" +
+		" --config review_risk_model=sonnet" +
+		" --config review_readability_model=sonnet" +
+		" --config review_reliability_model=sonnet" +
+		" --config review_resilience_model=sonnet" +
+		" --config review_refuter_model=sonnet" +
 		" --config default_model=sonnet"
 	if !contains(runner.commands, wantCommand) {
 		t.Fatalf("update command sequence = %#v, want it to contain fresh-defaults command %q", runner.commands, wantCommand)
@@ -888,6 +913,11 @@ func TestUpdateCommand_ReappliesPersistedProfile(t *testing.T) {
 		" --config jd_judge_a_model=opus" +
 		" --config jd_judge_b_model=opus" +
 		" --config jd_fix_agent_model=opus" +
+		" --config review_risk_model=opus" +
+		" --config review_readability_model=opus" +
+		" --config review_reliability_model=opus" +
+		" --config review_resilience_model=opus" +
+		" --config review_refuter_model=opus" +
 		" --config default_model=opus"
 	if !contains(runner.commands, wantCommand) {
 		t.Fatalf("update command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
@@ -902,6 +932,86 @@ func TestUpdateCommand_ReappliesPersistedProfile(t *testing.T) {
 	}
 	if profile != modelconfig.ProfileQuality {
 		t.Fatalf("persisted profile after update = %q, want %q", profile, modelconfig.ProfileQuality)
+	}
+}
+
+func TestUpdateCommand_NormalizesPartialProfileModelsJson(t *testing.T) {
+	seedResolvableEngram(t)
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	cfg := installer.Config{ClaudeHome: home}
+	partial := oldThirteenPhaseModelsForProfile(modelconfig.ProfileCostSaver)
+	if err := installer.SaveModelsWithProfile(cfg, modelconfig.ProfileCostSaver, partial); err != nil {
+		t.Fatalf("SaveModelsWithProfile(partial cost-saver) error = %v", err)
+	}
+
+	if _, err := execRoot(t, home, "update"); err != nil {
+		t.Fatalf("update command error = %v", err)
+	}
+
+	profile, got, found, err := installer.LoadModelsWithProfile(cfg)
+	if err != nil {
+		t.Fatalf("LoadModelsWithProfile() error = %v", err)
+	}
+	if !found {
+		t.Fatal("LoadModelsWithProfile() found = false after update, want true")
+	}
+	if profile != modelconfig.ProfileCostSaver {
+		t.Fatalf("persisted profile after update = %q, want %q", profile, modelconfig.ProfileCostSaver)
+	}
+	if len(got) != len(modelconfig.Phases) {
+		t.Fatalf("persisted models has %d phases, want %d: %#v", len(got), len(modelconfig.Phases), got)
+	}
+	for _, phase := range []modelconfig.Phase{
+		modelconfig.PhaseReviewRisk,
+		modelconfig.PhaseReviewReadability,
+		modelconfig.PhaseReviewReliability,
+		modelconfig.PhaseReviewResilience,
+		modelconfig.PhaseReviewRefuter,
+	} {
+		if got[phase] != "haiku" {
+			t.Fatalf("persisted models[%s] = %q, want haiku from active cost-saver profile", phase, got[phase])
+		}
+	}
+}
+
+func TestDoctorModelsLine_ResolvesMissingReviewPhasesFromActiveProfile(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		profile modelconfig.ProfileName
+		want    string
+	}{
+		{name: "cost saver", profile: modelconfig.ProfileCostSaver, want: "haiku"},
+		{name: "quality", profile: modelconfig.ProfileQuality, want: "opus"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := installer.Config{ClaudeHome: t.TempDir()}
+			partial := oldThirteenPhaseModelsForProfile(tt.profile)
+			if err := installer.SaveModelsWithProfile(cfg, tt.profile, partial); err != nil {
+				t.Fatalf("SaveModelsWithProfile(partial %s) error = %v", tt.profile, err)
+			}
+
+			line, err := formatModelsLine(cfg)
+			if err != nil {
+				t.Fatalf("formatModelsLine() error = %v", err)
+			}
+
+			for _, phase := range []modelconfig.Phase{
+				modelconfig.PhaseReviewRisk,
+				modelconfig.PhaseReviewReadability,
+				modelconfig.PhaseReviewReliability,
+				modelconfig.PhaseReviewResilience,
+				modelconfig.PhaseReviewRefuter,
+			} {
+				want := string(phase) + "=" + tt.want
+				if !strings.Contains(line, want) {
+					t.Fatalf("formatModelsLine() = %q, want it to contain %q", line, want)
+				}
+			}
+		})
 	}
 }
 
@@ -990,6 +1100,16 @@ func contains(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func oldThirteenPhaseModelsForProfile(profile modelconfig.ProfileName) map[modelconfig.Phase]string {
+	models := modelconfig.ResolveForProfile(string(profile), nil)
+	delete(models, modelconfig.PhaseReviewRisk)
+	delete(models, modelconfig.PhaseReviewReadability)
+	delete(models, modelconfig.PhaseReviewReliability)
+	delete(models, modelconfig.PhaseReviewResilience)
+	delete(models, modelconfig.PhaseReviewRefuter)
+	return models
 }
 
 func TestRendererFor_NoColorFlagForcesPlain(t *testing.T) {

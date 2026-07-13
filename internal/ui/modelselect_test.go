@@ -142,9 +142,32 @@ func TestModelSelectModel_Update_IgnoresNonKeyMessages(t *testing.T) {
 func TestModelSelectModel_View_RendersAllPhaseRows(t *testing.T) {
 	m := NewModelSelectModel()
 	view := m.View()
+	rowCount := 0
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, " opus") || strings.Contains(line, " sonnet") || strings.Contains(line, " haiku") {
+			rowCount++
+		}
+	}
+	if rowCount != len(modelconfig.Phases) {
+		t.Fatalf("View() rendered %d phase rows, want %d:\n%s", rowCount, len(modelconfig.Phases), view)
+	}
 	for _, model := range m.Selection {
 		if !strings.Contains(view, model) {
 			t.Errorf("View() missing selected model %q:\n%s", model, view)
+		}
+	}
+}
+
+func TestModelSelectModel_PhaseLabelsCoverEveryPhase(t *testing.T) {
+	m := NewModelSelectModel()
+	view := m.View()
+	for _, phase := range modelconfig.Phases {
+		label := phaseLabels[phase]
+		if label == "" {
+			t.Fatalf("phaseLabels[%q] is empty or missing", phase)
+		}
+		if !strings.Contains(view, label) {
+			t.Fatalf("View() missing label %q for phase %q:\n%s", label, phase, view)
 		}
 	}
 }

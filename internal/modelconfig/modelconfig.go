@@ -1,10 +1,11 @@
 // Package modelconfig resolves per-phase model selections for the real SDD phase taxonomy the
-// click-sdd plugin and the wider gentle-ai SDD ecosystem use — the 13 phases exercised by
+// click-sdd plugin and the wider gentle-ai SDD ecosystem use — the 18 phases exercised by
 // `/sdd-explore`, `/sdd-propose`, `/sdd-spec`, `/sdd-design`, `/sdd-tasks`, `/sdd-apply`,
 // `/sdd-verify`, `/sdd-archive`, `/sdd-onboard`, and Judgment Day's two blind judges + fix agent,
-// plus a `default` fallback for any delegation not covered by a specific phase. A developer may
-// override any phase's model at install time via `click install`'s interactive TUI or by accepting
-// the defaults; unset phases always fall back to their default. The resolved map is what
+// plus the five 4R review lens roles and a `default` fallback for any delegation not covered by a
+// specific phase. A developer may override any phase's model at install time via `click install`'s
+// interactive TUI or by accepting the defaults; unset phases always fall back to their default. The
+// resolved map is what
 // internal/installer turns into `--config <phase>_model=<alias>` flags on
 // `claude plugin install click-sdd@click-ai-devkit`.
 //
@@ -19,26 +20,33 @@ package modelconfig
 type Phase string
 
 const (
-	PhaseExplore    Phase = "explore"
-	PhasePropose    Phase = "propose"
-	PhaseSpec       Phase = "spec"
-	PhaseDesign     Phase = "design"
-	PhaseTasks      Phase = "tasks"
-	PhaseApply      Phase = "apply"
-	PhaseVerify     Phase = "verify"
-	PhaseArchive    Phase = "archive"
-	PhaseOnboard    Phase = "onboard"
-	PhaseJDJudgeA   Phase = "jd-judge-a"
-	PhaseJDJudgeB   Phase = "jd-judge-b"
-	PhaseJDFixAgent Phase = "jd-fix-agent"
-	PhaseDefault    Phase = "default"
+	PhaseExplore           Phase = "explore"
+	PhasePropose           Phase = "propose"
+	PhaseSpec              Phase = "spec"
+	PhaseDesign            Phase = "design"
+	PhaseTasks             Phase = "tasks"
+	PhaseApply             Phase = "apply"
+	PhaseVerify            Phase = "verify"
+	PhaseArchive           Phase = "archive"
+	PhaseOnboard           Phase = "onboard"
+	PhaseJDJudgeA          Phase = "jd-judge-a"
+	PhaseJDJudgeB          Phase = "jd-judge-b"
+	PhaseJDFixAgent        Phase = "jd-fix-agent"
+	PhaseReviewRisk        Phase = "review-risk"
+	PhaseReviewReadability Phase = "review-readability"
+	PhaseReviewReliability Phase = "review-reliability"
+	PhaseReviewResilience  Phase = "review-resilience"
+	PhaseReviewRefuter     Phase = "review-refuter"
+	PhaseDefault           Phase = "default"
 )
 
-// Phases lists all thirteen phases in the fixed order click uses everywhere a stable order
+// Phases lists all eighteen phases in the fixed order click uses everywhere a stable order
 // matters: TUI rows, --config flag emission, and `click doctor` output.
 var Phases = []Phase{
 	PhaseExplore, PhasePropose, PhaseSpec, PhaseDesign, PhaseTasks, PhaseApply, PhaseVerify,
-	PhaseArchive, PhaseOnboard, PhaseJDJudgeA, PhaseJDJudgeB, PhaseJDFixAgent, PhaseDefault,
+	PhaseArchive, PhaseOnboard, PhaseJDJudgeA, PhaseJDJudgeB, PhaseJDFixAgent,
+	PhaseReviewRisk, PhaseReviewReadability, PhaseReviewReliability, PhaseReviewResilience,
+	PhaseReviewRefuter, PhaseDefault,
 }
 
 // Models are the model aliases click's TUI cycles through per phase, in cycle order.
@@ -46,24 +54,29 @@ var Models = []string{"opus", "sonnet", "haiku"}
 
 // Defaults returns the default model per phase: opus for the architecturally-heavy phases
 // (propose, design, verify), haiku for the cheap/mechanical phases (archive, onboard), and sonnet
-// for every other phase (explore, spec, tasks, apply, jd-judge-a, jd-judge-b, jd-fix-agent,
-// default). It always returns a fresh map so callers can mutate their copy without affecting later
-// calls.
+// for every other phase (explore, spec, tasks, apply, jd-judge-a, jd-judge-b, jd-fix-agent, the
+// review lenses, default). It always returns a fresh map so callers can mutate their copy without
+// affecting later calls.
 func Defaults() map[Phase]string {
 	return map[Phase]string{
-		PhaseExplore:    "sonnet",
-		PhasePropose:    "opus",
-		PhaseSpec:       "sonnet",
-		PhaseDesign:     "opus",
-		PhaseTasks:      "sonnet",
-		PhaseApply:      "sonnet",
-		PhaseVerify:     "opus",
-		PhaseArchive:    "haiku",
-		PhaseOnboard:    "haiku",
-		PhaseJDJudgeA:   "sonnet",
-		PhaseJDJudgeB:   "sonnet",
-		PhaseJDFixAgent: "sonnet",
-		PhaseDefault:    "sonnet",
+		PhaseExplore:           "sonnet",
+		PhasePropose:           "opus",
+		PhaseSpec:              "sonnet",
+		PhaseDesign:            "opus",
+		PhaseTasks:             "sonnet",
+		PhaseApply:             "sonnet",
+		PhaseVerify:            "opus",
+		PhaseArchive:           "haiku",
+		PhaseOnboard:           "haiku",
+		PhaseJDJudgeA:          "sonnet",
+		PhaseJDJudgeB:          "sonnet",
+		PhaseJDFixAgent:        "sonnet",
+		PhaseReviewRisk:        "sonnet",
+		PhaseReviewReadability: "sonnet",
+		PhaseReviewReliability: "sonnet",
+		PhaseReviewResilience:  "sonnet",
+		PhaseReviewRefuter:     "sonnet",
+		PhaseDefault:           "sonnet",
 	}
 }
 

@@ -9,7 +9,7 @@
     "orchestration_profile": {
       "type": "string",
       "title": "Orchestration profile",
-      "description": "Named preset for all 13 per-phase models at once (balanced, cost-saver, quality, or custom for a hand-tuned selection).",
+      "description": "Named preset for all 18 per-phase models at once (balanced, cost-saver, quality, or custom for a hand-tuned selection).",
       "default": "balanced"
     },
     "explore_model": {
@@ -82,6 +82,36 @@
       "type": "string",
       "title": "Judgment Day fix agent model",
       "description": "Model alias for Judgment Day's fix agent (applies surgical fixes from confirmed issues).",
+      "default": "sonnet"
+    },
+    "review_risk_model": {
+      "type": "string",
+      "title": "Review risk model",
+      "description": "Model alias for the review-risk lens role.",
+      "default": "sonnet"
+    },
+    "review_readability_model": {
+      "type": "string",
+      "title": "Review readability model",
+      "description": "Model alias for the review-readability lens role.",
+      "default": "sonnet"
+    },
+    "review_reliability_model": {
+      "type": "string",
+      "title": "Review reliability model",
+      "description": "Model alias for the review-reliability lens role.",
+      "default": "sonnet"
+    },
+    "review_resilience_model": {
+      "type": "string",
+      "title": "Review resilience model",
+      "description": "Model alias for the review-resilience lens role.",
+      "default": "sonnet"
+    },
+    "review_refuter_model": {
+      "type": "string",
+      "title": "Review refuter model",
+      "description": "Model alias for the review-refuter role.",
       "default": "sonnet"
     },
     "default_model": {
