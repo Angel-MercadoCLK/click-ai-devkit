@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -409,10 +410,16 @@ func validateAgentBuilderFinalMarkdown(content string) error {
 	}
 	frontmatter := rest[:frontmatterEnd]
 	body := rest[frontmatterEnd+len("\n---\n"):]
+	frontmatterValues := make(map[string]string, 4)
 	for _, field := range []string{"name", "description", "model", "tools"} {
-		if !frontmatterHasNonBlankField(frontmatter, field) {
-			return fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
+		value, err := frontmatterScalarValue(frontmatter, field)
+		if err != nil {
+			return err
 		}
+		frontmatterValues[field] = value
+	}
+	if err := validateAgentBuilderGeneratedName(frontmatterValues["name"]); err != nil {
+		return err
 	}
 	for _, heading := range []string{"# Role", "## Tasks", "## Triggers", "## Hard Rules", "## SDD Integration", "## Tone", "## Domain Knowledge", "## Good Output"} {
 		if !strings.Contains(body, heading+"\n") {
@@ -422,16 +429,50 @@ func validateAgentBuilderFinalMarkdown(content string) error {
 	return nil
 }
 
-func frontmatterHasNonBlankField(frontmatter, field string) bool {
+func frontmatterScalarValue(frontmatter, field string) (string, error) {
 	prefix := field + ":"
 	for _, line := range strings.Split(frontmatter, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, prefix) {
 			continue
 		}
-		return strings.TrimSpace(strings.TrimPrefix(line, prefix)) != ""
+		rawValue := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		if rawValue == "" {
+			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
+		}
+		value, err := parseAgentBuilderFrontmatterScalar(field, rawValue)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(value) == "" {
+			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
+		}
+		if strings.ContainsAny(value, "\n\r") {
+			return "", fmt.Errorf("agentbuilder: agent frontmatter field %s contains a newline", field)
+		}
+		return value, nil
 	}
-	return false
+	return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
+}
+
+func parseAgentBuilderFrontmatterScalar(field, rawValue string) (string, error) {
+	if strings.HasPrefix(rawValue, "|") || strings.HasPrefix(rawValue, ">") {
+		return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must be a single-line scalar", field)
+	}
+	if strings.HasPrefix(rawValue, `"`) {
+		value, err := strconv.Unquote(rawValue)
+		if err != nil {
+			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s has invalid quoted scalar", field)
+		}
+		return value, nil
+	}
+	if strings.HasPrefix(rawValue, `'`) {
+		if !strings.HasSuffix(rawValue, `'`) || len(rawValue) == 1 {
+			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s has invalid quoted scalar", field)
+		}
+		return strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(rawValue, `'`), `'`), `''`, `'`), nil
+	}
+	return rawValue, nil
 }
 
 func (m *AgentBuilderModel) moveCursor(delta, size int) {

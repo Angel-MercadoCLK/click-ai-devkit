@@ -410,6 +410,51 @@ func TestAgentBuilderModel_InvalidEditedPreviewCannotConfirm(t *testing.T) {
 	}
 }
 
+func TestAgentBuilderModel_EditedPreviewInvalidFrontmatterDomainCannotConfirm(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(string) string
+	}{
+		{
+			name: "invalid slug name",
+			edit: func(content string) string {
+				return strings.Replace(content, `name: "review-risky-database-migrations"`, `name: "bad name"`, 1)
+			},
+		},
+		{
+			name: "multiline frontmatter scalar",
+			edit: func(content string) string {
+				return strings.Replace(content, `model: "sonnet"`, "model: |\n  sonnet", 1)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+			edited := tt.edit(m.PreviewContent)
+
+			m, _ = updateAgentBuilderModel(m, keyMsg("down"))
+			m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+			m = clearAgentBuilderInput(t, m)
+			m = typeAgentBuilderText(t, m, edited)
+			m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+
+			m, _ = updateAgentBuilderModel(m, keyMsg("up"))
+			m, cmd := updateAgentBuilderModel(m, keyMsg("enter"))
+			if m.Confirmed || m.Step != StepPreview || cmd != nil {
+				t.Fatalf("invalid frontmatter domain advanced: Confirmed=%v Step=%v cmd=%v", m.Confirmed, m.Step, cmd)
+			}
+			if m.PreviewError == "" {
+				t.Fatal("PreviewError empty after invalid frontmatter domain, want validation error")
+			}
+			if m.FinalMarkdown != "" {
+				t.Fatalf("FinalMarkdown = %q, want empty for invalid frontmatter domain", m.FinalMarkdown)
+			}
+		})
+	}
+}
+
 func TestAgentBuilderModel_InvalidSpecCannotConfirm(t *testing.T) {
 	t.Run("tampered blank required metadata stays at preview", func(t *testing.T) {
 		m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
