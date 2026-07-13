@@ -193,6 +193,9 @@ func validateAgentName(name string) error {
 }
 
 func validateFrontmatterScalar(field, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("agentbuilder: agent frontmatter field %s is required", field)
+	}
 	if strings.ContainsAny(value, "\n\r") {
 		return fmt.Errorf("agentbuilder: agent frontmatter field %s contains a newline", field)
 	}

@@ -97,6 +97,57 @@ func TestRenderAgentMarkdownRejectsFrontmatterNewlineInjection(t *testing.T) {
 	}
 }
 
+func TestRenderAgentMarkdownRejectsBlankRequiredFrontmatterFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*AgentSpec)
+	}{
+		{
+			name: "description",
+			mutate: func(spec *AgentSpec) {
+				spec.Description = " \t "
+			},
+		},
+		{
+			name: "model",
+			mutate: func(spec *AgentSpec) {
+				spec.Model = ""
+			},
+		},
+		{
+			name: "tools",
+			mutate: func(spec *AgentSpec) {
+				spec.Tools = "\t"
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := validAgentSpec()
+			tt.mutate(&spec)
+
+			if _, err := RenderAgentMarkdown(spec); err == nil {
+				t.Fatalf("RenderAgentMarkdown() error = nil, want non-nil for blank %s", tt.name)
+			}
+		})
+	}
+}
+
+func TestInstallRejectsBlankRequiredDescriptionBeforeWriting(t *testing.T) {
+	spec := validAgentSpec()
+	spec.Description = "   "
+	spec.Placement = PlacementShareable
+	writer := newFakeFileWriter()
+
+	if _, err := Install(spec, "", filepath.Join("testdata", "repo"), writer); err == nil {
+		t.Fatal("Install() error = nil, want non-nil for blank description")
+	}
+	if len(writer.writePaths) != 0 {
+		t.Fatalf("Install() writes = %v, want none for invalid spec", writer.writePaths)
+	}
+}
+
 func TestTargetPathPersonalUsesClaudeConfigDirWhenSet(t *testing.T) {
 	claudeConfigDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeConfigDir)
