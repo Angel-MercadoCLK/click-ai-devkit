@@ -71,6 +71,28 @@ func TestAgentBuilderModel_DescriptionCapturesFreeTextBeforeThemes(t *testing.T)
 	}
 }
 
+func TestAgentBuilderModel_BlankDescriptionMustBeCorrectedBeforeSDDMode(t *testing.T) {
+	m := NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})
+	m = typeAgentBuilderText(t, m, "   ")
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+
+	if m.Step != StepDescription {
+		t.Fatalf("blank description advanced to Step=%v, want StepDescription", m.Step)
+	}
+	if m.PreviewError == "" {
+		t.Fatal("PreviewError empty after blank description, want required-field error")
+	}
+	if m.Spec.Description != "" || m.Spec.Name != "" {
+		t.Fatalf("blank description mutated spec to Description=%q Name=%q, want both empty", m.Spec.Description, m.Spec.Name)
+	}
+
+	m = typeAgentBuilderText(t, m, "Review risky database migrations")
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	if m.Step != StepSDDMode || m.Spec.Description != "Review risky database migrations" || m.Spec.Name != "review-risky-database-migrations" || m.PreviewError != "" {
+		t.Fatalf("corrected description state = Step %v Description %q Name %q PreviewError %q, want SDD mode/corrected name/no error", m.Step, m.Spec.Description, m.Spec.Name, m.PreviewError)
+	}
+}
+
 func TestAgentBuilderModel_TextEntryStatesCaptureLowercaseQ(t *testing.T) {
 	t.Run("description", func(t *testing.T) {
 		m := NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})

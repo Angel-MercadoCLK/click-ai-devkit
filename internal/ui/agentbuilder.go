@@ -147,6 +147,10 @@ func (m AgentBuilderModel) updateEngine(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) 
 func (m AgentBuilderModel) updateDescription(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if keyName(keyMsg) == "enter" {
 		description := strings.TrimSpace(m.input)
+		if description == "" {
+			m.PreviewError = "agentbuilder: agent frontmatter field description is required"
+			return m, nil
+		}
 		name := deriveAgentName(description)
 		if err := validateAgentBuilderGeneratedName(name); err != nil {
 			m.PreviewError = err.Error()
