@@ -51,10 +51,7 @@ var Items = []Item{
 	{Label: "Presets de instalación", Active: false},
 	{Label: "Crear tu propio agente", Active: false},
 	{Label: "Sincronizar configuración", Active: false},
-	{Label: "Actualizar + Sincronizar", Active: false},
 	{Label: "Gestionar backups", Active: false},
-	{Label: "Plugins de la comunidad OpenCode", Active: false},
-	{Label: "Perfiles SDD de OpenCode", Active: false},
 	{Label: "Salir", Action: ActionQuit, Active: true},
 }
 

@@ -285,7 +285,7 @@ func TestInstallCommand_InteractiveCancel_LeavesModelsUntouched(t *testing.T) {
 	cmd.SetErr(&buf)
 	r := rendererFor(cmd, &buf)
 
-	cancelledSelector := func(*cobra.Command) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+	cancelledSelector := func(*cobra.Command, modelconfig.ProfileName) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
 		return "", nil, true, nil
 	}
 
@@ -619,7 +619,7 @@ func TestResolveInstallModels_Interactive_PresetUnmodified_PersistsPresetLabel(t
 	r := rendererFor(cmd, &buf)
 
 	unmodified := modelconfig.ResolveProfile(string(modelconfig.ProfileQuality)).Models
-	selector := func(*cobra.Command) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+	selector := func(*cobra.Command, modelconfig.ProfileName) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
 		return modelconfig.ProfileQuality, unmodified, false, nil
 	}
 
@@ -649,7 +649,7 @@ func TestResolveInstallModels_Interactive_TweakedPreset_PersistsCustomLabel(t *t
 
 	tweaked := modelconfig.ResolveProfile(string(modelconfig.ProfileQuality)).Models
 	tweaked[modelconfig.PhaseExplore] = "haiku" // hand-edit away from quality's "opus"
-	selector := func(*cobra.Command) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+	selector := func(*cobra.Command, modelconfig.ProfileName) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
 		return modelconfig.ProfileQuality, tweaked, false, nil
 	}
 
@@ -665,6 +665,34 @@ func TestResolveInstallModels_Interactive_TweakedPreset_PersistsCustomLabel(t *t
 	}
 	if !reflect.DeepEqual(models, tweaked) {
 		t.Fatalf("resolveInstallModels() models = %#v, want %#v (tweaked values must still be preserved)", models, tweaked)
+	}
+}
+
+// TestResolveInstallModels_Interactive_ThreadsProfileFlagAsInitialSelection guards the C2 fix:
+// `click install --profile X` on a real terminal must pass X through to the interactive selector
+// as the picker's starting profile, instead of always hardcoding balanced. The fake selector here
+// stands in for runInstallSelectTUI (a real bubbletea program can't be exercised headlessly), so
+// this test verifies the wiring: the initial profile resolveInstallModels hands to the selector.
+func TestResolveInstallModels_Interactive_ThreadsProfileFlagAsInitialSelection(t *testing.T) {
+	home := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home}
+	cmd := NewRootCommand()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	r := rendererFor(cmd, &buf)
+
+	var gotInitial modelconfig.ProfileName
+	selector := func(_ *cobra.Command, initial modelconfig.ProfileName) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+		gotInitial = initial
+		return modelconfig.ProfileCostSaver, modelconfig.ResolveProfile(string(modelconfig.ProfileCostSaver)).Models, false, nil
+	}
+
+	if _, _, _, err := resolveInstallModels(cmd, &buf, r, cfg, false, "cost-saver", selector); err != nil {
+		t.Fatalf("resolveInstallModels() error = %v", err)
+	}
+	if gotInitial != modelconfig.ProfileCostSaver {
+		t.Fatalf("selector received initial profile = %q, want %q (--profile flag must be threaded into the interactive picker)", gotInitial, modelconfig.ProfileCostSaver)
 	}
 }
 
@@ -699,7 +727,13 @@ func TestInstallCommand_NonTTY_PersistsDefaultModels(t *testing.T) {
 
 // TestUpdateCommand_ReappliesPersistedModels guards the "click update re-passes the same --config
 // flags" contract: a non-default model selection saved by a previous install must be re-emitted
-// verbatim on the next update, not silently reset to defaults.
+// verbatim on the next update, not silently reset to defaults. The custom map is persisted via
+// SaveModelsWithProfile with an explicit "custom" label (C1 fix): the previous version of this test
+// persisted it via the profile-dropping SaveModels(cfg, custom) and then asserted
+// orchestration_profile=balanced was re-emitted — that assertion pinned the C1 bug (configure-models
+// silently erasing the persisted profile label) instead of guarding correct behavior. update.go
+// itself only re-emits whatever label LoadModelsWithProfile returns, so a correctly persisted
+// "custom" label must round-trip as "custom", not get silently relabeled to "balanced".
 func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
@@ -725,8 +759,8 @@ func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
 		modelconfig.PhaseJDFixAgent: "haiku",
 		modelconfig.PhaseDefault:    "haiku",
 	}
-	if err := installer.SaveModels(installer.Config{ClaudeHome: home}, custom); err != nil {
-		t.Fatalf("SaveModels() error = %v", err)
+	if err := installer.SaveModelsWithProfile(installer.Config{ClaudeHome: home}, modelconfig.ProfileCustom, custom); err != nil {
+		t.Fatalf("SaveModelsWithProfile() error = %v", err)
 	}
 
 	if _, err := execRoot(t, home, "update"); err != nil {
@@ -734,7 +768,7 @@ func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
 	}
 
 	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
-		" --config orchestration_profile=balanced" +
+		" --config orchestration_profile=custom" +
 		" --config explore_model=haiku" +
 		" --config propose_model=sonnet" +
 		" --config spec_model=haiku" +

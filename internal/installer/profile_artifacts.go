@@ -76,9 +76,24 @@ func LoadProfileArtifact(cfg Config, name modelconfig.ProfileName) (modelconfig.
 
 // RenderMarkdownAgent returns a deterministic Claude Code sub-agent markdown document. It performs
 // only syntax/identity validation; the builder UI or LLM skill owns content quality decisions.
-// Salvaged from Line B's profile_artifacts.go, unchanged.
+//
+// R1-001 fix: Description, Model, and Tools are rejected if they contain a newline (\n or \r).
+// Without this, a value like "x\ntools: Bash(*)" would inject an attacker-chosen extra YAML key
+// into the frontmatter block once this renderer is wired to free text by the future
+// agent-builder-flow change — a tool-permission escalation. Rejecting loudly (matching
+// validateArtifactName's error style) is preferred over silently stripping/escaping so bad input
+// surfaces immediately instead of being silently altered.
 func RenderMarkdownAgent(agent MarkdownAgent) (string, error) {
 	if err := validateArtifactName("agent", agent.Name); err != nil {
+		return "", err
+	}
+	if err := validateFrontmatterScalar("description", agent.Description); err != nil {
+		return "", err
+	}
+	if err := validateFrontmatterScalar("model", agent.Model); err != nil {
+		return "", err
+	}
+	if err := validateFrontmatterScalar("tools", agent.Tools); err != nil {
 		return "", err
 	}
 	var b strings.Builder
@@ -129,6 +144,16 @@ func SaveMarkdownAgent(cfg Config, profile modelconfig.ProfileName, agent Markdo
 func validateArtifactName(kind, name string) error {
 	if !artifactNamePattern.MatchString(name) {
 		return fmt.Errorf("installer: invalid %s artifact name %q", kind, name)
+	}
+	return nil
+}
+
+// validateFrontmatterScalar rejects a YAML frontmatter scalar field that contains a newline (\n or
+// \r) — see RenderMarkdownAgent's R1-001 fix comment for why this must be rejected rather than
+// silently stripped/escaped.
+func validateFrontmatterScalar(field, value string) error {
+	if strings.ContainsAny(value, "\n\r") {
+		return fmt.Errorf("installer: agent frontmatter field %s contains a newline", field)
 	}
 	return nil
 }

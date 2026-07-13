@@ -44,8 +44,23 @@ type ProfileSelectModel struct {
 
 // NewProfileSelectModel builds a ProfileSelectModel with the cursor on "balanced" — the default
 // preset a developer gets by just pressing enter, matching ModelSelectModel's "accept the default in
-// one key" behavior.
+// one key" behavior. Equivalent to NewProfileSelectModelForProfile(modelconfig.ProfileBalanced).
 func NewProfileSelectModel() ProfileSelectModel {
+	return NewProfileSelectModelForProfile(modelconfig.ProfileBalanced)
+}
+
+// NewProfileSelectModelForProfile builds a ProfileSelectModel with the cursor seeded on initial
+// (C2 fix): `click install --profile X` on a real terminal now preloads the interactive picker's
+// cursor on X instead of always hardcoding balanced, matching the flag's own help text. The
+// developer can still move off it before confirming. An empty, unrecognized, or otherwise
+// unmatched name falls back to balanced (index 0), matching modelconfig.ResolveProfile's own
+// fallback rule.
+func NewProfileSelectModelForProfile(initial modelconfig.ProfileName) ProfileSelectModel {
+	for i, name := range profileSelectNames {
+		if name == initial {
+			return ProfileSelectModel{Cursor: i, Selected: name}
+		}
+	}
 	return ProfileSelectModel{Selected: profileSelectNames[0]}
 }
 
