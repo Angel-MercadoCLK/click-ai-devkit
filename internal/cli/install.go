@@ -148,7 +148,10 @@ func isNonInteractiveInstall(cmd *cobra.Command, out io.Writer) bool {
 // installSelector drives the two-step interactive flow (profile-select, then the per-phase editor
 // seeded from that profile) and matches runInstallSelectTUI's signature so resolveInstallModels can
 // be driven by a fake selector in tests (a real bubbletea program can't be exercised headlessly).
-type installSelector func(cmd *cobra.Command) (profile modelconfig.ProfileName, models map[modelconfig.Phase]string, cancelled bool, err error)
+// initialProfile (C2 fix) is the profile the picker's cursor should start on — resolveInstallModels
+// derives it from --profile so the interactive picker actually honors the flag's own help text
+// instead of always hardcoding balanced.
+type installSelector func(cmd *cobra.Command, initialProfile modelconfig.ProfileName) (profile modelconfig.ProfileName, models map[modelconfig.Phase]string, cancelled bool, err error)
 
 // resolveInstallModels decides the active orchestration profile AND the per-phase model set for
 // `click install`, and performs the D8 stale-migration safety net at the correct point in the flow.
@@ -170,6 +173,11 @@ type installSelector func(cmd *cobra.Command) (profile modelconfig.ProfileName, 
 // preset name the final per-phase map no longer matches. The non-interactive path never needs this
 // downgrade: modelconfig.ResolveProfile(profileFlagValue).Models is always emitted verbatim, with no
 // per-phase editor step to diverge from it.
+//
+// C2 fix: the interactive path also passes profileFlagValue through to selector as the picker's
+// initial profile, so `click install --profile X` on a real terminal preloads the profile-select
+// screen's cursor on X (matching the flag's own help text) instead of always hardcoding balanced. An
+// empty or unrecognized value falls back to balanced, same as the non-interactive path.
 func resolveInstallModels(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg installer.Config, nonInteractive bool, profileFlagValue string, selector installSelector) (profile modelconfig.ProfileName, models map[modelconfig.Phase]string, cancelled bool, err error) {
 	if nonInteractive {
 		if _, err := installer.MigrateIfStale(cfg); err != nil {
@@ -179,7 +187,7 @@ func resolveInstallModels(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg
 		return resolved.Name, resolved.Models, false, nil
 	}
 
-	chosenProfile, selection, cancelled, err := selector(cmd)
+	chosenProfile, selection, cancelled, err := selector(cmd, modelconfig.ProfileName(profileFlagValue))
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -214,12 +222,13 @@ func runModelSelectTUI(cmd *cobra.Command) (map[modelconfig.Phase]string, bool, 
 	return result.Selection, false, nil
 }
 
-// runInstallSelectTUI drives ui.ProfileSelectModel then ui.ModelSelectModel (seeded from the chosen
-// profile, or from Defaults() when "custom" was picked) through real bubbletea programs attached to
-// cmd's in/out, and returns the developer's final profile + per-phase selection. Only reached when
-// isNonInteractiveInstall has already confirmed out is a real terminal.
-func runInstallSelectTUI(cmd *cobra.Command) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
-	profileProgram := tea.NewProgram(ui.NewProfileSelectModel(),
+// runInstallSelectTUI drives ui.ProfileSelectModel (seeded on initialProfile — C2 fix) then
+// ui.ModelSelectModel (seeded from the chosen profile, or from Defaults() when "custom" was picked)
+// through real bubbletea programs attached to cmd's in/out, and returns the developer's final
+// profile + per-phase selection. Only reached when isNonInteractiveInstall has already confirmed
+// out is a real terminal.
+func runInstallSelectTUI(cmd *cobra.Command, initialProfile modelconfig.ProfileName) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+	profileProgram := tea.NewProgram(ui.NewProfileSelectModelForProfile(initialProfile),
 		tea.WithInput(cmd.InOrStdin()),
 		tea.WithOutput(cmd.OutOrStdout()),
 	)

@@ -20,8 +20,11 @@ tests for the established pattern.
 
 ## Language
 
-All artifacts and code comments are in English: docs, README, code, commit messages, PR
-descriptions, and any string literal in source.
+Docs, README, code, code comments, commit messages, and PR descriptions are in English. Per D10
+(`documentacion/00-decisions-and-open-questions.md`), dev-facing CLI/TUI **string literals** — the
+text a developer actually sees when running `click` (menu labels, prompts, flag help,
+`click doctor`/`click install` output, etc.) — are Spanish, matching the shipped UI. Do not write
+new dev-facing strings in English or translate existing Spanish ones; do not contradict D10.
 
 ## Commits
 

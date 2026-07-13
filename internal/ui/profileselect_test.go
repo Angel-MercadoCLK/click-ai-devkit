@@ -133,3 +133,42 @@ func updateProfileModel(m ProfileSelectModel, msg tea.Msg) (ProfileSelectModel, 
 	updated, cmd := m.Update(msg)
 	return updated.(ProfileSelectModel), cmd
 }
+
+// TestNewProfileSelectModelForProfile_SeedsCursorOnGivenProfile guards the C2 fix: `click install
+// --profile X` must seed the interactive picker's cursor on X instead of always hardcoding
+// balanced.
+func TestNewProfileSelectModelForProfile_SeedsCursorOnGivenProfile(t *testing.T) {
+	cases := []struct {
+		initial    modelconfig.ProfileName
+		wantCursor int
+	}{
+		{modelconfig.ProfileBalanced, 0},
+		{modelconfig.ProfileCostSaver, 1},
+		{modelconfig.ProfileQuality, 2},
+		{modelconfig.ProfileCustom, 3},
+	}
+	for _, tc := range cases {
+		m := NewProfileSelectModelForProfile(tc.initial)
+		if m.Selected != tc.initial {
+			t.Errorf("NewProfileSelectModelForProfile(%q).Selected = %q, want %q", tc.initial, m.Selected, tc.initial)
+		}
+		if m.Cursor != tc.wantCursor {
+			t.Errorf("NewProfileSelectModelForProfile(%q).Cursor = %d, want %d", tc.initial, m.Cursor, tc.wantCursor)
+		}
+	}
+}
+
+// TestNewProfileSelectModelForProfile_UnknownFallsBackToBalanced guards the fallback rule for an
+// empty or unrecognized --profile value: the picker must still seed on balanced (index 0), never
+// panic or leave an out-of-range cursor.
+func TestNewProfileSelectModelForProfile_UnknownFallsBackToBalanced(t *testing.T) {
+	for _, initial := range []modelconfig.ProfileName{"", "not-a-real-profile"} {
+		m := NewProfileSelectModelForProfile(initial)
+		if m.Selected != modelconfig.ProfileBalanced {
+			t.Errorf("NewProfileSelectModelForProfile(%q).Selected = %q, want %q", initial, m.Selected, modelconfig.ProfileBalanced)
+		}
+		if m.Cursor != 0 {
+			t.Errorf("NewProfileSelectModelForProfile(%q).Cursor = %d, want 0", initial, m.Cursor)
+		}
+	}
+}
