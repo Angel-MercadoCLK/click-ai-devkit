@@ -3,7 +3,7 @@
 # Schema: tech-spec.md §2.3. No .claude-plugin/marketplace.json — this file is the source of
 # truth for what "this click-ai-devkit release" means (D16).
 schema_version: 1
-click_version: "0.2.0"
+click_version: "0.2.1"
 engram:
   # must match the repo-root ENGRAM_VERSION file (release.yml patches this value from it at
   # release time; internal/manifest/engram_version_sync_test.go guards them matching in between).
