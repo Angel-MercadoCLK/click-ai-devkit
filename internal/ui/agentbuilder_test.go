@@ -408,6 +408,42 @@ func TestAgentBuilderModel_InvalidEditedPreviewCannotConfirm(t *testing.T) {
 	if m.FinalMarkdown != "" {
 		t.Fatalf("FinalMarkdown = %q, want empty for invalid edited preview", m.FinalMarkdown)
 	}
+	if view := m.View(); !strings.Contains(view, m.PreviewError) {
+		t.Fatalf("preview view missing PreviewError %q:\n%s", m.PreviewError, view)
+	}
+}
+
+func TestAgentBuilderModel_PreviewValidationErrorIsVisible(t *testing.T) {
+	t.Run("edited preview validation", func(t *testing.T) {
+		m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+
+		m, _ = updateAgentBuilderModel(m, keyMsg("down"))
+		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+		m = clearAgentBuilderInput(t, m)
+		m = typeAgentBuilderText(t, m, "edited markdown body")
+		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+
+		if m.PreviewError == "" {
+			t.Fatal("PreviewError empty after invalid edit, want validation error")
+		}
+		if view := m.View(); !strings.Contains(view, m.PreviewError) {
+			t.Fatalf("preview view missing edited PreviewError %q:\n%s", m.PreviewError, view)
+		}
+	})
+
+	t.Run("install validation", func(t *testing.T) {
+		m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+		m.Spec.Tools = ""
+
+		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+
+		if m.PreviewError == "" {
+			t.Fatal("PreviewError empty after invalid install, want validation error")
+		}
+		if view := m.View(); !strings.Contains(view, m.PreviewError) {
+			t.Fatalf("preview view missing install PreviewError %q:\n%s", m.PreviewError, view)
+		}
+	})
 }
 
 func TestAgentBuilderModel_EditedPreviewInvalidFrontmatterDomainCannotConfirm(t *testing.T) {
@@ -425,6 +461,24 @@ func TestAgentBuilderModel_EditedPreviewInvalidFrontmatterDomainCannotConfirm(t 
 			name: "multiline frontmatter scalar",
 			edit: func(content string) string {
 				return strings.Replace(content, `model: "sonnet"`, "model: |\n  sonnet", 1)
+			},
+		},
+		{
+			name: "comment-only unquoted frontmatter scalar",
+			edit: func(content string) string {
+				return strings.Replace(content, `model: "sonnet"`, `model: # sonnet`, 1)
+			},
+		},
+		{
+			name: "flow sequence frontmatter scalar",
+			edit: func(content string) string {
+				return strings.Replace(content, `tools: "Read, Grep, Bash"`, `tools: [Read, Grep]`, 1)
+			},
+		},
+		{
+			name: "flow map frontmatter scalar",
+			edit: func(content string) string {
+				return strings.Replace(content, `tools: "Read, Grep, Bash"`, `tools: {Read: true}`, 1)
 			},
 		},
 	}
@@ -450,6 +504,51 @@ func TestAgentBuilderModel_EditedPreviewInvalidFrontmatterDomainCannotConfirm(t 
 			}
 			if m.FinalMarkdown != "" {
 				t.Fatalf("FinalMarkdown = %q, want empty for invalid frontmatter domain", m.FinalMarkdown)
+			}
+		})
+	}
+}
+
+func TestAgentBuilderModel_EditedPreviewValidFrontmatterScalarsStillConfirm(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(string) string
+	}{
+		{
+			name: "quoted scalars",
+			edit: func(content string) string { return content },
+		},
+		{
+			name: "plain safe scalars",
+			edit: func(content string) string {
+				content = strings.Replace(content, `model: "sonnet"`, `model: sonnet`, 1)
+				return strings.Replace(content, `tools: "Read, Grep, Bash"`, `tools: Read, Grep, Bash`, 1)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+			edited := tt.edit(m.PreviewContent)
+
+			m, _ = updateAgentBuilderModel(m, keyMsg("down"))
+			m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+			m = clearAgentBuilderInput(t, m)
+			m = typeAgentBuilderText(t, m, edited)
+			m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+
+			m, _ = updateAgentBuilderModel(m, keyMsg("up"))
+			m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+			if m.Step != StepPlacement {
+				t.Fatalf("valid frontmatter scalar install ended at Step=%v PreviewError=%q, want StepPlacement", m.Step, m.PreviewError)
+			}
+			m, cmd := updateAgentBuilderModel(m, keyMsg("enter"))
+			if !m.Confirmed || m.Step != StepDone || cmd == nil {
+				t.Fatalf("valid frontmatter scalar did not confirm: Confirmed=%v Step=%v cmd=%v", m.Confirmed, m.Step, cmd)
+			}
+			if m.FinalMarkdown != edited {
+				t.Fatalf("FinalMarkdown = %q, want edited preview content", m.FinalMarkdown)
 			}
 		})
 	}

@@ -341,6 +341,10 @@ func (m AgentBuilderModel) renderPreview() string {
 	var b strings.Builder
 	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Revisá el agente antes de instalar"))
 	b.WriteString("\n\n")
+	if m.PreviewError != "" {
+		b.WriteString(styleRenderer.NewStyle().Foreground(lipgloss.Color("9")).Render(m.PreviewError))
+		b.WriteString("\n\n")
+	}
 	b.WriteString(m.PreviewContent)
 	b.WriteString("\n")
 	for i, action := range agentBuilderPreviewActions {
@@ -471,6 +475,9 @@ func parseAgentBuilderFrontmatterScalar(field, rawValue string) (string, error) 
 			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s has invalid quoted scalar", field)
 		}
 		return strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(rawValue, `'`), `'`), `''`, `'`), nil
+	}
+	if strings.HasPrefix(rawValue, "#") || strings.HasPrefix(rawValue, "[") || strings.HasPrefix(rawValue, "{") {
+		return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must be a string scalar", field)
 	}
 	return rawValue, nil
 }
