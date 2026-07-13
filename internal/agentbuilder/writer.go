@@ -91,13 +91,19 @@ func Install(spec AgentSpec, claudeHome, repoRoot string, w FileWriter) (string,
 	if err != nil {
 		return "", err
 	}
+	standalonePluginPath := filepath.Join(repoRoot, "plugins", standalonePluginName(spec), "agents", spec.Name+".md")
+	if spec.Placement == PlacementShareable && path == standalonePluginPath {
+		if err := ensureShareablePluginNameAvailable(spec, repoRoot, w); err != nil {
+			return "", err
+		}
+	}
 	if err := w.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("agentbuilder: create agent directory: %w", err)
 	}
 	if err := w.WriteFile(path, []byte(content), 0o600); err != nil {
 		return "", fmt.Errorf("agentbuilder: write agent: %w", err)
 	}
-	if spec.Placement == PlacementShareable && path == filepath.Join(repoRoot, "plugins", standalonePluginName(spec), "agents", spec.Name+".md") {
+	if spec.Placement == PlacementShareable && path == standalonePluginPath {
 		if err := scaffoldShareablePlugin(spec, repoRoot, w); err != nil {
 			return "", err
 		}
@@ -266,6 +272,39 @@ func scaffoldShareablePlugin(spec AgentSpec, repoRoot string, w FileWriter) erro
 		return fmt.Errorf("agentbuilder: write marketplace manifest: %w", err)
 	}
 	return nil
+}
+
+func ensureShareablePluginNameAvailable(spec AgentSpec, repoRoot string, w FileWriter) error {
+	pluginName := standalonePluginName(spec)
+	pluginManifestPath := filepath.Join(repoRoot, "plugins", pluginName, ".claude-plugin", "plugin.json")
+	exists, err := fileExists(w, pluginManifestPath)
+	if err != nil {
+		return fmt.Errorf("agentbuilder: inspect plugin manifest collision: %w", err)
+	}
+	if exists {
+		return fmt.Errorf("agentbuilder: shareable plugin %q already exists at %s; choose a different agent name or remove the existing plugin metadata before installing", pluginName, pluginManifestPath)
+	}
+
+	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
+	marketplace, err := loadMarketplaceManifest(w, marketplacePath)
+	if err != nil {
+		return err
+	}
+	if marketplace.HasPlugin(pluginName) {
+		return fmt.Errorf("agentbuilder: shareable plugin %q already exists in %s; choose a different agent name or remove the existing marketplace entry before installing", pluginName, marketplacePath)
+	}
+	return nil
+}
+
+func fileExists(w FileWriter, path string) (bool, error) {
+	_, err := w.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func standalonePluginName(spec AgentSpec) string {

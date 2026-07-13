@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
@@ -348,6 +349,41 @@ func TestInstallShareableStandaloneCreatesMarketplaceWhenMissing(t *testing.T) {
 	}
 }
 
+func TestInstallShareableStandaloneRejectsExistingPluginMetadataCollision(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	spec := validAgentSpec()
+	spec.Name = "review"
+	spec.Description = "Generated review agent."
+	spec.Placement = PlacementShareable
+	writer := newFakeFileWriter()
+
+	pluginManifestPath := filepath.Join(repoRoot, "plugins", "click-review", ".claude-plugin", "plugin.json")
+	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
+	existingPluginManifest := []byte(`{"name":"click-review","version":"9.9.9","description":"Existing review plugin","author":{"name":"Local User"},"userConfig":{"preserve":true}}`)
+	existingMarketplace := []byte(`{"plugins":[{"name":"click-review","description":"Existing review marketplace entry","version":"9.9.9","author":{"name":"Local User"},"source":"./plugins/click-review","category":"custom","homepage":"https://example.test/review"}]}`)
+	writer.files[pluginManifestPath] = existingPluginManifest
+	writer.files[marketplacePath] = existingMarketplace
+
+	_, err := Install(spec, "", repoRoot, writer)
+	if err == nil {
+		t.Fatal("Install() error = nil, want collision error for existing click-review plugin metadata")
+	}
+	if !strings.Contains(err.Error(), "click-review") || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("Install() error = %q, want actionable click-review collision error", err)
+	}
+	if string(writer.files[pluginManifestPath]) != string(existingPluginManifest) {
+		t.Fatalf("plugin manifest was overwritten:\n%s", writer.files[pluginManifestPath])
+	}
+	if string(writer.files[marketplacePath]) != string(existingMarketplace) {
+		t.Fatalf("marketplace manifest was overwritten:\n%s", writer.files[marketplacePath])
+	}
+	for _, path := range writer.writePaths {
+		if path == pluginManifestPath || path == marketplacePath {
+			t.Fatalf("Install() wrote colliding metadata path %s; writes=%v", path, writer.writePaths)
+		}
+	}
+}
+
 func TestInstallShareablePhaseSupportWithoutMarketplaceScaffoldsLoadablePlugin(t *testing.T) {
 	repoRoot := filepath.Join("testdata", "repo")
 	spec := validAgentSpec()
@@ -569,7 +605,14 @@ func (w *fakeFileWriter) WriteFile(path string, data []byte, perm os.FileMode) e
 	return w.writeErr
 }
 
-func (w *fakeFileWriter) Stat(string) (os.FileInfo, error) {
+func (w *fakeFileWriter) Stat(path string) (os.FileInfo, error) {
+	if w.files != nil {
+		data, ok := w.files[path]
+		if !ok {
+			return nil, os.ErrNotExist
+		}
+		return fakeFileInfo{name: filepath.Base(path), size: int64(len(data))}, nil
+	}
 	return nil, errors.New("fake stat not configured")
 }
 
@@ -582,3 +625,15 @@ func (w *fakeFileWriter) ReadFile(path string) ([]byte, error) {
 	}
 	return nil, errors.New("fake stat not configured")
 }
+
+type fakeFileInfo struct {
+	name string
+	size int64
+}
+
+func (f fakeFileInfo) Name() string       { return f.name }
+func (f fakeFileInfo) Size() int64        { return f.size }
+func (f fakeFileInfo) Mode() os.FileMode  { return 0o600 }
+func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeFileInfo) IsDir() bool        { return false }
+func (f fakeFileInfo) Sys() any           { return nil }
