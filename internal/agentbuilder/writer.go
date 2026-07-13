@@ -12,6 +12,8 @@ import (
 
 var agentNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 
+const clickSDDPluginSource = "./plugins/click-sdd"
+
 type FileWriter interface {
 	MkdirAll(path string, perm os.FileMode) error
 	ReadFile(path string) ([]byte, error)
@@ -158,17 +160,29 @@ func hasLoadableClickSDDPlugin(repoRoot string, w FileWriter) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !marketplace.HasPlugin("click-sdd") {
+	if !marketplace.HasPluginSource("click-sdd", clickSDDPluginSource) {
 		return false, nil
 	}
 	pluginManifestPath := filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json")
-	if _, err := w.ReadFile(pluginManifestPath); err != nil {
+	manifestData, err := w.ReadFile(pluginManifestPath)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("agentbuilder: inspect click-sdd plugin manifest: %w", err)
 	}
-	return true, nil
+	return isLoadablePluginManifest(manifestData, "click-sdd"), nil
+}
+
+func isLoadablePluginManifest(data []byte, name string) bool {
+	var manifest pluginManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return false
+	}
+	return strings.TrimSpace(manifest.Name) == name &&
+		strings.TrimSpace(manifest.Version) != "" &&
+		strings.TrimSpace(manifest.Description) != "" &&
+		strings.TrimSpace(manifest.Author.Name) != ""
 }
 
 func validateAgentName(name string) error {
@@ -344,6 +358,15 @@ func (m *marketplaceManifest) UpsertPlugin(plugin marketplacePlugin) {
 func (m marketplaceManifest) HasPlugin(name string) bool {
 	for _, plugin := range m.Plugins {
 		if plugin.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (m marketplaceManifest) HasPluginSource(name, source string) bool {
+	for _, plugin := range m.Plugins {
+		if plugin.Name == name && strings.TrimSpace(plugin.Source) == source {
 			return true
 		}
 	}

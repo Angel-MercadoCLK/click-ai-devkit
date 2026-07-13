@@ -139,7 +139,7 @@ func TestTargetPathShareableWithRegisteredClickSDDUsesClickSDDAgentsForPhaseSupp
 	if err := os.MkdirAll(filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin"), 0o755); err != nil {
 		t.Fatalf("os.MkdirAll() error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json"), []byte(`{"name":"click-sdd"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json"), validClickSDDPluginManifest(), 0o600); err != nil {
 		t.Fatalf("os.WriteFile() error = %v", err)
 	}
 	spec := validAgentSpec()
@@ -386,6 +386,54 @@ func TestInstallShareablePhaseSupportWithMissingClickSDDManifestScaffoldsLoadabl
 	}
 }
 
+func TestInstallShareablePhaseSupportWithWrongClickSDDSourceScaffoldsLoadablePlugin(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	spec := validAgentSpec()
+	spec.SDDMode = SDDPhaseSupport
+	spec.Phase = modelconfig.PhaseApply
+	spec.Placement = PlacementShareable
+	writer := newFakeFileWriter()
+	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(`{"plugins":[{"name":"click-sdd","source":"./plugins/not-click-sdd"}]}`)
+	writer.files[filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json")] = validClickSDDPluginManifest()
+
+	gotPath, err := Install(spec, "", repoRoot, writer)
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	pluginName := "click-release-helper"
+	agentPath := filepath.Join(repoRoot, "plugins", pluginName, "agents", "release-helper.md")
+	pluginManifestPath := filepath.Join(repoRoot, "plugins", pluginName, ".claude-plugin", "plugin.json")
+	wantPath(t, gotPath, agentPath)
+	if _, ok := writer.files[pluginManifestPath]; !ok {
+		t.Fatalf("Install() did not write standalone plugin manifest; writes=%v", writer.writePaths)
+	}
+}
+
+func TestInstallShareablePhaseSupportWithMalformedClickSDDManifestScaffoldsLoadablePlugin(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	spec := validAgentSpec()
+	spec.SDDMode = SDDPhaseSupport
+	spec.Phase = modelconfig.PhaseApply
+	spec.Placement = PlacementShareable
+	writer := newFakeFileWriter()
+	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(`{"plugins":[{"name":"click-sdd","source":"./plugins/click-sdd"}]}`)
+	writer.files[filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json")] = []byte(`{"name":"click-sdd"`)
+
+	gotPath, err := Install(spec, "", repoRoot, writer)
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	pluginName := "click-release-helper"
+	agentPath := filepath.Join(repoRoot, "plugins", pluginName, "agents", "release-helper.md")
+	pluginManifestPath := filepath.Join(repoRoot, "plugins", pluginName, ".claude-plugin", "plugin.json")
+	wantPath(t, gotPath, agentPath)
+	if _, ok := writer.files[pluginManifestPath]; !ok {
+		t.Fatalf("Install() did not write standalone plugin manifest; writes=%v", writer.writePaths)
+	}
+}
+
 func TestInstallShareablePhaseSupportWithRegisteredClickSDDUsesClickSDDAgents(t *testing.T) {
 	repoRoot := filepath.Join("testdata", "repo")
 	spec := validAgentSpec()
@@ -394,7 +442,7 @@ func TestInstallShareablePhaseSupportWithRegisteredClickSDDUsesClickSDDAgents(t 
 	spec.Placement = PlacementShareable
 	writer := newFakeFileWriter()
 	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(`{"plugins":[{"name":"click-sdd","source":"./plugins/click-sdd"}]}`)
-	writer.files[filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json")] = []byte(`{"name":"click-sdd"}`)
+	writer.files[filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json")] = validClickSDDPluginManifest()
 
 	gotPath, err := Install(spec, "", repoRoot, writer)
 	if err != nil {
@@ -405,6 +453,10 @@ func TestInstallShareablePhaseSupportWithRegisteredClickSDDUsesClickSDDAgents(t 
 	if _, ok := writer.files[filepath.Join(repoRoot, "plugins", "click-release-helper", ".claude-plugin", "plugin.json")]; ok {
 		t.Fatal("Install() scaffolded a standalone plugin even though click-sdd is registered and loadable")
 	}
+}
+
+func validClickSDDPluginManifest() []byte {
+	return []byte(`{"name":"click-sdd","version":"0.1.0","description":"Click SDD plugin","author":{"name":"Click AI Devkit"}}`)
 }
 
 func validAgentSpec() AgentSpec {
