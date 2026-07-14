@@ -91,6 +91,23 @@ func TestModel_Update_EnterOnInertItemShowsStatusAndDoesNotQuit(t *testing.T) {
 	}
 }
 
+func TestAgentBuilderMenuItemIsActiveAndDispatchable(t *testing.T) {
+	idx := firstItemIndexWhere(t, func(it Item) bool { return it.Label == "Crear tu propio agente" })
+	item := Items[idx]
+	if !item.Active {
+		t.Fatal("Crear tu propio agente Active = false, want true")
+	}
+	if item.Action != ActionAgentBuilder {
+		t.Fatalf("Crear tu propio agente Action = %q, want %q", item.Action, ActionAgentBuilder)
+	}
+
+	got := ActionArgs(item.Action)
+	want := []string{"agent-builder"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("ActionArgs(%q) = %v, want %v", item.Action, got, want)
+	}
+}
+
 func TestModel_Update_QRuneQuits(t *testing.T) {
 	m := NewModel()
 	m, cmd := updateModel(m, keyMsg("q"))
@@ -163,6 +180,7 @@ func TestActionArgs_MapsEachActiveDispatchableAction(t *testing.T) {
 		ActionInstall:         {"install"},
 		ActionUpdate:          {"update"},
 		ActionConfigureModels: {"configure-models"},
+		ActionAgentBuilder:    {"agent-builder"},
 		ActionDoctor:          {"doctor"},
 		ActionUninstall:       {"uninstall"},
 	}
