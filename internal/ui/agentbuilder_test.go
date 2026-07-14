@@ -93,6 +93,29 @@ func TestAgentBuilderModel_BlankDescriptionMustBeCorrectedBeforeSDDMode(t *testi
 	}
 }
 
+func TestAgentBuilderModel_MultilinePastedDescriptionMustBeCorrectedBeforeSDDMode(t *testing.T) {
+	m := NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})
+	m = pasteAgentBuilderText(t, m, "Review risky\ndatabase migrations")
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+
+	if m.Step != StepDescription {
+		t.Fatalf("multiline description advanced to Step=%v, want StepDescription", m.Step)
+	}
+	if m.PreviewError == "" || !strings.Contains(m.View(), m.PreviewError) {
+		t.Fatalf("multiline description error not visible: PreviewError=%q View=\n%s", m.PreviewError, m.View())
+	}
+	if m.Spec.Description != "" || m.Spec.Name != "" {
+		t.Fatalf("multiline description mutated spec to Description=%q Name=%q, want both empty", m.Spec.Description, m.Spec.Name)
+	}
+
+	m = clearAgentBuilderInput(t, m)
+	m = pasteAgentBuilderText(t, m, "Review risky database migrations")
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	if m.Step != StepSDDMode || m.Spec.Description != "Review risky database migrations" || m.Spec.Name != "review-risky-database-migrations" || m.PreviewError != "" {
+		t.Fatalf("corrected description state = Step %v Description %q Name %q PreviewError %q, want SDD mode/corrected name/no error", m.Step, m.Spec.Description, m.Spec.Name, m.PreviewError)
+	}
+}
+
 func TestAgentBuilderModel_TextEntryStatesCaptureLowercaseQ(t *testing.T) {
 	t.Run("description", func(t *testing.T) {
 		m := NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})
@@ -286,6 +309,63 @@ func TestAgentBuilderModel_RequiredThemeFieldsMustBeCorrectedBeforePreview(t *te
 	m, cmd := updateAgentBuilderModel(m, keyMsg("enter"))
 	if !m.Confirmed || m.Step != StepDone || cmd == nil {
 		t.Fatalf("corrected required fields did not confirm: Confirmed=%v Step=%v cmd=%v", m.Confirmed, m.Step, cmd)
+	}
+}
+
+func TestAgentBuilderModel_MultilineRequiredThemeScalarsMustBeCorrectedBeforeAdvancing(t *testing.T) {
+	tests := []struct {
+		name       string
+		themeIndex int
+		invalid    string
+		corrected  string
+		gotField   func(agentbuilder.AgentSpec) string
+	}{
+		{
+			name:       "tools",
+			themeIndex: 4,
+			invalid:    "Read, Grep\nBash",
+			corrected:  "Read, Grep, Bash",
+			gotField:   func(spec agentbuilder.AgentSpec) string { return spec.Tools },
+		},
+		{
+			name:       "model",
+			themeIndex: 5,
+			invalid:    "sonnet\nopus",
+			corrected:  "sonnet",
+			gotField:   func(spec agentbuilder.AgentSpec) string { return spec.Model },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := advanceToThemes(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+			for _, answer := range validAgentBuilderThemeAnswers()[:tt.themeIndex] {
+				m = typeAgentBuilderText(t, m, answer)
+				m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+			}
+			if m.ThemeIndex != tt.themeIndex {
+				t.Fatalf("ThemeIndex before %s = %d, want %d", tt.name, m.ThemeIndex, tt.themeIndex)
+			}
+
+			m = pasteAgentBuilderText(t, m, tt.invalid)
+			m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+			if m.Step != StepThemes || m.ThemeIndex != tt.themeIndex {
+				t.Fatalf("multiline %s advanced to Step/ThemeIndex = %v/%d, want StepThemes/%d", tt.name, m.Step, m.ThemeIndex, tt.themeIndex)
+			}
+			if m.PreviewError == "" || !strings.Contains(m.View(), m.PreviewError) {
+				t.Fatalf("multiline %s error not visible: PreviewError=%q View=\n%s", tt.name, m.PreviewError, m.View())
+			}
+			if got := tt.gotField(m.Spec); got != "" {
+				t.Fatalf("multiline %s mutated spec field to %q, want empty", tt.name, got)
+			}
+
+			m = clearAgentBuilderInput(t, m)
+			m = pasteAgentBuilderText(t, m, tt.corrected)
+			m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+			if m.Step != StepThemes || m.ThemeIndex != tt.themeIndex+1 || tt.gotField(m.Spec) != tt.corrected || m.PreviewError != "" {
+				t.Fatalf("corrected %s state = Step %v ThemeIndex %d Value %q PreviewError %q, want StepThemes/%d/%q/no error", tt.name, m.Step, m.ThemeIndex, tt.gotField(m.Spec), m.PreviewError, tt.themeIndex+1, tt.corrected)
+			}
+		})
 	}
 }
 
@@ -665,6 +745,12 @@ func typeAgentBuilderText(t *testing.T, m AgentBuilderModel, text string) AgentB
 	for _, r := range text {
 		m, _ = updateAgentBuilderModel(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
+	return m
+}
+
+func pasteAgentBuilderText(t *testing.T, m AgentBuilderModel, text string) AgentBuilderModel {
+	t.Helper()
+	m, _ = updateAgentBuilderModel(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)})
 	return m
 }
 

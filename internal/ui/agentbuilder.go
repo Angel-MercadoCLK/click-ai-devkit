@@ -149,8 +149,8 @@ func (m AgentBuilderModel) updateEngine(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) 
 func (m AgentBuilderModel) updateDescription(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if keyName(keyMsg) == "enter" {
 		description := strings.TrimSpace(m.input)
-		if description == "" {
-			m.PreviewError = "agentbuilder: agent frontmatter field description is required"
+		if err := validateAgentBuilderRequiredFrontmatterScalar("description", description); err != nil {
+			m.PreviewError = err.Error()
 			return m, nil
 		}
 		name := deriveAgentName(description)
@@ -388,13 +388,23 @@ func validateAgentBuilderGeneratedName(name string) error {
 func validateAgentBuilderThemeAnswer(themeIndex int, answer string) error {
 	switch themeIndex {
 	case 4:
-		if strings.TrimSpace(answer) == "" {
-			return fmt.Errorf("agentbuilder: agent frontmatter field tools is required")
+		if err := validateAgentBuilderRequiredFrontmatterScalar("tools", answer); err != nil {
+			return err
 		}
 	case 5:
-		if strings.TrimSpace(answer) == "" {
-			return fmt.Errorf("agentbuilder: agent frontmatter field model is required")
+		if err := validateAgentBuilderRequiredFrontmatterScalar("model", answer); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func validateAgentBuilderRequiredFrontmatterScalar(field, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("agentbuilder: agent frontmatter field %s is required", field)
+	}
+	if strings.ContainsAny(value, "\n\r") {
+		return fmt.Errorf("agentbuilder: agent frontmatter field %s contains a newline", field)
 	}
 	return nil
 }
