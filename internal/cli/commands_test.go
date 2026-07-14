@@ -47,13 +47,14 @@ func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
 }
 
 type testCommandRunner struct {
-	home     string
-	commands []string
-	plugins  map[string]bool
+	home          string
+	commands      []string
+	plugins       map[string]bool
+	pluginConfigs map[string]map[string]string
 }
 
 func newTestCommandRunner(home string) *testCommandRunner {
-	return &testCommandRunner{home: home, plugins: map[string]bool{}}
+	return &testCommandRunner{home: home, plugins: map[string]bool{}, pluginConfigs: map[string]map[string]string{}}
 }
 
 func (r *testCommandRunner) Run(name string, args ...string) error {
@@ -66,6 +67,12 @@ func (r *testCommandRunner) Run(name string, args ...string) error {
 		return r.writeSettings()
 	case len(args) >= 3 && args[0] == "plugin" && args[1] == "install":
 		r.plugins[args[2]] = true
+		// Mirrors the real `claude` CLI: repeated `--config key=value` flags land in settings.json's
+		// pluginConfigs[pluginID].options — the shape installer.AppliedClickSDDPluginConfig / doctor's
+		// checkAppliedPluginConfig read back.
+		if options := parseTestConfigFlags(args[3:]); len(options) > 0 {
+			r.pluginConfigs[args[2]] = options
+		}
 		return r.writeSettings()
 	case len(args) >= 3 && args[0] == "plugin" && args[1] == "uninstall":
 		delete(r.plugins, args[2])
@@ -135,6 +142,24 @@ func (r *testCommandRunner) Output(name string, args ...string) ([]byte, error) 
 	return []byte{}, nil
 }
 
+// parseTestConfigFlags extracts the "--config key=value" pairs from a `plugin install` argument
+// tail, mirroring how the real `claude` CLI turns repeated --config flags into
+// pluginConfigs[pluginID].options entries.
+func parseTestConfigFlags(args []string) map[string]string {
+	options := map[string]string{}
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] != "--config" {
+			continue
+		}
+		key, value, ok := strings.Cut(args[i+1], "=")
+		if !ok {
+			continue
+		}
+		options[key] = value
+	}
+	return options
+}
+
 func (r *testCommandRunner) writeSettings() error {
 	plugins := map[string]any{}
 	enabled := map[string]bool{}
@@ -153,7 +178,15 @@ func (r *testCommandRunner) writeSettings() error {
 	if err := os.WriteFile(pluginsPath, pluginsData, 0o600); err != nil {
 		return err
 	}
-	settingsData, err := json.Marshal(map[string]any{"enabledPlugins": enabled})
+	pluginConfigs := map[string]any{}
+	for pluginID, options := range r.pluginConfigs {
+		optionsAny := make(map[string]any, len(options))
+		for k, v := range options {
+			optionsAny[k] = v
+		}
+		pluginConfigs[pluginID] = map[string]any{"options": optionsAny}
+	}
+	settingsData, err := json.Marshal(map[string]any{"enabledPlugins": enabled, "pluginConfigs": pluginConfigs})
 	if err != nil {
 		return err
 	}

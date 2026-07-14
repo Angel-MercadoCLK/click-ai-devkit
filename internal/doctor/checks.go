@@ -6,8 +6,13 @@
 package doctor
 
 import (
+	"sort"
+	"strconv"
+	"strings"
+
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
 // EngramChecksCount is the number of doctor checks contributed by Engram (plugin + binary), kept
@@ -51,6 +56,7 @@ func Run(cfg installer.Config) Report {
 		checkClaudeMD(cfg),
 		checkMemoryGuardHook(cfg),
 		checkModelsConfig(cfg),
+		checkAppliedPluginConfig(cfg),
 		checkEngramPlugin(cfg),
 		checkEngramBinary(cfg),
 		checkContext7(cfg),
@@ -192,6 +198,80 @@ func checkModelsConfig(cfg installer.Config) CheckResult {
 		}
 	}
 	return CheckResult{Name: name, Healthy: true, Detail: "actualizado (o aún no generado)"}
+}
+
+// checkAppliedPluginConfig reports whether every click-sdd `--config` key click computed it SHOULD
+// configure (expectedClickSDDConfigKeys — modelconfig.ProfileConfigKey plus one ConfigKey() per
+// modelconfig.Phases entry) is ACTUALLY present in Claude Code's own settings.json, under
+// pluginConfigs[installer.ClickSDDPluginID].options — i.e. what Claude Code itself accepted and
+// applied, not merely what click intended to send.
+//
+// This closes a real blind spot checkModelsConfig cannot see: checkModelsConfig only validates
+// click's own models.json (what SHOULD be configured, computed from modelconfig). During a live
+// incident, click-sdd's plugin.json grew from 13 to 18 model-config phases (adding the 5
+// review_*_model userConfig keys), but because the plugin version never bumped, Claude Code cached
+// a stale schema and silently DROPPED those 5 --config keys during `claude plugin install` — so
+// the developer's real settings.json ended up with only 14 of the 19 expected keys, while `click
+// doctor` kept reporting healthy the whole time, because checkModelsConfig never looks at the
+// applied side at all. checkAppliedPluginConfig is a SEPARATE check from checkModelsConfig on
+// purpose: the two answer different questions (should-be-configured vs. actually-applied) and
+// either can go unhealthy independently of the other.
+//
+// It is intentionally read-only (NFR-012): it only reads settings.json via
+// installer.AppliedClickSDDPluginConfig, never writes it.
+func checkAppliedPluginConfig(cfg installer.Config) CheckResult {
+	const name = "click-sdd applied plugin config"
+
+	expected := expectedClickSDDConfigKeys()
+
+	applied, found, err := installer.AppliedClickSDDPluginConfig(cfg)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	if !found {
+		return CheckResult{
+			Name:    name,
+			Healthy: false,
+			Detail:  "pluginConfigs[\"" + installer.ClickSDDPluginID + "\"] ausente en " + cfg.SettingsPath() + " — ejecuta `click update` para aplicarla",
+		}
+	}
+
+	var missing []string
+	for _, key := range expected {
+		if _, ok := applied[key]; !ok {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return CheckResult{
+			Name:    name,
+			Healthy: false,
+			Detail: "Claude Code no aplicó " + strconv.Itoa(len(missing)) + " de " + strconv.Itoa(len(expected)) +
+				" claves esperadas (posible schema en caché desactualizado): " + strings.Join(missing, ", ") +
+				" — ejecuta `click update` para forzar un refresh del marketplace y reaplicarlas",
+		}
+	}
+
+	return CheckResult{
+		Name:    name,
+		Healthy: true,
+		Detail:  strconv.Itoa(len(expected)) + "/" + strconv.Itoa(len(expected)) + " claves aplicadas correctamente en " + cfg.SettingsPath(),
+	}
+}
+
+// expectedClickSDDConfigKeys returns every plugin.json userConfig key click-sdd's --config flags
+// SHOULD apply: modelconfig.ProfileConfigKey plus one Phase.ConfigKey() per modelconfig.Phases
+// entry. It deliberately derives this from modelconfig — never a hardcoded literal count or key
+// list — so checkAppliedPluginConfig auto-tracks any future taxonomy change (a phase added or
+// removed) without a second manual edit here.
+func expectedClickSDDConfigKeys() []string {
+	keys := make([]string, 0, len(modelconfig.Phases)+1)
+	keys = append(keys, modelconfig.ProfileConfigKey)
+	for _, phase := range modelconfig.Phases {
+		keys = append(keys, phase.ConfigKey())
+	}
+	return keys
 }
 
 func checkMemoryGuardHook(cfg installer.Config) CheckResult {
