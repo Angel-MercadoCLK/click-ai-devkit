@@ -187,9 +187,15 @@ func frontmatterScalarValue(frontmatter, field string) (string, error) {
 		if strings.TrimSpace(parsedValue) == "" {
 			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
 		}
-		// Unicode line separators are folded to \n/\r by normalizeLineBreaks before we
-		// ever reach here, so this single check also covers U+2028/U+2029/U+0085 (R1-002).
-		if strings.ContainsAny(parsedValue, "\n\r") {
+		// normalizeLineBreaks only folds Unicode line separators found in the RAW
+		// document text (e.g. an unescaped U+2028 typed directly into the frontmatter
+		// line). A quoted scalar can still smuggle one in *escaped* form (e.g.
+		// "foo bar", decoded by strconv.Unquote above into a literal U+2028 rune),
+		// so parsedValue must be checked directly too. Covering U+2028 (LINE
+		// SEPARATOR), U+2029 (PARAGRAPH SEPARATOR), and U+0085 (NEL) here closes that
+		// gap (R1-002): renderers/parsers that treat these as line breaks would
+		// otherwise let a crafted field forge a new frontmatter line.
+		if strings.ContainsAny(parsedValue, "\n\r  ") {
 			return "", fmt.Errorf("agentbuilder: agent frontmatter field %s contains a newline", field)
 		}
 		value = parsedValue
