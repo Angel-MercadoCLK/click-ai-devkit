@@ -57,6 +57,9 @@ func TestSyncMarketplacePlugins_PassesPerPhaseConfigFlagsForClickSDD(t *testing.
 			"--sparse", ".claude-plugin", "plugins",
 		}},
 		{Name: "claude", Args: []string{
+			"plugin", "marketplace", "update", marketplaceName,
+		}},
+		{Name: "claude", Args: []string{
 			"plugin", "install", "click-sdd@click-ai-devkit",
 			"--config", "orchestration_profile=cost-saver",
 			"--config", "explore_model=sonnet",
@@ -83,6 +86,59 @@ func TestSyncMarketplacePlugins_PassesPerPhaseConfigFlagsForClickSDD(t *testing.
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("runner.commands = %#v, want %#v", runner.commands, want)
+	}
+}
+
+// TestSyncMarketplacePlugins_RefreshesMarketplaceBeforeInstalling guards the stale-schema-cache
+// bug (fix/marketplace-refresh-stale-schema), root-caused live: click-sdd's plugin.json version
+// never bumps past 0.1.0 across content/schema changes, so `claude plugin install` treats it as
+// "already installed, nothing to check" and validates `--config key=value` flags against a STALE
+// CACHED COPY of the plugin's userConfig schema — reproduced live as:
+//
+//	⚠ Installed, but --config not applied: --config key "review_risk_model" isn't declared in
+//	this plugin's userConfig.
+//
+// A live fix was verified: running `claude plugin marketplace update <name>` (forcing Claude Code
+// to refresh its cached plugin.json/schema from the git source) BEFORE reinstalling makes the
+// --config flags apply cleanly. The stale-cache gap lives at the marketplace level — the existing
+// "already on disk, declared in user settings" no-op path never refreshed anything — so
+// SyncMarketplacePlugins must issue a genuine refresh unconditionally, on every sync, strictly
+// BEFORE any `plugin install` call (a refresh issued after install wouldn't fix anything).
+func TestSyncMarketplacePlugins_RefreshesMarketplaceBeforeInstalling(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreSource := SetMarketplaceSourceForTests("https://github.com/Angel-MercadoCLK/click-ai-devkit")
+	defer restoreSource()
+
+	if err := SyncMarketplacePlugins(nil); err != nil {
+		t.Fatalf("SyncMarketplacePlugins(nil) error = %v", err)
+	}
+
+	updateIdx, installIdx := -1, -1
+	for i, cmd := range runner.commands {
+		if cmd.Name != "claude" {
+			continue
+		}
+		if len(cmd.Args) == 4 && cmd.Args[0] == "plugin" && cmd.Args[1] == "marketplace" && cmd.Args[2] == "update" {
+			updateIdx = i
+			if cmd.Args[3] != marketplaceName {
+				t.Fatalf("marketplace update arg = %q, want %q", cmd.Args[3], marketplaceName)
+			}
+		}
+		if installIdx == -1 && len(cmd.Args) >= 3 && cmd.Args[0] == "plugin" && cmd.Args[1] == "install" {
+			installIdx = i
+		}
+	}
+	if updateIdx == -1 {
+		t.Fatalf("SyncMarketplacePlugins never invoked `claude plugin marketplace update %s`; commands = %#v", marketplaceName, runner.commandStrings())
+	}
+	if installIdx == -1 {
+		t.Fatalf("no plugin install command found; commands = %#v", runner.commandStrings())
+	}
+	if updateIdx >= installIdx {
+		t.Fatalf("marketplace update must run BEFORE the first plugin install; update at %d, first install at %d; commands = %#v", updateIdx, installIdx, runner.commandStrings())
 	}
 }
 
@@ -123,8 +179,8 @@ func TestSyncMarketplacePlugins_DefaultsWhenModelsNil(t *testing.T) {
 		"--config", "review_refuter_model=sonnet",
 		"--config", "default_model=sonnet",
 	}}
-	if !reflect.DeepEqual(runner.commands[1], wantClickSDD) {
-		t.Fatalf("runner.commands[1] = %#v, want %#v", runner.commands[1], wantClickSDD)
+	if !reflect.DeepEqual(runner.commands[2], wantClickSDD) {
+		t.Fatalf("runner.commands[2] = %#v, want %#v", runner.commands[2], wantClickSDD)
 	}
 }
 

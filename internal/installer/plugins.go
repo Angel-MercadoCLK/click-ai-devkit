@@ -127,6 +127,18 @@ func SyncMarketplacePlugins(models map[modelconfig.Phase]string, profile ...mode
 	if err := addMarketplace(runner, marketplaceSource, sparsePaths); err != nil {
 		return err
 	}
+	// updateMarketplace forces Claude Code to refresh its cached copy of the marketplace's
+	// plugin.json/schema from the git source. This runs unconditionally, on EVERY sync — not just
+	// the first-ever `marketplace add` — because addMarketplace's own "already on disk, declared
+	// in user settings" no-op path (confirmed live on a re-run of `click update`) never refreshes
+	// anything. Without this, `claude plugin install` treats an unversioned-bump plugin.json as
+	// "already installed, nothing to check" and validates --config flags against a stale cached
+	// schema, silently dropping newly-added userConfig keys (reproduced live: "--config not
+	// applied: --config key \"review_risk_model\" isn't declared in this plugin's userConfig").
+	// It must run BEFORE the install loop below — a refresh issued after install wouldn't help.
+	if err := updateMarketplace(runner, marketplaceName); err != nil {
+		return err
+	}
 	for _, plugin := range managedPlugins {
 		var extraArgs []string
 		if plugin == "click-sdd" {
@@ -232,6 +244,18 @@ func addMarketplace(runner CommandRunner, source string, sparsePaths []string) e
 	}
 	if err := runner.Run(pluginCLIBinary, args...); err != nil {
 		return fmt.Errorf("installer: add plugin marketplace %q: %w", source, err)
+	}
+	return nil
+}
+
+// updateMarketplace forces a refresh of Claude Code's cached copy of the named marketplace's
+// plugin.json/schema from its git source (`claude plugin marketplace update <name>`, verified
+// live). Errors are treated the same way addMarketplace's are (hard error, aborts the sync):
+// the whole point of this step is correctness of the --config flags applied right after it, so a
+// failed refresh means the sync can no longer be trusted to configure plugins correctly.
+func updateMarketplace(runner CommandRunner, name string) error {
+	if err := runner.Run(pluginCLIBinary, "plugin", "marketplace", "update", name); err != nil {
+		return fmt.Errorf("installer: update plugin marketplace %q: %w", name, err)
 	}
 	return nil
 }

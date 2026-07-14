@@ -474,6 +474,7 @@ func TestInstallCommand_IssuesMarketplaceCommandsInOrder(t *testing.T) {
 	}
 	want := []string{
 		"claude plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins",
+		"claude plugin marketplace update click-ai-devkit",
 		"claude plugin install click-sdd@click-ai-devkit" +
 			" --config orchestration_profile=balanced" +
 			" --config explore_model=sonnet" +
@@ -497,8 +498,8 @@ func TestInstallCommand_IssuesMarketplaceCommandsInOrder(t *testing.T) {
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",
 	}
-	if !reflect.DeepEqual(runner.commands[:4], want) {
-		t.Fatalf("runner.commands[:4] = %#v, want %#v", runner.commands[:4], want)
+	if !reflect.DeepEqual(runner.commands[:5], want) {
+		t.Fatalf("runner.commands[:5] = %#v, want %#v", runner.commands[:5], want)
 	}
 }
 
