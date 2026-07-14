@@ -356,36 +356,150 @@ func newPluginManifest(name, description string) pluginManifest {
 	}
 }
 
+// marketplaceManifest models only the subset of the Claude Code marketplace.json schema
+// this package needs to read/write directly. It round-trips through UnmarshalJSON/
+// MarshalJSON below so that any field outside this subset (e.g. strict, commands,
+// keywords, top-level metadata) survives a rewrite untouched instead of being silently
+// dropped (R4-001).
 type marketplaceManifest struct {
 	Schema      string              `json:"$schema,omitempty"`
 	Name        string              `json:"name"`
 	Description string              `json:"description,omitempty"`
 	Owner       *marketplaceOwner   `json:"owner,omitempty"`
 	Plugins     []marketplacePlugin `json:"plugins"`
+
+	extra map[string]json.RawMessage
 }
+
+var marketplaceManifestKnownFields = map[string]bool{
+	"$schema":     true,
+	"name":        true,
+	"description": true,
+	"owner":       true,
+	"plugins":     true,
+}
+
+func (m *marketplaceManifest) UnmarshalJSON(data []byte) error {
+	type alias marketplaceManifest
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	extra := make(map[string]json.RawMessage, len(raw))
+	for k, v := range raw {
+		if marketplaceManifestKnownFields[k] {
+			continue
+		}
+		extra[k] = v
+	}
+	*m = marketplaceManifest(a)
+	m.extra = extra
+	return nil
+}
+
+func (m marketplaceManifest) MarshalJSON() ([]byte, error) {
+	return mergeExtraFields(m.extra, marketplaceManifestAlias(m))
+}
+
+type marketplaceManifestAlias marketplaceManifest
 
 type marketplaceOwner struct {
 	Name  string `json:"name"`
 	Email string `json:"email,omitempty"`
 }
 
+// marketplacePlugin models only the subset of a marketplace plugin entry this package
+// needs. It preserves unknown per-plugin fields (e.g. keywords, license) the same way
+// marketplaceManifest does (R4-001). Source is raw JSON so both a string source and an
+// object-form source (schema-valid alternatives) round-trip without erroring.
 type marketplacePlugin struct {
-	Name        string       `json:"name"`
-	Description string       `json:"description"`
-	Version     string       `json:"version"`
-	Author      pluginAuthor `json:"author"`
-	Source      string       `json:"source"`
-	Category    string       `json:"category,omitempty"`
-	Homepage    string       `json:"homepage,omitempty"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Version     string          `json:"version"`
+	Author      pluginAuthor    `json:"author"`
+	Source      json.RawMessage `json:"source"`
+	Category    string          `json:"category,omitempty"`
+	Homepage    string          `json:"homepage,omitempty"`
+
+	extra map[string]json.RawMessage
+}
+
+var marketplacePluginKnownFields = map[string]bool{
+	"name":        true,
+	"description": true,
+	"version":     true,
+	"author":      true,
+	"source":      true,
+	"category":    true,
+	"homepage":    true,
+}
+
+func (p *marketplacePlugin) UnmarshalJSON(data []byte) error {
+	type alias marketplacePlugin
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	extra := make(map[string]json.RawMessage, len(raw))
+	for k, v := range raw {
+		if marketplacePluginKnownFields[k] {
+			continue
+		}
+		extra[k] = v
+	}
+	*p = marketplacePlugin(a)
+	p.extra = extra
+	return nil
+}
+
+func (p marketplacePlugin) MarshalJSON() ([]byte, error) {
+	return mergeExtraFields(p.extra, marketplacePluginAlias(p))
+}
+
+type marketplacePluginAlias marketplacePlugin
+
+// mergeExtraFields marshals known (typed) fields via alias, then merges any preserved
+// unknown fields back in before the final marshal. Known fields always win on key
+// collision. Key order is not preserved (Go map marshaling sorts keys); content is.
+func mergeExtraFields(extra map[string]json.RawMessage, known any) ([]byte, error) {
+	knownBytes, err := json.Marshal(known)
+	if err != nil {
+		return nil, err
+	}
+	merged := make(map[string]json.RawMessage, len(extra))
+	for k, v := range extra {
+		merged[k] = v
+	}
+	var knownMap map[string]json.RawMessage
+	if err := json.Unmarshal(knownBytes, &knownMap); err != nil {
+		return nil, err
+	}
+	for k, v := range knownMap {
+		merged[k] = v
+	}
+	return json.Marshal(merged)
 }
 
 func newMarketplacePlugin(name, description string) marketplacePlugin {
+	sourceJSON, err := json.Marshal("./" + path.Join("plugins", name))
+	if err != nil {
+		// "./"+path.Join(...) is always a valid string; Marshal of a string never fails.
+		sourceJSON = []byte(`""`)
+	}
 	return marketplacePlugin{
 		Name:        name,
 		Description: strings.TrimSpace(description),
 		Version:     "0.1.0",
 		Author:      pluginAuthor{Name: "Click AI Devkit"},
-		Source:      "./" + path.Join("plugins", name),
+		Source:      json.RawMessage(sourceJSON),
 		Category:    "productivity",
 	}
 }
@@ -432,7 +546,16 @@ func (m marketplaceManifest) HasPlugin(name string) bool {
 
 func (m marketplaceManifest) HasPluginSource(name, source string) bool {
 	for _, plugin := range m.Plugins {
-		if plugin.Name == name && strings.TrimSpace(plugin.Source) == source {
+		if plugin.Name != name {
+			continue
+		}
+		var pluginSource string
+		if err := json.Unmarshal(plugin.Source, &pluginSource); err != nil {
+			// Object-form (or otherwise non-string) sources never match a plain string
+			// source comparison; they simply don't match this string-source check.
+			continue
+		}
+		if strings.TrimSpace(pluginSource) == source {
 			return true
 		}
 	}

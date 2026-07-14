@@ -695,6 +695,130 @@ func TestInstallShareablePhaseSupportWithRegisteredClickSDDUsesClickSDDAgents(t 
 	}
 }
 
+// R4-001 regression coverage: rewriting an existing marketplace.json during a shareable
+// install must never silently drop fields outside the narrow known-field subset, and must
+// tolerate object-form `source` values on unrelated existing entries.
+func TestScaffoldShareablePluginPreservesUnknownTopLevelMarketplaceFields(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	spec := validAgentSpec()
+	spec.Placement = PlacementShareable
+	writer := newFakeFileWriter()
+	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(
+		`{"$schema":"https://anthropic.com/claude-code/marketplace.schema.json","name":"click-ai-devkit","strict":true,"metadata":{"maintainer":"click"},"plugins":[]}`,
+	)
+
+	if _, err := Install(spec, "", repoRoot, writer); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
+	var out map[string]json.RawMessage
+	if err := json.Unmarshal(writer.files[marketplacePath], &out); err != nil {
+		t.Fatalf("marketplace.json parse error = %v\n%s", err, writer.files[marketplacePath])
+	}
+	if strictRaw, ok := out["strict"]; !ok || string(strictRaw) != "true" {
+		t.Fatalf("marketplace.json dropped or mutated top-level \"strict\" field: %s", writer.files[marketplacePath])
+	}
+	metadataRaw, ok := out["metadata"]
+	if !ok {
+		t.Fatalf("marketplace.json dropped top-level \"metadata\" field: %s", writer.files[marketplacePath])
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(metadataRaw, &metadata); err != nil || metadata["maintainer"] != "click" {
+		t.Fatalf("marketplace.json metadata = %s, want {\"maintainer\":\"click\"}", metadataRaw)
+	}
+}
+
+func TestScaffoldShareablePluginPreservesUnknownPerPluginFields(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	spec := validAgentSpec()
+	spec.Placement = PlacementShareable
+	writer := newFakeFileWriter()
+	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(
+		`{"plugins":[{"name":"click-existing","description":"Existing plugin","version":"1.0.0","author":{"name":"Someone"},"source":"./plugins/click-existing","keywords":["db","review"]}]}`,
+	)
+
+	if _, err := Install(spec, "", repoRoot, writer); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
+	var out struct {
+		Plugins []map[string]json.RawMessage `json:"plugins"`
+	}
+	if err := json.Unmarshal(writer.files[marketplacePath], &out); err != nil {
+		t.Fatalf("marketplace.json parse error = %v\n%s", err, writer.files[marketplacePath])
+	}
+	var existing map[string]json.RawMessage
+	for _, plugin := range out.Plugins {
+		var name string
+		if err := json.Unmarshal(plugin["name"], &name); err == nil && name == "click-existing" {
+			existing = plugin
+		}
+	}
+	if existing == nil {
+		t.Fatalf("marketplace.json dropped existing plugin entry: %s", writer.files[marketplacePath])
+	}
+	keywordsRaw, ok := existing["keywords"]
+	if !ok {
+		t.Fatalf("marketplace.json dropped unknown per-plugin field \"keywords\": %+v", existing)
+	}
+	var keywords []string
+	if err := json.Unmarshal(keywordsRaw, &keywords); err != nil || len(keywords) != 2 || keywords[0] != "db" {
+		t.Fatalf("marketplace.json keywords = %s, want [\"db\",\"review\"]", keywordsRaw)
+	}
+	if len(out.Plugins) != 2 {
+		t.Fatalf("marketplace.json plugins count = %d, want 2 (existing + new)", len(out.Plugins))
+	}
+}
+
+func TestScaffoldShareablePluginPreservesObjectFormSourceOnExistingPlugin(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	spec := validAgentSpec()
+	spec.Placement = PlacementShareable
+	writer := newFakeFileWriter()
+	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(
+		`{"plugins":[{"name":"click-existing","description":"Existing plugin","version":"1.0.0","author":{"name":"Someone"},"source":{"type":"github","repo":"click/existing"}}]}`,
+	)
+
+	if _, err := Install(spec, "", repoRoot, writer); err != nil {
+		t.Fatalf("Install() error = %v, want object-form source to round-trip without error", err)
+	}
+
+	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
+	var out struct {
+		Plugins []map[string]json.RawMessage `json:"plugins"`
+	}
+	if err := json.Unmarshal(writer.files[marketplacePath], &out); err != nil {
+		t.Fatalf("marketplace.json parse error = %v\n%s", err, writer.files[marketplacePath])
+	}
+	var existingSource json.RawMessage
+	var newSource json.RawMessage
+	for _, plugin := range out.Plugins {
+		var name string
+		if err := json.Unmarshal(plugin["name"], &name); err != nil {
+			continue
+		}
+		switch name {
+		case "click-existing":
+			existingSource = plugin["source"]
+		case "click-release-helper":
+			newSource = plugin["source"]
+		}
+	}
+	var existingSourceObj struct {
+		Type string `json:"type"`
+		Repo string `json:"repo"`
+	}
+	if err := json.Unmarshal(existingSource, &existingSourceObj); err != nil || existingSourceObj.Repo != "click/existing" {
+		t.Fatalf("existing plugin source corrupted = %s, want object-form source preserved", existingSource)
+	}
+	var newSourceStr string
+	if err := json.Unmarshal(newSource, &newSourceStr); err != nil || newSourceStr != "./plugins/click-release-helper" {
+		t.Fatalf("new plugin source = %s, want string-form ./plugins/click-release-helper", newSource)
+	}
+}
+
 func validClickSDDPluginManifest() []byte {
 	return []byte(`{"name":"click-sdd","version":"0.1.0","description":"Click SDD plugin","author":{"name":"Click AI Devkit"}}`)
 }
