@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -283,6 +284,75 @@ func TestAgentBuilderCommand_NonTTYReturnsGuardWithoutRunningWizard(t *testing.T
 	if !strings.Contains(out, "requiere una terminal interactiva") {
 		t.Fatalf("agent-builder command output = %q, want non-TTY guard message", out)
 	}
+}
+
+// R2-007 (D10) regression coverage: internal/cli/agentbuilder.go mixed English
+// ("agent-builder finished without a confirmed agent") with Spanish user-facing
+// messages in the same file. Every RunE error message returned by this file must be
+// Spanish, not raw English.
+func TestAgentBuilderCommand_ErrorsAreSpanishNotRawEnglish(t *testing.T) {
+	assertSpanish := func(t *testing.T, err error, forbidden ...string) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("error = nil, want a Spanish error message")
+		}
+		for _, f := range forbidden {
+			if strings.Contains(err.Error(), f) {
+				t.Fatalf("error = %q, want no raw English fragment %q (D10)", err.Error(), f)
+			}
+		}
+	}
+
+	t.Run("wizard finished without confirming", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		deps := agentBuilderCommandDeps{
+			runWizard: func(*cobra.Command) (ui.AgentBuilderModel, error) {
+				return ui.AgentBuilderModel{Confirmed: false, Cancelled: false}, nil
+			},
+		}
+		err := runAgentBuilderInteractive(cmd, deps)
+		assertSpanish(t, err, "finished without a confirmed agent")
+	})
+
+	t.Run("wizard confirmed empty final markdown", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		deps := agentBuilderCommandDeps{
+			runWizard: func(*cobra.Command) (ui.AgentBuilderModel, error) {
+				return ui.AgentBuilderModel{Confirmed: true, FinalMarkdown: "   "}, nil
+			},
+		}
+		err := runAgentBuilderInteractive(cmd, deps)
+		assertSpanish(t, err, "confirmed empty final markdown")
+	})
+
+	t.Run("install failure is wrapped with a Spanish lead message", func(t *testing.T) {
+		spec := cliValidAgentSpec()
+		cmd := &cobra.Command{}
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		deps := agentBuilderCommandDeps{
+			runWizard: func(*cobra.Command) (ui.AgentBuilderModel, error) {
+				return ui.AgentBuilderModel{Confirmed: true, Spec: spec, FinalMarkdown: "---\nname: \"release-helper\"\n---\n\n# Role\nx\n"}, nil
+			},
+			installFinalMarkdown: func(agentbuilder.AgentSpec, string, string, string, agentbuilder.FileWriter) (string, error) {
+				return "", fmt.Errorf("agentbuilder: target agent already exists at /tmp/agents/release-helper.md")
+			},
+		}
+		err := runAgentBuilderInteractive(cmd, deps)
+		if err == nil {
+			t.Fatal("error = nil, want the wrapped install error")
+		}
+		if !strings.Contains(err.Error(), "no se pudo instalar el agente") {
+			t.Fatalf("error = %q, want a Spanish lead message before the technical detail", err.Error())
+		}
+	})
 }
 
 func cliValidAgentSpec() agentbuilder.AgentSpec {

@@ -954,6 +954,66 @@ func TestValidateAgentBuilderThemeAnswerDispatchesByDeclaredKindNotPosition(t *t
 	}
 }
 
+// R2-007 (D10) regression coverage: validation errors like
+// "agentbuilder: agent frontmatter field description is required" (package-prefixed,
+// English) were rendered directly in the Spanish-language wizard UI. Every PreviewError
+// the model surfaces must be Spanish user-facing text, not a raw English Go error.
+func TestAgentBuilderModel_PreviewErrorsAreSpanishNotRawEnglishGoErrors(t *testing.T) {
+	assertSpanishError := func(t *testing.T, m AgentBuilderModel) {
+		t.Helper()
+		if m.PreviewError == "" {
+			t.Fatal("PreviewError empty, want a Spanish validation message")
+		}
+		if strings.Contains(m.PreviewError, "agentbuilder:") {
+			t.Fatalf("PreviewError = %q, want no raw English \"agentbuilder:\"-prefixed Go error surfaced to the user (D10)", m.PreviewError)
+		}
+	}
+
+	t.Run("blank description", func(t *testing.T) {
+		m := NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})
+		m = typeAgentBuilderText(t, m, "   ")
+		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+		assertSpanishError(t, m)
+	})
+
+	t.Run("invalid generated name", func(t *testing.T) {
+		m := NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})
+		m = typeAgentBuilderText(t, m, "Ñandú migration reviewer")
+		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+		assertSpanishError(t, m)
+	})
+
+	t.Run("blank required theme field", func(t *testing.T) {
+		m := advanceToThemes(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+		for _, answer := range validAgentBuilderThemeAnswers()[:4] {
+			m = typeAgentBuilderText(t, m, answer)
+			m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+		}
+		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+		assertSpanishError(t, m)
+	})
+
+	t.Run("invalid edited preview", func(t *testing.T) {
+		m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+		m, _ = updateAgentBuilderModel(m, keyMsg("down"))
+		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+		m = clearAgentBuilderInput(t, m)
+		m = typeAgentBuilderText(t, m, "edited markdown body")
+		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+		assertSpanishError(t, m)
+	})
+
+	t.Run("name collision at placement confirm", func(t *testing.T) {
+		checker := func(spec agentbuilder.AgentSpec) error {
+			return fmt.Errorf("agentbuilder: target agent already exists at testdata/claude-home/agents/%s.md", spec.Name)
+		}
+		m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}, WithNameAvailabilityCheck(checker)))
+		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+		assertSpanishError(t, m)
+	})
+}
+
 func updateAgentBuilderModel(m AgentBuilderModel, msg tea.Msg) (AgentBuilderModel, tea.Cmd) {
 	updated, cmd := m.Update(msg)
 	return updated.(AgentBuilderModel), cmd

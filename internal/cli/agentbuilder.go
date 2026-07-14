@@ -55,10 +55,13 @@ func runAgentBuilderInteractive(cmd *cobra.Command, deps agentBuilderCommandDeps
 		return nil
 	}
 	if !result.Confirmed {
-		return fmt.Errorf("cli: agent-builder finished without a confirmed agent")
+		// D10: dev-facing CLI/TUI string literals are Spanish. Keep the "cli: " prefix
+		// (an internal Go-package label, consistent with the rest of this file's
+		// wrapped errors) but the actual message must be Spanish, not English.
+		return fmt.Errorf("cli: el asistente de agent-builder terminó sin confirmar el agente")
 	}
 	if strings.TrimSpace(result.FinalMarkdown) == "" {
-		return fmt.Errorf("cli: agent-builder confirmed empty final markdown")
+		return fmt.Errorf("cli: el asistente de agent-builder confirmó un markdown final vacío")
 	}
 
 	claudeHome := ""
@@ -79,7 +82,9 @@ func runAgentBuilderInteractive(cmd *cobra.Command, deps agentBuilderCommandDeps
 
 	path, err := deps.installFinalMarkdown(result.Spec, result.FinalMarkdown, claudeHome, repoRoot, nil)
 	if err != nil {
-		return err
+		// D10: lead with a Spanish user-facing message; keep the wrapped domain error
+		// (English) as trailing technical detail for logs/troubleshooting via %w.
+		return fmt.Errorf("cli: no se pudo instalar el agente: %w", err)
 	}
 	fmt.Fprintf(out, "Agente instalado en %s\n", path)
 	return nil

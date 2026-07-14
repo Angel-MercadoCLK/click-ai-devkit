@@ -180,12 +180,12 @@ func (m AgentBuilderModel) updateDescription(keyMsg tea.KeyMsg) (tea.Model, tea.
 	if keyName(keyMsg) == "enter" {
 		description := strings.TrimSpace(m.input)
 		if err := agentbuilder.ValidateFrontmatterScalar("description", description); err != nil {
-			m.PreviewError = err.Error()
+			m.PreviewError = translateAgentBuilderError(err)
 			return m, nil
 		}
 		name := deriveAgentName(description)
 		if err := agentbuilder.ValidateAgentName(name); err != nil {
-			m.PreviewError = err.Error()
+			m.PreviewError = translateAgentBuilderError(err)
 			return m, nil
 		}
 		m.Spec.Description = description
@@ -236,7 +236,7 @@ func (m AgentBuilderModel) updateThemes(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	if keyName(keyMsg) == "enter" {
 		answer := strings.TrimSpace(m.input)
 		if err := validateAgentBuilderThemeAnswer(m.ThemeIndex, answer); err != nil {
-			m.PreviewError = err.Error()
+			m.PreviewError = translateAgentBuilderError(err)
 			return m, nil
 		}
 		agentBuilderThemePrompts[m.ThemeIndex].apply(&m.Spec, answer)
@@ -290,7 +290,7 @@ func (m AgentBuilderModel) updatePreviewEdit(keyMsg tea.KeyMsg) (tea.Model, tea.
 		m.input = ""
 		m.EditingPreview = false
 		if err := agentbuilder.ValidateFinalMarkdown(m.PreviewContent); err != nil {
-			m.PreviewError = err.Error()
+			m.PreviewError = translateAgentBuilderError(err)
 			return m, nil
 		}
 		m.PreviewError = ""
@@ -319,7 +319,7 @@ func (m AgentBuilderModel) updatePlacement(keyMsg tea.KeyMsg) (tea.Model, tea.Cm
 				// answer still held in Spec/PreviewContent. The user can fix the name
 				// via the existing Editar flow and try again without redoing the
 				// wizard (R4-003).
-				m.PreviewError = err.Error()
+				m.PreviewError = translateAgentBuilderError(err)
 				m.Step = StepPreview
 				m.cursor = 0
 				return m, nil
@@ -434,6 +434,60 @@ func validateAgentBuilderThemeAnswer(themeIndex int, answer string) error {
 	return nil
 }
 
+// translateAgentBuilderError converts a domain/internal error into Spanish user-facing
+// text for display in the wizard.
+//
+// Per locked decision D10 (dev-facing CLI/TUI string literals are Spanish), the
+// underlying Go error values returned by internal/agentbuilder stay in English (for
+// logs and %w-wrapping) — only the text actually rendered to the user goes through
+// this translator, consistent with the rest of this repo's UI (e.g.
+// internal/ui/profileselect.go, internal/cli/doctor.go).
+func translateAgentBuilderError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	detail := stripAgentBuilderErrorPrefixes(msg)
+	switch {
+	case strings.Contains(msg, "must match generated name"):
+		return "El nombre del frontmatter editado no coincide con el nombre del agente generado por el wizard."
+	case strings.Contains(msg, "already exists"):
+		return fmt.Sprintf("Ya existe un agente o plugin con ese nombre. Elegí otro nombre o eliminá el existente antes de instalar. (Detalle técnico: %s)", detail)
+	case strings.Contains(msg, "invalid agent name") || strings.Contains(msg, "invalid generated agent name"):
+		return "El nombre del agente no es válido: usá letras minúsculas, números y guiones (sin espacios ni tildes)."
+	case strings.Contains(msg, "contains a newline"):
+		return "El valor ingresado no puede contener saltos de línea."
+	case strings.Contains(msg, "is required"):
+		return "Falta completar un campo obligatorio."
+	case strings.Contains(msg, "must start with YAML frontmatter") || strings.Contains(msg, "must close YAML frontmatter"):
+		return "El markdown final no tiene un bloque de frontmatter YAML válido (debe empezar y cerrar con \"---\")."
+	case strings.Contains(msg, "missing") && strings.Contains(msg, "section"):
+		return fmt.Sprintf("Al markdown final le falta una sección obligatoria. (Detalle técnico: %s)", detail)
+	case strings.Contains(msg, "not allowed") || strings.Contains(msg, "must be a top-level native Claude agent field") || strings.Contains(msg, "must use a valid top-level field name"):
+		return "El frontmatter tiene un campo que no está permitido."
+	case strings.Contains(msg, "must be unique"):
+		return "El frontmatter tiene un campo duplicado."
+	case strings.Contains(msg, "indented continuation lines"):
+		return "El frontmatter no puede tener líneas indentadas."
+	default:
+		// Fallback: still Spanish-language user-facing text, with the raw technical
+		// detail appended (prefix stripped) for troubleshooting rather than shown as
+		// the whole message.
+		return fmt.Sprintf("Hubo un problema al validar el agente. (Detalle técnico: %s)", detail)
+	}
+}
+
+// stripAgentBuilderErrorPrefixes removes the internal package-name prefixes
+// ("agentbuilder: ", "cli: ") from an error message before it is embedded as a
+// technical-detail suffix in a Spanish user-facing message (D10): the prefix itself is
+// an internal Go-package label, not meaningful content for the user.
+func stripAgentBuilderErrorPrefixes(msg string) string {
+	for _, prefix := range []string{"agentbuilder: ", "cli: "} {
+		msg = strings.TrimPrefix(msg, prefix)
+	}
+	return msg
+}
+
 func (m *AgentBuilderModel) moveCursor(delta, size int) {
 	if size == 0 {
 		m.cursor = 0
@@ -460,8 +514,8 @@ func (m *AgentBuilderModel) refreshPreview() {
 	content, err := agentbuilder.RenderAgentMarkdown(m.Spec)
 	m.FinalMarkdown = ""
 	if err != nil {
-		m.PreviewError = err.Error()
-		m.PreviewContent = fmt.Sprintf("No se pudo generar el preview: %v", err)
+		m.PreviewError = translateAgentBuilderError(err)
+		m.PreviewContent = fmt.Sprintf("No se pudo generar el preview: %s", translateAgentBuilderError(err))
 		return
 	}
 	m.PreviewError = ""
@@ -471,12 +525,12 @@ func (m *AgentBuilderModel) refreshPreview() {
 func (m *AgentBuilderModel) validatePreviewSpec() error {
 	_, err := agentbuilder.RenderAgentMarkdown(m.Spec)
 	if err != nil {
-		m.PreviewError = err.Error()
-		m.PreviewContent = fmt.Sprintf("No se pudo generar el preview: %v", err)
+		m.PreviewError = translateAgentBuilderError(err)
+		m.PreviewContent = fmt.Sprintf("No se pudo generar el preview: %s", translateAgentBuilderError(err))
 		return err
 	}
 	if err := agentbuilder.ValidateFinalMarkdown(m.PreviewContent, m.Spec.Name); err != nil {
-		m.PreviewError = err.Error()
+		m.PreviewError = translateAgentBuilderError(err)
 		return err
 	}
 	m.PreviewError = ""
