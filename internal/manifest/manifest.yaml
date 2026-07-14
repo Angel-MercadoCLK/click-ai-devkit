@@ -11,12 +11,12 @@ engram:
   source: "github.com/Gentleman-Programming/engram"
 plugins:
   click-sdd:
-    version: "0.0.0-placeholder"
+    version: "0.1.0"
     path: "plugins/click-sdd"
   click-memory:
-    version: "0.0.0-placeholder"
+    version: "0.1.0"
     path: "plugins/click-memory"
   click-review:
-    version: "0.0.0-placeholder"
+    version: "0.1.0"
     path: "plugins/click-review"
 min_claude_code_version: "1.x"

@@ -1,5 +1,0 @@
-{
-  "name": "click-stub",
-  "version": "0.0.0-dev",
-  "description": "Tracer-bullet stub plugin for click-ai-devkit Slice 1. Proves the install/copy mechanism end to end; real plugin content (click-sdd, click-memory, click-review) lands in later slices."
-}
