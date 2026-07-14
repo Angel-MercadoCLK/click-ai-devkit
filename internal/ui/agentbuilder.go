@@ -50,19 +50,32 @@ var agentBuilderSDDModeOptions = []struct {
 	{label: "Phase Support", mode: agentbuilder.SDDPhaseSupport},
 }
 
+// agentBuilderThemeKind tags what a theme prompt's answer is used for, so validation
+// can dispatch on an explicit, declared role instead of the prompt's raw position in
+// agentBuilderThemePrompts (R2-006). Reordering the slice below can never silently
+// point validation at the wrong field, because each prompt still declares its own kind.
+type agentBuilderThemeKind int
+
+const (
+	agentBuilderThemeFreeText agentBuilderThemeKind = iota
+	agentBuilderThemeTools
+	agentBuilderThemeModel
+)
+
 var agentBuilderThemePrompts = []struct {
 	title string
+	kind  agentBuilderThemeKind
 	apply func(*agentbuilder.AgentSpec, string)
 }{
-	{title: "Propósito / objetivo", apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Purpose = value }},
-	{title: "Tareas exactas", apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Tasks = value }},
-	{title: "Situaciones o frases que lo activan", apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Triggers = value }},
-	{title: "Reglas duras / restricciones", apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Rules = value }},
-	{title: "Herramientas necesarias", apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Tools = value }},
-	{title: "Modelo", apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Model = value }},
-	{title: "Tono / persona", apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Tone = value }},
-	{title: "Conocimiento de dominio", apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Domain = value }},
-	{title: "Ejemplo de buen resultado", apply: func(spec *agentbuilder.AgentSpec, value string) { spec.GoodOutput = value }},
+	{title: "Propósito / objetivo", kind: agentBuilderThemeFreeText, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Purpose = value }},
+	{title: "Tareas exactas", kind: agentBuilderThemeFreeText, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Tasks = value }},
+	{title: "Situaciones o frases que lo activan", kind: agentBuilderThemeFreeText, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Triggers = value }},
+	{title: "Reglas duras / restricciones", kind: agentBuilderThemeFreeText, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Rules = value }},
+	{title: "Herramientas necesarias", kind: agentBuilderThemeTools, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Tools = value }},
+	{title: "Modelo", kind: agentBuilderThemeModel, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Model = value }},
+	{title: "Tono / persona", kind: agentBuilderThemeFreeText, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Tone = value }},
+	{title: "Conocimiento de dominio", kind: agentBuilderThemeFreeText, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Domain = value }},
+	{title: "Ejemplo de buen resultado", kind: agentBuilderThemeFreeText, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.GoodOutput = value }},
 }
 
 var agentBuilderPreviewActions = []string{"Instalar", "Editar", "Regenerar", "Volver"}
@@ -332,7 +345,7 @@ func (m AgentBuilderModel) View() string {
 		return m.renderList("Elegí la fase SDD que este agente va a apoyar", phaseLabelsForAgentBuilder(), "↑/↓ mover · enter confirmar · q/esc cancelar")
 	case StepThemes:
 		prompt := agentBuilderThemePrompts[m.ThemeIndex]
-		return renderInputWithError(fmt.Sprintf("%d/9 · %s", m.ThemeIndex+1, prompt.title), m.input, m.PreviewError)
+		return renderInputWithError(fmt.Sprintf("%d/%d · %s", m.ThemeIndex+1, len(agentBuilderThemePrompts), prompt.title), m.input, m.PreviewError)
 	case StepPreview:
 		if m.EditingPreview {
 			return renderInput("Editá el Markdown final", m.input)
@@ -409,18 +422,14 @@ func renderInputWithError(title, value, errorMessage string) string {
 
 // validateAgentBuilderThemeAnswer delegates to the domain package's canonical
 // frontmatter scalar validator instead of keeping a UI-side duplicate (R1-001,
-// R2-005). See Fix 7 for the plan to replace these positional indices with named
-// roles.
+// R2-005), and dispatches on the prompt's declared agentBuilderThemeKind rather than
+// its raw index (R2-006).
 func validateAgentBuilderThemeAnswer(themeIndex int, answer string) error {
-	switch themeIndex {
-	case 4:
-		if err := agentbuilder.ValidateFrontmatterScalar("tools", answer); err != nil {
-			return err
-		}
-	case 5:
-		if err := agentbuilder.ValidateFrontmatterScalar("model", answer); err != nil {
-			return err
-		}
+	switch agentBuilderThemePrompts[themeIndex].kind {
+	case agentBuilderThemeTools:
+		return agentbuilder.ValidateFrontmatterScalar("tools", answer)
+	case agentBuilderThemeModel:
+		return agentbuilder.ValidateFrontmatterScalar("model", answer)
 	}
 	return nil
 }

@@ -902,6 +902,58 @@ func TestAgentBuilderModel_WithoutNameAvailabilityCheckStillConfirms(t *testing.
 	}
 }
 
+// R2-006 regression coverage: theme-answer validation used to switch on the raw
+// positional ThemeIndex (case 4, case 5), tightly coupling validation to
+// agentBuilderThemePrompts' slice order, and the progress display hardcoded "/9"
+// instead of deriving it from the prompt list.
+func TestAgentBuilderModel_ThemeProgressDisplayDerivesFromPromptCountNotHardcoded(t *testing.T) {
+	original := agentBuilderThemePrompts
+	defer func() { agentBuilderThemePrompts = original }()
+	agentBuilderThemePrompts = []struct {
+		title string
+		kind  agentBuilderThemeKind
+		apply func(*agentbuilder.AgentSpec, string)
+	}{
+		{title: "Solo tema", kind: agentBuilderThemeFreeText, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Purpose = value }},
+	}
+
+	m := advanceToThemes(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+	view := m.View()
+	if !strings.Contains(view, "1/1") {
+		t.Fatalf("View() = %q, want progress derived from len(agentBuilderThemePrompts)=1", view)
+	}
+	if strings.Contains(view, "/9") {
+		t.Fatalf("View() = %q, want no hardcoded /9 progress text", view)
+	}
+}
+
+// validateAgentBuilderThemeAnswer must dispatch by each prompt's declared kind, not by
+// its position in agentBuilderThemePrompts, so reordering the wizard's themes can never
+// silently point validation at the wrong field.
+func TestValidateAgentBuilderThemeAnswerDispatchesByDeclaredKindNotPosition(t *testing.T) {
+	original := agentBuilderThemePrompts
+	defer func() { agentBuilderThemePrompts = original }()
+	agentBuilderThemePrompts = []struct {
+		title string
+		kind  agentBuilderThemeKind
+		apply func(*agentbuilder.AgentSpec, string)
+	}{
+		{title: "Modelo (movido a la posición 0)", kind: agentBuilderThemeModel, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Model = value }},
+		{title: "Herramientas (movido a la posición 1)", kind: agentBuilderThemeTools, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Tools = value }},
+		{title: "Texto libre", kind: agentBuilderThemeFreeText, apply: func(spec *agentbuilder.AgentSpec, value string) { spec.Tone = value }},
+	}
+
+	if err := validateAgentBuilderThemeAnswer(0, ""); err == nil {
+		t.Fatal("validateAgentBuilderThemeAnswer(0, \"\") error = nil, want required-field error for the model prompt now at index 0")
+	}
+	if err := validateAgentBuilderThemeAnswer(1, ""); err == nil {
+		t.Fatal("validateAgentBuilderThemeAnswer(1, \"\") error = nil, want required-field error for the tools prompt now at index 1")
+	}
+	if err := validateAgentBuilderThemeAnswer(2, ""); err != nil {
+		t.Fatalf("validateAgentBuilderThemeAnswer(2, \"\") error = %v, want nil for a free-text prompt", err)
+	}
+}
+
 func updateAgentBuilderModel(m AgentBuilderModel, msg tea.Msg) (AgentBuilderModel, tea.Cmd) {
 	updated, cmd := m.Update(msg)
 	return updated.(AgentBuilderModel), cmd
