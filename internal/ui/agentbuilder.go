@@ -426,6 +426,9 @@ func validateAgentBuilderFinalMarkdown(content string, expectedName ...string) e
 	}
 	frontmatter := rest[:frontmatterEnd]
 	body := rest[frontmatterEnd+len("\n---\n"):]
+	if err := validateAgentBuilderFrontmatterIndentation(frontmatter); err != nil {
+		return err
+	}
 	frontmatterValues := make(map[string]string, 4)
 	for _, field := range []string{"name", "description", "model", "tools"} {
 		value, err := frontmatterScalarValue(frontmatter, field)
@@ -443,6 +446,18 @@ func validateAgentBuilderFinalMarkdown(content string, expectedName ...string) e
 	for _, heading := range []string{"# Role", "## Tasks", "## Triggers", "## Hard Rules", "## SDD Integration", "## Tone", "## Domain Knowledge", "## Good Output"} {
 		if !strings.Contains(body, heading+"\n") {
 			return fmt.Errorf("agentbuilder: final markdown missing %s section", heading)
+		}
+	}
+	return nil
+}
+
+func validateAgentBuilderFrontmatterIndentation(frontmatter string) error {
+	for _, line := range strings.Split(frontmatter, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			return fmt.Errorf("agentbuilder: final markdown frontmatter must not contain indented continuation lines")
 		}
 	}
 	return nil

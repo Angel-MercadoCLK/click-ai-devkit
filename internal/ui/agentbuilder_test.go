@@ -622,6 +622,12 @@ func TestAgentBuilderModel_EditedPreviewInvalidFrontmatterDomainCannotConfirm(t 
 			},
 		},
 		{
+			name: "indented frontmatter continuation line",
+			edit: func(content string) string {
+				return strings.Replace(content, `model: "sonnet"`, "model: sonnet\n  continuation", 1)
+			},
+		},
+		{
 			name: "single quoted scalar with unescaped apostrophe",
 			edit: func(content string) string {
 				return strings.Replace(content, `model: "sonnet"`, `model: 'sonnet's helper'`, 1)
@@ -693,6 +699,12 @@ func TestAgentBuilderModel_EditedPreviewValidFrontmatterScalarsStillConfirm(t *t
 			name: "single quoted scalar with doubled apostrophe",
 			edit: func(content string) string {
 				return strings.Replace(content, `model: "sonnet"`, `model: 'sonnet''s helper'`, 1)
+			},
+		},
+		{
+			name: "indented body content after frontmatter",
+			edit: func(content string) string {
+				return strings.Replace(content, "# Role\nProtect production data", "# Role\n  Protect production data", 1)
 			},
 		},
 	}
