@@ -446,21 +446,28 @@ func validateAgentBuilderFinalMarkdown(content string) error {
 }
 
 func frontmatterScalarValue(frontmatter, field string) (string, error) {
-	prefix := field + ":"
+	fieldPrefix := field + ":"
+	separatorPrefix := field + ": "
 	found := false
 	var value string
 	for _, line := range strings.Split(frontmatter, "\n") {
 		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
 			continue
 		}
-		if !strings.HasPrefix(line, prefix) {
+		if !strings.HasPrefix(line, fieldPrefix) {
 			continue
 		}
 		if found {
 			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must be unique", field)
 		}
 		found = true
-		rawValue := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		if !strings.HasPrefix(line, separatorPrefix) {
+			rawWithoutSeparator := strings.TrimSpace(strings.TrimPrefix(line, fieldPrefix))
+			if rawWithoutSeparator != "" {
+				return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must use 'field: value' separator", field)
+			}
+		}
+		rawValue := strings.TrimSpace(strings.TrimPrefix(line, fieldPrefix))
 		if rawValue == "" {
 			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
 		}

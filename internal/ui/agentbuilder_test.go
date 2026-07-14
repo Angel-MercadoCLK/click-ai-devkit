@@ -586,6 +586,13 @@ func TestAgentBuilderModel_EditedPreviewInvalidFrontmatterDomainCannotConfirm(t 
 			},
 		},
 		{
+			name: "required frontmatter scalar without separator space",
+			edit: func(content string) string {
+				content = strings.Replace(content, `name: "review-risky-database-migrations"`, `name:bad-name`, 1)
+				return strings.Replace(content, `model: "sonnet"`, `model:sonnet`, 1)
+			},
+		},
+		{
 			name: "single quoted scalar with unescaped apostrophe",
 			edit: func(content string) string {
 				return strings.Replace(content, `model: "sonnet"`, `model: 'sonnet's helper'`, 1)
