@@ -15,6 +15,11 @@ import (
 const (
 	marketplaceName = "click-ai-devkit"
 	pluginCLIBinary = "claude"
+
+	// ClickSDDPluginID is the plugin@marketplace identifier Claude Code assigns to click-sdd once
+	// installed via SyncMarketplacePlugins. It is exactly the key AppliedClickSDDPluginConfig looks
+	// up in settings.json's pluginConfigs map.
+	ClickSDDPluginID = "click-sdd@" + marketplaceName
 )
 
 var managedPlugins = []string{"click-sdd", "click-memory", "click-review"}
@@ -230,6 +235,47 @@ func HasInstalledPluginID(cfg Config, pluginID string) (bool, error) {
 	return s.EnabledPlugins[pluginID], nil
 }
 
+// AppliedClickSDDPluginConfig reads the click-sdd plugin's ACTUALLY APPLIED --config options from
+// cfg.SettingsPath()'s pluginConfigs[ClickSDDPluginID].options — i.e. what Claude Code itself
+// accepted and wrote to settings.json, as opposed to what click computed it SHOULD have configured
+// (modelconfig.Defaults/Resolve, what models.json holds). This distinction matters: a stale cached
+// plugin.json schema on Claude Code's side can silently DROP newly-added --config keys during
+// `claude plugin install` without click ever finding out (root-caused live,
+// fix/marketplace-refresh-stale-schema — reproduced as "--config not applied: --config key ... isn't
+// declared in this plugin's userConfig"). This is the read side `click doctor` uses to detect that
+// blind spot. It returns (nil, false, nil) — not an error — when settings.json is missing, has no
+// "pluginConfigs" key, has no click-sdd entry, or that entry has no "options" map: all "nothing
+// applied yet" states a caller should treat as zero applied keys, not a hard failure. A genuinely
+// malformed settings.json (invalid JSON) still returns an error, matching every other settings.json
+// reader in this package.
+func AppliedClickSDDPluginConfig(cfg Config) (map[string]string, bool, error) {
+	settings, err := readSettingsFile(cfg.SettingsPath())
+	if err != nil {
+		return nil, false, err
+	}
+	pluginConfigs, ok := settings["pluginConfigs"].(map[string]any)
+	if !ok {
+		return nil, false, nil
+	}
+	entry, ok := pluginConfigs[ClickSDDPluginID].(map[string]any)
+	if !ok {
+		return nil, false, nil
+	}
+	optionsRaw, ok := entry["options"].(map[string]any)
+	if !ok {
+		return nil, false, nil
+	}
+	options := make(map[string]string, len(optionsRaw))
+	for key, value := range optionsRaw {
+		s, ok := value.(string)
+		if !ok {
+			continue
+		}
+		options[key] = s
+	}
+	return options, true, nil
+}
+
 // addMarketplace registers a plugin marketplace. sparsePaths, when non-empty, limits the checkout
 // to those paths under the repo root (`--sparse <paths...>`) — only click-ai-devkit's own
 // marketplace needs this (its plugins live under plugins/<name>, alongside .claude-plugin/).
@@ -336,7 +382,16 @@ func (f *fakeCommandRunner) Run(name string, args ...string) error {
 	if len(args) >= 3 && args[0] == "plugin" && args[1] == "install" {
 		pluginID := args[2]
 		f.plugins[pluginID] = true
-		return f.upsertPluginRegistry(pluginID, true)
+		if err := f.upsertPluginRegistry(pluginID, true); err != nil {
+			return err
+		}
+		// Mirrors the real `claude` CLI: `--config key=value` flags land in settings.json's
+		// pluginConfigs[pluginID].options (verified against the real CLI in Step 0) — this is what
+		// installer.AppliedClickSDDPluginConfig / doctor's checkAppliedPluginConfig read back.
+		if options := parseConfigFlags(args[3:]); len(options) > 0 {
+			return f.upsertPluginConfig(pluginID, options)
+		}
+		return nil
 	}
 	if len(args) >= 3 && args[0] == "plugin" && args[1] == "uninstall" {
 		pluginID := args[2]
@@ -355,6 +410,46 @@ func (f *fakeCommandRunner) Run(name string, args ...string) error {
 		return f.removeMCPServer(mcpName)
 	}
 	return nil
+}
+
+// parseConfigFlags extracts the "--config key=value" pairs from a `plugin install` argument tail,
+// mirroring how the real `claude` CLI turns repeated --config flags into
+// pluginConfigs[pluginID].options entries.
+func parseConfigFlags(args []string) map[string]string {
+	options := map[string]string{}
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] != "--config" {
+			continue
+		}
+		key, value, ok := strings.Cut(args[i+1], "=")
+		if !ok {
+			continue
+		}
+		options[key] = value
+	}
+	return options
+}
+
+// upsertPluginConfig simulates `claude plugin install ... --config k=v ...`'s effect on Claude
+// Code's own settings.json pluginConfigs[pluginID].options — the same shape
+// AppliedClickSDDPluginConfig reads for real — so doctor's checkAppliedPluginConfig can observe it
+// deterministically in fake-runner-backed tests without shelling out.
+func (f *fakeCommandRunner) upsertPluginConfig(pluginID string, options map[string]string) error {
+	settings, err := readSettingsFile(f.cfg.SettingsPath())
+	if err != nil {
+		return err
+	}
+	pluginConfigs, ok := settings["pluginConfigs"].(map[string]any)
+	if !ok || pluginConfigs == nil {
+		pluginConfigs = map[string]any{}
+	}
+	optionsAny := make(map[string]any, len(options))
+	for k, v := range options {
+		optionsAny[k] = v
+	}
+	pluginConfigs[pluginID] = map[string]any{"options": optionsAny}
+	settings["pluginConfigs"] = pluginConfigs
+	return writeSettingsFile(f.cfg.SettingsPath(), settings)
 }
 
 // marketplaceKeyFromSource mirrors how the real `claude` CLI names a marketplace after `plugin

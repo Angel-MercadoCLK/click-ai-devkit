@@ -84,9 +84,9 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	report := Run(cfg)
 
-	const wantChecks = 6 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 7 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (click-sdd plugin, click-memory plugin, click-review plugin, CLAUDE.md, memory-guard hook, models.json schema, engram plugin, engram binary, context7 MCP)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d (click-sdd plugin, click-memory plugin, click-review plugin, CLAUDE.md, memory-guard hook, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, context7 MCP)", len(report.Checks), wantChecks)
 	}
 }
 
@@ -288,6 +288,9 @@ func seedInstalledState(t *testing.T, cfg installer.Config) {
 			"click-memory@click-ai-devkit": true,
 			"click-review@click-ai-devkit": true,
 			installer.EngramPluginID:       true,
+		},
+		"pluginConfigs": map[string]any{
+			installer.ClickSDDPluginID: map[string]any{"options": allExpectedAppliedOptions()},
 		},
 	}
 	settingsData, err := json.Marshal(settings)
