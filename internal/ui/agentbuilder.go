@@ -489,7 +489,24 @@ func parseAgentBuilderFrontmatterScalar(field, rawValue string) (string, error) 
 	if strings.HasPrefix(rawValue, "#") || strings.HasPrefix(rawValue, "[") || strings.HasPrefix(rawValue, "{") {
 		return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must be a string scalar", field)
 	}
+	if !isAgentBuilderPlainSafeFrontmatterScalar(rawValue) {
+		return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s has unsafe plain scalar; quote the value", field)
+	}
 	return rawValue, nil
+}
+
+func isAgentBuilderPlainSafeFrontmatterScalar(value string) bool {
+	for _, r := range value {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+			continue
+		case r == ' ', r == ',', r == '.', r == '-', r == '_', r == '/':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (m *AgentBuilderModel) moveCursor(delta, size int) {

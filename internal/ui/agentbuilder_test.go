@@ -561,6 +561,18 @@ func TestAgentBuilderModel_EditedPreviewInvalidFrontmatterDomainCannotConfirm(t 
 				return strings.Replace(content, `tools: "Read, Grep, Bash"`, `tools: {Read: true}`, 1)
 			},
 		},
+		{
+			name: "plain scalar with colon-space",
+			edit: func(content string) string {
+				return strings.Replace(content, `description: "Review risky database migrations"`, `description: Release helper: drafts notes`, 1)
+			},
+		},
+		{
+			name: "plain scalar with inline comment",
+			edit: func(content string) string {
+				return strings.Replace(content, `model: "sonnet"`, `model: sonnet # comment`, 1)
+			},
+		},
 	}
 
 	for _, tt := range tests {
