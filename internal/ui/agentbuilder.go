@@ -411,7 +411,7 @@ func validateAgentBuilderRequiredFrontmatterScalar(field, value string) error {
 	return nil
 }
 
-func validateAgentBuilderFinalMarkdown(content string) error {
+func validateAgentBuilderFinalMarkdown(content string, expectedName ...string) error {
 	if strings.TrimSpace(content) == "" {
 		return fmt.Errorf("agentbuilder: final markdown is required")
 	}
@@ -436,6 +436,9 @@ func validateAgentBuilderFinalMarkdown(content string) error {
 	}
 	if err := validateAgentBuilderGeneratedName(frontmatterValues["name"]); err != nil {
 		return err
+	}
+	if len(expectedName) > 0 && frontmatterValues["name"] != expectedName[0] {
+		return fmt.Errorf("agentbuilder: final markdown frontmatter name %q must match generated name %q", frontmatterValues["name"], expectedName[0])
 	}
 	for _, heading := range []string{"# Role", "## Tasks", "## Triggers", "## Hard Rules", "## SDD Integration", "## Tone", "## Domain Knowledge", "## Good Output"} {
 		if !strings.Contains(body, heading+"\n") {
@@ -591,7 +594,7 @@ func (m *AgentBuilderModel) validatePreviewSpec() error {
 		m.PreviewContent = fmt.Sprintf("No se pudo generar el preview: %v", err)
 		return err
 	}
-	if err := validateAgentBuilderFinalMarkdown(m.PreviewContent); err != nil {
+	if err := validateAgentBuilderFinalMarkdown(m.PreviewContent, m.Spec.Name); err != nil {
 		m.PreviewError = err.Error()
 		return err
 	}

@@ -468,6 +468,35 @@ func TestAgentBuilderModel_EditedPreviewConfirmsAsFinalMarkdown(t *testing.T) {
 	}
 }
 
+func TestAgentBuilderModel_EditedPreviewNameMismatchCannotConfirm(t *testing.T) {
+	m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+	edited := strings.Replace(m.PreviewContent, `name: "review-risky-database-migrations"`, `name: "release-helper"`, 1)
+
+	m, _ = updateAgentBuilderModel(m, keyMsg("down"))
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	m = clearAgentBuilderInput(t, m)
+	m = typeAgentBuilderText(t, m, edited)
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+
+	m, _ = updateAgentBuilderModel(m, keyMsg("up"))
+	m, cmd := updateAgentBuilderModel(m, keyMsg("enter"))
+	if m.Confirmed || m.Step != StepPreview || cmd != nil {
+		t.Fatalf("name-mismatched edited preview advanced: Confirmed=%v Step=%v cmd=%v", m.Confirmed, m.Step, cmd)
+	}
+	if m.PreviewError == "" {
+		t.Fatal("PreviewError empty after name-mismatched edited preview, want validation error")
+	}
+	if !strings.Contains(m.View(), m.PreviewError) {
+		t.Fatalf("preview view missing PreviewError %q:\n%s", m.PreviewError, m.View())
+	}
+	if m.FinalMarkdown != "" {
+		t.Fatalf("FinalMarkdown = %q, want empty for name-mismatched edited preview", m.FinalMarkdown)
+	}
+	if m.Spec.Name != "review-risky-database-migrations" {
+		t.Fatalf("Spec.Name = %q, want original generated name", m.Spec.Name)
+	}
+}
+
 func TestAgentBuilderModel_InvalidEditedPreviewCannotConfirm(t *testing.T) {
 	m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
 
