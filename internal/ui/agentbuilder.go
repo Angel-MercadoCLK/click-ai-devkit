@@ -70,6 +70,8 @@ var agentBuilderPreviewActions = []string{"Instalar", "Editar", "Regenerar", "Vo
 
 var agentBuilderGeneratedNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 
+var agentBuilderImplicitNumberScalarPattern = regexp.MustCompile(`^[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
+
 var agentBuilderPlacementOptions = []struct {
 	label     string
 	placement agentbuilder.Placement
@@ -445,25 +447,36 @@ func validateAgentBuilderFinalMarkdown(content string) error {
 
 func frontmatterScalarValue(frontmatter, field string) (string, error) {
 	prefix := field + ":"
+	found := false
+	var value string
 	for _, line := range strings.Split(frontmatter, "\n") {
-		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			continue
+		}
 		if !strings.HasPrefix(line, prefix) {
 			continue
 		}
+		if found {
+			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must be unique", field)
+		}
+		found = true
 		rawValue := strings.TrimSpace(strings.TrimPrefix(line, prefix))
 		if rawValue == "" {
 			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
 		}
-		value, err := parseAgentBuilderFrontmatterScalar(field, rawValue)
+		parsedValue, err := parseAgentBuilderFrontmatterScalar(field, rawValue)
 		if err != nil {
 			return "", err
 		}
-		if strings.TrimSpace(value) == "" {
+		if strings.TrimSpace(parsedValue) == "" {
 			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
 		}
-		if strings.ContainsAny(value, "\n\r") {
+		if strings.ContainsAny(parsedValue, "\n\r") {
 			return "", fmt.Errorf("agentbuilder: agent frontmatter field %s contains a newline", field)
 		}
+		value = parsedValue
+	}
+	if found {
 		return value, nil
 	}
 	return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
@@ -499,10 +512,21 @@ func parseAgentBuilderFrontmatterScalar(field, rawValue string) (string, error) 
 	if strings.HasPrefix(rawValue, "#") || strings.HasPrefix(rawValue, "[") || strings.HasPrefix(rawValue, "{") {
 		return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must be a string scalar", field)
 	}
+	if isAgentBuilderImplicitNonStringScalar(rawValue) {
+		return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must be a string scalar; quote the value", field)
+	}
 	if !isAgentBuilderPlainSafeFrontmatterScalar(rawValue) {
 		return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s has unsafe plain scalar; quote the value", field)
 	}
 	return rawValue, nil
+}
+
+func isAgentBuilderImplicitNonStringScalar(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "false", "null", "~", ".nan", ".inf", "+.inf", "-.inf":
+		return true
+	}
+	return agentBuilderImplicitNumberScalarPattern.MatchString(value)
 }
 
 func isAgentBuilderPlainSafeFrontmatterScalar(value string) bool {

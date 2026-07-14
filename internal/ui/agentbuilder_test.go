@@ -538,6 +538,18 @@ func TestAgentBuilderModel_EditedPreviewInvalidFrontmatterDomainCannotConfirm(t 
 			},
 		},
 		{
+			name: "nested required name is not top-level metadata",
+			edit: func(content string) string {
+				return strings.Replace(content, `name: "review-risky-database-migrations"`, "metadata:\n  name: \"review-risky-database-migrations\"", 1)
+			},
+		},
+		{
+			name: "duplicate required name",
+			edit: func(content string) string {
+				return strings.Replace(content, `description: "Review risky database migrations"`, "description: \"Review risky database migrations\"\nname: \"review-risky-database-migrations-copy\"", 1)
+			},
+		},
+		{
 			name: "multiline frontmatter scalar",
 			edit: func(content string) string {
 				return strings.Replace(content, `model: "sonnet"`, "model: |\n  sonnet", 1)
@@ -577,6 +589,24 @@ func TestAgentBuilderModel_EditedPreviewInvalidFrontmatterDomainCannotConfirm(t 
 			name: "single quoted scalar with unescaped apostrophe",
 			edit: func(content string) string {
 				return strings.Replace(content, `model: "sonnet"`, `model: 'sonnet's helper'`, 1)
+			},
+		},
+		{
+			name: "implicit boolean scalar",
+			edit: func(content string) string {
+				return strings.Replace(content, `model: "sonnet"`, `model: true`, 1)
+			},
+		},
+		{
+			name: "implicit integer scalar",
+			edit: func(content string) string {
+				return strings.Replace(content, `model: "sonnet"`, `model: 123`, 1)
+			},
+		},
+		{
+			name: "implicit null scalar",
+			edit: func(content string) string {
+				return strings.Replace(content, `model: "sonnet"`, `model: null`, 1)
 			},
 		},
 	}
