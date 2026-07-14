@@ -309,7 +309,14 @@ func TestInstallFinalMarkdownWritesConfirmedMarkdownExactly(t *testing.T) {
 				"model: \"opus\"\n" +
 				"tools: \"Read, Edit\"\n" +
 				"---\n\n" +
-				"# Role\nPersist the confirmed preview verbatim.\n",
+				"# Role\nPersist the confirmed preview verbatim.\n\n" +
+				"## Tasks\nConfirmed tasks.\n\n" +
+				"## Triggers\nConfirmed triggers.\n\n" +
+				"## Hard Rules\nConfirmed hard rules.\n\n" +
+				"## SDD Integration\nMode: standalone\n\n" +
+				"## Tone\nConfirmed tone.\n\n" +
+				"## Domain Knowledge\nConfirmed domain knowledge.\n\n" +
+				"## Good Output\nConfirmed good output.\n",
 		},
 		{
 			name:         "shareable standalone scaffolding",
@@ -326,7 +333,14 @@ func TestInstallFinalMarkdownWritesConfirmedMarkdownExactly(t *testing.T) {
 				"model: \"haiku\"\n" +
 				"tools: \"Read, Grep, Bash\"\n" +
 				"---\n\n" +
-				"# Role\nInstall through the existing shareable scaffold path.\n",
+				"# Role\nInstall through the existing shareable scaffold path.\n\n" +
+				"## Tasks\nConfirmed tasks.\n\n" +
+				"## Triggers\nConfirmed triggers.\n\n" +
+				"## Hard Rules\nConfirmed hard rules.\n\n" +
+				"## SDD Integration\nMode: standalone\n\n" +
+				"## Tone\nConfirmed tone.\n\n" +
+				"## Domain Knowledge\nConfirmed domain knowledge.\n\n" +
+				"## Good Output\nConfirmed good output.\n",
 		},
 	}
 
@@ -418,6 +432,25 @@ func TestInstallFinalMarkdownRejectsExistingTargetAgentWithoutOverwrite(t *testi
 				}
 			}
 		})
+	}
+}
+
+// R1-001/R2-005 regression coverage: InstallFinalMarkdown previously performed zero
+// frontmatter validation itself, relying entirely on its one caller (the interactive
+// wizard) to validate first. Any future caller (batch import, a non-interactive path)
+// would have inherited an unguarded write. installContent now calls
+// ValidateFinalMarkdown internally, so this guard holds regardless of caller.
+func TestInstallFinalMarkdownRejectsInvalidContentWithoutWriting(t *testing.T) {
+	spec := validAgentSpec()
+	spec.Placement = PlacementPersonal
+	writer := newFakeFileWriter()
+
+	_, err := InstallFinalMarkdown(spec, "---\nname: \"release-helper\"\ndescription: \"x\"\nmodel: \"sonnet\"\ntools: \"Read\"\n---\n\n# Role\nmissing every other required section\n", "", "", writer)
+	if err == nil {
+		t.Fatal("InstallFinalMarkdown() error = nil, want validation error for markdown missing required sections")
+	}
+	if len(writer.writePaths) != 0 {
+		t.Fatalf("InstallFinalMarkdown() writes = %v, want none for invalid final markdown", writer.writePaths)
 	}
 }
 

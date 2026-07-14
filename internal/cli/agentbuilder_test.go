@@ -23,7 +23,14 @@ func TestAgentBuilderCommand_InstallsConfirmedFinalMarkdownExactly(t *testing.T)
 		"model: \"opus\"\n" +
 		"tools: \"Read, Edit, Bash\"\n" +
 		"---\n\n" +
-		"# Role\nThis exact markdown came from the wizard.\n"
+		"# Role\nThis exact markdown came from the wizard.\n\n" +
+		"## Tasks\nConfirmed tasks.\n\n" +
+		"## Triggers\nConfirmed triggers.\n\n" +
+		"## Hard Rules\nConfirmed hard rules.\n\n" +
+		"## SDD Integration\nMode: standalone\n\n" +
+		"## Tone\nConfirmed tone.\n\n" +
+		"## Domain Knowledge\nConfirmed domain knowledge.\n\n" +
+		"## Good Output\nConfirmed good output.\n"
 
 	cmd := &cobra.Command{}
 	var out bytes.Buffer
@@ -69,7 +76,14 @@ func TestAgentBuilderCommand_PersonalInstallHonorsClaudeConfigDir(t *testing.T) 
 		"model: \"opus\"\n" +
 		"tools: \"Read, Edit, Bash\"\n" +
 		"---\n\n" +
-		"# Role\nThis exact markdown came from the wizard.\n"
+		"# Role\nThis exact markdown came from the wizard.\n\n" +
+		"## Tasks\nConfirmed tasks.\n\n" +
+		"## Triggers\nConfirmed triggers.\n\n" +
+		"## Hard Rules\nConfirmed hard rules.\n\n" +
+		"## SDD Integration\nMode: standalone\n\n" +
+		"## Tone\nConfirmed tone.\n\n" +
+		"## Domain Knowledge\nConfirmed domain knowledge.\n\n" +
+		"## Good Output\nConfirmed good output.\n"
 
 	cmd := &cobra.Command{}
 	var out bytes.Buffer
@@ -116,7 +130,14 @@ func TestAgentBuilderCommand_PersonalInstallHonorsClickClaudeHomeWhenClaudeConfi
 		"model: \"opus\"\n" +
 		"tools: \"Read, Edit, Bash\"\n" +
 		"---\n\n" +
-		"# Role\nThis exact markdown came from the wizard.\n"
+		"# Role\nThis exact markdown came from the wizard.\n\n" +
+		"## Tasks\nConfirmed tasks.\n\n" +
+		"## Triggers\nConfirmed triggers.\n\n" +
+		"## Hard Rules\nConfirmed hard rules.\n\n" +
+		"## SDD Integration\nMode: standalone\n\n" +
+		"## Tone\nConfirmed tone.\n\n" +
+		"## Domain Knowledge\nConfirmed domain knowledge.\n\n" +
+		"## Good Output\nConfirmed good output.\n"
 
 	cmd := &cobra.Command{}
 	var out bytes.Buffer
@@ -159,7 +180,14 @@ func TestAgentBuilderCommand_PersonalInstallPreservesInjectedClaudeHomeOverride(
 		"model: \"opus\"\n" +
 		"tools: \"Read, Edit, Bash\"\n" +
 		"---\n\n" +
-		"# Role\nThis exact markdown came from the wizard.\n"
+		"# Role\nThis exact markdown came from the wizard.\n\n" +
+		"## Tasks\nConfirmed tasks.\n\n" +
+		"## Triggers\nConfirmed triggers.\n\n" +
+		"## Hard Rules\nConfirmed hard rules.\n\n" +
+		"## SDD Integration\nMode: standalone\n\n" +
+		"## Tone\nConfirmed tone.\n\n" +
+		"## Domain Knowledge\nConfirmed domain knowledge.\n\n" +
+		"## Good Output\nConfirmed good output.\n"
 
 	cmd := &cobra.Command{}
 	var out bytes.Buffer

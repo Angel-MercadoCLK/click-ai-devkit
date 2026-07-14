@@ -2,8 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -67,10 +65,6 @@ var agentBuilderThemePrompts = []struct {
 }
 
 var agentBuilderPreviewActions = []string{"Instalar", "Editar", "Regenerar", "Volver"}
-
-var agentBuilderGeneratedNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
-
-var agentBuilderImplicitNumberScalarPattern = regexp.MustCompile(`^[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
 
 var agentBuilderPlacementOptions = []struct {
 	label     string
@@ -151,12 +145,12 @@ func (m AgentBuilderModel) updateEngine(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) 
 func (m AgentBuilderModel) updateDescription(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if keyName(keyMsg) == "enter" {
 		description := strings.TrimSpace(m.input)
-		if err := validateAgentBuilderRequiredFrontmatterScalar("description", description); err != nil {
+		if err := agentbuilder.ValidateFrontmatterScalar("description", description); err != nil {
 			m.PreviewError = err.Error()
 			return m, nil
 		}
 		name := deriveAgentName(description)
-		if err := validateAgentBuilderGeneratedName(name); err != nil {
+		if err := agentbuilder.ValidateAgentName(name); err != nil {
 			m.PreviewError = err.Error()
 			return m, nil
 		}
@@ -261,7 +255,7 @@ func (m AgentBuilderModel) updatePreviewEdit(keyMsg tea.KeyMsg) (tea.Model, tea.
 		m.FinalMarkdown = ""
 		m.input = ""
 		m.EditingPreview = false
-		if err := validateAgentBuilderFinalMarkdown(m.PreviewContent); err != nil {
+		if err := agentbuilder.ValidateFinalMarkdown(m.PreviewContent); err != nil {
 			m.PreviewError = err.Error()
 			return m, nil
 		}
@@ -380,221 +374,22 @@ func renderInputWithError(title, value, errorMessage string) string {
 	return b.String()
 }
 
-func validateAgentBuilderGeneratedName(name string) error {
-	if !agentBuilderGeneratedNamePattern.MatchString(name) {
-		return fmt.Errorf("agentbuilder: invalid generated agent name %q; use ASCII letters or numbers in the description", name)
-	}
-	return nil
-}
-
+// validateAgentBuilderThemeAnswer delegates to the domain package's canonical
+// frontmatter scalar validator instead of keeping a UI-side duplicate (R1-001,
+// R2-005). See Fix 7 for the plan to replace these positional indices with named
+// roles.
 func validateAgentBuilderThemeAnswer(themeIndex int, answer string) error {
 	switch themeIndex {
 	case 4:
-		if err := validateAgentBuilderRequiredFrontmatterScalar("tools", answer); err != nil {
+		if err := agentbuilder.ValidateFrontmatterScalar("tools", answer); err != nil {
 			return err
 		}
 	case 5:
-		if err := validateAgentBuilderRequiredFrontmatterScalar("model", answer); err != nil {
+		if err := agentbuilder.ValidateFrontmatterScalar("model", answer); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func validateAgentBuilderRequiredFrontmatterScalar(field, value string) error {
-	if strings.TrimSpace(value) == "" {
-		return fmt.Errorf("agentbuilder: agent frontmatter field %s is required", field)
-	}
-	if strings.ContainsAny(value, "\n\r") {
-		return fmt.Errorf("agentbuilder: agent frontmatter field %s contains a newline", field)
-	}
-	return nil
-}
-
-func validateAgentBuilderFinalMarkdown(content string, expectedName ...string) error {
-	if strings.TrimSpace(content) == "" {
-		return fmt.Errorf("agentbuilder: final markdown is required")
-	}
-	normalized := strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", "\n"), "\r", "\n")
-	if !strings.HasPrefix(normalized, "---\n") {
-		return fmt.Errorf("agentbuilder: final markdown must start with YAML frontmatter")
-	}
-	rest := strings.TrimPrefix(normalized, "---\n")
-	frontmatterEnd := strings.Index(rest, "\n---\n")
-	if frontmatterEnd < 0 {
-		return fmt.Errorf("agentbuilder: final markdown must close YAML frontmatter")
-	}
-	frontmatter := rest[:frontmatterEnd]
-	body := rest[frontmatterEnd+len("\n---\n"):]
-	if err := validateAgentBuilderFrontmatterIndentation(frontmatter); err != nil {
-		return err
-	}
-	if err := validateAgentBuilderNativeFrontmatterKeys(frontmatter); err != nil {
-		return err
-	}
-	frontmatterValues := make(map[string]string, 4)
-	for _, field := range []string{"name", "description", "model", "tools"} {
-		value, err := frontmatterScalarValue(frontmatter, field)
-		if err != nil {
-			return err
-		}
-		frontmatterValues[field] = value
-	}
-	if err := validateAgentBuilderGeneratedName(frontmatterValues["name"]); err != nil {
-		return err
-	}
-	if len(expectedName) > 0 && frontmatterValues["name"] != expectedName[0] {
-		return fmt.Errorf("agentbuilder: final markdown frontmatter name %q must match generated name %q", frontmatterValues["name"], expectedName[0])
-	}
-	for _, heading := range []string{"# Role", "## Tasks", "## Triggers", "## Hard Rules", "## SDD Integration", "## Tone", "## Domain Knowledge", "## Good Output"} {
-		if !strings.Contains(body, heading+"\n") {
-			return fmt.Errorf("agentbuilder: final markdown missing %s section", heading)
-		}
-	}
-	return nil
-}
-
-func validateAgentBuilderFrontmatterIndentation(frontmatter string) error {
-	for _, line := range strings.Split(frontmatter, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-			return fmt.Errorf("agentbuilder: final markdown frontmatter must not contain indented continuation lines")
-		}
-	}
-	return nil
-}
-
-func validateAgentBuilderNativeFrontmatterKeys(frontmatter string) error {
-	allowed := map[string]bool{
-		"name":        true,
-		"description": true,
-		"model":       true,
-		"tools":       true,
-	}
-	for _, line := range strings.Split(frontmatter, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("agentbuilder: final markdown frontmatter line %q must be a top-level native Claude agent field", line)
-		}
-		key := parts[0]
-		if key == "" || key != strings.TrimSpace(key) {
-			return fmt.Errorf("agentbuilder: final markdown frontmatter line %q must use a valid top-level field name", line)
-		}
-		if !allowed[key] {
-			return fmt.Errorf("agentbuilder: final markdown frontmatter field %q is not allowed", key)
-		}
-	}
-	return nil
-}
-
-func frontmatterScalarValue(frontmatter, field string) (string, error) {
-	fieldPrefix := field + ":"
-	separatorPrefix := field + ": "
-	found := false
-	var value string
-	for _, line := range strings.Split(frontmatter, "\n") {
-		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-			continue
-		}
-		if !strings.HasPrefix(line, fieldPrefix) {
-			continue
-		}
-		if found {
-			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must be unique", field)
-		}
-		found = true
-		if !strings.HasPrefix(line, separatorPrefix) {
-			rawWithoutSeparator := strings.TrimSpace(strings.TrimPrefix(line, fieldPrefix))
-			if rawWithoutSeparator != "" {
-				return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must use 'field: value' separator", field)
-			}
-		}
-		rawValue := strings.TrimSpace(strings.TrimPrefix(line, fieldPrefix))
-		if rawValue == "" {
-			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
-		}
-		parsedValue, err := parseAgentBuilderFrontmatterScalar(field, rawValue)
-		if err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(parsedValue) == "" {
-			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
-		}
-		if strings.ContainsAny(parsedValue, "\n\r") {
-			return "", fmt.Errorf("agentbuilder: agent frontmatter field %s contains a newline", field)
-		}
-		value = parsedValue
-	}
-	if found {
-		return value, nil
-	}
-	return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s is required", field)
-}
-
-func parseAgentBuilderFrontmatterScalar(field, rawValue string) (string, error) {
-	if strings.HasPrefix(rawValue, "|") || strings.HasPrefix(rawValue, ">") {
-		return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must be a single-line scalar", field)
-	}
-	if strings.HasPrefix(rawValue, `"`) {
-		value, err := strconv.Unquote(rawValue)
-		if err != nil {
-			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s has invalid quoted scalar", field)
-		}
-		return value, nil
-	}
-	if strings.HasPrefix(rawValue, `'`) {
-		if !strings.HasSuffix(rawValue, `'`) || len(rawValue) == 1 {
-			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s has invalid quoted scalar", field)
-		}
-		inner := strings.TrimSuffix(strings.TrimPrefix(rawValue, `'`), `'`)
-		for i := 0; i < len(inner); i++ {
-			if inner[i] != '\'' {
-				continue
-			}
-			if i+1 >= len(inner) || inner[i+1] != '\'' {
-				return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s has invalid quoted scalar", field)
-			}
-			i++
-		}
-		return strings.ReplaceAll(inner, `''`, `'`), nil
-	}
-	if strings.HasPrefix(rawValue, "#") || strings.HasPrefix(rawValue, "[") || strings.HasPrefix(rawValue, "{") {
-		return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must be a string scalar", field)
-	}
-	if isAgentBuilderImplicitNonStringScalar(rawValue) {
-		return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must be a string scalar; quote the value", field)
-	}
-	if !isAgentBuilderPlainSafeFrontmatterScalar(rawValue) {
-		return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s has unsafe plain scalar; quote the value", field)
-	}
-	return rawValue, nil
-}
-
-func isAgentBuilderImplicitNonStringScalar(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "true", "false", "null", "~", ".nan", ".inf", "+.inf", "-.inf":
-		return true
-	}
-	return agentBuilderImplicitNumberScalarPattern.MatchString(value)
-}
-
-func isAgentBuilderPlainSafeFrontmatterScalar(value string) bool {
-	for _, r := range value {
-		switch {
-		case unicode.IsLetter(r), unicode.IsDigit(r):
-			continue
-		case r == ' ', r == ',', r == '.', r == '-', r == '_', r == '/':
-			continue
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func (m *AgentBuilderModel) moveCursor(delta, size int) {
@@ -638,7 +433,7 @@ func (m *AgentBuilderModel) validatePreviewSpec() error {
 		m.PreviewContent = fmt.Sprintf("No se pudo generar el preview: %v", err)
 		return err
 	}
-	if err := validateAgentBuilderFinalMarkdown(m.PreviewContent, m.Spec.Name); err != nil {
+	if err := agentbuilder.ValidateFinalMarkdown(m.PreviewContent, m.Spec.Name); err != nil {
 		m.PreviewError = err.Error()
 		return err
 	}

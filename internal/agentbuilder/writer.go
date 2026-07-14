@@ -24,16 +24,16 @@ type FileWriter interface {
 }
 
 func RenderAgentMarkdown(spec AgentSpec) (string, error) {
-	if err := validateAgentName(spec.Name); err != nil {
+	if err := ValidateAgentName(spec.Name); err != nil {
 		return "", err
 	}
-	if err := validateFrontmatterScalar("description", spec.Description); err != nil {
+	if err := ValidateFrontmatterScalar("description", spec.Description); err != nil {
 		return "", err
 	}
-	if err := validateFrontmatterScalar("model", spec.Model); err != nil {
+	if err := ValidateFrontmatterScalar("model", spec.Model); err != nil {
 		return "", err
 	}
-	if err := validateFrontmatterScalar("tools", spec.Tools); err != nil {
+	if err := ValidateFrontmatterScalar("tools", spec.Tools); err != nil {
 		return "", err
 	}
 
@@ -56,7 +56,7 @@ func RenderAgentMarkdown(spec AgentSpec) (string, error) {
 }
 
 func TargetPath(spec AgentSpec, claudeHome, repoRoot string) (string, error) {
-	if err := validateAgentName(spec.Name); err != nil {
+	if err := ValidateAgentName(spec.Name); err != nil {
 		return "", err
 	}
 
@@ -123,6 +123,13 @@ func installContent(spec AgentSpec, content []byte, claudeHome, repoRoot string,
 	} else if exists {
 		return "", fmt.Errorf("agentbuilder: target agent already exists at %s; choose a different agent name or remove the existing agent before installing", path)
 	}
+	// Validate here, at the single choke point shared by every installer entry point
+	// (Install and InstallFinalMarkdown), so this guarantee holds regardless of which
+	// caller reaches installContent — not just the interactive wizard, which used to be
+	// the only caller that validated before writing (R1-001, R2-005).
+	if err := ValidateFinalMarkdown(string(content), spec.Name); err != nil {
+		return "", fmt.Errorf("agentbuilder: refusing to write invalid agent markdown: %w", err)
+	}
 	if err := w.WriteFile(path, content, 0o600); err != nil {
 		return "", fmt.Errorf("agentbuilder: write agent: %w", err)
 	}
@@ -138,7 +145,7 @@ func installTargetPath(spec AgentSpec, claudeHome, repoRoot string, w FileWriter
 	if spec.Placement != PlacementShareable {
 		return TargetPath(spec, claudeHome, repoRoot)
 	}
-	if err := validateAgentName(spec.Name); err != nil {
+	if err := ValidateAgentName(spec.Name); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(repoRoot) == "" {
@@ -217,14 +224,26 @@ func isLoadablePluginManifest(data []byte, name string) bool {
 		strings.TrimSpace(manifest.Author.Name) != ""
 }
 
-func validateAgentName(name string) error {
+// ValidateAgentName validates an agent's slug-style name (used both for a name derived
+// from the wizard's description and for a name typed directly into edited frontmatter).
+// It is exported so internal/ui can delegate to a single canonical implementation
+// instead of keeping its own duplicate pattern/check (R1-001, R2-005).
+func ValidateAgentName(name string) error {
 	if !agentNamePattern.MatchString(name) {
-		return fmt.Errorf("agentbuilder: invalid agent name %q", name)
+		return fmt.Errorf("agentbuilder: invalid agent name %q; use lowercase ASCII letters, numbers, and hyphens", name)
 	}
 	return nil
 }
 
-func validateFrontmatterScalar(field, value string) error {
+// ValidateFrontmatterScalar validates a single required frontmatter scalar value.
+// Exported for the same reason as ValidateAgentName: internal/ui previously kept a
+// byte-for-byte duplicate of this exact check (R1-001, R2-005).
+//
+// Threat defended: rejecting an embedded newline (or Unicode line-break-like
+// character — see normalizeLineBreaks) stops a crafted field value from injecting a
+// forged extra frontmatter line (e.g. smuggling in "tools: Bash(*)" via the
+// description) once the rendered markdown is re-parsed as YAML frontmatter (R1-002).
+func ValidateFrontmatterScalar(field, value string) error {
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("agentbuilder: agent frontmatter field %s is required", field)
 	}
