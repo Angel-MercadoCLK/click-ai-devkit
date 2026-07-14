@@ -936,7 +936,7 @@ func TestScaffoldShareablePluginManifestWriteFailureAllowsCleanRetryWithoutFalse
 	spec.Placement = PlacementShareable
 	writer := &selectiveFailWriter{fakeFileWriter: newFakeFileWriter(), failWriteContains: "plugin.json"}
 
-	if err := scaffoldShareablePlugin(spec, repoRoot, writer); err == nil {
+	if err := scaffoldShareablePlugin(spec, spec.Description, repoRoot, writer); err == nil {
 		t.Fatal("scaffoldShareablePlugin() error = nil, want error when plugin.json write fails")
 	}
 
@@ -953,7 +953,7 @@ func TestScaffoldShareablePluginManifestWriteFailureAllowsCleanRetryWithoutFalse
 
 	// Blocker fixed: retry with a non-failing writer sharing the same underlying files.
 	retryWriter := &fakeFileWriter{files: writer.fakeFileWriter.files}
-	if err := scaffoldShareablePlugin(spec, repoRoot, retryWriter); err != nil {
+	if err := scaffoldShareablePlugin(spec, spec.Description, repoRoot, retryWriter); err != nil {
 		t.Fatalf("scaffoldShareablePlugin() retry error = %v, want success once the blocker is fixed", err)
 	}
 	if _, ok := retryWriter.files[pluginManifestPath]; !ok {
@@ -1012,6 +1012,62 @@ func TestCheckNameAvailableDoesNotWriteAnything(t *testing.T) {
 	}
 	if len(writer.writePaths) != 0 {
 		t.Fatalf("CheckNameAvailable() writes = %v, want none (read-only probe)", writer.writePaths)
+	}
+}
+
+// R3-001 regression coverage: scaffoldShareablePlugin used to build plugin.json/
+// marketplace.json from spec.Description (the ORIGINAL wizard answer), even though the
+// user may have edited the description frontmatter field in the Preview/Edit step. The
+// installed agent .md always reflected the edited text; the shareable plugin metadata
+// must match it.
+func TestInstallFinalMarkdownShareableUsesConfirmedDescriptionNotOriginalSpec(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	spec := validAgentSpec()
+	spec.Placement = PlacementShareable
+	spec.Description = "Original wizard description (must not be used)"
+	writer := newFakeFileWriter()
+	finalMarkdown := "---\n" +
+		"name: \"release-helper\"\n" +
+		"description: \"Edited confirmed description\"\n" +
+		"model: \"sonnet\"\n" +
+		"tools: \"Read, Grep\"\n" +
+		"---\n\n" +
+		"# Role\nTurn merged pull requests into release notes.\n\n" +
+		"## Tasks\nRead merged PRs.\n\n" +
+		"## Triggers\nUse on release day.\n\n" +
+		"## Hard Rules\nNever invent merged work.\n\n" +
+		"## SDD Integration\nMode: standalone\n\n" +
+		"## Tone\nClear and direct.\n\n" +
+		"## Domain Knowledge\nGo CLI releases.\n\n" +
+		"## Good Output\nA changelog.\n\n"
+
+	if _, err := InstallFinalMarkdown(spec, finalMarkdown, "", repoRoot, writer); err != nil {
+		t.Fatalf("InstallFinalMarkdown() error = %v", err)
+	}
+
+	pluginManifestPath := filepath.Join(repoRoot, "plugins", "click-release-helper", ".claude-plugin", "plugin.json")
+	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
+
+	var pluginManifest struct {
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(writer.files[pluginManifestPath], &pluginManifest); err != nil {
+		t.Fatalf("plugin.json parse error = %v\n%s", err, writer.files[pluginManifestPath])
+	}
+	if pluginManifest.Description != "Edited confirmed description" {
+		t.Fatalf("plugin.json description = %q, want the confirmed edited description", pluginManifest.Description)
+	}
+
+	var marketplace struct {
+		Plugins []struct {
+			Description string `json:"description"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(writer.files[marketplacePath], &marketplace); err != nil {
+		t.Fatalf("marketplace.json parse error = %v\n%s", err, writer.files[marketplacePath])
+	}
+	if len(marketplace.Plugins) != 1 || marketplace.Plugins[0].Description != "Edited confirmed description" {
+		t.Fatalf("marketplace.json plugins = %+v, want the confirmed edited description", marketplace.Plugins)
 	}
 }
 

@@ -134,7 +134,15 @@ func installContent(spec AgentSpec, content []byte, claudeHome, repoRoot string,
 		return "", fmt.Errorf("agentbuilder: write agent: %w", err)
 	}
 	if spec.Placement == PlacementShareable && path == standalonePluginPath {
-		if err := scaffoldShareablePlugin(spec, repoRoot, w); err != nil {
+		// Use the CONFIRMED description from content's frontmatter, not spec.Description
+		// (the original wizard answer): the user may have edited the description in the
+		// Preview/Edit step, and the installed agent .md always reflects that edited
+		// text. The already-validated content is guaranteed to parse here (R3-001).
+		confirmedDescription, err := finalMarkdownDescription(string(content))
+		if err != nil {
+			return "", fmt.Errorf("agentbuilder: extract confirmed description: %w", err)
+		}
+		if err := scaffoldShareablePlugin(spec, confirmedDescription, repoRoot, w); err != nil {
 			return "", err
 		}
 	}
@@ -320,7 +328,11 @@ func quoteYAMLScalar(value string) string {
 // plugin.json/marketplace.json did and did not complete (R4-002) — no rollback is
 // performed, but the state left behind is always accurately reported and, thanks to
 // atomicWriteFile, never a truncated/corrupt file that would falsely block a retry.
-func scaffoldShareablePlugin(spec AgentSpec, repoRoot string, w FileWriter) error {
+// scaffoldShareablePlugin writes plugin.json/marketplace.json using description as the
+// plugin/marketplace description. Callers must pass the CONFIRMED description (from the
+// installed markdown's frontmatter), not spec.Description, since the user may have
+// edited the description in the Preview/Edit step (R3-001).
+func scaffoldShareablePlugin(spec AgentSpec, description, repoRoot string, w FileWriter) error {
 	pluginName := standalonePluginName(spec)
 	pluginDir := filepath.Join(repoRoot, "plugins", pluginName)
 	pluginManifestDir := filepath.Join(pluginDir, ".claude-plugin")
@@ -330,7 +342,7 @@ func scaffoldShareablePlugin(spec AgentSpec, repoRoot string, w FileWriter) erro
 	if err := w.MkdirAll(pluginManifestDir, 0o755); err != nil {
 		return fmt.Errorf("agentbuilder: create plugin manifest directory: agent markdown was already written; plugin manifest at %s and marketplace registration at %s were NOT written: %w", pluginManifestPath, marketplacePath, err)
 	}
-	pluginManifest, err := json.MarshalIndent(newPluginManifest(pluginName, spec.Description), "", "  ")
+	pluginManifest, err := json.MarshalIndent(newPluginManifest(pluginName, description), "", "  ")
 	if err != nil {
 		return fmt.Errorf("agentbuilder: render plugin manifest: agent markdown was already written; plugin manifest at %s and marketplace registration at %s were NOT written: %w", pluginManifestPath, marketplacePath, err)
 	}
@@ -343,7 +355,7 @@ func scaffoldShareablePlugin(spec AgentSpec, repoRoot string, w FileWriter) erro
 	if err != nil {
 		return fmt.Errorf("agentbuilder: agent markdown and plugin manifest at %s were already written; marketplace registration at %s was NOT written: %w", pluginManifestPath, marketplacePath, err)
 	}
-	marketplace.UpsertPlugin(newMarketplacePlugin(pluginName, spec.Description))
+	marketplace.UpsertPlugin(newMarketplacePlugin(pluginName, description))
 	marketplaceData, err := json.MarshalIndent(marketplace, "", "  ")
 	if err != nil {
 		return fmt.Errorf("agentbuilder: render marketplace manifest: agent markdown and plugin manifest at %s were already written; marketplace registration at %s was NOT written: %w", pluginManifestPath, marketplacePath, err)

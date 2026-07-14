@@ -88,6 +88,22 @@ func ValidateFinalMarkdown(content string, expectedName ...string) error {
 	return nil
 }
 
+// finalMarkdownDescription extracts the confirmed "description" frontmatter value from
+// final markdown content that has already passed ValidateFinalMarkdown.
+//
+// Used so shareable plugin/marketplace metadata reflects the CONFIRMED (possibly
+// user-edited) description instead of the original AgentSpec.Description, which may be
+// stale once the user edits the description in the wizard's Preview/Edit step (R3-001).
+func finalMarkdownDescription(content string) (string, error) {
+	normalized := normalizeLineBreaks(content)
+	rest := strings.TrimPrefix(normalized, "---\n")
+	frontmatterEnd := strings.Index(rest, "\n---\n")
+	if frontmatterEnd < 0 {
+		return "", fmt.Errorf("agentbuilder: final markdown must close YAML frontmatter")
+	}
+	return frontmatterScalarValue(rest[:frontmatterEnd], "description")
+}
+
 // normalizeLineBreaks folds every Unicode line-break-like character onto \n before this
 // package inspects final markdown line by line.
 //
