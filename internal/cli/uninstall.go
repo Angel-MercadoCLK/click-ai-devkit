@@ -27,7 +27,7 @@ func runUninstall(cmd *cobra.Command) error {
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome}
 
-	if err := r.RunStep("Quitando plugins click-sdd, click-memory y click-review…", "Plugins eliminados de Claude Code", func() error {
+	if err := r.RunStep("Quitando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins eliminados de Claude Code", func() error {
 		return installer.RemoveMarketplacePlugins()
 	}); err != nil {
 		return err

@@ -22,7 +22,7 @@ const (
 	ClickSDDPluginID = "click-sdd@" + marketplaceName
 )
 
-var managedPlugins = []string{"click-sdd", "click-memory", "click-review"}
+var managedPlugins = []string{"click-sdd", "click-memory", "click-review", "click-skills"}
 
 type pluginManifest struct {
 	Name string `json:"name"`
@@ -101,7 +101,7 @@ func SetMarketplaceSourceForTests(source string) func() {
 }
 
 // SyncMarketplacePlugins uses the official Claude Code plugin CLI to register the marketplace and
-// install the three Click-managed plugins. This is the real activation path — copying loose plugin
+// install the click-managed plugins (see managedPlugins). This is the real activation path — copying loose plugin
 // folders never loaded anything in Claude Code.
 //
 // models is the resolved per-phase click-sdd model selection (D25): it is always run through
@@ -175,7 +175,7 @@ func clickSDDConfigArgs(profile modelconfig.ProfileName, resolved map[modelconfi
 	return args
 }
 
-// RemoveMarketplacePlugins uninstalls the three Click-managed plugins and removes the marketplace.
+// RemoveMarketplacePlugins uninstalls all click-managed plugins (see managedPlugins) and removes the marketplace.
 func RemoveMarketplacePlugins() error {
 	runner := commandRunnerFactory()
 	for _, plugin := range managedPlugins {

@@ -90,6 +90,7 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 			" --config default_model=sonnet",
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",
+		"claude plugin install click-skills@click-ai-devkit",
 		"claude plugin marketplace add https://github.com/Gentleman-Programming/engram",
 		"claude plugin install engram@engram",
 		"claude mcp add --transport http --scope user context7 https://mcp.context7.com/mcp",

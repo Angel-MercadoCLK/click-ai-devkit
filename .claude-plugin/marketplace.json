@@ -39,6 +39,17 @@
       "source": "./plugins/click-review",
       "category": "productivity",
       "homepage": "https://github.com/Angel-MercadoCLK/click-ai-devkit"
+    },
+    {
+      "name": "click-skills",
+      "description": "Click Seguros engineering skills plugin (backend, frontend, mobile, and shared conventions) for Claude Code.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Click Seguros"
+      },
+      "source": "./plugins/click-skills",
+      "category": "productivity",
+      "homepage": "https://github.com/Angel-MercadoCLK/click-ai-devkit"
     }
   ]
 }

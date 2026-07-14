@@ -19,4 +19,7 @@ plugins:
   click-review:
     version: "0.1.0"
     path: "plugins/click-review"
+  click-skills:
+    version: "0.1.0"
+    path: "plugins/click-skills"
 min_claude_code_version: "1.x"
