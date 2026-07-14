@@ -10,18 +10,29 @@ and the per-feature SDD artifacts it points to. Read this whole file first.
 
 ## 0. Current state (start here)
 
-- `main` is green and released as **v0.2.0** (installable via `scoop install click`
-  from `https://github.com/Angel-MercadoCLK/click-ai-devkit`).
-- The standing interactive menu (`internal/menu/menu.go`), the 13-phase model
-  taxonomy (`internal/modelconfig`), orchestration profiles
+- `main` is green and released as **v0.2.1** (installable via `scoop install click`
+  from `https://github.com/Angel-MercadoCLK/click-ai-devkit` — live today, not
+  pending a tag push).
+- The standing interactive menu (`internal/menu/menu.go`), the 18-phase model
+  taxonomy (`internal/modelconfig` — the 9 flow phases + Judgment Day's 3 roles +
+  the 5 review-lens roles, up from 13 pre-PR #12), orchestration profiles
   (balanced/cost-saver/quality/custom), and profile-aware install/update/doctor
   all already shipped.
 - A post-v0.2.0 full-4R audit + a Phase-1 fix round already merged (PR #9): the 3
-  CRITICALs are fixed and the menu was trimmed. **Do not re-open those.** After
-  Phase 1 the inert `(próximamente)` menu items remaining are exactly:
-  **Presets de instalación · Crear tu propio agente · Sincronizar configuración ·
-  Gestionar backups**. The two "OpenCode …" items and "Actualizar + Sincronizar"
-  were intentionally removed (click is Claude Code only).
+  CRITICALs are fixed and the menu was trimmed. **Do not re-open those.** **A —
+  review-role models is DONE** (merged via PR #12, `feature/review-role-models`;
+  see `documentacion/sdd/review-role-models/{design,tasks}.md`). **F —
+  agent-builder is far along but not yet merged**: implemented across
+  `feat/agent-builder-domain` → `feat/agent-builder-flow` →
+  `feat/agent-builder-wizard` → `feat/agent-builder-cli`, currently in a
+  pre-merge fix round against a full adversarial audit (3 confirmed CRITICALs;
+  see Engram topic `review/agent-builder-v0.3/ledger`) — **do not treat it as
+  shipped until that branch merges to `main`.** After Phase 1 and pending F's
+  merge, the inert `(próximamente)` menu items remaining are: **Presets de
+  instalación · Sincronizar configuración · Gestionar backups** (agent-builder's
+  "Crear tu propio agente" moves out of this list once its branch merges). The
+  two "OpenCode …" items and "Actualizar + Sincronizar" were intentionally
+  removed (click is Claude Code only).
 
 ## 1. Non-negotiable execution rules
 
@@ -68,22 +79,22 @@ and the per-feature SDD artifacts it points to. Read this whole file first.
   (upstream has colliding leaf names across domains).
 - **click-skills installs silently as part of `click install`** (like
   click-memory/click-review), no new menu item, no install-time confirmation.
-- **review-role models**: extend the model taxonomy to the review lenses by
-  adding 5 new `modelconfig.Phase` entries (13→18): `review-risk`,
-  `review-readability`, `review-reliability`, `review-resilience`,
-  `review-refuter`. They MUST be added to the lockstep test's
-  `phasesWithoutDedicatedSkill` exemption (they are review roles, not SDD skills).
+- **review-role models (DONE, PR #12)**: the model taxonomy was extended with 5
+  `modelconfig.Phase` entries (13→18): `review-risk`, `review-readability`,
+  `review-reliability`, `review-resilience`, `review-refuter`. They were added to
+  the lockstep test's `phasesWithoutDedicatedSkill` exemption (they are review
+  roles, not SDD skills). Do not re-implement this — it's merged and live.
 
 ## 3. Features to implement (each has full design + tasks on disk + in Engram)
 
-| # | Feature | Artifacts | Forecast | Depends on |
-|---|---------|-----------|----------|-----------|
-| A | **review-role models** (gentle-ai improvement: model per 4R lens) | `documentacion/sdd/review-role-models/{design,tasks}.md` | ~110 LOC, **1 PR**, low risk | — |
-| B | **Sincronizar configuración** (`click sync`: re-apply config, no version bump) | `documentacion/sdd/sync-config/{design,tasks}.md` | ~300 LOC, **1 PR** | — |
-| C | **click-skills** (vendor zesh-one-skills v2.7.0) | `documentacion/sdd/click-skills/{design,tasks}.md` | 24 tasks, **2 PRs** (vendored snapshot `size:exception` → Go wiring) | — |
-| D | **Presets de instalación** | `documentacion/sdd/install-presets/{design,tasks}.md` | ~510 LOC, **2 PRs** | A (both touch `profiles.go`/`modelselect.go`) |
-| E | **Gestionar backups** (dedup + keep-5 + pin, gentle-ai improvement) | `documentacion/sdd/manage-backups/{design,tasks}.md` | ~520 LOC, **4 slices**, high risk | — |
-| F | **Crear tu propio agente** (agent-builder) | `documentacion/sdd/agent-builder-flow/{proposal,spec,design,tasks}.md` + `documentacion/CODEX-HANDOFF.md` | pre-planned | R1-001 (already fixed in Phase 1 → **unblocked**) |
+| # | Feature | Artifacts | Status | Depends on |
+|---|---------|-----------|--------|-----------|
+| A | **review-role models** (gentle-ai improvement: model per 4R lens) | `documentacion/sdd/review-role-models/{design,tasks}.md` | **DONE — merged (PR #12)** | — |
+| B | **Sincronizar configuración** (`click sync`: re-apply config, no version bump) | `documentacion/sdd/sync-config/{design,tasks}.md` | not started, ~300 LOC, **1 PR** | — |
+| C | **click-skills** (vendor zesh-one-skills v2.7.0) | `documentacion/sdd/click-skills/{design,tasks}.md` | not started, 24 tasks, **2 PRs** (vendored snapshot `size:exception` → Go wiring) | — |
+| D | **Presets de instalación** | `documentacion/sdd/install-presets/{design,tasks}.md` | not started, ~510 LOC, **2 PRs** | A (both touch `profiles.go`/`modelselect.go`) — A done, D unblocked |
+| E | **Gestionar backups** (dedup + keep-5 + pin, gentle-ai improvement) | `documentacion/sdd/manage-backups/{design,tasks}.md` | not started, ~520 LOC, **4 slices**, high risk | — |
+| F | **Crear tu propio agente** (agent-builder) | `documentacion/sdd/agent-builder-flow/{proposal,spec,design,tasks}.md` + `documentacion/CODEX-HANDOFF.md` | **in progress, near merge**: implemented across `feat/agent-builder-{domain,flow,wizard,cli}`, currently in a pre-merge fix round (see `review/agent-builder-v0.3/ledger`) | R1-001 (already fixed in Phase 1 → was unblocked) |
 
 Each `tasks.md` contains its own ordered RED→GREEN checklist, Review Workload
 Forecast, chain strategy, and acceptance criteria. Follow it.
