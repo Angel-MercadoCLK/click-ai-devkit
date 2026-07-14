@@ -651,6 +651,12 @@ func TestAgentBuilderModel_EditedPreviewInvalidFrontmatterDomainCannotConfirm(t 
 				return strings.Replace(content, `model: "sonnet"`, `model: null`, 1)
 			},
 		},
+		{
+			name: "unknown malformed frontmatter key",
+			edit: func(content string) string {
+				return strings.Replace(content, `tools: "Read, Grep, Bash"`, "tools: \"Read, Grep, Bash\"\nextra: [unterminated", 1)
+			},
+		},
 	}
 
 	for _, tt := range tests {

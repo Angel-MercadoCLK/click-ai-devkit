@@ -429,6 +429,9 @@ func validateAgentBuilderFinalMarkdown(content string, expectedName ...string) e
 	if err := validateAgentBuilderFrontmatterIndentation(frontmatter); err != nil {
 		return err
 	}
+	if err := validateAgentBuilderNativeFrontmatterKeys(frontmatter); err != nil {
+		return err
+	}
 	frontmatterValues := make(map[string]string, 4)
 	for _, field := range []string{"name", "description", "model", "tools"} {
 		value, err := frontmatterScalarValue(frontmatter, field)
@@ -458,6 +461,32 @@ func validateAgentBuilderFrontmatterIndentation(frontmatter string) error {
 		}
 		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
 			return fmt.Errorf("agentbuilder: final markdown frontmatter must not contain indented continuation lines")
+		}
+	}
+	return nil
+}
+
+func validateAgentBuilderNativeFrontmatterKeys(frontmatter string) error {
+	allowed := map[string]bool{
+		"name":        true,
+		"description": true,
+		"model":       true,
+		"tools":       true,
+	}
+	for _, line := range strings.Split(frontmatter, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("agentbuilder: final markdown frontmatter line %q must be a top-level native Claude agent field", line)
+		}
+		key := parts[0]
+		if key == "" || key != strings.TrimSpace(key) {
+			return fmt.Errorf("agentbuilder: final markdown frontmatter line %q must use a valid top-level field name", line)
+		}
+		if !allowed[key] {
+			return fmt.Errorf("agentbuilder: final markdown frontmatter field %q is not allowed", key)
 		}
 	}
 	return nil
