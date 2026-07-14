@@ -819,6 +819,115 @@ func TestScaffoldShareablePluginPreservesObjectFormSourceOnExistingPlugin(t *tes
 	}
 }
 
+// R4-002 regression coverage: the 3-step shareable-install write sequence (agent .md ->
+// plugin.json -> marketplace.json) must never leave silent partial/corrupt state, and a
+// failure partway through must produce an error that says exactly what succeeded and
+// what didn't.
+func TestScaffoldShareablePluginPartialFailureReportsWhichFilesSucceeded(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	spec := validAgentSpec()
+	spec.Placement = PlacementShareable
+	writer := &selectiveFailWriter{fakeFileWriter: newFakeFileWriter(), failWriteContains: "marketplace.json"}
+
+	_, err := Install(spec, "", repoRoot, writer)
+	if err == nil {
+		t.Fatal("Install() error = nil, want error when marketplace.json write fails")
+	}
+
+	agentPath := filepath.Join(repoRoot, "plugins", "click-release-helper", "agents", "release-helper.md")
+	pluginManifestPath := filepath.Join(repoRoot, "plugins", "click-release-helper", ".claude-plugin", "plugin.json")
+	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
+
+	if _, ok := writer.files[agentPath]; !ok {
+		t.Fatalf("agent markdown was not written before the failure; writes=%v", writer.writePaths)
+	}
+	if _, ok := writer.files[pluginManifestPath]; !ok {
+		t.Fatalf("plugin manifest was not written before the failure; writes=%v", writer.writePaths)
+	}
+	if _, ok := writer.files[marketplacePath]; ok {
+		t.Fatalf("marketplace manifest was written despite injected failure; writes=%v", writer.writePaths)
+	}
+
+	msg := err.Error()
+	if !strings.Contains(msg, pluginManifestPath) || !strings.Contains(msg, marketplacePath) {
+		t.Fatalf("error = %q, want it to name both the succeeded plugin manifest path and the failed marketplace path", msg)
+	}
+}
+
+func TestScaffoldShareablePluginAtomicMarketplaceWriteFailureLeavesExistingFileUntouched(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
+	original := []byte(`{"plugins":[{"name":"click-existing","description":"Existing","version":"1.0.0","author":{"name":"Someone"},"source":"./plugins/click-existing"}]}`)
+
+	spec := validAgentSpec()
+	spec.Placement = PlacementShareable
+	writer := &selectiveFailWriter{fakeFileWriter: newFakeFileWriter(), failWriteContains: "marketplace.json"}
+	writer.files[marketplacePath] = append([]byte(nil), original...)
+
+	if _, err := Install(spec, "", repoRoot, writer); err == nil {
+		t.Fatal("Install() error = nil, want error when marketplace.json write fails")
+	}
+	if string(writer.files[marketplacePath]) != string(original) {
+		t.Fatalf("existing marketplace.json was corrupted by the failed atomic write:\ngot  %s\nwant %s", writer.files[marketplacePath], original)
+	}
+
+	// Blocker fixed: retry (a different agent, to avoid the unrelated .md/plugin.json
+	// collision already covered by TestInstallFinalMarkdownRejectsExistingTargetAgentWithoutOverwrite)
+	// using a writer sharing the same underlying files, without the injected failure.
+	retryWriter := &fakeFileWriter{files: writer.fakeFileWriter.files}
+	retrySpec := validAgentSpec()
+	retrySpec.Name = "second-helper"
+	retrySpec.Description = "Second helper agent."
+	retrySpec.Placement = PlacementShareable
+
+	if _, err := Install(retrySpec, "", repoRoot, retryWriter); err != nil {
+		t.Fatalf("Install() after fixed blocker error = %v, want the previously-untouched marketplace.json to still be valid/parseable", err)
+	}
+
+	var marketplace struct {
+		Plugins []struct {
+			Name string `json:"name"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(retryWriter.files[marketplacePath], &marketplace); err != nil {
+		t.Fatalf("marketplace.json parse error after retry = %v\n%s", err, retryWriter.files[marketplacePath])
+	}
+	if len(marketplace.Plugins) != 2 {
+		t.Fatalf("marketplace plugins after retry = %+v, want original entry preserved plus the new registration", marketplace.Plugins)
+	}
+}
+
+func TestScaffoldShareablePluginManifestWriteFailureAllowsCleanRetryWithoutFalseCollision(t *testing.T) {
+	repoRoot := filepath.Join("testdata", "repo")
+	spec := validAgentSpec()
+	spec.Placement = PlacementShareable
+	writer := &selectiveFailWriter{fakeFileWriter: newFakeFileWriter(), failWriteContains: "plugin.json"}
+
+	if err := scaffoldShareablePlugin(spec, repoRoot, writer); err == nil {
+		t.Fatal("scaffoldShareablePlugin() error = nil, want error when plugin.json write fails")
+	}
+
+	pluginManifestPath := filepath.Join(repoRoot, "plugins", "click-release-helper", ".claude-plugin", "plugin.json")
+	if _, ok := writer.files[pluginManifestPath]; ok {
+		t.Fatalf("plugin.json left a truncated/orphaned file after a failed atomic write; writes=%v", writer.writePaths)
+	}
+
+	// The atomic write leaves no trace on failure, so the collision guard must not
+	// falsely report the plugin manifest as already existing.
+	if err := ensureShareablePluginNameAvailable(spec, repoRoot, writer.fakeFileWriter); err != nil {
+		t.Fatalf("ensureShareablePluginNameAvailable() error = %v, want nil (plugin manifest write never actually completed)", err)
+	}
+
+	// Blocker fixed: retry with a non-failing writer sharing the same underlying files.
+	retryWriter := &fakeFileWriter{files: writer.fakeFileWriter.files}
+	if err := scaffoldShareablePlugin(spec, repoRoot, retryWriter); err != nil {
+		t.Fatalf("scaffoldShareablePlugin() retry error = %v, want success once the blocker is fixed", err)
+	}
+	if _, ok := retryWriter.files[pluginManifestPath]; !ok {
+		t.Fatal("scaffoldShareablePlugin() retry did not write plugin.json")
+	}
+}
+
 func validClickSDDPluginManifest() []byte {
 	return []byte(`{"name":"click-sdd","version":"0.1.0","description":"Click SDD plugin","author":{"name":"Click AI Devkit"}}`)
 }
@@ -854,15 +963,17 @@ func wantPath(t *testing.T, got, want string) {
 }
 
 type fakeFileWriter struct {
-	mkdirPath  string
-	mkdirPerm  os.FileMode
-	mkdirErr   error
-	writePath  string
-	writeData  []byte
-	writePerm  os.FileMode
-	writeErr   error
-	writePaths []string
-	files      map[string][]byte
+	mkdirPath   string
+	mkdirPerm   os.FileMode
+	mkdirErr    error
+	writePath   string
+	writeData   []byte
+	writePerm   os.FileMode
+	writeErr    error
+	writePaths  []string
+	renameErr   error
+	renamePaths [][2]string
+	files       map[string][]byte
 }
 
 func (w *fakeFileWriter) MkdirAll(path string, perm os.FileMode) error {
@@ -901,6 +1012,36 @@ func (w *fakeFileWriter) ReadFile(path string) ([]byte, error) {
 		return nil, os.ErrNotExist
 	}
 	return nil, errors.New("fake stat not configured")
+}
+
+func (w *fakeFileWriter) Rename(oldpath, newpath string) error {
+	if w.renameErr != nil {
+		return w.renameErr
+	}
+	if w.files != nil {
+		if data, ok := w.files[oldpath]; ok {
+			w.files[newpath] = data
+			delete(w.files, oldpath)
+		}
+	}
+	w.renamePaths = append(w.renamePaths, [2]string{oldpath, newpath})
+	return nil
+}
+
+// selectiveFailWriter wraps a fakeFileWriter and fails WriteFile only for paths
+// containing failWriteContains, leaving no trace in the underlying files map for that
+// call (unlike fakeFileWriter.writeErr, which records data before returning the error).
+// This models a real atomic-write temp-file failure: nothing is committed at all.
+type selectiveFailWriter struct {
+	*fakeFileWriter
+	failWriteContains string
+}
+
+func (w *selectiveFailWriter) WriteFile(path string, data []byte, perm os.FileMode) error {
+	if w.failWriteContains != "" && strings.Contains(path, w.failWriteContains) {
+		return errors.New("simulated write failure")
+	}
+	return w.fakeFileWriter.WriteFile(path, data, perm)
 }
 
 type fakeFileInfo struct {

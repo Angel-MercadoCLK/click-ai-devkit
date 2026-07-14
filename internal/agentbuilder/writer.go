@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var agentNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
@@ -19,6 +20,7 @@ type FileWriter interface {
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte, perm os.FileMode) error
 	Stat(path string) (os.FileInfo, error)
+	Rename(oldpath, newpath string) error
 }
 
 func RenderAgentMarkdown(spec AgentSpec) (string, error) {
@@ -262,38 +264,62 @@ func quoteYAMLScalar(value string) string {
 	return b.String()
 }
 
+// scaffoldShareablePlugin writes the plugin.json and marketplace.json needed to make a
+// shareable agent loadable. The caller (installContent) has already written the agent
+// .md by the time this runs, so every error below names that fact plus exactly which of
+// plugin.json/marketplace.json did and did not complete (R4-002) — no rollback is
+// performed, but the state left behind is always accurately reported and, thanks to
+// atomicWriteFile, never a truncated/corrupt file that would falsely block a retry.
 func scaffoldShareablePlugin(spec AgentSpec, repoRoot string, w FileWriter) error {
 	pluginName := standalonePluginName(spec)
 	pluginDir := filepath.Join(repoRoot, "plugins", pluginName)
 	pluginManifestDir := filepath.Join(pluginDir, ".claude-plugin")
+	pluginManifestPath := filepath.Join(pluginManifestDir, "plugin.json")
+	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
+
 	if err := w.MkdirAll(pluginManifestDir, 0o755); err != nil {
-		return fmt.Errorf("agentbuilder: create plugin manifest directory: %w", err)
+		return fmt.Errorf("agentbuilder: create plugin manifest directory: agent markdown was already written; plugin manifest at %s and marketplace registration at %s were NOT written: %w", pluginManifestPath, marketplacePath, err)
 	}
 	pluginManifest, err := json.MarshalIndent(newPluginManifest(pluginName, spec.Description), "", "  ")
 	if err != nil {
-		return fmt.Errorf("agentbuilder: render plugin manifest: %w", err)
+		return fmt.Errorf("agentbuilder: render plugin manifest: agent markdown was already written; plugin manifest at %s and marketplace registration at %s were NOT written: %w", pluginManifestPath, marketplacePath, err)
 	}
 	pluginManifest = append(pluginManifest, '\n')
-	if err := w.WriteFile(filepath.Join(pluginManifestDir, "plugin.json"), pluginManifest, 0o600); err != nil {
-		return fmt.Errorf("agentbuilder: write plugin manifest: %w", err)
+	if err := atomicWriteFile(w, pluginManifestPath, pluginManifest, 0o600); err != nil {
+		return fmt.Errorf("agentbuilder: write plugin manifest: agent markdown was already written; plugin manifest at %s was NOT written (no partial file left behind) and marketplace registration at %s was NOT written: %w", pluginManifestPath, marketplacePath, err)
 	}
 
-	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
 	marketplace, err := loadMarketplaceManifest(w, marketplacePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("agentbuilder: agent markdown and plugin manifest at %s were already written; marketplace registration at %s was NOT written: %w", pluginManifestPath, marketplacePath, err)
 	}
 	marketplace.UpsertPlugin(newMarketplacePlugin(pluginName, spec.Description))
 	marketplaceData, err := json.MarshalIndent(marketplace, "", "  ")
 	if err != nil {
-		return fmt.Errorf("agentbuilder: render marketplace manifest: %w", err)
+		return fmt.Errorf("agentbuilder: render marketplace manifest: agent markdown and plugin manifest at %s were already written; marketplace registration at %s was NOT written: %w", pluginManifestPath, marketplacePath, err)
 	}
 	marketplaceData = append(marketplaceData, '\n')
 	if err := w.MkdirAll(filepath.Dir(marketplacePath), 0o755); err != nil {
-		return fmt.Errorf("agentbuilder: create marketplace directory: %w", err)
+		return fmt.Errorf("agentbuilder: create marketplace directory: agent markdown and plugin manifest at %s were already written; marketplace registration at %s was NOT written: %w", pluginManifestPath, marketplacePath, err)
 	}
-	if err := w.WriteFile(marketplacePath, marketplaceData, 0o600); err != nil {
-		return fmt.Errorf("agentbuilder: write marketplace manifest: %w", err)
+	if err := atomicWriteFile(w, marketplacePath, marketplaceData, 0o600); err != nil {
+		return fmt.Errorf("agentbuilder: write marketplace manifest: agent markdown and plugin manifest at %s were already written; marketplace registration at %s was NOT written (existing marketplace.json, if any, was left untouched): %w", pluginManifestPath, marketplacePath, err)
+	}
+	return nil
+}
+
+// atomicWriteFile writes data to path by first writing a temporary sibling file and then
+// renaming it into place. A failure at either step leaves path exactly as it was before
+// the call (existing content untouched, or simply absent if it didn't exist) — never
+// truncated or half-written. This prevents a crash mid-write from leaving a corrupt file
+// that nonetheless "exists" and falsely blocks a retry (R4-002).
+func atomicWriteFile(w FileWriter, path string, data []byte, perm os.FileMode) error {
+	tmpPath := fmt.Sprintf("%s.tmp-%d", path, time.Now().UnixNano())
+	if err := w.WriteFile(tmpPath, data, perm); err != nil {
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := w.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("rename temp file into place: %w", err)
 	}
 	return nil
 }
@@ -600,4 +626,8 @@ func (osFileWriter) ReadFile(path string) ([]byte, error) {
 
 func (osFileWriter) Stat(path string) (os.FileInfo, error) {
 	return os.Stat(path)
+}
+
+func (osFileWriter) Rename(oldpath, newpath string) error {
+	return os.Rename(oldpath, newpath)
 }
