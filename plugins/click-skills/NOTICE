@@ -1,0 +1,42 @@
+click-skills — vendored company skills for the Click ecosystem
+==============================================================
+
+The skills under `skills/` in this plugin are a pinned, vendored snapshot of the
+Zesh-One company skills repository:
+
+    Source:  https://github.com/zeshone/zesh-one-skills
+    Version: v2.7.0 (commit 57bbdf3)  — see UPSTREAM_VERSION
+
+They are vendored (rather than fetched at install time) so that `click install`
+is offline-safe and reproducible, and so the exact skill content shipped to
+developers is reviewable in this repository.
+
+Provenance and licensing
+-------------------------
+- Each `skills/<name>/SKILL.md` preserves the upstream `license:` field
+  declared in its own YAML frontmatter (Apache-2.0 for the Zesh-One skills).
+  That per-skill declaration is authoritative for each file; the root
+  LICENSE (Apache-2.0) in this directory is provided to back those declarations
+  for the collection as a whole.
+- The upstream repository has no root LICENSE file of its own; the individual
+  skills declare Apache-2.0. Vendoring here was authorized by the repository
+  owner on that basis, preserving the per-skill attribution.
+- Per the upstream `CREDITS.md`: the backend, apps, and most frontend skills are
+  original Zesh-One authorship; `shared/github-pr` originates from
+  gentleman-programming (https://github.com/gentleman-programming) with an
+  upstream license that was not confirmed at the time of the upstream release —
+  it is included with explicit attribution and this caveat carried forward.
+  Several frontend skills are derivative works "inspired by" gentleman-programming
+  originals with substantial Zesh-One modifications.
+
+Modifications made during vendoring
+-----------------------------------
+- Skill directories and their frontmatter `name:` fields were prefixed with
+  their upstream domain (e.g. `security` under `backend/`, `frontend/`, and
+  `dotnet-10/` became `backend-security`, `frontend-security`,
+  `dotnet-10-security`). This is required because Claude Code requires unique
+  skill names within a plugin, and the upstream repository organized colliding
+  names under separate domain directories. No skill body content was altered.
+
+To update: bump UPSTREAM_VERSION and re-run the vendoring against the new tag,
+preserving the domain-prefix naming and the per-skill license frontmatter.

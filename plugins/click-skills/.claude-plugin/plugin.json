@@ -1,0 +1,8 @@
+{
+  "name": "click-skills",
+  "version": "0.1.0",
+  "description": "Zesh-One company engineering skills (backend .NET, frontend Next.js/React, mobile Ionic/Capacitor) vendored for Claude Code.",
+  "author": {
+    "name": "Click Seguros"
+  }
+}
