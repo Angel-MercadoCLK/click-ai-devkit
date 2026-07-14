@@ -60,6 +60,7 @@ func NewRootCommand() *cobra.Command {
 		newUninstallCommand(),
 		newMemoryGuardCommand(),
 		newConfigureModelsCommand(),
+		newAgentBuilderCommand(),
 	)
 
 	return root

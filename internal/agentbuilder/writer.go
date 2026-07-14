@@ -87,6 +87,22 @@ func Install(spec AgentSpec, claudeHome, repoRoot string, w FileWriter) (string,
 	if err != nil {
 		return "", err
 	}
+	return installContent(spec, []byte(content), claudeHome, repoRoot, w)
+}
+
+// InstallFinalMarkdown installs the wizard-confirmed markdown bytes exactly, while preserving the
+// same target-path and shareable-plugin scaffolding behavior as Install.
+func InstallFinalMarkdown(spec AgentSpec, finalMarkdown, claudeHome, repoRoot string, w FileWriter) (string, error) {
+	if w == nil {
+		w = osFileWriter{}
+	}
+	if strings.TrimSpace(finalMarkdown) == "" {
+		return "", fmt.Errorf("agentbuilder: final markdown is required")
+	}
+	return installContent(spec, []byte(finalMarkdown), claudeHome, repoRoot, w)
+}
+
+func installContent(spec AgentSpec, content []byte, claudeHome, repoRoot string, w FileWriter) (string, error) {
 	path, err := installTargetPath(spec, claudeHome, repoRoot, w)
 	if err != nil {
 		return "", err
@@ -100,7 +116,7 @@ func Install(spec AgentSpec, claudeHome, repoRoot string, w FileWriter) (string,
 	if err := w.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("agentbuilder: create agent directory: %w", err)
 	}
-	if err := w.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := w.WriteFile(path, content, 0o600); err != nil {
 		return "", fmt.Errorf("agentbuilder: write agent: %w", err)
 	}
 	if spec.Placement == PlacementShareable && path == standalonePluginPath {

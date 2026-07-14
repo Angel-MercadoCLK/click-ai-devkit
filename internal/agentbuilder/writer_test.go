@@ -269,6 +269,85 @@ func TestInstallWritesRenderedAgentWithInjectedFileWriter(t *testing.T) {
 	}
 }
 
+func TestInstallFinalMarkdownWritesConfirmedMarkdownExactly(t *testing.T) {
+	tests := []struct {
+		name          string
+		placement     Placement
+		claudeHome    string
+		repoRoot      string
+		wantPath      string
+		wantScaffold  bool
+		seedFiles     map[string][]byte
+		finalMarkdown string
+	}{
+		{
+			name:       "personal placement",
+			placement:  PlacementPersonal,
+			claudeHome: filepath.Join("testdata", "claude-home"),
+			repoRoot:   "",
+			wantPath:   filepath.Join("testdata", "claude-home", "agents", "release-helper.md"),
+			finalMarkdown: "---\n" +
+				"name: \"release-helper\"\n" +
+				"description: \"Confirmed edited markdown\"\n" +
+				"model: \"opus\"\n" +
+				"tools: \"Read, Edit\"\n" +
+				"---\n\n" +
+				"# Role\nPersist the confirmed preview verbatim.\n",
+		},
+		{
+			name:         "shareable standalone scaffolding",
+			placement:    PlacementShareable,
+			repoRoot:     filepath.Join("testdata", "repo"),
+			wantPath:     filepath.Join("testdata", "repo", "plugins", "click-release-helper", "agents", "release-helper.md"),
+			wantScaffold: true,
+			seedFiles: map[string][]byte{
+				filepath.Join("testdata", "repo", ".claude-plugin", "marketplace.json"): []byte(`{"plugins":[]}`),
+			},
+			finalMarkdown: "---\n" +
+				"name: \"release-helper\"\n" +
+				"description: \"Shareable edited markdown\"\n" +
+				"model: \"haiku\"\n" +
+				"tools: \"Read, Grep, Bash\"\n" +
+				"---\n\n" +
+				"# Role\nInstall through the existing shareable scaffold path.\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := validAgentSpec()
+			spec.Placement = tt.placement
+			// Make the spec disagree with the confirmed markdown. If the installer re-renders from
+			// AgentSpec, this assertion catches it byte-for-byte.
+			spec.Model = "sonnet"
+			spec.Tools = "Read, Grep"
+			writer := newFakeFileWriter()
+			for path, data := range tt.seedFiles {
+				writer.files[path] = data
+			}
+
+			gotPath, err := InstallFinalMarkdown(spec, tt.finalMarkdown, tt.claudeHome, tt.repoRoot, writer)
+			if err != nil {
+				t.Fatalf("InstallFinalMarkdown() error = %v", err)
+			}
+
+			wantPath(t, gotPath, tt.wantPath)
+			if string(writer.files[tt.wantPath]) != tt.finalMarkdown {
+				t.Fatalf("written markdown =\n%q\nwant exact confirmed markdown\n%q", string(writer.files[tt.wantPath]), tt.finalMarkdown)
+			}
+			if tt.wantScaffold {
+				pluginManifestPath := filepath.Join(tt.repoRoot, "plugins", "click-release-helper", ".claude-plugin", "plugin.json")
+				marketplacePath := filepath.Join(tt.repoRoot, ".claude-plugin", "marketplace.json")
+				for _, path := range []string{pluginManifestPath, marketplacePath} {
+					if _, ok := writer.files[path]; !ok {
+						t.Fatalf("InstallFinalMarkdown() did not preserve scaffold write %s; writes=%v", path, writer.writePaths)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestInstallReturnsWriteErrorsFromInjectedFileWriter(t *testing.T) {
 	spec := validAgentSpec()
 	spec.Placement = PlacementPersonal

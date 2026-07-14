@@ -25,6 +25,7 @@ const (
 	ActionInstall         = "install"
 	ActionUpdate          = "update"
 	ActionConfigureModels = "configure-models"
+	ActionAgentBuilder    = "agent-builder"
 	ActionDoctor          = "doctor"
 	ActionUninstall       = "uninstall"
 	ActionQuit            = "quit"
@@ -49,7 +50,7 @@ var Items = []Item{
 	{Label: "Ejecutar diagnóstico", Action: ActionDoctor, Active: true},
 	{Label: "Desinstalar", Action: ActionUninstall, Active: true},
 	{Label: "Presets de instalación", Active: false},
-	{Label: "Crear tu propio agente", Active: false},
+	{Label: "Crear tu propio agente", Action: ActionAgentBuilder, Active: true},
 	{Label: "Sincronizar configuración", Active: false},
 	{Label: "Gestionar backups", Active: false},
 	{Label: "Salir", Action: ActionQuit, Active: true},
@@ -188,6 +189,8 @@ func ActionArgs(action string) []string {
 		return []string{"update"}
 	case ActionConfigureModels:
 		return []string{"configure-models"}
+	case ActionAgentBuilder:
+		return []string{"agent-builder"}
 	case ActionDoctor:
 		return []string{"doctor"}
 	case ActionUninstall:
