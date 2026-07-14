@@ -484,7 +484,17 @@ func parseAgentBuilderFrontmatterScalar(field, rawValue string) (string, error) 
 		if !strings.HasSuffix(rawValue, `'`) || len(rawValue) == 1 {
 			return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s has invalid quoted scalar", field)
 		}
-		return strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(rawValue, `'`), `'`), `''`, `'`), nil
+		inner := strings.TrimSuffix(strings.TrimPrefix(rawValue, `'`), `'`)
+		for i := 0; i < len(inner); i++ {
+			if inner[i] != '\'' {
+				continue
+			}
+			if i+1 >= len(inner) || inner[i+1] != '\'' {
+				return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s has invalid quoted scalar", field)
+			}
+			i++
+		}
+		return strings.ReplaceAll(inner, `''`, `'`), nil
 	}
 	if strings.HasPrefix(rawValue, "#") || strings.HasPrefix(rawValue, "[") || strings.HasPrefix(rawValue, "{") {
 		return "", fmt.Errorf("agentbuilder: final markdown frontmatter field %s must be a string scalar", field)
