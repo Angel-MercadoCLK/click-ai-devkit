@@ -103,6 +103,49 @@ func TestAgentBuilderCommand_PersonalInstallHonorsClaudeConfigDir(t *testing.T) 
 	}
 }
 
+func TestAgentBuilderCommand_PersonalInstallHonorsClickClaudeHomeWhenClaudeConfigDirUnset(t *testing.T) {
+	clickClaudeHome := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CLICK_CLAUDE_HOME", clickClaudeHome)
+
+	spec := cliValidAgentSpec()
+	spec.Placement = agentbuilder.PlacementPersonal
+	finalMarkdown := "---\n" +
+		"name: \"release-helper\"\n" +
+		"description: \"Edited and confirmed in preview\"\n" +
+		"model: \"opus\"\n" +
+		"tools: \"Read, Edit, Bash\"\n" +
+		"---\n\n" +
+		"# Role\nThis exact markdown came from the wizard.\n"
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetIn(&bytes.Buffer{})
+	deps := agentBuilderCommandDeps{
+		runWizard: func(*cobra.Command) (ui.AgentBuilderModel, error) {
+			return ui.AgentBuilderModel{Confirmed: true, Spec: spec, FinalMarkdown: finalMarkdown}, nil
+		},
+	}
+
+	if err := runAgentBuilderInteractive(cmd, deps); err != nil {
+		t.Fatalf("runAgentBuilderInteractive() error = %v, output:\n%s", err, out.String())
+	}
+
+	wantPath := filepath.Join(clickClaudeHome, "agents", "release-helper.md")
+	got, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", wantPath, err)
+	}
+	if string(got) != finalMarkdown {
+		t.Fatalf("installed markdown =\n%q\nwant exact wizard FinalMarkdown\n%q", got, finalMarkdown)
+	}
+	if !strings.Contains(out.String(), wantPath) {
+		t.Fatalf("output = %q, want installed path %q", out.String(), wantPath)
+	}
+}
+
 func TestAgentBuilderCommand_PersonalInstallPreservesInjectedClaudeHomeOverride(t *testing.T) {
 	overrideHome := t.TempDir()
 	configHome := t.TempDir()

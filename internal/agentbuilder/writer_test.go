@@ -152,6 +152,7 @@ func TestInstallRejectsBlankRequiredDescriptionBeforeWriting(t *testing.T) {
 func TestTargetPathPersonalUsesClaudeConfigDirWhenSet(t *testing.T) {
 	claudeConfigDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeConfigDir)
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
 	spec := validAgentSpec()
 	spec.Placement = PlacementPersonal
 
@@ -163,8 +164,24 @@ func TestTargetPathPersonalUsesClaudeConfigDirWhenSet(t *testing.T) {
 	wantPath(t, got, filepath.Join(claudeConfigDir, "agents", "release-helper.md"))
 }
 
+func TestTargetPathPersonalUsesClickClaudeHomeWhenClaudeConfigDirUnset(t *testing.T) {
+	clickClaudeHome := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CLICK_CLAUDE_HOME", clickClaudeHome)
+	spec := validAgentSpec()
+	spec.Placement = PlacementPersonal
+
+	got, err := TargetPath(spec, "", t.TempDir())
+	if err != nil {
+		t.Fatalf("TargetPath() error = %v", err)
+	}
+
+	wantPath(t, got, filepath.Join(clickClaudeHome, "agents", "release-helper.md"))
+}
+
 func TestTargetPathPersonalDefaultsToUserClaudeAgentsDir(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CLICK_CLAUDE_HOME", "")
 	spec := validAgentSpec()
 	spec.Placement = PlacementPersonal
 	home, err := os.UserHomeDir()
@@ -243,7 +260,7 @@ func TestInstallWritesRenderedAgentWithInjectedFileWriter(t *testing.T) {
 	claudeHome := filepath.Join("testdata", "claude-home")
 	spec := validAgentSpec()
 	spec.Placement = PlacementPersonal
-	writer := &fakeFileWriter{}
+	writer := newFakeFileWriter()
 
 	gotPath, err := Install(spec, claudeHome, "", writer)
 	if err != nil {
@@ -348,10 +365,67 @@ func TestInstallFinalMarkdownWritesConfirmedMarkdownExactly(t *testing.T) {
 	}
 }
 
+func TestInstallFinalMarkdownRejectsExistingTargetAgentWithoutOverwrite(t *testing.T) {
+	tests := []struct {
+		name       string
+		placement  Placement
+		claudeHome string
+		repoRoot   string
+		targetPath string
+		seedFiles  map[string][]byte
+	}{
+		{
+			name:       "personal placement",
+			placement:  PlacementPersonal,
+			claudeHome: filepath.Join("testdata", "claude-home"),
+			targetPath: filepath.Join("testdata", "claude-home", "agents", "release-helper.md"),
+		},
+		{
+			name:       "shareable standalone placement",
+			placement:  PlacementShareable,
+			repoRoot:   filepath.Join("testdata", "repo"),
+			targetPath: filepath.Join("testdata", "repo", "plugins", "click-release-helper", "agents", "release-helper.md"),
+			seedFiles: map[string][]byte{
+				filepath.Join("testdata", "repo", ".claude-plugin", "marketplace.json"): []byte(`{"plugins":[]}`),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := validAgentSpec()
+			spec.Placement = tt.placement
+			writer := newFakeFileWriter()
+			for path, data := range tt.seedFiles {
+				writer.files[path] = data
+			}
+			existingAgent := []byte("existing personal agent; do not truncate")
+			writer.files[tt.targetPath] = existingAgent
+
+			_, err := InstallFinalMarkdown(spec, "---\nname: release-helper\n---\n", tt.claudeHome, tt.repoRoot, writer)
+			if err == nil {
+				t.Fatal("InstallFinalMarkdown() error = nil, want existing target error")
+			}
+			if !strings.Contains(err.Error(), "already exists") || !strings.Contains(err.Error(), tt.targetPath) {
+				t.Fatalf("InstallFinalMarkdown() error = %q, want clear existing target path error", err)
+			}
+			if string(writer.files[tt.targetPath]) != string(existingAgent) {
+				t.Fatalf("existing agent was overwritten:\n%s", writer.files[tt.targetPath])
+			}
+			for _, path := range writer.writePaths {
+				if path == tt.targetPath {
+					t.Fatalf("InstallFinalMarkdown() wrote existing target path %s; writes=%v", path, writer.writePaths)
+				}
+			}
+		})
+	}
+}
+
 func TestInstallReturnsWriteErrorsFromInjectedFileWriter(t *testing.T) {
 	spec := validAgentSpec()
 	spec.Placement = PlacementPersonal
-	writer := &fakeFileWriter{writeErr: errors.New("disk full")}
+	writer := newFakeFileWriter()
+	writer.writeErr = errors.New("disk full")
 
 	if _, err := Install(spec, filepath.Join("testdata", "claude-home"), "", writer); err == nil {
 		t.Fatal("Install() error = nil, want non-nil when injected writer fails")

@@ -116,6 +116,11 @@ func installContent(spec AgentSpec, content []byte, claudeHome, repoRoot string,
 	if err := w.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("agentbuilder: create agent directory: %w", err)
 	}
+	if exists, err := fileExists(w, path); err != nil {
+		return "", fmt.Errorf("agentbuilder: inspect target agent: %w", err)
+	} else if exists {
+		return "", fmt.Errorf("agentbuilder: target agent already exists at %s; choose a different agent name or remove the existing agent before installing", path)
+	}
 	if err := w.WriteFile(path, content, 0o600); err != nil {
 		return "", fmt.Errorf("agentbuilder: write agent: %w", err)
 	}
@@ -155,6 +160,9 @@ func resolveClaudeHome(claudeHome string) (string, error) {
 	}
 	if configDir := os.Getenv("CLAUDE_CONFIG_DIR"); configDir != "" {
 		return configDir, nil
+	}
+	if clickClaudeHome := os.Getenv("CLICK_CLAUDE_HOME"); clickClaudeHome != "" {
+		return clickClaudeHome, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
