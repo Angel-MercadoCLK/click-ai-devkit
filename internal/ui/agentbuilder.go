@@ -36,9 +36,10 @@ type AgentBuilderModel struct {
 	Confirmed      bool
 	Cancelled      bool
 
-	engines []agentbuilder.Engine
-	cursor  int
-	input   string
+	engines            []agentbuilder.Engine
+	cursor             int
+	input              string
+	checkNameAvailable func(agentbuilder.AgentSpec) error
 }
 
 var agentBuilderSDDModeOptions = []struct {
@@ -74,11 +75,31 @@ var agentBuilderPlacementOptions = []struct {
 	{label: "Shareable", placement: agentbuilder.PlacementShareable},
 }
 
-func NewAgentBuilderModel(engines []agentbuilder.Engine) AgentBuilderModel {
+// AgentBuilderOption configures optional, injectable behavior on AgentBuilderModel.
+// Using a variadic option here (rather than growing NewAgentBuilderModel's required
+// parameter list) keeps every existing call site source-compatible.
+type AgentBuilderOption func(*AgentBuilderModel)
+
+// WithNameAvailabilityCheck injects a read-only collision probe the model calls right
+// before confirming the wizard (see updatePlacement). If unset, no collision check runs
+// here at all — the model's behavior is unchanged from before this option existed.
+//
+// This exists so a name collision can be surfaced WHILE the wizard is still running,
+// with every answer still held in Spec/PreviewContent, instead of only being
+// discovered by the caller after the wizard has already exited with Confirmed=true and
+// all of that state has been discarded (R4-003).
+func WithNameAvailabilityCheck(check func(agentbuilder.AgentSpec) error) AgentBuilderOption {
+	return func(m *AgentBuilderModel) { m.checkNameAvailable = check }
+}
+
+func NewAgentBuilderModel(engines []agentbuilder.Engine, opts ...AgentBuilderOption) AgentBuilderModel {
 	if len(engines) == 0 {
 		engines = agentbuilder.Engines()
 	}
 	m := AgentBuilderModel{engines: append([]agentbuilder.Engine(nil), engines...)}
+	for _, opt := range opts {
+		opt(&m)
+	}
 	if len(m.engines) == 1 {
 		m.Spec.Engine = m.engines[0]
 		m.Step = StepDescription
@@ -279,6 +300,18 @@ func (m AgentBuilderModel) updatePlacement(keyMsg tea.KeyMsg) (tea.Model, tea.Cm
 			return m, nil
 		}
 		m.Spec.Placement = agentBuilderPlacementOptions[m.cursor].placement
+		if m.checkNameAvailable != nil {
+			if err := m.checkNameAvailable(m.Spec); err != nil {
+				// Recoverable: bounce back to Preview (not a terminal error) with every
+				// answer still held in Spec/PreviewContent. The user can fix the name
+				// via the existing Editar flow and try again without redoing the
+				// wizard (R4-003).
+				m.PreviewError = err.Error()
+				m.Step = StepPreview
+				m.cursor = 0
+				return m, nil
+			}
+		}
 		m.FinalMarkdown = m.PreviewContent
 		m.Confirmed = true
 		m.Step = StepDone

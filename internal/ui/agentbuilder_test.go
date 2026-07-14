@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -841,6 +842,64 @@ func TestAgentBuilderModel_PlacementConfirmsOnlyAfterExplicitInstallAndSupportsC
 			t.Fatal("Update(esc) returned nil cmd, want tea.Quit")
 		}
 	})
+}
+
+// R4-003 regression coverage: a name collision used to only surface inside
+// installContent, after the interactive TUI had already exited with Confirmed=true —
+// discarding every wizard answer. WithNameAvailabilityCheck lets the model probe for a
+// collision WHILE it is still running, before Confirmed is ever set.
+func TestAgentBuilderModel_NameCollisionAtPlacementConfirmSurfacesErrorWithoutLosingState(t *testing.T) {
+	collide := true
+	checker := func(spec agentbuilder.AgentSpec) error {
+		if collide {
+			return fmt.Errorf("agentbuilder: target agent already exists at testdata/claude-home/agents/%s.md", spec.Name)
+		}
+		return nil
+	}
+	m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}, WithNameAvailabilityCheck(checker)))
+	originalSpec := m.Spec
+	originalPreview := m.PreviewContent
+
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter")) // Instalar -> StepPlacement
+	if m.Step != StepPlacement {
+		t.Fatalf("Step after Install action = %v, want StepPlacement", m.Step)
+	}
+	m, cmd := updateAgentBuilderModel(m, keyMsg("enter")) // confirm personal placement
+
+	if m.Confirmed {
+		t.Fatal("Confirmed = true despite a colliding agent name, want false")
+	}
+	if cmd != nil {
+		t.Fatal("Update(placement enter) returned non-nil cmd for a colliding name, want nil (no tea.Quit)")
+	}
+	if m.PreviewError == "" {
+		t.Fatal("PreviewError empty after a colliding agent name, want a collision error")
+	}
+	if m.Step != StepPreview {
+		t.Fatalf("Step after colliding name = %v, want StepPreview (recoverable, not terminal)", m.Step)
+	}
+	if m.Spec.Purpose != originalSpec.Purpose || m.Spec.Name != originalSpec.Name || m.PreviewContent != originalPreview {
+		t.Fatal("wizard answers were discarded after a colliding agent name, want them preserved for the user to fix")
+	}
+
+	// The user fixes the blocker (e.g. picks a different name via Editar) and the
+	// checker now reports the name as available; installing must succeed without
+	// having to redo any of the wizard.
+	collide = false
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter")) // Instalar -> StepPlacement again
+	m, cmd = updateAgentBuilderModel(m, keyMsg("enter"))
+	if !m.Confirmed || m.Step != StepDone || cmd == nil {
+		t.Fatalf("recoverable retry after fixed collision did not confirm: Confirmed=%v Step=%v cmd=%v", m.Confirmed, m.Step, cmd)
+	}
+}
+
+func TestAgentBuilderModel_WithoutNameAvailabilityCheckStillConfirms(t *testing.T) {
+	m := completeRequiredFieldsToPreview(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+	m, cmd := updateAgentBuilderModel(m, keyMsg("enter"))
+	if !m.Confirmed || m.Step != StepDone || cmd == nil {
+		t.Fatalf("install without a configured checker did not confirm: Confirmed=%v Step=%v cmd=%v", m.Confirmed, m.Step, cmd)
+	}
 }
 
 func updateAgentBuilderModel(m AgentBuilderModel, msg tea.Msg) (AgentBuilderModel, tea.Cmd) {

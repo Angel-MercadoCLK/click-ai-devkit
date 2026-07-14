@@ -961,6 +961,60 @@ func TestScaffoldShareablePluginManifestWriteFailureAllowsCleanRetryWithoutFalse
 	}
 }
 
+// R4-003 regression coverage: the wizard used to only discover an agent-name collision
+// inside installContent, after the interactive TUI had already exited with
+// Confirmed=true — discarding all wizard answers. CheckNameAvailable exposes the same
+// checks installContent runs immediately before writing, but as a read-only probe the
+// UI layer can call while the wizard is still running.
+func TestCheckNameAvailableAcceptsFreeName(t *testing.T) {
+	spec := validAgentSpec()
+	spec.Placement = PlacementPersonal
+	writer := newFakeFileWriter()
+
+	if err := CheckNameAvailable(spec, filepath.Join("testdata", "claude-home"), "", writer); err != nil {
+		t.Fatalf("CheckNameAvailable() error = %v, want nil for a free personal name", err)
+	}
+}
+
+func TestCheckNameAvailableRejectsExistingPersonalTarget(t *testing.T) {
+	spec := validAgentSpec()
+	spec.Placement = PlacementPersonal
+	claudeHome := filepath.Join("testdata", "claude-home")
+	writer := newFakeFileWriter()
+	writer.files[filepath.Join(claudeHome, "agents", "release-helper.md")] = []byte("existing agent")
+
+	if err := CheckNameAvailable(spec, claudeHome, "", writer); err == nil {
+		t.Fatal("CheckNameAvailable() error = nil, want collision error for existing personal target")
+	}
+}
+
+func TestCheckNameAvailableRejectsExistingShareableTarget(t *testing.T) {
+	spec := validAgentSpec()
+	spec.Placement = PlacementShareable
+	repoRoot := filepath.Join("testdata", "repo")
+	writer := newFakeFileWriter()
+	pluginManifestPath := filepath.Join(repoRoot, "plugins", "click-release-helper", ".claude-plugin", "plugin.json")
+	writer.files[pluginManifestPath] = validClickSDDPluginManifest()
+
+	if err := CheckNameAvailable(spec, "", repoRoot, writer); err == nil {
+		t.Fatal("CheckNameAvailable() error = nil, want collision error for existing shareable plugin metadata")
+	}
+}
+
+func TestCheckNameAvailableDoesNotWriteAnything(t *testing.T) {
+	spec := validAgentSpec()
+	spec.Placement = PlacementShareable
+	repoRoot := filepath.Join("testdata", "repo")
+	writer := newFakeFileWriter()
+
+	if err := CheckNameAvailable(spec, "", repoRoot, writer); err != nil {
+		t.Fatalf("CheckNameAvailable() error = %v, want nil for a free shareable name", err)
+	}
+	if len(writer.writePaths) != 0 {
+		t.Fatalf("CheckNameAvailable() writes = %v, want none (read-only probe)", writer.writePaths)
+	}
+}
+
 func validClickSDDPluginManifest() []byte {
 	return []byte(`{"name":"click-sdd","version":"0.1.0","description":"Click SDD plugin","author":{"name":"Click AI Devkit"}}`)
 }

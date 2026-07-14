@@ -86,20 +86,28 @@ func runAgentBuilderInteractive(cmd *cobra.Command, deps agentBuilderCommandDeps
 }
 
 func defaultAgentBuilderCommandDeps(deps agentBuilderCommandDeps) agentBuilderCommandDeps {
-	if deps.runWizard == nil {
-		deps.runWizard = runAgentBuilderWizardTUI
-	}
 	if deps.resolveRepoRoot == nil {
 		deps.resolveRepoRoot = resolveAgentBuilderRepoRoot
 	}
 	if deps.installFinalMarkdown == nil {
 		deps.installFinalMarkdown = agentbuilder.InstallFinalMarkdown
 	}
+	if deps.runWizard == nil {
+		// Captures deps (already defaulted above) so the wizard can probe for a name
+		// collision using the same claudeHome/repoRoot resolution InstallFinalMarkdown
+		// itself would use, while the wizard is still running (R4-003).
+		deps.runWizard = func(cmd *cobra.Command) (ui.AgentBuilderModel, error) {
+			return runAgentBuilderWizardTUI(cmd, deps)
+		}
+	}
 	return deps
 }
 
-func runAgentBuilderWizardTUI(cmd *cobra.Command) (ui.AgentBuilderModel, error) {
-	program := tea.NewProgram(ui.NewAgentBuilderModel(agentbuilder.Engines()),
+func runAgentBuilderWizardTUI(cmd *cobra.Command, deps agentBuilderCommandDeps) (ui.AgentBuilderModel, error) {
+	program := tea.NewProgram(
+		ui.NewAgentBuilderModel(agentbuilder.Engines(), ui.WithNameAvailabilityCheck(func(spec agentbuilder.AgentSpec) error {
+			return checkAgentBuilderNameAvailable(spec, deps)
+		})),
 		tea.WithInput(cmd.InOrStdin()),
 		tea.WithOutput(cmd.OutOrStdout()),
 	)
@@ -112,6 +120,30 @@ func runAgentBuilderWizardTUI(cmd *cobra.Command) (ui.AgentBuilderModel, error) 
 		return ui.AgentBuilderModel{}, fmt.Errorf("cli: unexpected agent-builder TUI model %T", finalModel)
 	}
 	return result, nil
+}
+
+// checkAgentBuilderNameAvailable resolves the same claudeHome/repoRoot
+// runAgentBuilderInteractive resolves right before installing, then runs a read-only
+// collision probe (agentbuilder.CheckNameAvailable) so the wizard can surface a
+// collision before it ever exits (R4-003).
+func checkAgentBuilderNameAvailable(spec agentbuilder.AgentSpec, deps agentBuilderCommandDeps) error {
+	claudeHome := ""
+	if deps.resolveClaudeHomeOverride != nil {
+		var err error
+		claudeHome, err = deps.resolveClaudeHomeOverride()
+		if err != nil {
+			return err
+		}
+	}
+	repoRoot := ""
+	if spec.Placement == agentbuilder.PlacementShareable {
+		var err error
+		repoRoot, err = deps.resolveRepoRoot()
+		if err != nil {
+			return err
+		}
+	}
+	return agentbuilder.CheckNameAvailable(spec, claudeHome, repoRoot, nil)
 }
 
 func resolveAgentBuilderRepoRoot() (string, error) {

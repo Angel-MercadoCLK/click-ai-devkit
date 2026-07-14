@@ -141,6 +141,37 @@ func installContent(spec AgentSpec, content []byte, claudeHome, repoRoot string,
 	return path, nil
 }
 
+// CheckNameAvailable reports whether spec's target agent name is free, without writing
+// anything. It runs the exact same checks installContent runs immediately before
+// writing (target path collision, plus the shareable plugin-metadata collision), so a
+// caller can surface a name collision as a read-only probe.
+//
+// This exists so the interactive wizard can detect a collision WHILE it is still
+// running — while the user's answers are still held in memory — instead of only
+// discovering it inside installContent after the wizard has already exited with
+// Confirmed=true and every answer has been discarded (R4-003).
+func CheckNameAvailable(spec AgentSpec, claudeHome, repoRoot string, w FileWriter) error {
+	if w == nil {
+		w = osFileWriter{}
+	}
+	path, err := installTargetPath(spec, claudeHome, repoRoot, w)
+	if err != nil {
+		return err
+	}
+	standalonePluginPath := filepath.Join(repoRoot, "plugins", standalonePluginName(spec), "agents", spec.Name+".md")
+	if spec.Placement == PlacementShareable && path == standalonePluginPath {
+		if err := ensureShareablePluginNameAvailable(spec, repoRoot, w); err != nil {
+			return err
+		}
+	}
+	if exists, err := fileExists(w, path); err != nil {
+		return fmt.Errorf("agentbuilder: inspect target agent: %w", err)
+	} else if exists {
+		return fmt.Errorf("agentbuilder: target agent already exists at %s; choose a different agent name or remove the existing agent before installing", path)
+	}
+	return nil
+}
+
 func installTargetPath(spec AgentSpec, claudeHome, repoRoot string, w FileWriter) (string, error) {
 	if spec.Placement != PlacementShareable {
 		return TargetPath(spec, claudeHome, repoRoot)

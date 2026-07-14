@@ -219,6 +219,61 @@ func TestAgentBuilderCommand_PersonalInstallPreservesInjectedClaudeHomeOverride(
 	}
 }
 
+// R4-003 regression coverage: checkAgentBuilderNameAvailable is the closure
+// runAgentBuilderWizardTUI wires into ui.WithNameAvailabilityCheck. It must resolve
+// claudeHome/repoRoot the same way runAgentBuilderInteractive resolves them right
+// before installing, so the mid-wizard collision probe agrees with the real install
+// path.
+func TestCheckAgentBuilderNameAvailableUsesResolvedClaudeHomeAndRepoRoot(t *testing.T) {
+	t.Run("personal placement checks resolved claude home", func(t *testing.T) {
+		claudeHome := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(claudeHome, "agents"), 0o755); err != nil {
+			t.Fatalf("os.MkdirAll() error = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(claudeHome, "agents", "release-helper.md"), []byte("existing"), 0o600); err != nil {
+			t.Fatalf("os.WriteFile() error = %v", err)
+		}
+		spec := cliValidAgentSpec()
+		spec.Placement = agentbuilder.PlacementPersonal
+		deps := agentBuilderCommandDeps{
+			resolveClaudeHomeOverride: func() (string, error) { return claudeHome, nil },
+		}
+
+		if err := checkAgentBuilderNameAvailable(spec, deps); err == nil {
+			t.Fatal("checkAgentBuilderNameAvailable() error = nil, want collision error for existing personal target")
+		}
+	})
+
+	t.Run("shareable placement does not resolve repo root when unused", func(t *testing.T) {
+		spec := cliValidAgentSpec()
+		spec.Placement = agentbuilder.PlacementPersonal
+		deps := agentBuilderCommandDeps{
+			resolveClaudeHomeOverride: func() (string, error) { return t.TempDir(), nil },
+			resolveRepoRoot: func() (string, error) {
+				t.Fatal("resolveRepoRoot() called for a personal-placement check, want it skipped")
+				return "", nil
+			},
+		}
+
+		if err := checkAgentBuilderNameAvailable(spec, deps); err != nil {
+			t.Fatalf("checkAgentBuilderNameAvailable() error = %v, want nil for a free personal name", err)
+		}
+	})
+
+	t.Run("shareable placement resolves repo root", func(t *testing.T) {
+		repoRoot := t.TempDir()
+		spec := cliValidAgentSpec()
+		spec.Placement = agentbuilder.PlacementShareable
+		deps := agentBuilderCommandDeps{
+			resolveRepoRoot: func() (string, error) { return repoRoot, nil },
+		}
+
+		if err := checkAgentBuilderNameAvailable(spec, deps); err != nil {
+			t.Fatalf("checkAgentBuilderNameAvailable() error = %v, want nil for a free shareable name", err)
+		}
+	})
+}
+
 func TestAgentBuilderCommand_NonTTYReturnsGuardWithoutRunningWizard(t *testing.T) {
 	home := t.TempDir()
 	out, err := execRoot(t, home, "agent-builder")
