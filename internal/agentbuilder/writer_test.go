@@ -728,6 +728,29 @@ func TestInstallShareablePhaseSupportWithRegisteredClickSDDUsesClickSDDAgents(t 
 	}
 }
 
+// R4-002 residual coverage: if the final rename step of an atomic write fails, the orphaned
+// temp file must be cleaned up (best-effort) rather than left behind indefinitely — a leaked
+// ".tmp-<nanos>" file next to a plugin/marketplace manifest would otherwise accumulate silently
+// on every failed retry.
+func TestAtomicWriteFileRenameFailureCleansUpTempFile(t *testing.T) {
+	writer := &fakeFileWriter{files: map[string][]byte{}, renameErr: errors.New("simulated rename failure")}
+
+	err := atomicWriteFile(writer, "target.json", []byte(`{}`), 0o600)
+	if err == nil {
+		t.Fatal("atomicWriteFile() error = nil, want the simulated rename failure")
+	}
+
+	if len(writer.removePaths) != 1 {
+		t.Fatalf("removePaths = %v, want exactly one cleanup call for the orphaned temp file", writer.removePaths)
+	}
+	if !strings.HasPrefix(writer.removePaths[0], "target.json.tmp-") {
+		t.Fatalf("removePaths[0] = %q, want the temp file written just before the failed rename", writer.removePaths[0])
+	}
+	if _, stillPresent := writer.files[writer.removePaths[0]]; stillPresent {
+		t.Fatal("temp file still present after cleanup")
+	}
+}
+
 // R4-001 regression coverage: rewriting an existing marketplace.json during a shareable
 // install must never silently drop fields outside the narrow known-field subset, and must
 // tolerate object-form `source` values on unrelated existing entries.
@@ -1116,7 +1139,17 @@ type fakeFileWriter struct {
 	writePaths  []string
 	renameErr   error
 	renamePaths [][2]string
+	removeErr   error
+	removePaths []string
 	files       map[string][]byte
+}
+
+func (w *fakeFileWriter) Remove(path string) error {
+	w.removePaths = append(w.removePaths, path)
+	if w.files != nil {
+		delete(w.files, path)
+	}
+	return w.removeErr
 }
 
 func (w *fakeFileWriter) MkdirAll(path string, perm os.FileMode) error {

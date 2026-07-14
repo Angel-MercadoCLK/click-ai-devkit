@@ -21,6 +21,7 @@ type FileWriter interface {
 	WriteFile(path string, data []byte, perm os.FileMode) error
 	Stat(path string) (os.FileInfo, error)
 	Rename(oldpath, newpath string) error
+	Remove(path string) error
 }
 
 func RenderAgentMarkdown(spec AgentSpec) (string, error) {
@@ -381,6 +382,12 @@ func atomicWriteFile(w FileWriter, path string, data []byte, perm os.FileMode) e
 		return fmt.Errorf("write temp file: %w", err)
 	}
 	if err := w.Rename(tmpPath, path); err != nil {
+		// Best-effort cleanup: the rename failed, so tmpPath is an orphan next to the
+		// real target. Removing it keeps a failed install from silently leaving
+		// ".tmp-<nanos>" files around on every retry. The cleanup error itself is
+		// deliberately swallowed — it must never mask the original rename failure,
+		// which is the actionable error the caller needs to see.
+		_ = w.Remove(tmpPath)
 		return fmt.Errorf("rename temp file into place: %w", err)
 	}
 	return nil
@@ -692,4 +699,8 @@ func (osFileWriter) Stat(path string) (os.FileInfo, error) {
 
 func (osFileWriter) Rename(oldpath, newpath string) error {
 	return os.Rename(oldpath, newpath)
+}
+
+func (osFileWriter) Remove(path string) error {
+	return os.Remove(path)
 }

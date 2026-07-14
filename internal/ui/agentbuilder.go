@@ -316,9 +316,15 @@ func (m AgentBuilderModel) updatePlacement(keyMsg tea.KeyMsg) (tea.Model, tea.Cm
 		if m.checkNameAvailable != nil {
 			if err := m.checkNameAvailable(m.Spec); err != nil {
 				// Recoverable: bounce back to Preview (not a terminal error) with every
-				// answer still held in Spec/PreviewContent. The user can fix the name
-				// via the existing Editar flow and try again without redoing the
-				// wizard (R4-003).
+				// answer still held in Spec/PreviewContent, instead of dying after
+				// Confirmed=true (R4-003). NOTE: this does NOT let the user rename
+				// in-place — Editar rejects a frontmatter name that diverges from the
+				// generated one (see the "must match generated name" check), so the
+				// only real recovery today is cancelling and retrying with a
+				// different description, or clearing the conflicting file first. The
+				// error text shown to the user (translateAgentBuilderError's
+				// "already exists" case) says so honestly; don't reintroduce a claim
+				// that Editar can change the name (RRAB-001).
 				m.PreviewError = translateAgentBuilderError(err)
 				m.Step = StepPreview
 				m.cursor = 0
@@ -452,7 +458,12 @@ func translateAgentBuilderError(err error) string {
 	case strings.Contains(msg, "must match generated name"):
 		return "El nombre del frontmatter editado no coincide con el nombre del agente generado por el wizard."
 	case strings.Contains(msg, "already exists"):
-		return fmt.Sprintf("Ya existe un agente o plugin con ese nombre. Elegí otro nombre o eliminá el existente antes de instalar. (Detalle técnico: %s)", detail)
+		// The wizard has no in-flow way to rename (Editar rejects a frontmatter name
+		// that doesn't match the generated one — see the "must match generated name"
+		// case above), so the honest recovery path is: cancel and retry with a
+		// different description, or clear the conflicting file first. Do not imply an
+		// in-place rename is possible here (RRAB-001).
+		return fmt.Sprintf("Ya existe un agente o plugin con ese nombre. Cancelá (Esc) y volvé a intentar con una descripción distinta, o eliminá el agente/plugin existente antes de instalar. (Detalle técnico: %s)", detail)
 	case strings.Contains(msg, "invalid agent name") || strings.Contains(msg, "invalid generated agent name"):
 		return "El nombre del agente no es válido: usá letras minúsculas, números y guiones (sin espacios ni tildes)."
 	case strings.Contains(msg, "contains a newline"):
