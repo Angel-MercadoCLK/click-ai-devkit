@@ -530,9 +530,10 @@ func TestInstallCommand_IssuesMarketplaceCommandsInOrder(t *testing.T) {
 			" --config default_model=sonnet",
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",
+		"claude plugin install click-skills@click-ai-devkit",
 	}
-	if !reflect.DeepEqual(runner.commands[:5], want) {
-		t.Fatalf("runner.commands[:5] = %#v, want %#v", runner.commands[:5], want)
+	if !reflect.DeepEqual(runner.commands[:6], want) {
+		t.Fatalf("runner.commands[:6] = %#v, want %#v", runner.commands[:6], want)
 	}
 }
 

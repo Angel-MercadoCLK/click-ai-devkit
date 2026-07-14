@@ -53,6 +53,7 @@ func Run(cfg installer.Config) Report {
 		checkPlugin(cfg),
 		checkMemoryPlugin(cfg),
 		checkReviewPlugin(cfg),
+		checkSkillsPlugin(cfg),
 		checkClaudeMD(cfg),
 		checkMemoryGuardHook(cfg),
 		checkModelsConfig(cfg),
@@ -93,6 +94,19 @@ func checkReviewPlugin(cfg installer.Config) CheckResult {
 	const name = "plugin click-review"
 
 	ok, err := installer.HasInstalledPlugin(cfg, "click-review")
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	if !ok {
+		return CheckResult{Name: name, Healthy: false, Detail: "no registrado en Claude Code"}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: "registrado y habilitado"}
+}
+
+func checkSkillsPlugin(cfg installer.Config) CheckResult {
+	const name = "plugin click-skills"
+
+	ok, err := installer.HasInstalledPlugin(cfg, "click-skills")
 	if err != nil {
 		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
 	}

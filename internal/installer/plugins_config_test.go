@@ -83,6 +83,7 @@ func TestSyncMarketplacePlugins_PassesPerPhaseConfigFlagsForClickSDD(t *testing.
 		}},
 		{Name: "claude", Args: []string{"plugin", "install", "click-memory@click-ai-devkit"}},
 		{Name: "claude", Args: []string{"plugin", "install", "click-review@click-ai-devkit"}},
+		{Name: "claude", Args: []string{"plugin", "install", "click-skills@click-ai-devkit"}},
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("runner.commands = %#v, want %#v", runner.commands, want)

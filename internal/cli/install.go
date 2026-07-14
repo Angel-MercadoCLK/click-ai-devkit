@@ -63,7 +63,7 @@ func runInstall(cmd *cobra.Command) error {
 		return nil
 	}
 
-	if err := r.RunStep("Registrando plugins click-sdd, click-memory y click-review…", "Plugins registrados en Claude Code", func() error {
+	if err := r.RunStep("Registrando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins registrados en Claude Code", func() error {
 		return installer.SyncMarketplacePlugins(models, profile)
 	}); err != nil {
 		return err

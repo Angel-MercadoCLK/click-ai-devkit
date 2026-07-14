@@ -22,7 +22,7 @@ const (
 	ClickSDDPluginID = "click-sdd@" + marketplaceName
 )
 
-var managedPlugins = []string{"click-sdd", "click-memory", "click-review"}
+var managedPlugins = []string{"click-sdd", "click-memory", "click-review", "click-skills"}
 
 type pluginManifest struct {
 	Name string `json:"name"`

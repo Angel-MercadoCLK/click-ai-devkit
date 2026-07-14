@@ -25,8 +25,8 @@ func TestMarketplaceManifest_Parses(t *testing.T) {
 	if manifest.Name != marketplaceName {
 		t.Fatalf("marketplace name = %q, want %q", manifest.Name, marketplaceName)
 	}
-	if len(manifest.Plugins) != 3 {
-		t.Fatalf("marketplace plugins = %d, want 3", len(manifest.Plugins))
+	if len(manifest.Plugins) != 4 {
+		t.Fatalf("marketplace plugins = %d, want 4", len(manifest.Plugins))
 	}
 }
 
