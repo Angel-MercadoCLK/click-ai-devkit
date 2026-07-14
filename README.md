@@ -7,9 +7,13 @@ Go CLI, `click`.
 
 ## Status
 
-**v0.1.** The `click` CLI has a real install/uninstall/update/doctor implementation (see
-`internal/cli/` and `internal/installer/`) — see `documentacion/implementation-plan.md` for the
-full build plan and slice history.
+**v0.2.1**, released and installable today via `scoop install click` (see Install below). The
+`click` CLI has a real install/uninstall/update/doctor implementation, a standing interactive
+menu (bare `click` on a TTY), an 18-phase per-phase model configuration (9 SDD flow phases +
+Judgment Day's 3 roles + the 5 review-lens roles) with orchestration profiles
+(balanced/cost-saver/quality/custom), and an agent-builder flow nearing merge on its own branch
+(see `internal/cli/`, `internal/installer/`, `internal/modelconfig/`, `internal/menu/`) — see
+`documentacion/implementation-plan.md` for the full build plan and slice history.
 
 ## Install
 
@@ -21,17 +25,19 @@ scoop bucket add click https://github.com/Angel-MercadoCLK/click-ai-devkit
 scoop install click
 ```
 
-(Not live yet — requires a `v0.1.0` tag push to trigger the first release. Brew tap for
-macOS/Linux is scaffolded in `.goreleaser.yaml` but deferred — see `documentacion/tech-spec.md` §6.)
+This works today (`bucket/click.json` is published and live at v0.2.1+). Brew tap for
+macOS/Linux is scaffolded in `.goreleaser.yaml` but deferred — see `documentacion/tech-spec.md` §6.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `click install` | Registers the Click marketplace with `claude plugin marketplace add`, installs `click-sdd`, `click-memory`, and `click-review` via the native `claude plugin` CLI, writes/updates the managed `CLAUDE.md` block, and registers the `memory-guard` PreToolUse hook. |
-| `click doctor` | Read-only health check: verifies the three plugins are actually registered in Claude Code, the managed `CLAUDE.md` block, and the `memory-guard` hook registration (5 checks total). Never mutates state. |
+| `click` (no args, TTY) | Launches the standing interactive menu (`internal/menu`) to reach install/update/doctor/uninstall/configure-models without memorizing flags. Non-TTY or `--no-interactive` prints help instead. |
+| `click install` | Registers the Click marketplace with `claude plugin marketplace add`, installs `click-sdd`, `click-memory`, and `click-review` via the native `claude plugin` CLI, writes/updates the managed `CLAUDE.md` block, registers the `memory-guard` PreToolUse hook, and lets you choose per-phase models (or an orchestration profile) interactively. |
+| `click doctor` | Read-only health check: verifies the three plugins are actually registered in Claude Code, the managed `CLAUDE.md` block, and the `memory-guard` hook registration. Never mutates state. |
 | `click uninstall` | Reverses everything `install`/`update` write: uninstalls the three plugins through the native `claude plugin` CLI, removes the Click marketplace registration, strips the managed `CLAUDE.md` block, deregisters the `memory-guard` hook, and removes the Engram MCP config/state if `update` ever configured it. Idempotent. |
 | `click update` | Re-runs the native `claude plugin` install flow to re-sync the three plugins, rewrites the managed `CLAUDE.md` block, re-registers the `memory-guard` hook, and configures the pinned Engram MCP entry. |
+| `click configure-models` | Reopens the per-phase model selection TUI (18 phases, or pick an orchestration profile) without a full install/update, preserving the currently persisted profile label. Hidden from `--help`, reached primarily through the standing menu. |
 | `click --version` | Prints the CLI version, injected at build time via `ldflags` (`internal/version`). |
 
 ## What gets installed
@@ -51,8 +57,8 @@ macOS/Linux is scaffolded in `.goreleaser.yaml` but deferred — see `documentac
 `memory-guard` is a Claude Code PreToolUse hook that intercepts every `mem_save` call before it
 can reach Engram. It is:
 
-- **Block-only** in v0.1 (`internal/guard`): a matching forbidden pattern denies the call outright;
-  there is no redaction path yet (planned for v0.2).
+- **Block-only** as of v0.2.1 (`internal/guard`): a matching forbidden pattern denies the call
+  outright; there is no redaction path yet (still planned, not scheduled).
 - **Fail-closed**: any internal error (payload decode failure, pattern-load failure, panic) also
   results in a deny, never a silent allow.
 - **Hash-only audit**: every decision is appended to a local JSONL log
@@ -62,12 +68,16 @@ can reach Engram. It is:
 ## Repo layout
 
 - `cmd/click/` — CLI entrypoint.
-- `internal/cli/` — cobra command tree (install/doctor/uninstall/update/memory-guard).
+- `internal/cli/` — cobra command tree (install/doctor/uninstall/update/configure-models/memory-guard).
 - `internal/installer/` — install/uninstall logic: plugins, `CLAUDE.md` block, hook registration, Engram MCP config.
 - `internal/doctor/` — read-only health checks.
 - `internal/guard/` — the memory-guard pattern-matching engine.
 - `internal/audit/` — hash-only audit logging for guard decisions.
 - `internal/manifest/` — the embedded release manifest (plugin/Engram version pins).
+- `internal/menu/` — the standing interactive menu (bare `click` on a TTY).
+- `internal/modelconfig/` — the 18-phase per-phase model taxonomy, defaults, and orchestration profiles.
+- `internal/ui/` — shared bubbletea TUI screens (model selection, profile selection, rendering helpers).
+- `internal/version/` — build-time version metadata injected via `ldflags`.
 - `plugins/` — the three plugin source trees served by the Click marketplace.
 
 ## Docs

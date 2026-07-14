@@ -67,25 +67,41 @@ below is the exact skill under `plugins/click-sdd/skills/`.
 
 ## Model routing
 
-- click-sdd resolves a per-phase model override for the real 13-phase taxonomy (`explore`,
-  `propose`, `spec`, `design`, `tasks`, `apply`, `verify`, `archive`, `onboard`, `jd-judge-a`,
-  `jd-judge-b`, `jd-fix-agent`, `default`), chosen once at `click install` time and stored as this
-  plugin's `userConfig` (`explore_model`, `propose_model`, `spec_model`, `design_model`,
+- click-sdd resolves a per-phase model override for the real 18-phase taxonomy: the 9 flow phases
+  (`explore`, `propose`, `spec`, `design`, `tasks`, `apply`, `verify`, `archive`, `onboard`),
+  Judgment Day's 3 roles (`jd-judge-a`, `jd-judge-b`, `jd-fix-agent`), the 5 review-lens roles
+  (`review-risk`, `review-readability`, `review-reliability`, `review-resilience`,
+  `review-refuter`), and `default`. Each phase is chosen once at `click install` time and stored as
+  this plugin's `userConfig` (`explore_model`, `propose_model`, `spec_model`, `design_model`,
   `tasks_model`, `apply_model`, `verify_model`, `archive_model`, `onboard_model`,
-  `jd_judge_a_model`, `jd_judge_b_model`, `jd_fix_agent_model`, `default_model` — see
-  `plugins/click-sdd/.claude-plugin/plugin.json`). Defaults: `opus` for `propose`/`design`/`verify`,
-  `haiku` for `archive`/`onboard`, `sonnet` for every other phase.
+  `jd_judge_a_model`, `jd_judge_b_model`, `jd_fix_agent_model`, `review_risk_model`,
+  `review_readability_model`, `review_reliability_model`, `review_resilience_model`,
+  `review_refuter_model`, `default_model` — see `plugins/click-sdd/.claude-plugin/plugin.json` and
+  `internal/modelconfig/modelconfig.go`'s `ConfigKey()`). Defaults: `opus` for
+  `propose`/`design`/`verify`, `haiku` for `archive`/`onboard`, `sonnet` for every other phase
+  (including all 5 review lenses).
+- The 5 review-lens roles back the 4R adversarial code-review pattern used at `pre-commit`,
+  `pre-push`, `pre-pr`, and post-`design`/post-`apply` review triggers:
+  - `review-risk` — security, permissions, data exposure/loss, architecture, and dependency
+    findings.
+  - `review-readability` — naming, structure, and maintainability findings.
+  - `review-reliability` — behavior, state, tests, determinism, and regression findings.
+  - `review-resilience` — shell/process integration, partial failures, and recovery findings.
+  - `review-refuter` — adversarial verification of BLOCKER/CRITICAL candidates surfaced by the
+    other four lenses before they enter the fix loop.
+  Route each lens delegation with its own resolved `review_*_model` alias rather than reusing
+  another phase's model.
 - Once per session, before your first `Agent` delegation, read the resolved choice from
   `pluginConfigs["click-sdd@click-ai-devkit"].options` in Claude Code's `settings.json` and cache
   the phase→model map for the rest of the session.
 - Pass the resolved alias as the `model` param on every `Agent` tool delegation you make to a
   phase skill (`explore`, `propose`, `spec`, `design`, `tasks`, `apply`, `verify`, `archive`,
-  `onboard`, `jd-judge-a`, `jd-judge-b`, `jd-fix-agent`). Specialist agents (`click-prd-writer`,
-  `click-architect`, `click-reviewer`) resolve to the model of the phase(s) they own — see each
-  agent's own file. `click-memory-curator` is not one of the 13 phases; route it with
-  `archive_model`'s resolved alias since it runs alongside/after `archive` and is similarly
-  low-cost/mechanical work. If a session's `settings.json` has no `pluginConfigs` entry for
-  `click-sdd@click-ai-devkit` yet (e.g. an install predating this feature), fall back to
+  `onboard`, `jd-judge-a`, `jd-judge-b`, `jd-fix-agent`, and the 5 `review-*` lenses). Specialist
+  agents (`click-prd-writer`, `click-architect`, `click-reviewer`) resolve to the model of the
+  phase(s) they own — see each agent's own file. `click-memory-curator` is not one of the 18
+  phases; route it with `archive_model`'s resolved alias since it runs alongside/after `archive`
+  and is similarly low-cost/mechanical work. If a session's `settings.json` has no `pluginConfigs`
+  entry for `click-sdd@click-ai-devkit` yet (e.g. an install predating this feature), fall back to
   `modelconfig.Defaults()`'s values (mirrored above) rather than failing the delegation.
 - Do not rely on agent frontmatter to resolve the model for you: every phase agent's `model:`
   field stays plain (`sonnet`/`inherit`, not a `${user_config...}` placeholder) because Claude Code

@@ -48,9 +48,11 @@ together — these four stay in sync by convention, not by a generated check.
 
 ## SDD phase taxonomy
 
-The real SDD phase chain is 13 phases: `default`, `explore`, `propose`, `spec`, `design`, `tasks`,
-`apply`, `verify`, `archive`, `onboard`, `jd-judge-a`, `jd-judge-b`, `jd-fix-agent`. Each has a
-`<phase>_model` config key in `plugins/click-sdd/.claude-plugin/plugin.json` — see
+The real SDD phase chain is 18 phases (was 13 before the 5 review-lens roles landed):
+`default`, `explore`, `propose`, `spec`, `design`, `tasks`, `apply`, `verify`, `archive`,
+`onboard`, `jd-judge-a`, `jd-judge-b`, `jd-fix-agent`, `review-risk`, `review-readability`,
+`review-reliability`, `review-resilience`, `review-refuter`. Each has a `<phase>_model` config key
+in `plugins/click-sdd/.claude-plugin/plugin.json` — see
 `plugins/click-sdd/agents/click-orchestrator.md` for the routing rules. Do not reintroduce the
 deprecated 5-phase taxonomy (`orchestrator`/`prd_writer`/`architect`/`reviewer`/`memory_curator`
 as phase keys) in any new agent, skill, or config file.
