@@ -295,17 +295,17 @@ type fakePathStore struct{}
 func (fakePathStore) PersistedPathContains(dir string) (bool, error) { return false, nil }
 func (fakePathStore) EnsureOnPath(dir string) (bool, error)          { return false, nil }
 
-// TestSetPathStoreFactoryForTests_OverridesAndRestores proves the injectable-factory seam
-// PR2/PR3 rely on actually works: overriding returns the fake, and calling the restore func puts
-// pathStoreFactory back to its exact pre-override value. This file deliberately references no
-// platform-specific symbol (no osPathStore) so it keeps compiling and passing on every CI
-// platform, per PR1's explicit "this file builds and tests standalone" contract — whether the
-// pre-override factory is nil (a hypothetical build with no OS-specific pathenv_*.go compiled in)
-// or a real platform default (pathenv_windows.go's or pathenv_unix.go's build-tagged init(), both
-// of which now assign one) is intentionally NOT asserted here; only that restore() puts it back
-// to whatever it was, unchanged.
+// TestSetPathStoreFactoryForTests_OverridesAndRestores proves the injectable-factory seam PR2/PR3
+// rely on actually works: overriding returns the fake, and calling the restore func puts
+// pathStoreFactory back to whatever it was before the override — WITHOUT this generic,
+// cross-platform test file asserting a specific pre-override value or type. PR1 (this file) leaves
+// pathStoreFactory nil, but PR2's windows-tagged pathenv_windows.go init() (and PR3's POSIX
+// equivalent) assign a platform default via a build-tagged init(); this file has no build tag and
+// must keep compiling on every CI platform, so it deliberately never references a concrete
+// platform type like osPathStore. It only proves restore() puts back exactly the pre-override
+// func value (nil-ness and, when non-nil, "no longer the injected fake").
 func TestSetPathStoreFactoryForTests_OverridesAndRestores(t *testing.T) {
-	preOverrideWasNil := pathStoreFactory == nil
+	before := pathStoreFactory
 
 	restore := SetPathStoreFactoryForTests(func() pathStore { return fakePathStore{} })
 	defer restore()
@@ -316,8 +316,14 @@ func TestSetPathStoreFactoryForTests_OverridesAndRestores(t *testing.T) {
 	}
 
 	restore()
-	if postRestoreWasNil := pathStoreFactory == nil; postRestoreWasNil != preOverrideWasNil {
-		t.Fatalf("pathStoreFactory nil-ness after restore() = %v, want it back to its pre-override nil-ness %v", postRestoreWasNil, preOverrideWasNil)
+	after := pathStoreFactory
+	if (before == nil) != (after == nil) {
+		t.Fatalf("pathStoreFactory nil-ness after restore() = %v, want it back to its pre-override nil-ness %v", after == nil, before == nil)
+	}
+	if after != nil {
+		if _, ok := after().(fakePathStore); ok {
+			t.Fatal("pathStoreFactory() after restore() is still the injected fakePathStore, want it reverted to the pre-override value")
+		}
 	}
 }
 
