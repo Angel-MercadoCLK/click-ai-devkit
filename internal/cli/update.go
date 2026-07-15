@@ -83,12 +83,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}); err != nil {
 		return err
 	}
+	enginePathWarning := ""
 	if err := r.RunStep(fmt.Sprintf("Sincronizando Engram (pin %s)…", m.Engram.Version), "Engram sincronizado", func() error {
-		_, err := installer.SyncEngram(cfg, m)
-		return err
+		var syncErr error
+		_, enginePathWarning, syncErr = installer.SyncEngram(cfg, m)
+		return syncErr
 	}); err != nil {
 		return err
 	}
+	surfacePathWarning(out, r, enginePathWarning)
 	// Same non-fatal binary-provisioning report as `click install` (Slice 3b): SyncEngram already
 	// attempted `go install` internally when needed; this just surfaces the resulting state.
 	if _, resolvable, err := installer.EngramBinaryResolvable(cfg); err != nil {
