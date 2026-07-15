@@ -39,8 +39,15 @@ func TestGoBinDir_PrefersGOBIN(t *testing.T) {
 func TestGoBinDir_FallsBackToGOPATHBin(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir()}
 	runner := newFakeCommandRunner(cfg)
+	// gopath is a fixture value, not a real filesystem path — it deliberately does not use
+	// filepath.Join for its own construction so this test stays independent of the host OS's
+	// separator. GoBinDir() itself joins it with "bin" via filepath.Join, so `want` must be
+	// derived the same way rather than hardcoded, or this test only passes on the OS it was
+	// authored on (it previously hardcoded a `\`-joined `want`, which fails on any non-Windows
+	// CI leg since filepath.Join uses `/` there).
+	gopath := "C:\\Users\\dev\\go"
 	runner.lookup["go env GOBIN"] = []byte("\n")
-	runner.lookup["go env GOPATH"] = []byte("C:\\Users\\dev\\go\n")
+	runner.lookup["go env GOPATH"] = []byte(gopath + "\n")
 	restore := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restore()
 
@@ -48,7 +55,7 @@ func TestGoBinDir_FallsBackToGOPATHBin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GoBinDir() error = %v", err)
 	}
-	want := "C:\\Users\\dev\\go\\bin"
+	want := filepath.Join(gopath, "bin")
 	if got != want {
 		t.Fatalf("GoBinDir() = %q, want %q", got, want)
 	}
