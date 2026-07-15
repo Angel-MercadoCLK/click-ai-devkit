@@ -180,14 +180,17 @@ type fakePathStore struct{}
 func (fakePathStore) PersistedPathContains(dir string) (bool, error) { return false, nil }
 func (fakePathStore) EnsureOnPath(dir string) (bool, error)          { return false, nil }
 
-// TestSetPathStoreFactoryForTests_OverridesAndRestores proves the injectable-factory seam PR2/PR3
-// will rely on actually works: overriding returns the fake, and calling the restore func puts
-// pathStoreFactory back to its pre-override value (nil in this PR, since no OS-specific file has
-// assigned a default yet).
+// TestSetPathStoreFactoryForTests_OverridesAndRestores proves the injectable-factory seam
+// PR2/PR3 rely on actually works: overriding returns the fake, and calling the restore func puts
+// pathStoreFactory back to its exact pre-override value. This file deliberately references no
+// platform-specific symbol (no osPathStore) so it keeps compiling and passing on every CI
+// platform, per PR1's explicit "this file builds and tests standalone" contract — whether the
+// pre-override factory is nil (a hypothetical build with no OS-specific pathenv_*.go compiled in)
+// or a real platform default (pathenv_windows.go's or pathenv_unix.go's build-tagged init(), both
+// of which now assign one) is intentionally NOT asserted here; only that restore() puts it back
+// to whatever it was, unchanged.
 func TestSetPathStoreFactoryForTests_OverridesAndRestores(t *testing.T) {
-	if pathStoreFactory != nil {
-		t.Fatal("pathStoreFactory != nil before any override; want nil in this PR (no OS-specific default wired yet)")
-	}
+	preOverrideWasNil := pathStoreFactory == nil
 
 	restore := SetPathStoreFactoryForTests(func() pathStore { return fakePathStore{} })
 	defer restore()
@@ -198,8 +201,8 @@ func TestSetPathStoreFactoryForTests_OverridesAndRestores(t *testing.T) {
 	}
 
 	restore()
-	if pathStoreFactory != nil {
-		t.Fatal("pathStoreFactory != nil after restore(), want it back to nil")
+	if postRestoreWasNil := pathStoreFactory == nil; postRestoreWasNil != preOverrideWasNil {
+		t.Fatalf("pathStoreFactory nil-ness after restore() = %v, want it back to its pre-override nil-ness %v", postRestoreWasNil, preOverrideWasNil)
 	}
 }
 
