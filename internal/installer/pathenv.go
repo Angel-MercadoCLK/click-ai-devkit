@@ -77,6 +77,70 @@ func goEnv(runner CommandRunner, key string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// pathPersistedProbe is the injectable seam behind PathPersisted, defaulting to the real
+// pathStoreFactory-backed implementation (nil-factory guard + PersistedPathContains forward).
+// Exported via SetPathPersistedProbeForTests so DOWNSTREAM packages (click doctor's
+// checkEngramPath, the CLI's own end-to-end test suite) can make PATH-drift diagnosis
+// deterministic without this package exposing the unexported pathStore type itself — mirrors the
+// commandRunnerFactory/binaryLookupFactory injectable-factory pattern already used elsewhere in
+// this package, just at the probe-function level instead of a whole-store level, since callers
+// outside this package only ever need the read-only PersistedPathContains question answered, never
+// the full pathStore surface.
+var pathPersistedProbe = func(dir string) (bool, error) {
+	if pathStoreFactory == nil {
+		return false, fmt.Errorf("installer: no platform pathStore wired in")
+	}
+	return pathStoreFactory().PersistedPathContains(dir)
+}
+
+// PathPersisted reports whether dir is present in the user's PERSISTED PATH — the platform
+// pathStore's PersistedPathContains (Windows HKCU\Environment\Path, POSIX shell rc files): what a
+// freshly started process/session would see. Exported so `click doctor`'s checkEngramPath (a
+// different package, internal/doctor) can diagnose PERSISTED-vs-LIVE PATH drift (sdd/engram-mcp-
+// resolution obs #1436, D-6) without this package exposing the unexported pathStore type itself.
+func PathPersisted(dir string) (bool, error) {
+	return pathPersistedProbe(dir)
+}
+
+// SetPathPersistedProbeForTests overrides PathPersisted's implementation for tests and returns a
+// restore function, mirroring SetCommandRunnerFactoryForTests/SetBinaryLookupFactoryForTests.
+func SetPathPersistedProbeForTests(probe func(dir string) (bool, error)) func() {
+	old := pathPersistedProbe
+	pathPersistedProbe = probe
+	return func() { pathPersistedProbe = old }
+}
+
+// livePathContainsProbe is the injectable seam behind LivePathContains, defaulting to the real
+// os.Getenv("PATH")-backed implementation. Exported via SetLivePathContainsProbeForTests for the
+// same cross-package reason as pathPersistedProbe above.
+var livePathContainsProbe = func(dir string) bool {
+	for _, entry := range filepath.SplitList(os.Getenv("PATH")) {
+		if sameDir(entry, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+// LivePathContains reports whether dir is present in the CURRENT process's live PATH environment
+// variable (os.Getenv("PATH")), split via the OS-native list separator (filepath.SplitList) and
+// compared with sameDir's case rule (case-insensitive on Windows, case-sensitive elsewhere — the
+// same rule the filesystem/PATH itself follows on each platform). This answers "would a subprocess
+// launched right now, in THIS process's environment, resolve dir" — as opposed to PathPersisted,
+// which answers "would a FRESH process/session resolve dir". Exported for `click doctor`'s
+// checkEngramPath.
+func LivePathContains(dir string) bool {
+	return livePathContainsProbe(dir)
+}
+
+// SetLivePathContainsProbeForTests overrides LivePathContains's implementation for tests and
+// returns a restore function, mirroring SetPathPersistedProbeForTests above.
+func SetLivePathContainsProbeForTests(probe func(dir string) bool) func() {
+	old := livePathContainsProbe
+	livePathContainsProbe = probe
+	return func() { livePathContainsProbe = old }
+}
+
 // computeNewPath is the pure core of the Windows REG_EXPAND_SZ Path value mutation: given the
 // current semicolon-joined PATH value and a directory to ensure is present, it returns the new
 // value to write (unchanged from current when dir is already present) and whether a write is

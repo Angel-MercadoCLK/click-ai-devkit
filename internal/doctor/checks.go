@@ -15,10 +15,11 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
-// EngramChecksCount is the number of doctor checks contributed by Engram (plugin + binary), kept
-// as an exported constant so other packages/tests documenting Run()'s total check count don't have
-// to hardcode a magic number that silently drifts if a check is added or removed here.
-const EngramChecksCount = 2
+// EngramChecksCount is the number of doctor checks contributed by Engram (plugin + binary + PATH
+// persistence), kept as an exported constant so other packages/tests documenting Run()'s total
+// check count don't have to hardcode a magic number that silently drifts if a check is added or
+// removed here.
+const EngramChecksCount = 3
 
 // Context7ChecksCount is the number of doctor checks contributed by Context7, kept as an exported
 // constant for the same reason as EngramChecksCount.
@@ -61,6 +62,7 @@ func Run(cfg installer.Config) Report {
 		checkAppliedPluginConfig(cfg),
 		checkEngramPlugin(cfg),
 		checkEngramBinary(cfg),
+		checkEngramPath(cfg),
 		checkContext7(cfg),
 	}}
 }
@@ -193,6 +195,69 @@ func checkEngramBinary(cfg installer.Config) CheckResult {
 		Name:    name,
 		Healthy: false,
 		Detail:  "no encontrado en " + path + " (el MCP de engram no podrá conectar). " + installer.EngramBinaryRemediationMessage(version),
+	}
+}
+
+// checkEngramPath diagnoses PERSISTED-vs-LIVE PATH drift for the resolved Go bin dir the Engram
+// binary needs to be on (installer.GoBinDir) — distinct from checkEngramBinary above, which asks
+// "does the binary resolve/exist at all", regardless of why. This check answers a narrower,
+// different question: "is the directory click's own PATH-persistence step
+// (EnsureEngramBinary/persistPathToBinaryDir, sdd/engram-mcp-resolution obs #1436 D-5) writes to
+// the user's PERSISTED PATH also visible in THIS live process's PATH right now". It is
+// deliberately diagnose-only (NFR-012, design D-6): no `claude mcp list` connectivity probe
+// (explicitly deferred scope per the design), no mutation, and no attempt to fix drift itself —
+// `click install`/`click update`'s own persistPathToBinaryDir already does that.
+//
+// Four states:
+//   - persisted=true,  live=true  -> healthy: everything lines up right now.
+//   - persisted=true,  live=false -> the exact bug class this change targets, now CAUGHT instead
+//     of silent: a PATH fix was already persisted (a prior install/update ran successfully) but
+//     THIS doctor process (or any already-running Claude Code session) started before that and
+//     still has a stale live PATH. Reported non-fatal (Healthy: true) with an actionable restart
+//     message — the persisted state is actually correct going forward, so this must never fail
+//     `click doctor`.
+//   - persisted=false, live=true  -> an edge case: dir resolves in THIS session's live PATH
+//     without click having persisted it (e.g. a developer's own manual `export PATH=...`) —
+//     healthy, click just didn't put it there.
+//   - persisted=false, live=false -> genuinely not configured at all: unhealthy, matching
+//     checkEngramBinary's existing "not on PATH" severity.
+func checkEngramPath(cfg installer.Config) CheckResult {
+	const name = "engram PATH persistence"
+
+	gobin, err := installer.GoBinDir(cfg)
+	if err != nil {
+		return CheckResult{
+			Name:    name,
+			Healthy: false,
+			Detail:  "no se pudo resolver el directorio de binarios de Go (go env GOBIN/GOPATH): " + err.Error(),
+		}
+	}
+
+	persisted, err := installer.PathPersisted(gobin)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	live := installer.LivePathContains(gobin)
+
+	switch {
+	case persisted && live:
+		return CheckResult{Name: name, Healthy: true, Detail: gobin + " está persistido en el PATH y activo en esta sesión"}
+	case persisted && !live:
+		return CheckResult{
+			Name:    name,
+			Healthy: true,
+			Detail: gobin + " ya está persistido en el PATH, pero esta sesión (o cualquier Claude Code ya en ejecución) " +
+				"todavía no lo ve — reiniciá la terminal o Claude Code para que tome efecto",
+		}
+	case !persisted && live:
+		return CheckResult{Name: name, Healthy: true, Detail: gobin + " está en el PATH de esta sesión, aunque no fue persistido por click"}
+	default:
+		return CheckResult{
+			Name:    name,
+			Healthy: false,
+			Detail: gobin + " no está en el PATH persistido ni en el de esta sesión — el MCP de engram podría no conectar " +
+				"en una sesión nueva. Ejecutá `click install` o `click update` para reintentar la persistencia.",
+		}
 	}
 }
 

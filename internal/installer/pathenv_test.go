@@ -384,3 +384,128 @@ func TestComputeNewPath(t *testing.T) {
 		})
 	}
 }
+
+// fakePersistedPathStore is a pathStore double used only to prove PathPersisted forwards
+// PersistedPathContains's result/error verbatim, in isolation from any real platform pathStore.
+type fakePersistedPathStore struct {
+	persisted bool
+	err       error
+}
+
+func (f fakePersistedPathStore) PersistedPathContains(dir string) (bool, error) {
+	return f.persisted, f.err
+}
+func (f fakePersistedPathStore) EnsureOnPath(dir string) (bool, error) { return false, nil }
+
+// TestPathPersisted_ForwardsPathStoreResult is PR5's checkEngramPath dependency: `click doctor`
+// (a different package) needs a way to ask "is dir on the persisted PATH" without this package
+// exposing the unexported pathStore type — PathPersisted is that seam. This proves it forwards the
+// injected pathStore's PersistedPathContains result unchanged.
+func TestPathPersisted_ForwardsPathStoreResult(t *testing.T) {
+	restore := SetPathStoreFactoryForTests(func() pathStore { return fakePersistedPathStore{persisted: true} })
+	defer restore()
+
+	got, err := PathPersisted(`C:\Users\dev\go\bin`)
+	if err != nil {
+		t.Fatalf("PathPersisted() error = %v", err)
+	}
+	if !got {
+		t.Fatal("PathPersisted() = false, want true (forwarded from the injected pathStore)")
+	}
+}
+
+// TestPathPersisted_ForwardsPathStoreError triangulates the happy path above: a failing
+// PersistedPathContains must surface as PathPersisted's own error, not be swallowed.
+func TestPathPersisted_ForwardsPathStoreError(t *testing.T) {
+	wantErr := errors.New("registry closed")
+	restore := SetPathStoreFactoryForTests(func() pathStore { return fakePersistedPathStore{err: wantErr} })
+	defer restore()
+
+	_, err := PathPersisted(`C:\Users\dev\go\bin`)
+	if err != wantErr {
+		t.Fatalf("PathPersisted() error = %v, want it to forward %v unchanged", err, wantErr)
+	}
+}
+
+// TestPathPersisted_ErrorsWhenNoPathStoreFactoryWired guards the nil-factory guard: without this,
+// a build missing both platform init()s would panic on a nil func call instead of erroring cleanly.
+func TestPathPersisted_ErrorsWhenNoPathStoreFactoryWired(t *testing.T) {
+	restore := SetPathStoreFactoryForTests(nil)
+	defer restore()
+
+	_, err := PathPersisted(`C:\Users\dev\go\bin`)
+	if err == nil {
+		t.Fatal("PathPersisted() error = nil, want an error when no pathStoreFactory is wired in")
+	}
+}
+
+// TestLivePathContains_TrueWhenDirIsInProcessPath covers the common case: dir is one of the
+// current process's live PATH entries.
+func TestLivePathContains_TrueWhenDirIsInProcessPath(t *testing.T) {
+	dir := filepath.Join("C:", "Users", "dev", "go", "bin")
+	other := filepath.Join("C:", "Windows", "system32")
+	t.Setenv("PATH", other+string(os.PathListSeparator)+dir)
+
+	if !LivePathContains(dir) {
+		t.Fatalf("LivePathContains(%q) = false, want true (present in os.Getenv(\"PATH\"))", dir)
+	}
+}
+
+// TestLivePathContains_FalseWhenDirIsNotInProcessPath triangulates the happy path above with a dir
+// that is genuinely absent from the live PATH.
+func TestLivePathContains_FalseWhenDirIsNotInProcessPath(t *testing.T) {
+	other := filepath.Join("C:", "Windows", "system32")
+	t.Setenv("PATH", other)
+
+	dir := filepath.Join("C:", "Users", "dev", "go", "bin")
+	if LivePathContains(dir) {
+		t.Fatalf("LivePathContains(%q) = true, want false (absent from os.Getenv(\"PATH\"))", dir)
+	}
+}
+
+// TestLivePathContains_NormalizesTrailingSeparator proves the comparison goes through sameDir's
+// filepath.Clean normalization (matching PATH-entry semantics), not a brittle exact string match.
+func TestLivePathContains_NormalizesTrailingSeparator(t *testing.T) {
+	dir := filepath.Join("C:", "Users", "dev", "go", "bin")
+	t.Setenv("PATH", dir+string(filepath.Separator))
+
+	if !LivePathContains(dir) {
+		t.Fatalf("LivePathContains(%q) = false, want true even though the PATH entry has a trailing separator", dir)
+	}
+}
+
+// TestSetPathPersistedProbeForTests_OverridesAndRestores proves the cross-package injection seam
+// downstream packages (click doctor, the CLI's own test suite) rely on actually swaps PathPersisted's
+// behavior and restores the pathStoreFactory-backed default afterward.
+func TestSetPathPersistedProbeForTests_OverridesAndRestores(t *testing.T) {
+	restore := SetPathPersistedProbeForTests(func(dir string) (bool, error) { return true, nil })
+
+	got, err := PathPersisted("anything")
+	if err != nil || !got {
+		t.Fatalf("PathPersisted() = (%v, %v), want (true, nil) from the injected probe", got, err)
+	}
+
+	restore()
+	restoreNilFactory := SetPathStoreFactoryForTests(nil)
+	defer restoreNilFactory()
+	if _, err := PathPersisted("anything"); err == nil {
+		t.Fatal("PathPersisted() after restore() still behaves like the injected always-true probe, want the default pathStoreFactory-backed behavior (erroring here since the factory is nil)")
+	}
+}
+
+// TestSetLivePathContainsProbeForTests_OverridesAndRestores mirrors
+// TestSetPathPersistedProbeForTests_OverridesAndRestores for LivePathContains's own seam.
+func TestSetLivePathContainsProbeForTests_OverridesAndRestores(t *testing.T) {
+	t.Setenv("PATH", "")
+	dir := "definitely-not-on-the-fake-empty-PATH"
+
+	restore := SetLivePathContainsProbeForTests(func(dir string) bool { return true })
+	if !LivePathContains(dir) {
+		t.Fatal("LivePathContains() = false, want true from the injected probe")
+	}
+
+	restore()
+	if LivePathContains(dir) {
+		t.Fatal("LivePathContains() after restore() still behaves like the injected always-true probe, want the default os.Getenv(\"PATH\")-backed behavior")
+	}
+}
