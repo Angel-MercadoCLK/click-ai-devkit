@@ -134,16 +134,31 @@ var createTempFile = func(dir, pattern string) (tempFileWriter, error) {
 }
 
 // atomicWriteFile writes content to path atomically: it creates a temp file in the SAME directory
-// as path (so the final rename is on the same filesystem and therefore atomic on POSIX), writes
-// content, fsyncs, closes, chmods to mode, then renames the temp file onto path. On any error at
-// any step, it removes the temp file and returns the error — path itself is never touched until
-// the final rename, so a failure at any earlier step leaves the original file byte-for-byte
-// intact.
+// as path's REAL write target (so the final rename is on the same filesystem and therefore atomic
+// on POSIX), writes content, fsyncs, closes, chmods to mode, then renames the temp file onto the
+// real target. On any error at any step, it removes the temp file and returns the error — the
+// target is never touched until the final rename, so a failure at any earlier step leaves the
+// original file byte-for-byte intact.
+//
+// Symlink safety: if path is itself a symlink (e.g. ~/.bashrc -> ~/dotfiles/bashrc, the standard
+// chezmoi/GNU-stow/dotbot/yadm dotfiles pattern), POSIX rename(2) does NOT follow a symlink at the
+// destination — it atomically replaces the directory entry AT that path, which would silently
+// de-symlink it (path becomes a brand-new plain file; the real tracked file the symlink pointed at
+// is left stale and orphaned). To avoid that, atomicWriteFile resolves path to its real underlying
+// target first (via resolveWriteTarget) and writes/renames onto THAT path instead — the symlink
+// itself is left completely undisturbed, still pointing at the same place, now with updated
+// content at that real location. A non-symlink path is unaffected: resolveWriteTarget returns it
+// unchanged.
 func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
+	target, err := resolveWriteTarget(path)
+	if err != nil {
+		return fmt.Errorf("installer: resolve write target for %s: %w", path, err)
+	}
+
+	dir := filepath.Dir(target)
 	tmp, err := createTempFile(dir, ".click-*")
 	if err != nil {
-		return fmt.Errorf("installer: create temp file for %s: %w", path, err)
+		return fmt.Errorf("installer: create temp file for %s: %w", target, err)
 	}
 	tmpName := tmp.Name()
 	defer func() {
@@ -155,20 +170,47 @@ func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
 
 	if _, err := tmp.Write(content); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("installer: write temp file for %s: %w", path, err)
+		return fmt.Errorf("installer: write temp file for %s: %w", target, err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("installer: sync temp file for %s: %w", path, err)
+		return fmt.Errorf("installer: sync temp file for %s: %w", target, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("installer: close temp file for %s: %w", path, err)
+		return fmt.Errorf("installer: close temp file for %s: %w", target, err)
 	}
 	if err := os.Chmod(tmpName, mode); err != nil {
-		return fmt.Errorf("installer: chmod temp file for %s: %w", path, err)
+		return fmt.Errorf("installer: chmod temp file for %s: %w", target, err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("installer: rename temp file to %s: %w", path, err)
+	if err := os.Rename(tmpName, target); err != nil {
+		return fmt.Errorf("installer: rename temp file to %s: %w", target, err)
 	}
 	return nil
+}
+
+// resolveWriteTarget resolves the REAL path atomicWriteFile must write/rename onto: path itself,
+// unless path is a symlink, in which case it returns the symlink's fully-resolved real target so
+// the eventual rename replaces the real file's directory entry, not the symlink's. Three cases:
+//   - path does not exist yet (new file, e.g. a fresh install writing a brand-new rc file):
+//     returns path unchanged, nil error — there is nothing to resolve.
+//   - path exists and is NOT a symlink: returns path unchanged, nil error — existing behavior.
+//   - path exists and IS a symlink: returns filepath.EvalSymlinks(path) (fully resolving the whole
+//     chain, including any symlinked parent directories), or a wrapped error if the symlink is
+//     broken (its target does not exist) or otherwise cannot be resolved.
+func resolveWriteTarget(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return path, nil
+		}
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	return real, nil
 }

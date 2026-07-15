@@ -180,6 +180,114 @@ func TestAtomicWriteFile_InjectedWriteErrorLeavesOriginalIntact(t *testing.T) {
 	}
 }
 
+// requireSymlinkSupport skips the calling test when the current process/platform cannot create
+// symlinks (e.g. a Windows host without Developer Mode or admin privileges — os.Symlink there
+// fails with an "El cliente no dispone de un privilegio requerido" / ERROR_PRIVILEGE_NOT_HELD
+// style error). This keeps `go test ./...` green on such Windows hosts while still exercising the
+// real symlink behavior for real on any platform that does support it (Linux, macOS, or a Windows
+// host with Developer Mode / admin).
+func requireSymlinkSupport(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	target := filepath.Join(dir, "symlink-support-probe-target")
+	link := filepath.Join(dir, "symlink-support-probe-link")
+	if err := os.WriteFile(target, []byte("probe"), 0o644); err != nil {
+		t.Fatalf("WriteFile(probe target) error = %v", err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink creation not permitted on this platform/host: %v", err)
+	}
+}
+
+// TestAtomicWriteFile_SymlinkedTargetWritesThroughSymlinkPreservingIt is the required regression
+// test for the R1-001 finding: when path is a symlink (e.g. ~/.bashrc -> ~/dotfiles/bashrc, the
+// standard chezmoi/GNU-stow/dotbot/yadm dotfiles pattern), atomicWriteFile must write through the
+// symlink to its real target and leave the symlink itself completely undisturbed — not replace the
+// symlink's own directory entry with a plain file (which would silently de-symlink it and orphan
+// the user's tracked dotfiles-repo file).
+func TestAtomicWriteFile_SymlinkedTargetWritesThroughSymlinkPreservingIt(t *testing.T) {
+	requireSymlinkSupport(t)
+
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	linkDir := filepath.Join(root, "linked")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(realDir) error = %v", err)
+	}
+	if err := os.MkdirAll(linkDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(linkDir) error = %v", err)
+	}
+
+	realTarget := filepath.Join(realDir, "bashrc")
+	if err := os.WriteFile(realTarget, []byte("original content\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(realTarget) error = %v", err)
+	}
+
+	symlinkPath := filepath.Join(linkDir, "bashrc")
+	if err := os.Symlink(realTarget, symlinkPath); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	if err := atomicWriteFile(symlinkPath, []byte("updated content\n"), 0o644); err != nil {
+		t.Fatalf("atomicWriteFile() error = %v", err)
+	}
+
+	info, err := os.Lstat(symlinkPath)
+	if err != nil {
+		t.Fatalf("Lstat(symlinkPath) error = %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlinkPath is no longer a symlink after atomicWriteFile (mode = %v) — it was destructively de-symlinked", info.Mode())
+	}
+	gotTarget, err := os.Readlink(symlinkPath)
+	if err != nil {
+		t.Fatalf("Readlink(symlinkPath) error = %v", err)
+	}
+	realTargetResolved, err := filepath.EvalSymlinks(realTarget)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(realTarget) error = %v", err)
+	}
+	gotTargetResolved, err := filepath.EvalSymlinks(gotTarget)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(gotTarget) error = %v", err)
+	}
+	if gotTargetResolved != realTargetResolved {
+		t.Fatalf("Readlink(symlinkPath) = %q, want it to still point at %q", gotTarget, realTarget)
+	}
+
+	gotContent, err := os.ReadFile(realTarget)
+	if err != nil {
+		t.Fatalf("ReadFile(realTarget) error = %v", err)
+	}
+	if string(gotContent) != "updated content\n" {
+		t.Fatalf("realTarget content = %q, want %q", gotContent, "updated content\n")
+	}
+}
+
+// TestAtomicWriteFile_BrokenSymlinkReturnsClearError covers the "handle resolution failure
+// gracefully" requirement: a symlink whose target does not exist must produce a clear wrapped
+// error from atomicWriteFile, not a panic and not a silent fallback that writes somewhere
+// unexpected. The broken symlink itself must survive untouched.
+func TestAtomicWriteFile_BrokenSymlinkReturnsClearError(t *testing.T) {
+	requireSymlinkSupport(t)
+
+	dir := t.TempDir()
+	missingTarget := filepath.Join(dir, "does-not-exist")
+	link := filepath.Join(dir, "broken-link")
+	if err := os.Symlink(missingTarget, link); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	err := atomicWriteFile(link, []byte("content that must never land anywhere"), 0o644)
+	if err == nil {
+		t.Fatal("atomicWriteFile() error = nil, want a clear error for a broken symlink target")
+	}
+
+	if _, statErr := os.Lstat(link); statErr != nil {
+		t.Fatalf("Lstat(link) error = %v, the broken symlink itself must survive an error return", statErr)
+	}
+}
+
 // fakePathStore is a trivial pathStore double used only to prove SetPathStoreFactoryForTests
 // actually overrides (and later restores) pathStoreFactory.
 type fakePathStore struct{}
