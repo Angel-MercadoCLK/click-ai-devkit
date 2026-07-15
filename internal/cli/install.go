@@ -48,6 +48,16 @@ func runInstall(cmd *cobra.Command) error {
 
 	fmt.Fprintln(out, r.Banner())
 
+	// PreflightGit must run before anything else — including the interactive model-selection TUI
+	// below. `click install` registers the plugin marketplace via `claude plugin marketplace add`,
+	// which shells out to `git clone` under the hood; on a machine with no git on PATH that clone
+	// used to fail deep inside plugin registration with a cryptic error, well after the developer
+	// had already gone through the TUI (reproduced live on a fresh Windows VM). Failing fast here
+	// means a developer on a fresh machine finds out instantly, not after an interactive detour.
+	if err := installer.PreflightGit(); err != nil {
+		return err
+	}
+
 	claudeHome, err := installer.ResolveClaudeHome()
 	if err != nil {
 		return err

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -28,9 +29,39 @@ func seedResolvableEngram(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_BINARY_PATH", bin)
 }
 
+// cliFakeBinaryLookup fakes PATH resolution for installer.BinaryLookup, mirroring the same
+// injectable pattern already used for the Engram binary/Go toolchain lookups
+// (internal/installer/engram_test.go's fakeBinaryLookup) so CLI-level tests never depend on
+// whether the real test machine happens to have git on PATH.
+type cliFakeBinaryLookup struct {
+	resolved map[string]string
+}
+
+func (f cliFakeBinaryLookup) LookPath(name string) (string, error) {
+	if path, ok := f.resolved[name]; ok {
+		return path, nil
+	}
+	return "", fmt.Errorf("cliFakeBinaryLookup: not found: %s", name)
+}
+
+// seedResolvableGit makes installer.GitAvailable/GitPath (and therefore runInstall/runUpdate's
+// PreflightGit) see git as resolvable, so `execRoot`'s install/update-driven CLI tests are
+// deterministic regardless of the host PATH — the same rationale as seedResolvableEngram above.
+// execRoot calls this by default; tests that specifically exercise the "git missing" preflight
+// path build their own cobra command instead of going through execRoot (see
+// TestInstallCommand_GitMissing_AbortsBeforeMarketplaceRegistration).
+func seedResolvableGit(t *testing.T) {
+	t.Helper()
+	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git"}}
+	})
+	t.Cleanup(restore)
+}
+
 func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	seedResolvableGit(t)
 
 	root := NewRootCommand()
 	var buf bytes.Buffer
@@ -216,6 +247,103 @@ func TestInstallCommand_Succeeds(t *testing.T) {
 	}
 	if !strings.Contains(out, "CLAUDE.md") {
 		t.Errorf("install output = %q, want it to mention the CLAUDE.md step", out)
+	}
+}
+
+// execRootWithGitLookup is execRoot's shape, but wired with an explicit installer.BinaryLookup
+// instead of execRoot's own default seedResolvableGit — used exclusively by the "git missing"
+// preflight tests below, where the whole point is to simulate git being absent from PATH.
+func execRootWithGitLookup(t *testing.T, claudeHome string, lookup installer.BinaryLookup, args ...string) (string, error) {
+	t.Helper()
+	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup { return lookup })
+	defer restore()
+
+	root := NewRootCommand()
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs(args)
+
+	err := root.Execute()
+	return buf.String(), err
+}
+
+// TestInstallCommand_GitMissing_AbortsBeforeMarketplaceRegistration reproduces the exact bug
+// fixed here — `click install` on a machine with no git on PATH used to fail deep inside plugin
+// registration with a cryptic "Command git not found or is in an unsafe location" error, well
+// after the interactive model-selection TUI had already run. With PreflightGit wired in at the top
+// of runInstall, a missing git must now abort BEFORE any marketplace/plugin registration command is
+// ever issued — verified here via the fake CommandRunner recording zero commands at all.
+func TestInstallCommand_GitMissing_AbortsBeforeMarketplaceRegistration(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	missingGit := cliFakeBinaryLookup{resolved: map[string]string{}}
+
+	out, err := execRootWithGitLookup(t, home, missingGit, "install")
+	if err == nil {
+		t.Fatalf("install command error = nil when git is missing from PATH, want a non-nil actionable error, output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), installer.GitMissingMessage) {
+		t.Fatalf("install command error = %q, want it to contain the actionable message %q", err.Error(), installer.GitMissingMessage)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want zero commands issued — install must abort before touching the marketplace when git is missing", runner.commands)
+	}
+}
+
+// TestInstallCommand_GitPresent_ProceedsToMarketplaceRegistration is the GREEN counterpart: with
+// git resolvable, PreflightGit must not block the install, and marketplace registration proceeds
+// exactly as before this fix.
+func TestInstallCommand_GitPresent_ProceedsToMarketplaceRegistration(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	presentGit := cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git"}}
+
+	out, err := execRootWithGitLookup(t, home, presentGit, "install")
+	if err != nil {
+		t.Fatalf("install command error = %v when git is present, output:\n%s", err, out)
+	}
+	if len(runner.commands) == 0 {
+		t.Fatal("runner.commands is empty, want install to have issued marketplace/plugin registration commands when git is present")
+	}
+	wantCommand := "claude plugin marketplace add"
+	found := false
+	for _, c := range runner.commands {
+		if strings.HasPrefix(c, wantCommand) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("runner.commands = %#v, want it to contain a %q command", runner.commands, wantCommand)
+	}
+}
+
+// TestUpdateCommand_GitMissing_AbortsBeforeMarketplaceRegistration mirrors the install preflight
+// test above for `click update`, which also re-syncs the marketplace (SyncMarketplacePlugins) and
+// therefore also needs git.
+func TestUpdateCommand_GitMissing_AbortsBeforeMarketplaceRegistration(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	missingGit := cliFakeBinaryLookup{resolved: map[string]string{}}
+
+	out, err := execRootWithGitLookup(t, home, missingGit, "update")
+	if err == nil {
+		t.Fatalf("update command error = nil when git is missing from PATH, want a non-nil actionable error, output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), installer.GitMissingMessage) {
+		t.Fatalf("update command error = %q, want it to contain the actionable message %q", err.Error(), installer.GitMissingMessage)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want zero commands issued — update must abort before touching the marketplace when git is missing", runner.commands)
 	}
 }
 

@@ -21,6 +21,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	r := rendererFor(cmd, out)
 
+	// PreflightGit must run before anything else: `click update` re-syncs the plugin marketplace
+	// via SyncMarketplacePlugins, exactly like `click install` does, and that shells out to
+	// `git clone` under the hood — see runInstall's PreflightGit call for the full rationale.
+	if err := installer.PreflightGit(); err != nil {
+		return err
+	}
+
 	claudeHome, err := installer.ResolveClaudeHome()
 	if err != nil {
 		return err
