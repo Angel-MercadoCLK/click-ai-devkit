@@ -190,6 +190,7 @@ func TestSetPathStoreFactoryForTests_OverridesAndRestores(t *testing.T) {
 	}
 
 	restore := SetPathStoreFactoryForTests(func() pathStore { return fakePathStore{} })
+	defer restore()
 
 	got := pathStoreFactory()
 	if _, ok := got.(fakePathStore); !ok {
