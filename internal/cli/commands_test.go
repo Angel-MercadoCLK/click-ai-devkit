@@ -27,6 +27,15 @@ func seedResolvableEngram(t *testing.T) {
 		t.Fatalf("seed engram binary: %v", err)
 	}
 	t.Setenv("CLICK_ENGRAM_BINARY_PATH", bin)
+
+	// checkEngramPath (`click doctor`'s PERSISTED-vs-LIVE PATH drift diagnosis, sdd/engram-mcp-
+	// resolution obs #1436) reads the REAL platform pathStore (Windows registry / POSIX shell rc)
+	// and the REAL live process PATH by default — neither of which this fake, hermetic CLI test
+	// suite controls or wants to depend on. Force both probes to report a healthy (persisted AND
+	// live) state so `click doctor` after a successful install is deterministic here regardless of
+	// the actual test machine's real PATH/registry state.
+	t.Cleanup(installer.SetPathPersistedProbeForTests(func(dir string) (bool, error) { return true, nil }))
+	t.Cleanup(installer.SetLivePathContainsProbeForTests(func(dir string) bool { return true }))
 }
 
 // cliFakeBinaryLookup fakes PATH resolution for installer.BinaryLookup, mirroring the same
@@ -168,8 +177,23 @@ func (r *testCommandRunner) removeMCPServer(name string) error {
 	return os.WriteFile(r.context7ConfigPath(), raw, 0o600)
 }
 
+// Output answers `go env GOBIN`/`go env GOPATH` with a realistic, deterministic result — GOBIN
+// unset (the common case, empty string, same as a real machine that never ran `go env -w
+// GOBIN=...`) and GOPATH resolving under the fake ClaudeHome — so installer.GoBinDir (consulted by
+// EnsureEngramBinary's persistPathToBinaryDir and by `click doctor`'s checkEngramPath,
+// sdd/engram-mcp-resolution obs #1436) always resolves successfully here, instead of erroring on
+// the previous unconditional empty-bytes stub. Every other command still gets the previous
+// no-op/empty-bytes behavior.
 func (r *testCommandRunner) Output(name string, args ...string) ([]byte, error) {
 	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
+	if name == "go" && len(args) == 2 && args[0] == "env" {
+		switch args[1] {
+		case "GOBIN":
+			return []byte("\n"), nil
+		case "GOPATH":
+			return []byte(filepath.Join(r.home, "go") + "\n"), nil
+		}
+	}
 	return []byte{}, nil
 }
 

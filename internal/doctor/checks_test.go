@@ -67,6 +67,8 @@ func TestRun_AfterInstall_ReportsHealthy(t *testing.T) {
 		t.Fatalf("WriteFile(binary) error = %v", err)
 	}
 	t.Setenv("CLICK_ENGRAM_BINARY_PATH", binaryPath)
+	restoreEngramPath := seedEngramPathHealthy(t)
+	defer restoreEngramPath()
 	seedContext7Registered(t, cfg)
 
 	report := Run(cfg)
@@ -114,7 +116,7 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 
 	const wantChecks = 9 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (git, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, context7 MCP)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d (git, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, context7 MCP)", len(report.Checks), wantChecks)
 	}
 }
 
@@ -325,6 +327,173 @@ func TestCheckContext7_ReportsHealthyWhenRegistered(t *testing.T) {
 	}
 	if !checked {
 		t.Fatal(`Run() did not include a "context7 MCP" check`)
+	}
+}
+
+// fakeGoEnvCommandRunner fakes `go env GOBIN`/`go env GOPATH` resolution for
+// installer.GoBinDir's CommandRunner dependency, mirroring fakeGitLookup's role for checkGit's
+// BinaryLookup dependency — so checkEngramPath's tests never depend on the real test machine's
+// actual Go toolchain configuration. An empty gobin (and therefore empty GOBIN AND GOPATH, since
+// this fake answers every `go env` query with gobin) reproduces GoBinDir's "neither resolves"
+// error path.
+type fakeGoEnvCommandRunner struct {
+	gobin string
+}
+
+func (f fakeGoEnvCommandRunner) Run(name string, args ...string) error { return nil }
+
+func (f fakeGoEnvCommandRunner) Output(name string, args ...string) ([]byte, error) {
+	if name == "go" && len(args) == 2 && args[0] == "env" && args[1] == "GOBIN" {
+		return []byte(f.gobin + "\n"), nil
+	}
+	return []byte("\n"), nil
+}
+
+// seedResolvableGoBinDir makes installer.GoBinDir resolve deterministically to gobin, regardless of
+// the real test machine's actual Go toolchain configuration. Returns the restore func.
+func seedResolvableGoBinDir(t *testing.T, gobin string) func() {
+	t.Helper()
+	return installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner {
+		return fakeGoEnvCommandRunner{gobin: gobin}
+	})
+}
+
+// setEngramPathProbes overrides checkEngramPath's two dependencies — installer.PathPersisted and
+// installer.LivePathContains — via their exported cross-package test seams, so its four
+// PERSISTED/LIVE combinations are deterministic regardless of the real test machine's
+// registry/shell-rc/live-PATH state. Returns the combined restore func.
+func setEngramPathProbes(persisted, live bool) func() {
+	restorePersisted := installer.SetPathPersistedProbeForTests(func(dir string) (bool, error) { return persisted, nil })
+	restoreLive := installer.SetLivePathContainsProbeForTests(func(dir string) bool { return live })
+	return func() {
+		restoreLive()
+		restorePersisted()
+	}
+}
+
+// seedEngramPathHealthy makes checkEngramPath deterministically report healthy (persisted AND
+// live), mirroring seedResolvableGit's role for checkGit in TestRun_AfterInstall_ReportsHealthy.
+// Returns the restore func.
+func seedEngramPathHealthy(t *testing.T) func() {
+	t.Helper()
+	restoreRunner := seedResolvableGoBinDir(t, filepath.Join(t.TempDir(), "gobin"))
+	restoreProbes := setEngramPathProbes(true, true)
+	return func() {
+		restoreProbes()
+		restoreRunner()
+	}
+}
+
+// TestCheckEngramPath_PersistedAndLive_ReportsHealthy covers state 1/4: everything lines up right
+// now (a fresh install/update ran and this session already sees the result) — healthy.
+func TestCheckEngramPath_PersistedAndLive_ReportsHealthy(t *testing.T) {
+	restoreRunner := seedResolvableGoBinDir(t, filepath.Join(t.TempDir(), "gobin"))
+	defer restoreRunner()
+	restoreProbes := setEngramPathProbes(true, true)
+	defer restoreProbes()
+
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	c := checkEngramPath(cfg)
+
+	if !c.Healthy {
+		t.Fatalf("checkEngramPath() Healthy = false, want true when persisted AND live: %s", c.Detail)
+	}
+}
+
+// TestCheckEngramPath_PersistedButNotLive_ReportsHealthyWithRestartMessage covers state 2/4 — the
+// exact bug class this change targets: a PATH fix was already persisted (a prior install/update
+// succeeded) but THIS session (or any already-running Claude Code) still has a stale live PATH.
+// This must be non-fatal (Healthy: true, the persisted state is correct going forward) but visible
+// (an actionable restart message in Detail) — never a hard doctor failure.
+func TestCheckEngramPath_PersistedButNotLive_ReportsHealthyWithRestartMessage(t *testing.T) {
+	restoreRunner := seedResolvableGoBinDir(t, filepath.Join(t.TempDir(), "gobin"))
+	defer restoreRunner()
+	restoreProbes := setEngramPathProbes(true, false)
+	defer restoreProbes()
+
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	c := checkEngramPath(cfg)
+
+	if !c.Healthy {
+		t.Fatalf("checkEngramPath() Healthy = false, want true (non-fatal) for persisted-but-not-live drift: %s", c.Detail)
+	}
+	if !strings.Contains(c.Detail, "reiniciá") {
+		t.Fatalf("checkEngramPath() Detail = %q, want an actionable message telling the user to restart their terminal/Claude Code", c.Detail)
+	}
+}
+
+// TestCheckEngramPath_NotPersistedButLive_ReportsHealthy covers state 3/4, the edge case: dir
+// resolves in THIS session's live PATH even though click never persisted it (e.g. a developer's own
+// manual `export PATH=...`). It resolves right now, so it is healthy — click just didn't put it
+// there, which is not itself a problem this check should flag.
+func TestCheckEngramPath_NotPersistedButLive_ReportsHealthy(t *testing.T) {
+	restoreRunner := seedResolvableGoBinDir(t, filepath.Join(t.TempDir(), "gobin"))
+	defer restoreRunner()
+	restoreProbes := setEngramPathProbes(false, true)
+	defer restoreProbes()
+
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	c := checkEngramPath(cfg)
+
+	if !c.Healthy {
+		t.Fatalf("checkEngramPath() Healthy = false, want true when live even though not persisted: %s", c.Detail)
+	}
+}
+
+// TestCheckEngramPath_NeitherPersistedNorLive_ReportsUnhealthy covers state 4/4: genuinely not
+// configured at all — the only state that must fail `click doctor`.
+func TestCheckEngramPath_NeitherPersistedNorLive_ReportsUnhealthy(t *testing.T) {
+	restoreRunner := seedResolvableGoBinDir(t, filepath.Join(t.TempDir(), "gobin"))
+	defer restoreRunner()
+	restoreProbes := setEngramPathProbes(false, false)
+	defer restoreProbes()
+
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	c := checkEngramPath(cfg)
+
+	if c.Healthy {
+		t.Fatal("checkEngramPath() Healthy = true, want false when neither persisted nor live")
+	}
+}
+
+// TestCheckEngramPath_PersistedProbeError_ReportsUnhealthy guards the persisted-PATH probe's own
+// error path (e.g. a broken registry read / unreadable rc file) — this must surface as unhealthy,
+// not be silently swallowed or misreported as a healthy drift state.
+func TestCheckEngramPath_PersistedProbeError_ReportsUnhealthy(t *testing.T) {
+	restoreRunner := seedResolvableGoBinDir(t, filepath.Join(t.TempDir(), "gobin"))
+	defer restoreRunner()
+
+	wantErr := errors.New("registry closed")
+	restorePersisted := installer.SetPathPersistedProbeForTests(func(dir string) (bool, error) { return false, wantErr })
+	defer restorePersisted()
+	restoreLive := installer.SetLivePathContainsProbeForTests(func(dir string) bool { return true })
+	defer restoreLive()
+
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	c := checkEngramPath(cfg)
+
+	if c.Healthy {
+		t.Fatal("checkEngramPath() Healthy = true, want false when the persisted-PATH probe itself errors")
+	}
+	if !strings.Contains(c.Detail, wantErr.Error()) {
+		t.Fatalf("checkEngramPath() Detail = %q, want it to surface the probe error %q", c.Detail, wantErr.Error())
+	}
+}
+
+// TestCheckEngramPath_GoBinDirError_ReportsUnhealthy guards the "can't even resolve the Go bin dir"
+// path (no go toolchain / no GOBIN / no GOPATH) — checkEngramPath must fail closed, not panic or
+// silently report healthy.
+func TestCheckEngramPath_GoBinDirError_ReportsUnhealthy(t *testing.T) {
+	restore := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner {
+		return fakeGoEnvCommandRunner{gobin: ""}
+	})
+	defer restore()
+
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	c := checkEngramPath(cfg)
+
+	if c.Healthy {
+		t.Fatal("checkEngramPath() Healthy = true, want false when GoBinDir itself cannot resolve")
 	}
 }
 
