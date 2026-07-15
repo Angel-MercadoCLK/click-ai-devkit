@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -433,6 +434,73 @@ func TestPersistedPathContains_FreshFalseThenTrueAfterEnsure(t *testing.T) {
 	}
 	if !after {
 		t.Fatal("PersistedPathContains() = false after EnsureOnPath, want true")
+	}
+}
+
+// TestPersistedPathContains_BashPartialWriteAcrossTargetsIsNotPresent is the required regression
+// test for the R4-001-resilience finding: PersistedPathContains must NOT report "already present"
+// just because ONE of bash's two target files (the login-chain file) contains dir — it must
+// require EVERY applicable target file to contain dir before reporting true. This simulates a
+// prior EnsureOnPath run that wrote the login-chain file but crashed/failed before reaching
+// .bashrc (disk full, interrupted process, etc.) — a realistic partial multi-file-write failure
+// that the old ANY-match logic silently masked forever.
+func TestPersistedPathContains_BashPartialWriteAcrossTargetsIsNotPresent(t *testing.T) {
+	home := t.TempDir()
+	resetPosixEnv(t, home, "/bin/bash")
+	dir := "/home/dev/go/bin"
+
+	loginFile := filepath.Join(home, ".bash_profile")
+	content := strings.Join(buildPosixManagedBlock(dir), "\n") + "\n"
+	if err := os.WriteFile(loginFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(.bash_profile) error = %v", err)
+	}
+	// .bashrc intentionally NOT written — the login-chain file already covers dir, but .bashrc
+	// (bash's other required target) never got the PATH addition.
+
+	got, err := osPathStore{}.PersistedPathContains(dir)
+	if err != nil {
+		t.Fatalf("PersistedPathContains() error = %v", err)
+	}
+	if got {
+		t.Fatal("PersistedPathContains() = true, want false: dir is present in only ONE of bash's two required target files (partial write), not both")
+	}
+}
+
+// TestPersistedPathContains_BashBothTargetsPresentIsTrue triangulates the AND-based check against
+// the partial-write case above: once BOTH bash target files genuinely contain dir (as a full,
+// successful EnsureOnPath run guarantees), PersistedPathContains must report true.
+func TestPersistedPathContains_BashBothTargetsPresentIsTrue(t *testing.T) {
+	home := t.TempDir()
+	resetPosixEnv(t, home, "/bin/bash")
+	dir := "/home/dev/go/bin"
+
+	if _, err := (osPathStore{}).EnsureOnPath(dir); err != nil {
+		t.Fatalf("EnsureOnPath() error = %v", err)
+	}
+
+	got, err := osPathStore{}.PersistedPathContains(dir)
+	if err != nil {
+		t.Fatalf("PersistedPathContains() error = %v", err)
+	}
+	if !got {
+		t.Fatal("PersistedPathContains() = false, want true: EnsureOnPath wrote dir into BOTH of bash's target files")
+	}
+}
+
+// TestPersistedPathContains_FishShellAlwaysFalse covers the empty-targets branch explicitly: fish
+// has zero applicable target files (posixShellTargets returns nil, nil), so there is nothing to
+// check — PersistedPathContains must report false, not vacuously true.
+func TestPersistedPathContains_FishShellAlwaysFalse(t *testing.T) {
+	home := t.TempDir()
+	resetPosixEnv(t, home, "/usr/bin/fish")
+	dir := "/home/dev/go/bin"
+
+	got, err := osPathStore{}.PersistedPathContains(dir)
+	if err != nil {
+		t.Fatalf("PersistedPathContains() error = %v, want nil for fish", err)
+	}
+	if got {
+		t.Fatal("PersistedPathContains() = true for fish, want false (no target files to check)")
 	}
 }
 

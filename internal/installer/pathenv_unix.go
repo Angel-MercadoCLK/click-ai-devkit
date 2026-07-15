@@ -60,24 +60,33 @@ func init() {
 type osPathStore struct{}
 
 // PersistedPathContains reports whether dir is already present in the persisted user PATH: true
-// if ANY of the current shell's target rc files already contains a PATH-setting line that yields
-// dir once variables are expanded (click's own managed block counts too, since it's a normal
-// `export PATH=...` line like any other).
+// only if EVERY one of the current shell's target rc files already contains a PATH-setting line
+// that yields dir once variables are expanded (click's own managed block counts too, since it's a
+// normal `export PATH=...` line like any other). This mirrors what a fully successful EnsureOnPath
+// run guarantees — bash's login-chain file and .bashrc are read by different session types, so
+// both must independently end up correct before dir can be considered genuinely persisted.
+// Requiring only ONE target to match would silently mask a partial write (e.g. a prior EnsureOnPath
+// run that wrote the login-chain file but crashed/failed before reaching .bashrc). If there are no
+// applicable target files (fish shell — posixShellTargets returns nil), there is nothing to check,
+// so this reports false, not vacuously true.
 func (osPathStore) PersistedPathContains(dir string) (bool, error) {
 	targets, err := posixShellTargets()
 	if err != nil {
 		return false, err
+	}
+	if len(targets) == 0 {
+		return false, nil
 	}
 	for _, path := range targets {
 		content, err := readFileOrEmpty(path)
 		if err != nil {
 			return false, fmt.Errorf("installer: read %s: %w", path, err)
 		}
-		if rcContainsDir(content, dir) {
-			return true, nil
+		if !rcContainsDir(content, dir) {
+			return false, nil
 		}
 	}
-	return false, nil
+	return true, nil
 }
 
 // EnsureOnPath adds dir to every applicable target rc file that doesn't already provide it
