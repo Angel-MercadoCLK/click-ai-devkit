@@ -50,6 +50,7 @@ func (r Report) Healthy() bool {
 // filesystem.
 func Run(cfg installer.Config) Report {
 	return Report{Checks: []CheckResult{
+		checkGit(cfg),
 		checkPlugin(cfg),
 		checkMemoryPlugin(cfg),
 		checkReviewPlugin(cfg),
@@ -62,6 +63,25 @@ func Run(cfg installer.Config) Report {
 		checkEngramBinary(cfg),
 		checkContext7(cfg),
 	}}
+}
+
+// checkGit reports whether git is resolvable on PATH. It is foundational and read first (NFR-012:
+// read-only — it only resolves PATH, never installs anything): click's plugin marketplace
+// registration (`claude plugin marketplace add <source>`, run by both `click install` and `click
+// update`) shells out to `git clone` under the hood, so a missing git breaks install/update deep
+// inside plugin registration with a cryptic error — reproduced live on a fresh Windows VM with no
+// git installed. When missing, Detail carries the exact same actionable message
+// installer.GitMissingMessage that `click install`/`click update`'s own PreflightGit uses, so
+// doctor and install/update never give a developer conflicting instructions (mirroring
+// checkEngramBinary's shared-message contract with EngramBinaryRemediationMessage).
+func checkGit(cfg installer.Config) CheckResult {
+	const name = "git"
+
+	path, ok := installer.GitPath()
+	if ok {
+		return CheckResult{Name: name, Healthy: true, Detail: "resuelto en " + path}
+	}
+	return CheckResult{Name: name, Healthy: false, Detail: installer.GitMissingMessage}
 }
 
 func checkPlugin(cfg installer.Config) CheckResult {

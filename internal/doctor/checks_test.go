@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,31 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
+
+// fakeGitLookup fakes PATH resolution for checkGit's installer.GitPath/GitAvailable dependency,
+// mirroring the same injectable BinaryLookup pattern used for the Engram binary lookup
+// (internal/installer/engram_test.go's fakeBinaryLookup) — so these doctor tests never depend on
+// whether the real test machine actually has git installed.
+type fakeGitLookup struct {
+	resolved map[string]string
+}
+
+func (f fakeGitLookup) LookPath(name string) (string, error) {
+	if path, ok := f.resolved[name]; ok {
+		return path, nil
+	}
+	return "", errors.New("fakeGitLookup: not found: " + name)
+}
+
+// seedResolvableGit makes installer.GitAvailable/GitPath see git as resolvable on a fake PATH, so
+// doctor tests that assert overall Report.Healthy() are deterministic regardless of the real test
+// machine's PATH. Returns the restore func so callers can defer it.
+func seedResolvableGit(t *testing.T) func() {
+	t.Helper()
+	return installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return fakeGitLookup{resolved: map[string]string{"git": "/usr/bin/git"}}
+	})
+}
 
 func TestRun_BeforeInstall_ReportsUnhealthy(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
@@ -27,6 +53,8 @@ func TestRun_BeforeInstall_ReportsUnhealthy(t *testing.T) {
 func TestRun_AfterInstall_ReportsHealthy(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 
+	restoreGit := seedResolvableGit(t)
+	defer restoreGit()
 	seedInstalledState(t, cfg)
 	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
 		t.Fatalf("WriteManagedBlock() error = %v", err)
@@ -84,9 +112,68 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	report := Run(cfg)
 
-	const wantChecks = 8 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 9 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, context7 MCP)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d (git, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, context7 MCP)", len(report.Checks), wantChecks)
+	}
+}
+
+// TestCheckGit_ReportsHealthyWhenResolvable guards the "present" branch: git resolvable on PATH
+// must report healthy, with the resolved path surfaced in Detail (mirroring checkEngramBinary's
+// "resuelto en <path>" shape).
+func TestCheckGit_ReportsHealthyWhenResolvable(t *testing.T) {
+	restore := seedResolvableGit(t)
+	defer restore()
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "git" {
+			continue
+		}
+		checked = true
+		if !c.Healthy {
+			t.Fatalf("checkGit reports unhealthy when git is resolvable: %s", c.Detail)
+		}
+		if !strings.Contains(c.Detail, "/usr/bin/git") {
+			t.Fatalf("checkGit Detail = %q, want it to contain the resolved path", c.Detail)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "git" check`)
+	}
+}
+
+// TestCheckGit_ReportsUnhealthyWithActionableMessageWhenMissing is the RED-then-GREEN core of the
+// doctor half of this fix: reproduces the fresh-machine "no git on PATH" scenario and asserts
+// checkGit's Detail carries the exact same actionable message `click install`'s preflight uses
+// (installer.GitMissingMessage) — doctor and install must never give conflicting instructions.
+func TestCheckGit_ReportsUnhealthyWithActionableMessageWhenMissing(t *testing.T) {
+	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return fakeGitLookup{resolved: map[string]string{}}
+	})
+	defer restore()
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "git" {
+			continue
+		}
+		checked = true
+		if c.Healthy {
+			t.Fatal("checkGit reports healthy when git is not resolvable on PATH, want unhealthy")
+		}
+		if c.Detail != installer.GitMissingMessage {
+			t.Fatalf("checkGit Detail = %q, want exactly installer.GitMissingMessage %q", c.Detail, installer.GitMissingMessage)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "git" check`)
 	}
 }
 
