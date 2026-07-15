@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
@@ -79,24 +80,30 @@ type engramState struct {
 // call would flip a click-owned install to "pre-existing" the moment click's OWN prior install
 // makes it look already-there, and RemoveEngramPlugin would then wrongly refuse to remove
 // something click actually added (caught by a real end-to-end run in Step 0, not just the fakes).
-func SyncEngram(cfg Config, m *manifest.Manifest) (alreadyInstalled bool, err error) {
+//
+// pathWarning (Phase 4 / D-5, sdd/engram-mcp-resolution obs #1436) is forwarded unchanged from
+// EnsureEngramBinary: non-empty ONLY when a PATH-persistence attempt was made and failed or
+// partly failed. It is never an error on its own — the binary is still resolvable regardless of
+// whether the persisted-PATH write succeeded — so callers surface it (e.g. via ui.Renderer.Warn),
+// they don't treat it as a reason to fail install/update.
+func SyncEngram(cfg Config, m *manifest.Manifest) (alreadyInstalled bool, pathWarning string, err error) {
 	alreadyInstalled, err = SyncEngramPlugin(cfg)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	// EnsureEngramBinary (Slice 3b) both resolves the binary path AND, when it's missing and Go is
 	// available, attempts to provision it via `go install`. It never fails this call — a missing
 	// binary/toolchain is reported via remediation, not an error — so its own error return here is
 	// reserved for genuine I/O failures resolving state, not "binary not found".
-	binaryPath, _, _, err := EnsureEngramBinary(cfg, m.Engram.Version)
+	binaryPath, _, _, pathWarning, err := EnsureEngramBinary(cfg, m.Engram.Version)
 	if err != nil {
-		return alreadyInstalled, err
+		return alreadyInstalled, "", err
 	}
 
 	installedByClick := !alreadyInstalled
 	existing, found, err := loadEngramState(cfg)
 	if err != nil {
-		return alreadyInstalled, err
+		return alreadyInstalled, pathWarning, err
 	}
 	if found {
 		installedByClick = existing.InstalledByClick
@@ -109,9 +116,9 @@ func SyncEngram(cfg Config, m *manifest.Manifest) (alreadyInstalled bool, err er
 		InstalledByClick: installedByClick,
 	}
 	if err := writeJSONFile(cfg.EngramStatePath(), state); err != nil {
-		return alreadyInstalled, fmt.Errorf("installer: write engram state: %w", err)
+		return alreadyInstalled, pathWarning, fmt.Errorf("installer: write engram state: %w", err)
 	}
-	return alreadyInstalled, nil
+	return alreadyInstalled, pathWarning, nil
 }
 
 // SyncEngramPlugin is the plugin-registration half of SyncEngram, split out so callers/tests can
@@ -304,24 +311,34 @@ func goAvailable() bool {
 // EnsureEngramBinary checks whether the Engram binary the plugin's bundled MCP server needs (bare,
 // PATH-resolved `command: "engram"`, confirmed in Slice 3's Step 0) is already resolvable, and — if
 // not — attempts to provision it via `go install <engramBinaryModulePath>@<version>` when the Go
-// toolchain is itself available on PATH. It never edits PATH, never downloads a release zip, and
-// never fails the caller: when provisioning genuinely can't happen (no Go, or `go install` ran but
-// the binary is still not resolvable afterward), it returns a non-empty remediation message for the
-// caller to surface, and the overall install/update flow continues regardless — a missing dev
-// dependency must never brick `click install`.
+// toolchain is itself available on PATH. It never downloads a release zip, and never fails the
+// caller for a provisioning problem: when the binary genuinely can't be provisioned (no Go, or `go
+// install` ran but the binary is still not resolvable afterward), it returns a non-empty
+// remediation message for the caller to surface, and the overall install/update flow continues
+// regardless — a missing dev dependency must never brick `click install`.
 //
 // Idempotent: once the binary is resolvable (whether it always was, or a previous call's `go
-// install` already made it so), a later call issues no command at all.
-func EnsureEngramBinary(cfg Config, version string) (path string, resolvable bool, remediation string, err error) {
+// install` already made it so), a later call issues no `go install` command at all.
+//
+// pathWarning (Phase 4 / D-5, sdd/engram-mcp-resolution obs #1436): once the binary is confirmed
+// resolvable, this also attempts to persist its containing Go bin dir onto the user's *persisted*
+// PATH via persistPathToBinaryDir — closing the original bug's root failure mode, where a fresh
+// `go install` makes the binary resolvable for the CURRENT shell only, and a brand-new terminal
+// session silently can't find it (the plugin's bundled MCP server then fails to connect with no
+// clear signal why). That persistence attempt can itself fail (no write permission, an
+// unrecognized shell, etc.); such a failure is captured into pathWarning, NOT propagated as err —
+// the binary IS still provisioned and resolvable, so a PATH-persistence hiccup must never make
+// EnsureEngramBinary itself report failure.
+func EnsureEngramBinary(cfg Config, version string) (path string, resolvable bool, remediation string, pathWarning string, err error) {
 	path, resolvable, err = EngramBinaryResolvable(cfg)
 	if err != nil {
-		return "", false, "", err
+		return "", false, "", "", err
 	}
 	if resolvable {
-		return path, true, "", nil
+		return path, true, "", persistPathToBinaryDir(cfg, path), nil
 	}
 	if !goAvailable() {
-		return path, false, EngramBinaryRemediationMessage(version), nil
+		return path, false, EngramBinaryRemediationMessage(version), "", nil
 	}
 
 	runner := commandRunnerFactory()
@@ -331,10 +348,56 @@ func EnsureEngramBinary(cfg Config, version string) (path string, resolvable boo
 
 	path, resolvable, err = EngramBinaryResolvable(cfg)
 	if err != nil {
-		return "", false, "", err
+		return "", false, "", "", err
 	}
 	if !resolvable {
-		return path, false, EngramBinaryRemediationMessage(version), nil
+		return path, false, EngramBinaryRemediationMessage(version), "", nil
 	}
-	return path, true, "", nil
+	return path, true, "", persistPathToBinaryDir(cfg, path), nil
+}
+
+// persistPathToBinaryDir attempts to persist the resolved Engram binary's containing directory
+// onto the user's persisted PATH, but ONLY when that directory is actually GoBinDir(cfg) itself —
+// a binary resolved via brew, a test/deployment env override, or click's own
+// DefaultEngramBinaryPath fallback is not something pathStore has any business touching (D-5
+// closes JD-B-008's residual gap by applying this same rule from BOTH the already-resolvable
+// early-return path AND the post-`go install` path in EnsureEngramBinary above).
+//
+// It never returns an error itself: GoBinDir failing to resolve, or the binary living outside
+// GoBinDir, both mean "not attempted" (empty pathWarning) — not a warning. Only an actual
+// pathStoreFactory().EnsureOnPath failure produces a non-empty, wrapped pathWarning.
+// pathStoreFactory().EnsureOnPath is already idempotent (a no-op, changed=false, on a directory
+// already present in the persisted PATH), so calling it directly here — rather than pre-checking
+// PersistedPathContains first — never produces redundant writes on its own.
+func persistPathToBinaryDir(cfg Config, binaryPath string) (pathWarning string) {
+	gobin, err := GoBinDir(cfg)
+	if err != nil {
+		// No `go env`-resolvable GOBIN/GOPATH at all — nothing to compare binaryPath against.
+		return ""
+	}
+	if !sameDir(filepath.Dir(binaryPath), gobin) {
+		// Resolved from somewhere other than GoBinDir — pathStore has nothing to do here.
+		return ""
+	}
+	if pathStoreFactory == nil {
+		// No platform pathStore wired in (e.g. a build with neither pathenv_windows.go nor
+		// pathenv_unix.go compiled in, which never happens in a real release build, only in some
+		// narrowly-scoped unit tests) — nothing to attempt.
+		return ""
+	}
+	if _, err := pathStoreFactory().EnsureOnPath(gobin); err != nil {
+		return fmt.Sprintf("no se pudo agregar %s al PATH persistente: %v", gobin, err)
+	}
+	return ""
+}
+
+// sameDir reports whether a and b refer to the same directory, comparing case-insensitively on
+// Windows (where PATH entries and the filesystem itself are case-insensitive) and case-sensitively
+// everywhere else, after filepath.Clean normalizes both.
+func sameDir(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
