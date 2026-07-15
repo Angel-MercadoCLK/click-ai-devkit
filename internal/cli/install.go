@@ -84,10 +84,10 @@ func runInstall(cmd *cobra.Command) error {
 		return err
 	}
 	engramAlreadyInstalled := false
-	enginePathWarning := ""
+	engramPathWarning := ""
 	if err := r.RunStep("Instalando Engram (memoria persistente)…", "Engram sincronizado", func() error {
 		var syncErr error
-		engramAlreadyInstalled, enginePathWarning, syncErr = installer.SyncEngram(cfg, m)
+		engramAlreadyInstalled, engramPathWarning, syncErr = installer.SyncEngram(cfg, m)
 		return syncErr
 	}); err != nil {
 		return err
@@ -95,7 +95,7 @@ func runInstall(cmd *cobra.Command) error {
 	if engramAlreadyInstalled {
 		fmt.Fprintln(out, r.Info("Engram ya estaba instalado — se dejó como está, sin reinstalar."))
 	}
-	surfacePathWarning(out, r, enginePathWarning)
+	surfacePathWarning(out, r, engramPathWarning)
 
 	context7AlreadyPresent := false
 	if err := r.RunStep("Registrando Context7 (documentación de librerías)…", "Context7 sincronizado", func() error {
