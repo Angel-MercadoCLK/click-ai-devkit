@@ -780,6 +780,130 @@ func TestSyncEngram_ForwardsPathWarningFromEnsureEngramBinary(t *testing.T) {
 	}
 }
 
+// fakeHonestGoInstallRunner is a CommandRunner fake that models what a real `go install` actually
+// does — unlike fakeGoInstallRunner above (per JD-001, the root cause of why 5 rounds of prior
+// review missed this bug): it writes the provisioned binary to disk at binaryPath, but it does NOT
+// also retroactively register that binary in any BinaryLookup/LookPath map. A real `go install`
+// runs as a CHILD process; it can never mutate the PARENT process's own PATH/LookPath resolution.
+// It also answers `go env GOBIN` with gobin so installer.GoBinDir(cfg) resolves deterministically.
+type fakeHonestGoInstallRunner struct {
+	commands   []commandInvocation
+	binaryPath string
+	gobin      string
+}
+
+func (f *fakeHonestGoInstallRunner) Run(name string, args ...string) error {
+	f.commands = append(f.commands, commandInvocation{Name: name, Args: append([]string(nil), args...)})
+	if name == "go" && len(args) > 0 && args[0] == "install" {
+		return os.WriteFile(f.binaryPath, []byte("binary"), 0o644)
+	}
+	return nil
+}
+
+func (f *fakeHonestGoInstallRunner) Output(name string, args ...string) ([]byte, error) {
+	f.commands = append(f.commands, commandInvocation{Name: name, Args: append([]string(nil), args...)})
+	if name == "go" && len(args) == 2 && args[0] == "env" && args[1] == "GOBIN" {
+		return []byte(f.gobin + "\n"), nil
+	}
+	return []byte{}, nil
+}
+
+// TestEnsureEngramBinary_PersistsPathAfterHonestGoInstall_FreshMachine is JD-001's regression test:
+// the exact fresh-install scenario this whole change exists to fix. Go is on PATH, the Engram
+// binary is not, `go install` runs and genuinely writes the binary to disk at the real GoBinDir —
+// but (honestly, unlike fakeGoInstallRunner) does NOT make it newly resolvable via LookPath in THIS
+// process. EnsureEngramBinary must still independently detect the binary now exists on disk at
+// GoBinDir and attempt PATH persistence against that location, even though `resolvable` itself
+// (this process's own live LookPath prediction) legitimately stays false.
+func TestEnsureEngramBinary_PersistsPathAfterHonestGoInstall_FreshMachine(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+
+	// "go" itself resolves on PATH; "engram" never does — and nothing in this test's fake
+	// retroactively adds it once "go install" runs (the one thing fakeGoInstallRunner got wrong).
+	lookup := &fakeBinaryLookup{resolved: map[string]string{"go": "/usr/bin/go"}}
+	restoreLookup := SetBinaryLookupFactoryForTests(func() BinaryLookup { return lookup })
+	defer restoreLookup()
+
+	gobin := filepath.Join(t.TempDir(), "gobin")
+	if err := os.MkdirAll(gobin, 0o755); err != nil {
+		t.Fatalf("MkdirAll(gobin) error = %v", err)
+	}
+	binaryPath := filepath.Join(gobin, engramBinaryName())
+	runner := &fakeHonestGoInstallRunner{binaryPath: binaryPath, gobin: gobin}
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	store := &fakeConfigurablePathStore{}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	_, resolvable, remediation, pathWarning, err := EnsureEngramBinary(cfg, "v1.15.3")
+	if err != nil {
+		t.Fatalf("EnsureEngramBinary() error = %v", err)
+	}
+	// resolvable legitimately stays false: it answers "would a bare `command: engram` MCP launch
+	// succeed right now, in THIS process" — and this process's own LookPath still cannot see what
+	// `go install` just wrote to disk. That is NOT what this test guards.
+	if resolvable {
+		t.Fatal("EnsureEngramBinary() resolvable = true, want false — this process's LookPath still cannot see the freshly-installed binary")
+	}
+	if remediation == "" {
+		t.Fatal("EnsureEngramBinary() remediation = \"\", want non-empty — resolvable is still false from this process's point of view")
+	}
+	if _, statErr := os.Stat(binaryPath); statErr != nil {
+		t.Fatalf("go install fake did not write the binary to disk at %s: %v", binaryPath, statErr)
+	}
+	// This is JD-001's actual assertion: PATH persistence must be attempted against the real
+	// GoBinDir even though `resolvable` stayed false, because the binary genuinely exists on disk
+	// there now.
+	if len(store.ensureOnPathCalls) != 1 || store.ensureOnPathCalls[0] != gobin {
+		t.Fatalf("store.ensureOnPathCalls = %#v, want exactly one call with %q — a fresh go install must trigger PATH persistence independently of the resolvable flag", store.ensureOnPathCalls, gobin)
+	}
+	if pathWarning != "" {
+		t.Fatalf("EnsureEngramBinary() pathWarning = %q, want empty on a successful PATH persist", pathWarning)
+	}
+}
+
+// TestEnsureEngramBinary_SecondCallAfterHonestGoInstall_StillPersistsPath is JD-002's regression
+// test: doctor's checkEngramPath remediation message tells the user to re-run `click install`/
+// `click update`. Before the JD-001 fix this was permanently ineffective — `go install` is
+// idempotent and EnsureEngramBinary hit the identical resolvable=false, no-persistence branch every
+// time. After the fix, a second call (the user literally re-running `click install`) must still
+// reach and re-attempt PATH persistence — proving the remediation advice is now actionable, not a
+// dead end.
+func TestEnsureEngramBinary_SecondCallAfterHonestGoInstall_StillPersistsPath(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+
+	lookup := &fakeBinaryLookup{resolved: map[string]string{"go": "/usr/bin/go"}}
+	restoreLookup := SetBinaryLookupFactoryForTests(func() BinaryLookup { return lookup })
+	defer restoreLookup()
+
+	gobin := filepath.Join(t.TempDir(), "gobin")
+	if err := os.MkdirAll(gobin, 0o755); err != nil {
+		t.Fatalf("MkdirAll(gobin) error = %v", err)
+	}
+	binaryPath := filepath.Join(gobin, engramBinaryName())
+	runner := &fakeHonestGoInstallRunner{binaryPath: binaryPath, gobin: gobin}
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	store := &fakeConfigurablePathStore{}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	if _, _, _, pathWarning, err := EnsureEngramBinary(cfg, "v1.15.3"); err != nil || pathWarning != "" {
+		t.Fatalf("first EnsureEngramBinary() pathWarning = %q err = %v, want empty/nil", pathWarning, err)
+	}
+	if _, _, _, pathWarning, err := EnsureEngramBinary(cfg, "v1.15.3"); err != nil || pathWarning != "" {
+		t.Fatalf("second EnsureEngramBinary() (simulating a re-run per doctor's advice) pathWarning = %q err = %v, want empty/nil", pathWarning, err)
+	}
+	if len(store.ensureOnPathCalls) != 2 {
+		t.Fatalf("store.ensureOnPathCalls = %#v, want exactly two attempts — doctor's \"re-run click install\" remediation must actually retry PATH persistence, not be a permanent no-op", store.ensureOnPathCalls)
+	}
+}
+
 func seedEngramAlreadyInstalled(t *testing.T, cfg Config) {
 	t.Helper()
 	registry := map[string]any{

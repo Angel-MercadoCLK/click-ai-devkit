@@ -351,9 +351,35 @@ func EnsureEngramBinary(cfg Config, version string) (path string, resolvable boo
 		return "", false, "", "", err
 	}
 	if !resolvable {
-		return path, false, EngramBinaryRemediationMessage(version), "", nil
+		// JD-001 fix: `resolvable` reflects THIS process's own LookPath-based prediction of whether
+		// a bare `command: "engram"` MCP launch would succeed right now — and a child `go install`
+		// process can never mutate that. So on a genuinely fresh install (the exact scenario this
+		// whole feature exists to fix), resolvable legitimately stays false even after `go install`
+		// has verifiably written the binary to disk. PATH persistence must therefore be attempted
+		// independently of `resolvable`: check directly whether the binary now exists on disk at
+		// GoBinDir(cfg), and if so, persist that directory regardless of what LookPath reports.
+		return path, false, EngramBinaryRemediationMessage(version), pathWarningAfterGoInstall(cfg), nil
 	}
 	return path, true, "", persistPathToBinaryDir(cfg, path), nil
+}
+
+// pathWarningAfterGoInstall independently checks whether the Engram binary now exists on disk at
+// GoBinDir(cfg) — regardless of what the LookPath-based EngramBinaryResolvable reports — and, if
+// so, attempts to persist that directory onto the user's PATH via persistPathToBinaryDir (JD-001).
+// It never errors itself: GoBinDir failing to resolve, or the binary simply not existing there
+// (e.g. no Go toolchain, or `go install` itself failed), both mean "not attempted" (empty
+// pathWarning) — matching persistPathToBinaryDir's own no-error contract.
+func pathWarningAfterGoInstall(cfg Config) (pathWarning string) {
+	gobin, err := GoBinDir(cfg)
+	if err != nil {
+		return ""
+	}
+	candidate := filepath.Join(gobin, engramBinaryName())
+	info, statErr := os.Stat(candidate)
+	if statErr != nil || info.IsDir() {
+		return ""
+	}
+	return persistPathToBinaryDir(cfg, candidate)
 }
 
 // persistPathToBinaryDir attempts to persist the resolved Engram binary's containing directory
