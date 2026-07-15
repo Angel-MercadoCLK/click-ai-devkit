@@ -47,17 +47,28 @@ func TestSyncEngram_InstallsWhenNotPresent(t *testing.T) {
 		t.Fatalf("manifest.Load() error = %v", err)
 	}
 
-	alreadyInstalled, err := SyncEngram(cfg, m)
+	alreadyInstalled, pathWarning, err := SyncEngram(cfg, m)
 	if err != nil {
 		t.Fatalf("SyncEngram() error = %v", err)
 	}
 	if alreadyInstalled {
 		t.Fatal("SyncEngram() alreadyInstalled = true on a fresh home, want false")
 	}
+	// seedResolvableEngramBinary points CLICK_ENGRAM_BINARY_PATH outside any `go env`-resolved
+	// GoBinDir, and this test's fake runner never stubs "go env GOBIN"/"go env GOPATH" — PATH
+	// persistence must not even be attempted.
+	if pathWarning != "" {
+		t.Fatalf("SyncEngram() pathWarning = %q, want empty (not attempted)", pathWarning)
+	}
 
 	want := []commandInvocation{
 		{Name: "claude", Args: []string{"plugin", "marketplace", "add", "https://github.com/Gentleman-Programming/engram"}},
 		{Name: "claude", Args: []string{"plugin", "install", "engram@engram"}},
+		// EnsureEngramBinary's Phase 4 signal-wiring (D-5): once resolvable, it queries GoBinDir to
+		// decide whether to attempt PATH persistence — these two lookups are genuinely issued even
+		// though they end up failing (unstubbed) and no pathStore call follows.
+		{Name: "go", Args: []string{"env", "GOBIN"}},
+		{Name: "go", Args: []string{"env", "GOPATH"}},
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("runner.commands = %#v, want %#v (no --sparse: engram's repo layout has no plugins/ dir)", runner.commands, want)
@@ -110,15 +121,22 @@ func TestSyncEngram_SkipsWhenAlreadyInstalled(t *testing.T) {
 		t.Fatalf("manifest.Load() error = %v", err)
 	}
 
-	alreadyInstalled, err := SyncEngram(cfg, m)
+	alreadyInstalled, _, err := SyncEngram(cfg, m)
 	if err != nil {
 		t.Fatalf("SyncEngram() error = %v", err)
 	}
 	if !alreadyInstalled {
 		t.Fatal("SyncEngram() alreadyInstalled = false when engram@engram was pre-seeded as installed, want true")
 	}
-	if len(runner.commands) != 0 {
-		t.Fatalf("SyncEngram() issued commands %#v against an already-installed Engram, want zero (no reinstall/clobber)", runner.commands)
+	// No `claude plugin ...` command must be issued against an already-installed Engram (no
+	// reinstall/clobber). The two "go env GOBIN"/"go env GOPATH" commands ARE expected here: they
+	// come from EnsureEngramBinary's Phase 4 signal-wiring (D-5) unconditionally checking whether
+	// the resolved binary lives inside GoBinDir before attempting PATH persistence — unrelated to,
+	// and not a regression of, the plugin-registration skip this test guards.
+	for _, inv := range runner.commands {
+		if inv.Name == "claude" {
+			t.Fatalf("SyncEngram() issued a claude command %#v against an already-installed Engram, want none (no reinstall/clobber)", inv)
+		}
 	}
 
 	stateData, err := os.ReadFile(cfg.EngramStatePath())
@@ -156,10 +174,10 @@ func TestSyncEngram_SecondRunPreservesClickOwnership(t *testing.T) {
 		t.Fatalf("manifest.Load() error = %v", err)
 	}
 
-	if _, err := SyncEngram(cfg, m); err != nil {
+	if _, _, err := SyncEngram(cfg, m); err != nil {
 		t.Fatalf("first SyncEngram() error = %v", err)
 	}
-	alreadyInstalled, err := SyncEngram(cfg, m)
+	alreadyInstalled, _, err := SyncEngram(cfg, m)
 	if err != nil {
 		t.Fatalf("second SyncEngram() error = %v", err)
 	}
@@ -209,7 +227,7 @@ func TestRemoveEngramPlugin_RemovesWhenClickInstalledIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("manifest.Load() error = %v", err)
 	}
-	if _, err := SyncEngram(cfg, m); err != nil {
+	if _, _, err := SyncEngram(cfg, m); err != nil {
 		t.Fatalf("SyncEngram() error = %v", err)
 	}
 
@@ -246,7 +264,7 @@ func TestRemoveEngramPlugin_RespectsPreExistingInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("manifest.Load() error = %v", err)
 	}
-	if _, err := SyncEngram(cfg, m); err != nil {
+	if _, _, err := SyncEngram(cfg, m); err != nil {
 		t.Fatalf("SyncEngram() error = %v", err)
 	}
 
@@ -254,8 +272,14 @@ func TestRemoveEngramPlugin_RespectsPreExistingInstall(t *testing.T) {
 		t.Fatalf("RemoveEngramPlugin() error = %v", err)
 	}
 
-	if len(runner.commands) != 0 {
-		t.Fatalf("RemoveEngramPlugin() issued commands %#v against a pre-existing install, want zero", runner.commands)
+	// No `claude plugin ...` command must be issued against a pre-existing install (neither
+	// SyncEngram's plugin-registration skip nor RemoveEngramPlugin's respect-what-click-doesn't-own
+	// path touch the plugin). The two "go env GOBIN"/"go env GOPATH" commands are SyncEngram's own
+	// EnsureEngramBinary PATH-persistence check (D-5) — unrelated to this test's guard.
+	for _, inv := range runner.commands {
+		if inv.Name == "claude" {
+			t.Fatalf("RemoveEngramPlugin() issued a claude command %#v against a pre-existing install, want none", inv)
+		}
 	}
 	installed, err := HasInstalledPluginID(cfg, EngramPluginID)
 	if err != nil {
@@ -395,7 +419,7 @@ func TestEnsureEngramBinary_AlreadyResolvable_NoInstall(t *testing.T) {
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
 
-	path, resolvable, remediation, err := EnsureEngramBinary(cfg, "v1.15.3")
+	path, resolvable, remediation, pathWarning, err := EnsureEngramBinary(cfg, "v1.15.3")
 	if err != nil {
 		t.Fatalf("EnsureEngramBinary() error = %v", err)
 	}
@@ -408,8 +432,19 @@ func TestEnsureEngramBinary_AlreadyResolvable_NoInstall(t *testing.T) {
 	if path != existingPath {
 		t.Fatalf("EnsureEngramBinary() path = %q, want %q", path, existingPath)
 	}
-	if len(runner.commands) != 0 {
-		t.Fatalf("EnsureEngramBinary() issued commands %#v for an already-resolvable binary, want zero", runner.commands)
+	// No `go install` must be issued for an already-resolvable binary. EnsureEngramBinary's Phase 4
+	// signal-wiring (D-5) DOES still issue "go env GOBIN"/"go env GOPATH" — it unconditionally
+	// checks whether the resolved binary lives inside GoBinDir before attempting PATH persistence —
+	// unrelated to, and not a regression of, this test's "no go install" guard.
+	for _, inv := range runner.commands {
+		if inv.Name == "go" && len(inv.Args) > 0 && inv.Args[0] == "install" {
+			t.Fatalf("EnsureEngramBinary() issued a go install command %#v for an already-resolvable binary, want none", inv)
+		}
+	}
+	// existingPath is NOT inside a `go env`-resolved GoBinDir (the fake runner never stubs "go env
+	// GOBIN"/"go env GOPATH", so GoBinDir errors) — PATH persistence must not even be attempted.
+	if pathWarning != "" {
+		t.Fatalf("EnsureEngramBinary() pathWarning = %q, want empty when GoBinDir cannot be resolved (not attempted)", pathWarning)
 	}
 }
 
@@ -430,7 +465,7 @@ func TestEnsureEngramBinary_MissingWithGoPresent_RunsGoInstall(t *testing.T) {
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
 
-	path, resolvable, remediation, err := EnsureEngramBinary(cfg, "v1.15.3")
+	path, resolvable, remediation, pathWarning, err := EnsureEngramBinary(cfg, "v1.15.3")
 	if err != nil {
 		t.Fatalf("EnsureEngramBinary() error = %v", err)
 	}
@@ -443,9 +478,20 @@ func TestEnsureEngramBinary_MissingWithGoPresent_RunsGoInstall(t *testing.T) {
 	if path != binaryPath {
 		t.Fatalf("EnsureEngramBinary() path = %q, want %q", path, binaryPath)
 	}
+	// fakeGoInstallRunner.Output always returns []byte{}, nil (it never stubs "go env GOBIN"/"go
+	// env GOPATH"), so GoBinDir errors and PATH persistence is skipped — not attempted.
+	if pathWarning != "" {
+		t.Fatalf("EnsureEngramBinary() pathWarning = %q, want empty when GoBinDir cannot be resolved (not attempted)", pathWarning)
+	}
 
 	want := []commandInvocation{
 		{Name: "go", Args: []string{"install", "github.com/Gentleman-Programming/engram/cmd/engram@v1.15.3"}},
+		// EnsureEngramBinary's Phase 4 signal-wiring (D-5): once resolvable, it queries GoBinDir to
+		// decide whether to attempt PATH persistence. fakeGoInstallRunner.Output always returns
+		// empty (never stubs these keys), so GoBinDir errors and no pathStore call follows — but the
+		// two lookups themselves are still genuinely issued.
+		{Name: "go", Args: []string{"env", "GOBIN"}},
+		{Name: "go", Args: []string{"env", "GOPATH"}},
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("runner.commands = %#v, want %#v", runner.commands, want)
@@ -467,7 +513,7 @@ func TestEnsureEngramBinary_MissingWithoutGo_ReturnsRemediation(t *testing.T) {
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
 
-	_, resolvable, remediation, err := EnsureEngramBinary(cfg, "v1.15.3")
+	_, resolvable, remediation, pathWarning, err := EnsureEngramBinary(cfg, "v1.15.3")
 	if err != nil {
 		t.Fatalf("EnsureEngramBinary() error = %v", err)
 	}
@@ -476,6 +522,10 @@ func TestEnsureEngramBinary_MissingWithoutGo_ReturnsRemediation(t *testing.T) {
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("EnsureEngramBinary() issued commands %#v when Go is unavailable, want zero", runner.commands)
+	}
+	// Never resolvable, so PATH persistence is never even reached.
+	if pathWarning != "" {
+		t.Fatalf("EnsureEngramBinary() pathWarning = %q, want empty when the binary never resolved", pathWarning)
 	}
 
 	wantCmd := "go install github.com/Gentleman-Programming/engram/cmd/engram@v1.15.3"
@@ -505,18 +555,228 @@ func TestEnsureEngramBinary_Idempotent_NoReinstallAfterSuccess(t *testing.T) {
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
 
-	if _, resolvable, remediation, err := EnsureEngramBinary(cfg, "v1.15.3"); err != nil || !resolvable {
-		t.Fatalf("first EnsureEngramBinary() resolvable = %v remediation = %q err = %v, want true/empty/nil", resolvable, remediation, err)
+	if _, resolvable, remediation, pathWarning, err := EnsureEngramBinary(cfg, "v1.15.3"); err != nil || !resolvable || pathWarning != "" {
+		t.Fatalf("first EnsureEngramBinary() resolvable = %v remediation = %q pathWarning = %q err = %v, want true/empty/empty/nil", resolvable, remediation, pathWarning, err)
 	}
-	if len(runner.commands) != 1 {
-		t.Fatalf("after first EnsureEngramBinary(), commands = %#v, want exactly 1 (the go install)", runner.commands)
+	// EnsureEngramBinary's Phase 4 signal-wiring (D-5) unconditionally queries GoBinDir once
+	// resolvable (2 extra "go env" commands, both empty here since fakeGoInstallRunner never stubs
+	// them, so PATH persistence itself is never attempted) — the idempotency guarantee this test
+	// covers is specifically about "go install" never re-running, not about the total command count.
+	if n := countGoInstalls(runner.commands); n != 1 {
+		t.Fatalf("after first EnsureEngramBinary(), go install count = %d in %#v, want exactly 1", n, runner.commands)
 	}
 
-	if _, resolvable, remediation, err := EnsureEngramBinary(cfg, "v1.15.3"); err != nil || !resolvable || remediation != "" {
-		t.Fatalf("second EnsureEngramBinary() resolvable = %v remediation = %q err = %v, want true/empty/nil", resolvable, remediation, err)
+	if _, resolvable, remediation, pathWarning, err := EnsureEngramBinary(cfg, "v1.15.3"); err != nil || !resolvable || remediation != "" || pathWarning != "" {
+		t.Fatalf("second EnsureEngramBinary() resolvable = %v remediation = %q pathWarning = %q err = %v, want true/empty/empty/nil", resolvable, remediation, pathWarning, err)
 	}
-	if len(runner.commands) != 1 {
-		t.Fatalf("second EnsureEngramBinary() issued extra commands %#v, want still exactly 1 (idempotent, no reinstall)", runner.commands)
+	if n := countGoInstalls(runner.commands); n != 1 {
+		t.Fatalf("second EnsureEngramBinary() go install count = %d in %#v, want still exactly 1 (idempotent, no reinstall)", n, runner.commands)
+	}
+}
+
+// countGoInstalls counts how many `go install ...` invocations appear in commands, ignoring the
+// `go env GOBIN`/`go env GOPATH` lookups EnsureEngramBinary's PATH-persistence check (D-5) also
+// issues once the binary is resolvable.
+func countGoInstalls(commands []commandInvocation) int {
+	n := 0
+	for _, inv := range commands {
+		if inv.Name == "go" && len(inv.Args) > 0 && inv.Args[0] == "install" {
+			n++
+		}
+	}
+	return n
+}
+
+// fakeConfigurablePathStore is a pathStore double for Phase 4's signal-wiring tests: it records
+// every EnsureOnPath call (dir argument) and can be configured to fail, letting tests prove both
+// (a) a successful PATH persistence issues exactly one EnsureOnPath call and yields an empty
+// pathWarning, and (b) a failing one surfaces a non-empty, wrapped pathWarning WITHOUT making
+// EnsureEngramBinary itself return an error (the binary is still provisioned/resolvable regardless
+// of whether PATH persistence succeeded).
+type fakeConfigurablePathStore struct {
+	ensureOnPathCalls []string
+	ensureOnPathErr   error
+}
+
+func (f *fakeConfigurablePathStore) PersistedPathContains(dir string) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeConfigurablePathStore) EnsureOnPath(dir string) (bool, error) {
+	f.ensureOnPathCalls = append(f.ensureOnPathCalls, dir)
+	if f.ensureOnPathErr != nil {
+		return false, f.ensureOnPathErr
+	}
+	return true, nil
+}
+
+// seedResolvableEngramBinaryInGoBinDir wires cfg's engram binary to resolve from INSIDE a fake
+// `go env GOBIN`-reported directory: it writes a dummy binary at gobin/<engramBinaryName> and
+// points CLICK_ENGRAM_BINARY_PATH at it, then stubs "go env GOBIN" on runner so GoBinDir(cfg)
+// resolves to the exact same directory. This is the one precondition EnsureEngramBinary's PATH
+// persistence step requires before it will call pathStoreFactory().EnsureOnPath at all (D-5: skip
+// brew-resolved installs, env overrides pointed elsewhere, etc.).
+func seedResolvableEngramBinaryInGoBinDir(t *testing.T, runner *fakeCommandRunner) (gobin, binaryPath string) {
+	t.Helper()
+	gobin = filepath.Join(t.TempDir(), "gobin")
+	if err := os.MkdirAll(gobin, 0o755); err != nil {
+		t.Fatalf("MkdirAll(gobin) error = %v", err)
+	}
+	binaryPath = filepath.Join(gobin, engramBinaryName())
+	if err := os.WriteFile(binaryPath, []byte("binary"), 0o644); err != nil {
+		t.Fatalf("WriteFile(binary) error = %v", err)
+	}
+	t.Setenv(engramBinaryPathEnvOverride, binaryPath)
+	runner.lookup["go env GOBIN"] = []byte(gobin + "\n")
+	return gobin, binaryPath
+}
+
+// TestEnsureEngramBinary_PersistsPathWhenResolvedFromGoBinDir_Success covers the strict-TDD
+// requirement (a): a successful PATH-persistence attempt calls pathStoreFactory().EnsureOnPath
+// exactly once with the resolved GoBinDir, and yields an empty pathWarning alongside a nil err.
+func TestEnsureEngramBinary_PersistsPathWhenResolvedFromGoBinDir_Success(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	gobin, _ := seedResolvableEngramBinaryInGoBinDir(t, runner)
+
+	store := &fakeConfigurablePathStore{}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	_, resolvable, _, pathWarning, err := EnsureEngramBinary(cfg, "v1.15.3")
+	if err != nil {
+		t.Fatalf("EnsureEngramBinary() error = %v", err)
+	}
+	if !resolvable {
+		t.Fatal("EnsureEngramBinary() resolvable = false, want true")
+	}
+	if pathWarning != "" {
+		t.Fatalf("EnsureEngramBinary() pathWarning = %q, want empty on a successful PATH persist", pathWarning)
+	}
+	if len(store.ensureOnPathCalls) != 1 || store.ensureOnPathCalls[0] != gobin {
+		t.Fatalf("store.ensureOnPathCalls = %#v, want exactly one call with %q", store.ensureOnPathCalls, gobin)
+	}
+}
+
+// TestEnsureEngramBinary_PathPersistenceErrorSurfacesAsWarningNotError covers requirement (b): a
+// PATH-persistence error must surface as a non-empty, wrapped pathWarning while EnsureEngramBinary
+// itself still returns err=nil and resolvable=true — the binary IS provisioned, PATH persistence
+// merely failed.
+func TestEnsureEngramBinary_PathPersistenceErrorSurfacesAsWarningNotError(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	gobin, _ := seedResolvableEngramBinaryInGoBinDir(t, runner)
+
+	persistErr := errors.New("acceso denegado al registro")
+	store := &fakeConfigurablePathStore{ensureOnPathErr: persistErr}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	_, resolvable, _, pathWarning, err := EnsureEngramBinary(cfg, "v1.15.3")
+	if err != nil {
+		t.Fatalf("EnsureEngramBinary() error = %v, want nil — a PATH-persistence failure must not fail binary provisioning", err)
+	}
+	if !resolvable {
+		t.Fatal("EnsureEngramBinary() resolvable = false, want true — the binary itself is still provisioned")
+	}
+	if pathWarning == "" {
+		t.Fatal("EnsureEngramBinary() pathWarning = \"\", want a non-empty wrapped warning")
+	}
+	if !strings.Contains(pathWarning, persistErr.Error()) {
+		t.Fatalf("pathWarning = %q, want it to wrap %q", pathWarning, persistErr.Error())
+	}
+	if !strings.Contains(pathWarning, gobin) {
+		t.Fatalf("pathWarning = %q, want it to mention the target directory %q", pathWarning, gobin)
+	}
+	if len(store.ensureOnPathCalls) != 1 {
+		t.Fatalf("store.ensureOnPathCalls = %#v, want exactly one attempt", store.ensureOnPathCalls)
+	}
+}
+
+// TestEnsureEngramBinary_SkipsPathPersistenceWhenBinaryNotFromGoBinDir proves the design's
+// "resolves from within GoBinDir()" gate: a binary resolved from anywhere else (brew, a test/
+// deployment env override pointed elsewhere, the DefaultEngramBinaryPath fallback) must never
+// trigger a PATH-persistence attempt at all — pathStoreFactory().EnsureOnPath must not be called.
+func TestEnsureEngramBinary_SkipsPathPersistenceWhenBinaryNotFromGoBinDir(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	// GoBinDir resolves fine (go env GOBIN is stubbed)…
+	gobin := filepath.Join(t.TempDir(), "gobin")
+	runner.lookup["go env GOBIN"] = []byte(gobin + "\n")
+	// …but the resolved binary lives somewhere else entirely (simulating brew / a manually-managed
+	// install), NOT inside gobin.
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere", "engram.exe")
+	if err := os.MkdirAll(filepath.Dir(elsewhere), 0o755); err != nil {
+		t.Fatalf("MkdirAll(elsewhere) error = %v", err)
+	}
+	if err := os.WriteFile(elsewhere, []byte("binary"), 0o644); err != nil {
+		t.Fatalf("WriteFile(elsewhere) error = %v", err)
+	}
+	t.Setenv(engramBinaryPathEnvOverride, elsewhere)
+
+	store := &fakeConfigurablePathStore{}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	_, resolvable, _, pathWarning, err := EnsureEngramBinary(cfg, "v1.15.3")
+	if err != nil {
+		t.Fatalf("EnsureEngramBinary() error = %v", err)
+	}
+	if !resolvable {
+		t.Fatal("EnsureEngramBinary() resolvable = false, want true")
+	}
+	if pathWarning != "" {
+		t.Fatalf("EnsureEngramBinary() pathWarning = %q, want empty (not attempted)", pathWarning)
+	}
+	if len(store.ensureOnPathCalls) != 0 {
+		t.Fatalf("store.ensureOnPathCalls = %#v, want zero — binary did not resolve from within GoBinDir", store.ensureOnPathCalls)
+	}
+}
+
+// TestSyncEngram_ForwardsPathWarningFromEnsureEngramBinary covers requirement (c): SyncEngram must
+// forward EnsureEngramBinary's pathWarning unchanged to its own caller.
+func TestSyncEngram_ForwardsPathWarningFromEnsureEngramBinary(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreSource := SetEngramMarketplaceSourceForTests("https://github.com/Gentleman-Programming/engram")
+	defer restoreSource()
+
+	seedResolvableEngramBinaryInGoBinDir(t, runner)
+
+	persistErr := errors.New("no se pudo escribir el rc file")
+	store := &fakeConfigurablePathStore{ensureOnPathErr: persistErr}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+
+	_, pathWarning, err := SyncEngram(cfg, m)
+	if err != nil {
+		t.Fatalf("SyncEngram() error = %v, want nil — PATH persistence failure must not fail SyncEngram", err)
+	}
+	if pathWarning == "" {
+		t.Fatal("SyncEngram() pathWarning = \"\", want EnsureEngramBinary's non-empty pathWarning forwarded unchanged")
+	}
+	if !strings.Contains(pathWarning, persistErr.Error()) {
+		t.Fatalf("SyncEngram() pathWarning = %q, want it to wrap %q (forwarded from EnsureEngramBinary)", pathWarning, persistErr.Error())
 	}
 }
 

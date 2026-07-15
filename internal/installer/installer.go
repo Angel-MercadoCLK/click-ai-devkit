@@ -31,7 +31,11 @@ func Install(cfg Config, models map[modelconfig.Phase]string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := SyncEngram(cfg, m); err != nil {
+	// pathWarning is deliberately discarded here: Install has no ui.Renderer to surface it through
+	// (internal/cli wraps each step with RunStep for styled output — see package doc above), so the
+	// CLI-layer callers (install.go, update.go) capture and surface it themselves instead of going
+	// through this lower-level orchestration function.
+	if _, _, err := SyncEngram(cfg, m); err != nil {
 		return err
 	}
 	if _, err := SyncContext7(cfg); err != nil {

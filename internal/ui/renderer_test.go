@@ -27,6 +27,7 @@ func TestRenderer_PlainMode_NoANSI(t *testing.T) {
 		"Fail":    r.Fail("Plugin no copiado"),
 		"Step":    r.Step("Copiando plugin"),
 		"Info":    r.Info("Instalación completa"),
+		"Warn":    r.Warn("PATH no persistido"),
 	}
 
 	for name, out := range outputs {
@@ -43,6 +44,7 @@ func TestRenderer_ColorMode_ContainsANSI(t *testing.T) {
 		"Banner":  r.Banner(),
 		"Success": r.Success("Plugin copiado"),
 		"Fail":    r.Fail("Plugin no copiado"),
+		"Warn":    r.Warn("PATH no persistido"),
 	}
 
 	for name, out := range outputs {
@@ -84,6 +86,45 @@ func TestRenderer_Fail_ColorMode_HasCross(t *testing.T) {
 	got := r.Fail("algo se rompió")
 	if !strings.Contains(got, "✗") {
 		t.Fatalf("Fail() = %q, want a ✗ marker in color mode", got)
+	}
+}
+
+// TestRenderer_Warn_PlainMode_HasPlainMarker covers D-5's Warn method (design obs #1436): a
+// non-fatal warning (e.g. PATH persistence failed but the Engram binary is still resolvable) must
+// be visually distinct from Fail's "[FAIL]" — using the design's committed "[warn] " lowercase
+// plain-mode prefix — so a developer scanning install output doesn't mistake it for a hard failure.
+func TestRenderer_Warn_PlainMode_HasPlainMarker(t *testing.T) {
+	r := &Renderer{Color: false}
+	got := r.Warn("no se pudo persistir el PATH")
+	if !strings.Contains(got, "no se pudo persistir el PATH") {
+		t.Fatalf("Warn() = %q, want it to contain the message", got)
+	}
+	if !strings.HasPrefix(got, "[warn] ") {
+		t.Fatalf("Warn() = %q, want a plain \"[warn] \" prefix in plain mode", got)
+	}
+}
+
+// TestRenderer_Warn_ColorMode_HasWarningMarker proves Warn uses its own visual treatment (a ⚠
+// marker with lipgloss color 3/yellow, per D-5) rather than literally reusing Fail's ✗/red error
+// styling — a warning must read as "heads up", not "something broke".
+func TestRenderer_Warn_ColorMode_HasWarningMarker(t *testing.T) {
+	r := &Renderer{Color: true}
+	got := r.Warn("no se pudo persistir el PATH")
+	if !strings.Contains(got, "⚠") {
+		t.Fatalf("Warn() = %q, want a ⚠ marker in color mode", got)
+	}
+	if strings.Contains(got, "✗") {
+		t.Fatalf("Warn() = %q, must not reuse Fail's ✗ marker", got)
+	}
+}
+
+// TestRenderer_Warn_PlainMode_NoANSI is an explicit companion to the shared plain-mode ANSI sweep
+// above, guarding Warn specifically since it's new in this batch.
+func TestRenderer_Warn_PlainMode_NoANSI(t *testing.T) {
+	r := &Renderer{Color: false}
+	got := r.Warn("no se pudo persistir el PATH")
+	if containsANSI(got) {
+		t.Fatalf("Warn() plain mode = %q, contains an ANSI escape sequence", got)
 	}
 }
 
