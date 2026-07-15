@@ -441,9 +441,16 @@ func TestPathPersisted_ErrorsWhenNoPathStoreFactoryWired(t *testing.T) {
 
 // TestLivePathContains_TrueWhenDirIsInProcessPath covers the common case: dir is one of the
 // current process's live PATH entries.
+//
+// Fixture paths deliberately avoid a Windows drive-letter prefix like "C:" — filepath.SplitList
+// (which LivePathContains uses) splits on os.PathListSeparator (":" on POSIX), and a literal ":"
+// inside a drive letter collides with that separator, silently fragmenting "C:/Users/dev/go/bin"
+// into "C" and "/Users/dev/go/bin" on Linux/macOS CI (confirmed: this broke build-and-test on
+// ubuntu-latest before this fix). filepath.Join(string(filepath.Separator), ...) yields a fixture
+// that's valid, colon-free syntax on every OS.
 func TestLivePathContains_TrueWhenDirIsInProcessPath(t *testing.T) {
-	dir := filepath.Join("C:", "Users", "dev", "go", "bin")
-	other := filepath.Join("C:", "Windows", "system32")
+	dir := filepath.Join(string(filepath.Separator), "home", "dev", "go", "bin")
+	other := filepath.Join(string(filepath.Separator), "usr", "bin")
 	t.Setenv("PATH", other+string(os.PathListSeparator)+dir)
 
 	if !LivePathContains(dir) {
@@ -454,10 +461,10 @@ func TestLivePathContains_TrueWhenDirIsInProcessPath(t *testing.T) {
 // TestLivePathContains_FalseWhenDirIsNotInProcessPath triangulates the happy path above with a dir
 // that is genuinely absent from the live PATH.
 func TestLivePathContains_FalseWhenDirIsNotInProcessPath(t *testing.T) {
-	other := filepath.Join("C:", "Windows", "system32")
+	other := filepath.Join(string(filepath.Separator), "usr", "bin")
 	t.Setenv("PATH", other)
 
-	dir := filepath.Join("C:", "Users", "dev", "go", "bin")
+	dir := filepath.Join(string(filepath.Separator), "home", "dev", "go", "bin")
 	if LivePathContains(dir) {
 		t.Fatalf("LivePathContains(%q) = true, want false (absent from os.Getenv(\"PATH\"))", dir)
 	}
@@ -466,7 +473,7 @@ func TestLivePathContains_FalseWhenDirIsNotInProcessPath(t *testing.T) {
 // TestLivePathContains_NormalizesTrailingSeparator proves the comparison goes through sameDir's
 // filepath.Clean normalization (matching PATH-entry semantics), not a brittle exact string match.
 func TestLivePathContains_NormalizesTrailingSeparator(t *testing.T) {
-	dir := filepath.Join("C:", "Users", "dev", "go", "bin")
+	dir := filepath.Join(string(filepath.Separator), "home", "dev", "go", "bin")
 	t.Setenv("PATH", dir+string(filepath.Separator))
 
 	if !LivePathContains(dir) {
