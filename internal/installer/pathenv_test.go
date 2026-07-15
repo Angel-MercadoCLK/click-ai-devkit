@@ -188,13 +188,16 @@ func (fakePathStore) PersistedPathContains(dir string) (bool, error) { return fa
 func (fakePathStore) EnsureOnPath(dir string) (bool, error)          { return false, nil }
 
 // TestSetPathStoreFactoryForTests_OverridesAndRestores proves the injectable-factory seam PR2/PR3
-// will rely on actually works: overriding returns the fake, and calling the restore func puts
-// pathStoreFactory back to its pre-override value (nil in this PR, since no OS-specific file has
-// assigned a default yet).
+// rely on actually works: overriding returns the fake, and calling the restore func puts
+// pathStoreFactory back to whatever it was before the override — WITHOUT this generic,
+// cross-platform test file asserting a specific pre-override value or type. PR1 (this file) leaves
+// pathStoreFactory nil, but PR2's windows-tagged pathenv_windows.go init() (and PR3's POSIX
+// equivalent) assign a platform default via a build-tagged init(); this file has no build tag and
+// must keep compiling on every CI platform, so it deliberately never references a concrete
+// platform type like osPathStore. It only proves restore() puts back exactly the pre-override
+// func value (nil-ness and, when non-nil, "no longer the injected fake").
 func TestSetPathStoreFactoryForTests_OverridesAndRestores(t *testing.T) {
-	if pathStoreFactory != nil {
-		t.Fatal("pathStoreFactory != nil before any override; want nil in this PR (no OS-specific default wired yet)")
-	}
+	before := pathStoreFactory
 
 	restore := SetPathStoreFactoryForTests(func() pathStore { return fakePathStore{} })
 	defer restore()
@@ -205,8 +208,14 @@ func TestSetPathStoreFactoryForTests_OverridesAndRestores(t *testing.T) {
 	}
 
 	restore()
-	if pathStoreFactory != nil {
-		t.Fatal("pathStoreFactory != nil after restore(), want it back to nil")
+	after := pathStoreFactory
+	if (before == nil) != (after == nil) {
+		t.Fatalf("pathStoreFactory nil-ness after restore() = %v, want it back to its pre-override nil-ness %v", after == nil, before == nil)
+	}
+	if after != nil {
+		if _, ok := after().(fakePathStore); ok {
+			t.Fatal("pathStoreFactory() after restore() is still the injected fakePathStore, want it reverted to the pre-override value")
+		}
 	}
 }
 
