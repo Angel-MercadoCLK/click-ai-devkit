@@ -74,7 +74,20 @@ type engramState struct {
 	Source             string `json:"source"`
 	InstalledByClick   bool   `json:"installed_by_click"`
 	PathMutatedByClick bool   `json:"path_mutated_by_click"`
-	PathDir            string `json:"path_dir"`
+	// PathDir is the LATEST directory a PATH-mutating SyncEngram run persisted. Kept ONLY for
+	// backward-compatible JSON reads of state files written by v0.4.3 (before PathDirs existed) and
+	// for human-readability in the on-disk JSON — new logic must read PathDirs instead, never this
+	// field directly. See PathDirs' own doc comment for why a single latest-dir field is not enough.
+	PathDir string `json:"path_dir"`
+	// PathDirs (T4-1 follow-up) is EVERY directory a PATH-mutating SyncEngram run has ever persisted,
+	// in first-added order, deduped. PathDir alone only ever tracked the latest such directory — if
+	// GoBinDir moved TWICE across two separate SyncEngram runs (e.g. Go reinstalled with a different
+	// GOPATH between two `click update` runs), the FIRST directory click added became untracked and
+	// RemoveEngramPlugin could never reverse it, even though nothing incorrect was ever removed. This
+	// is the source of truth removeClickOwnedPath iterates. A state file written before this field
+	// existed (only PathDir set) is migrated in-memory by loadEngramState the first time it's read
+	// after this change ships — see that function's own doc comment.
+	PathDirs []string `json:"path_dirs"`
 }
 
 // SyncEngram registers the Engram marketplace and installs engram@engram through the native
@@ -137,12 +150,23 @@ func SyncEngram(cfg Config, m *manifest.Manifest) (alreadyInstalled bool, pathWa
 
 	pathMutatedByClick := pathMutated
 	pathDirToPersist := pathDir
+	var pathDirsToPersist []string
 	if found {
 		installedByClick = existing.InstalledByClick
 		pathMutatedByClick = existing.PathMutatedByClick || pathMutated
 		if !pathMutated {
 			pathDirToPersist = existing.PathDir
 		}
+		// existing.PathDirs is already migrated (seeded from a legacy existing.PathDir when needed)
+		// by loadEngramState above — always start accumulation from it, never from the raw JSON.
+		pathDirsToPersist = append(pathDirsToPersist, existing.PathDirs...)
+	}
+	if pathMutated && pathDir != "" && !containsPathDir(pathDirsToPersist, pathDir) {
+		// THIS run mutated the PATH at pathDir and it isn't already tracked — append it (T4-1
+		// follow-up). Deliberately append-only and deduped: a later GoBinDir move is tracked
+		// alongside every earlier one, and a repeated idempotent run against the same dir never
+		// grows the list.
+		pathDirsToPersist = append(pathDirsToPersist, pathDir)
 	}
 
 	state := engramState{
@@ -152,6 +176,7 @@ func SyncEngram(cfg Config, m *manifest.Manifest) (alreadyInstalled bool, pathWa
 		InstalledByClick:   installedByClick,
 		PathMutatedByClick: pathMutatedByClick,
 		PathDir:            pathDirToPersist,
+		PathDirs:           pathDirsToPersist,
 	}
 	if err := writeJSONFile(cfg.EngramStatePath(), state); err != nil {
 		return alreadyInstalled, pathWarning, fmt.Errorf("installer: write engram state: %w", err)
@@ -191,12 +216,13 @@ func SyncEngramPlugin(cfg Config) (alreadyInstalled bool, err error) {
 //   - The engram@engram plugin install itself — ONLY when state.InstalledByClick is true. If a
 //     developer already had Engram working before running `click install`, click uninstall leaves
 //     it running untouched.
-//   - Click's own PATH mutation from EnsureEngramBinary's PATH-persistence step — ONLY when
-//     state.PathMutatedByClick is true AND state.PathDir is non-empty. This is checked
-//     INDEPENDENTLY of the plugin-ownership gate above, because it is a separate mutation with its
-//     own ownership: EnsureOnPath runs unconditionally regardless of whether the plugin itself was
-//     already installed, so a developer's pre-existing Engram binary happening to resolve from
-//     inside GoBinDir can mean PathMutatedByClick==true even when InstalledByClick==false.
+//   - Click's own PATH mutation(s) from EnsureEngramBinary's PATH-persistence step — ONLY when
+//     state.PathMutatedByClick is true AND state.PathDirs is non-empty (T4-1 follow-up: EVERY
+//     directory ever added, not just the latest — see engramState.PathDirs' own doc comment). This
+//     is checked INDEPENDENTLY of the plugin-ownership gate above, because it is a separate mutation
+//     with its own ownership: EnsureOnPath runs unconditionally regardless of whether the plugin
+//     itself was already installed, so a developer's pre-existing Engram binary happening to resolve
+//     from inside GoBinDir can mean PathMutatedByClick==true even when InstalledByClick==false.
 //
 // A failure removing the PATH entry is surfaced back as pathWarning (never as err) — mirroring
 // EnsureEngramBinary/SyncEngram's own "a PATH operation failure is a warning, never fatal" contract
@@ -244,28 +270,61 @@ func RemoveEngramPlugin(cfg Config) (pathWarning string, err error) {
 	return pathWarning, nil
 }
 
-// removeClickOwnedPath reverses click's own PATH mutation recorded in state (D-9) via
-// pathStoreFactory().RemoveFromPath — but ONLY when state actually recorded one:
-// state.PathMutatedByClick must be true AND state.PathDir must be non-empty. This is the exact
-// "only reverse what click added" safety rule this feature exists to guarantee — a state where
-// click never mutated the PATH (PathMutatedByClick==false, e.g. the binary never resolved from
-// inside GoBinDir, or every PATH-persistence attempt ever made failed) must leave the developer's
-// PATH completely untouched; RemoveFromPath is not even called in that case. A RemoveFromPath
-// failure is folded into a non-empty pathWarning string (never an error) — see RemoveEngramPlugin's
-// own doc comment for why.
+// removeClickOwnedPath reverses EVERY PATH mutation click ever recorded in state (D-9, T4-1
+// follow-up) via pathStoreFactory().RemoveFromPath — but ONLY when state actually recorded owning
+// at least one: state.PathMutatedByClick must be true AND state.PathDirs must be non-empty
+// (loadEngramState's migration guarantees PathDirs is populated whenever a legacy PathDir was set).
+// This is the exact "only reverse what click added" safety rule this feature exists to guarantee —
+// a state where click never mutated the PATH (PathMutatedByClick==false) must leave the developer's
+// PATH completely untouched; RemoveFromPath is not even called in that case.
+//
+// Every tracked directory is attempted, even after an earlier one fails — a removal failure for one
+// directory must never prevent attempting the others. Failures are folded into a single non-empty
+// pathWarning string (one clause per failed directory, joined with "; "), never an error — see
+// RemoveEngramPlugin's own doc comment for why a PATH-removal failure is always a warning, never
+// fatal.
 func removeClickOwnedPath(state engramState) (pathWarning string) {
-	if !state.PathMutatedByClick || state.PathDir == "" {
+	if !state.PathMutatedByClick || len(state.PathDirs) == 0 {
 		return ""
 	}
 	if pathStoreFactory == nil {
 		return ""
 	}
-	if _, err := pathStoreFactory().RemoveFromPath(state.PathDir); err != nil {
-		return fmt.Sprintf("no se pudo quitar %s del PATH persistente: %v", state.PathDir, err)
+	store := pathStoreFactory()
+	var failures []string
+	for _, dir := range state.PathDirs {
+		if dir == "" {
+			continue
+		}
+		if _, err := store.RemoveFromPath(dir); err != nil {
+			failures = append(failures, fmt.Sprintf("no se pudo quitar %s del PATH persistente: %v", dir, err))
+		}
 	}
-	return ""
+	if len(failures) == 0 {
+		return ""
+	}
+	return strings.Join(failures, "; ")
 }
 
+// containsPathDir reports whether dir is already present in dirs, using sameDir's platform-aware
+// comparison (case-insensitive on Windows, trailing-separator-normalized) — the same rule
+// persistPathToBinaryDir/computeNewPath already use for PATH-entry comparisons — so a directory
+// already tracked under a different case or trailing separator on Windows is correctly recognized
+// as a dupe instead of appended again.
+func containsPathDir(dirs []string, dir string) bool {
+	for _, d := range dirs {
+		if sameDir(d, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+// loadEngramState reads and parses cfg's persisted engramState. Migration (T4-1 follow-up): a
+// state file written by v0.4.3 or earlier has PathDir set but no PathDirs — this seeds
+// PathDirs = []string{PathDir} in memory (never rewriting the file itself here) so an install
+// upgrading from that version doesn't silently "forget" the one directory it already knew about.
+// A state that already has PathDirs populated is left untouched by this step.
 func loadEngramState(cfg Config) (engramState, bool, error) {
 	data, err := os.ReadFile(cfg.EngramStatePath())
 	if err != nil {
@@ -277,6 +336,9 @@ func loadEngramState(cfg Config) (engramState, bool, error) {
 	var state engramState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return engramState{}, false, fmt.Errorf("installer: parse engram state: %w", err)
+	}
+	if len(state.PathDirs) == 0 && state.PathDir != "" {
+		state.PathDirs = []string{state.PathDir}
 	}
 	return state, true, nil
 }
