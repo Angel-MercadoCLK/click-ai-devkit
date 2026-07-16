@@ -28,6 +28,13 @@ scoop install click
 This works today (`bucket/click.json` is published and live at v0.2.1+). Brew tap for
 macOS/Linux is scaffolded in `.goreleaser.yaml` but deferred — see `documentacion/tech-spec.md` §6.
 
+> **`scoop update` needs git.** scoop refreshes its buckets with `git pull`; if git is not
+> installed for scoop, `scoop update click` silently keeps reading the stale local manifest and
+> reports the currently-installed version as "latest" even when a newer `click` release exists. If
+> a new version is not showing up, run `scoop install git` first, then `scoop update; scoop update
+> click`. (This is scoop's own requirement, separate from the `git` that `click install`/`update`
+> need to register the plugin marketplace — see `PreflightGit`.)
+
 ## Commands
 
 | Command | What it does |
