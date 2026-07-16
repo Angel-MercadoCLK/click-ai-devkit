@@ -186,6 +186,27 @@ func TestModel_Update_IgnoresNonKeyMessages(t *testing.T) {
 	}
 }
 
+// TestModel_View_ShowsSparkLogoAndTagline guards the branded menu header: the spark logo glyph
+// (✦) and the Click Seguros tagline must both render, so the menu opens with the brand mark the
+// approved design calls for rather than a bare text line.
+func TestModel_View_ShowsSparkLogoAndTagline(t *testing.T) {
+	view := NewModel().View()
+	if !strings.Contains(view, "✦") {
+		t.Errorf("View() missing spark logo glyph ✦:\n%s", view)
+	}
+	if !strings.Contains(view, "AI Devkit · Click Seguros") {
+		t.Errorf("View() missing brand tagline:\n%s", view)
+	}
+}
+
+// TestModel_View_HighlightsActiveRowPointer guards that the row under the cursor renders the
+// active-row pointer (▸); with the cursor at its initial row 0 the pointer must be present.
+func TestModel_View_HighlightsActiveRowPointer(t *testing.T) {
+	if view := NewModel().View(); !strings.Contains(view, "▸") {
+		t.Errorf("View() missing active-row pointer ▸:\n%s", view)
+	}
+}
+
 func TestModel_View_RendersEveryItemLabel(t *testing.T) {
 	m := NewModel()
 	view := m.View()
