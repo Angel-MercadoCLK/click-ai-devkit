@@ -1,5 +1,16 @@
 # click-ai-devkit — Hardening Roadmap
 
+## Status (as of the v0.4.3 cut)
+
+- **Tier 1 — DONE** (PR #31, PR #32/checkClaude).
+- **Tier 2 — DONE** (PR #33, incl. a review-caught fix for an over-correction in the guard tuning — see PR #33 commit history for R1-001/R1-002).
+- **Tier 3 — DONE** (PR #34). The T3-1 guardrail caught a real 4th instance of the drive-letter bug on its first run (`models_test.go`), fixed in the same PR.
+- **T4-3 — DONE** (PR #35): engram bumped v1.15.3 → v1.19.0, verified installing cleanly via a real `go install` before pinning.
+- **T4-1 — DONE** (PR #36): built despite the roadmap's own recommendation to defer it, per explicit user decision. `click uninstall` now reverses the PATH entry click added, with ownership tracking (`PathMutatedByClick`/`PathDir`) mirroring the existing `InstalledByClick` pattern. Two non-blocking WARNINGs recorded (Engram `hardening/t4-1` topic): (1) `PathDir` tracks only the latest directory, so an orphaned entry from an earlier `GOBIN` move isn't reversed — no worse than the pre-D-9 baseline; (2) a rare double-failure edge case in `click uninstall` can drop a PATH-removal warning message (the fatal error itself still surfaces).
+- **T4-2 — BLOCKED**, not done. Reproducing the nested-`Agent`-in-`Agent` Bash-availability report requires a working Bash tool to test with; unavailable for this entire hardening effort. Documented as deferred, not a confirmed defect — revisit when tooling allows an isolated repro.
+
+
+
 Consolidated, prioritized backlog of every real weakness surfaced and **verified against the actual
 code** during the deep end-to-end stress-test session (the `engram-mcp-resolution` cycle + the
 click-sdd agent audit + real fresh-machine install testing). Nothing here is invented or
@@ -118,18 +129,23 @@ by actually running the flow, finding the break, fixing it, repeating.
 
 ---
 
-## Tier 4 — larger / deferred. Deliberate future work, not now.
+## Tier 4 — larger / deferred, per the original triage. See Status above for what actually shipped.
 
-- **T4-1 · D-9 PATH-ownership tracking + `click uninstall` PATH reversal.** Consciously descoped
-  during `engram-mcp-resolution` design review (unimplementable under the committed signal-wiring
-  signature). Needs a properly wired `changed`/`targets` signal. Future change.
-- **T4-2 · Nested-agent Bash availability.** `click-architect.md` declares `Bash` but a session
-  reported it unavailable in a nested `Agent`-in-`Agent` delegation. **Unverified — needs an
-  isolated live repro, not a file patch.** Detail in `click-sdd-agent-fixes-for-codex.md`
-  (UNVERIFIED-5).
-- **T4-3 · Engram binary version bump (1.15.3 → newer).** *Not a bug* — the pin is intentional
-  (`ENGRAM_VERSION` + D16, for reproducibility). This is a maintenance decision: bump
-  `ENGRAM_VERSION` and cut a release when you want it.
+- **T4-1 · D-9 PATH-ownership tracking + `click uninstall` PATH reversal. DONE (PR #36).** Originally
+  descoped during `engram-mcp-resolution` design review, then re-descoped as "defer, low value /
+  new mutation risk" in this roadmap's first draft — built anyway on explicit user decision. The
+  `changed`/`targets` signal this needed is now wired: `pathStore.RemoveFromPath`, `EnsureOnPath`'s
+  `changed` bool threaded through a new unexported `ensureEngramBinaryWithPathInfo` helper (kept off
+  `EnsureEngramBinary`'s public signature to avoid a ~15-call-site blast radius), and
+  `engramState.PathMutatedByClick`/`PathDir` OR-merged the same way `InstalledByClick` already is.
+- **T4-2 · Nested-agent Bash availability. Still BLOCKED, not done.** `click-architect.md` declares
+  `Bash` but a session reported it unavailable in a nested `Agent`-in-`Agent` delegation.
+  **Unverified — needs an isolated live repro, not a file patch**, and this entire hardening effort
+  ran with a broken Bash tool, so no repro was possible. Detail in
+  `click-sdd-agent-fixes-for-codex.md` (UNVERIFIED-5).
+- **T4-3 · Engram binary version bump (1.15.3 → 1.19.0). DONE (PR #35).** Was correctly "not a bug"
+  (intentional pin, D16) — bumped anyway per explicit user decision, verified installing cleanly via
+  a real `go install` before pinning.
 
 ---
 
@@ -141,13 +157,26 @@ by actually running the flow, finding the break, fixing it, repeating.
 
 ---
 
-## Suggested execution order
+## Execution order actually followed
 
-1. T1-1, T1-2, T1-3 (a single small, high-leverage batch — verified, low risk).
-2. T2-1 + T2-2 together (both are the orchestrator becoming deterministic).
-3. T2-3 (guard tuning, with a safety regression corpus).
-4. T3-1 → T3-2 → T3-3 (preventive infra, whenever).
-5. Revisit Tier 4 deliberately, one at a time, only when each is actually needed.
+1. T1-1, T1-2, T1-3 (PR #31) — shipped, then a review finding on that same PR led to a same-day
+   follow-up, `checkClaude` in `click doctor` (PR #32).
+2. T2-1 + T2-2 + T2-3 together (PR #33) — a review-risk lens caught a genuine coverage regression
+   in the first T2-3 tuning pass (an over-correction dropping real abbreviated-ID coverage) before
+   merge; fixed in the same PR with dedicated regression tests. The concrete value of the whole
+   review discipline this roadmap is about.
+3. T3-1 → T3-2 → T3-3 (PR #34) — the T3-1 guardrail found a real, previously-unknown 4th instance of
+   the drive-letter bug on its very first CI run.
+4. T4-3 engram bump (PR #35), then T4-1 uninstall PATH reversal (PR #36) — both built per explicit
+   user decision after the roadmap recommended deferring both.
+5. T4-2 remains blocked on tooling (a working Bash tool to reproduce with).
 
-Attack top-down. Ship and end-to-end-validate each tier before starting the next. That cadence —
-not scope — is what turns "far behind" into "hardened."
+Each tier shipped as its own PR, verified with CI on both platforms before merge, with a review lens
+on any PR touching a genuine risk surface (memory-guard rules, PATH mutation). That cadence — not
+raw scope — is what turned "far behind" into "hardened": every tier found at least one real thing a
+faster, less disciplined pass would have missed.
+
+## Release
+
+All of the above (Tier 1–3, T4-1, T4-3) shipped in `v0.4.3`. T4-2 remains open for a future session
+once Bash tooling is confirmed working.
