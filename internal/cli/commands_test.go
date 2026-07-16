@@ -53,16 +53,17 @@ func (f cliFakeBinaryLookup) LookPath(name string) (string, error) {
 	return "", fmt.Errorf("cliFakeBinaryLookup: not found: %s", name)
 }
 
-// seedResolvableGit makes installer.GitAvailable/GitPath (and therefore runInstall/runUpdate's
-// PreflightGit) see git as resolvable, so `execRoot`'s install/update-driven CLI tests are
-// deterministic regardless of the host PATH — the same rationale as seedResolvableEngram above.
-// execRoot calls this by default; tests that specifically exercise the "git missing" preflight
-// path build their own cobra command instead of going through execRoot (see
-// TestInstallCommand_GitMissing_AbortsBeforeMarketplaceRegistration).
+// seedResolvableGit makes installer.GitAvailable/GitPath AND installer.ClaudeAvailable/ClaudePath
+// (and therefore runInstall/runUpdate's PreflightClaude + PreflightGit) see both binaries as
+// resolvable, so `execRoot`'s install/update-driven CLI tests are deterministic regardless of the
+// host PATH — the same rationale as seedResolvableEngram above. execRoot calls this by default;
+// tests that specifically exercise a "missing" preflight path build their own cobra command
+// instead of going through execRoot (see TestInstallCommand_GitMissing_AbortsBeforeMarketplace-
+// Registration / TestInstallCommand_ClaudeMissing_AbortsBeforeMarketplaceRegistration).
 func seedResolvableGit(t *testing.T) {
 	t.Helper()
 	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
-		return cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git"}}
+		return cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git", "claude": "/usr/bin/claude"}}
 	})
 	t.Cleanup(restore)
 }
@@ -305,7 +306,9 @@ func TestInstallCommand_GitMissing_AbortsBeforeMarketplaceRegistration(t *testin
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
-	missingGit := cliFakeBinaryLookup{resolved: map[string]string{}}
+	// claude resolvable so PreflightClaude (which now runs first) doesn't mask the git-missing
+	// scenario this test targets.
+	missingGit := cliFakeBinaryLookup{resolved: map[string]string{"claude": "/usr/bin/claude"}}
 
 	out, err := execRootWithGitLookup(t, home, missingGit, "install")
 	if err == nil {
@@ -319,6 +322,32 @@ func TestInstallCommand_GitMissing_AbortsBeforeMarketplaceRegistration(t *testin
 	}
 }
 
+// TestInstallCommand_ClaudeMissing_AbortsBeforeMarketplaceRegistration mirrors the git-missing test
+// above for T1-2's PreflightClaude: on a machine with no Claude Code installed, `click install`
+// used to run its whole interactive TUI and then die with a raw Go dump ("exec: \"claude\":
+// executable file not found in %PATH%") deep inside SyncMarketplacePlugins. With PreflightClaude
+// wired in at the very top of runInstall (before even PreflightGit), a missing claude must abort
+// BEFORE any marketplace/plugin registration command is ever issued.
+func TestInstallCommand_ClaudeMissing_AbortsBeforeMarketplaceRegistration(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	// git resolvable so this test isolates the claude-missing scenario specifically.
+	missingClaude := cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git"}}
+
+	out, err := execRootWithGitLookup(t, home, missingClaude, "install")
+	if err == nil {
+		t.Fatalf("install command error = nil when claude is missing from PATH, want a non-nil actionable error, output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), installer.ClaudeMissingMessage) {
+		t.Fatalf("install command error = %q, want it to contain the actionable message %q", err.Error(), installer.ClaudeMissingMessage)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want zero commands issued — install must abort before touching the marketplace when claude is missing", runner.commands)
+	}
+}
+
 // TestInstallCommand_GitPresent_ProceedsToMarketplaceRegistration is the GREEN counterpart: with
 // git resolvable, PreflightGit must not block the install, and marketplace registration proceeds
 // exactly as before this fix.
@@ -327,7 +356,7 @@ func TestInstallCommand_GitPresent_ProceedsToMarketplaceRegistration(t *testing.
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
-	presentGit := cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git"}}
+	presentGit := cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git", "claude": "/usr/bin/claude"}}
 
 	out, err := execRootWithGitLookup(t, home, presentGit, "install")
 	if err != nil {
@@ -357,7 +386,9 @@ func TestUpdateCommand_GitMissing_AbortsBeforeMarketplaceRegistration(t *testing
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
-	missingGit := cliFakeBinaryLookup{resolved: map[string]string{}}
+	// claude resolvable so PreflightClaude (which now runs first) doesn't mask the git-missing
+	// scenario this test targets.
+	missingGit := cliFakeBinaryLookup{resolved: map[string]string{"claude": "/usr/bin/claude"}}
 
 	out, err := execRootWithGitLookup(t, home, missingGit, "update")
 	if err == nil {
@@ -368,6 +399,29 @@ func TestUpdateCommand_GitMissing_AbortsBeforeMarketplaceRegistration(t *testing
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("runner.commands = %#v, want zero commands issued — update must abort before touching the marketplace when git is missing", runner.commands)
+	}
+}
+
+// TestUpdateCommand_ClaudeMissing_AbortsBeforeMarketplaceRegistration mirrors the install-side
+// claude-missing test above for `click update`, which also re-syncs the marketplace
+// (SyncMarketplacePlugins) via the claude CLI and therefore also needs PreflightClaude wired in.
+func TestUpdateCommand_ClaudeMissing_AbortsBeforeMarketplaceRegistration(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	// git resolvable so this test isolates the claude-missing scenario specifically.
+	missingClaude := cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git"}}
+
+	out, err := execRootWithGitLookup(t, home, missingClaude, "update")
+	if err == nil {
+		t.Fatalf("update command error = nil when claude is missing from PATH, want a non-nil actionable error, output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), installer.ClaudeMissingMessage) {
+		t.Fatalf("update command error = %q, want it to contain the actionable message %q", err.Error(), installer.ClaudeMissingMessage)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want zero commands issued — update must abort before touching the marketplace when claude is missing", runner.commands)
 	}
 }
 

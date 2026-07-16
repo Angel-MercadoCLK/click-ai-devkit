@@ -20,9 +20,22 @@ const (
 // DefaultManagedContent is the Slice 3 managed CLAUDE.md body: it activates ClickOrchestrator,
 // explains the Spanish/English split, points at the memory-policy docs, and reminds the user that
 // click manages this block.
+//
+// Hardening T1-3: the memory-policy reference used to be a bare repo-relative path
+// ("plugins/click-memory/docs/memory-policy.md"), which is wrong/ambiguous for any developer whose
+// CLAUDE.md lives outside the click-ai-devkit repo itself (the real installed file lives under
+// Claude Code's own plugin cache, e.g. ~/.claude/plugins/cache/click-ai-devkit/click-memory/<ver>/
+// docs/). This constant has no access to ClaudeHome or the installed plugin version at generation
+// time (it is a plain string, not a template — see WriteManagedBlock's callers in install.go/
+// update.go), so resolving a real absolute path here would require threading Config and the
+// click-memory plugin's resolved version through this constant into a template function, which is
+// non-trivial plumbing for a low-severity issue. Right-sized fix: the wording below no longer
+// claims a specific (and possibly wrong) path — it names the plugin and doc filenames only. If a
+// future change wants the fully-resolved absolute path, it needs a deliberate scoping decision (a
+// template function taking Config + the click-memory version), not a quick patch here.
 const DefaultManagedContent = `Use ClickOrchestrator by default for this repository and delegate phase work to the click-sdd agents and skills.
 Reply to the developer in Spanish. Produce all artifacts (PRD, design, tasks, code comments, and memory entries) in English. Keep explanations plain, direct, and free of regional slang.
-Before any mem_save, review plugins/click-memory/docs/memory-policy.md, allowed-memory.md, and forbidden-memory.md. The deterministic memory-guard hook enforces this policy even if a model attempts something unsafe.
+Before any mem_save, review the click-memory plugin's policy docs (memory-policy.md, allowed-memory.md, forbidden-memory.md) under its installed docs/ directory. The deterministic memory-guard hook enforces this policy even if a model attempts something unsafe.
 Before opening or merging a PR, run the click-review pre-merge checklist.
 This block is managed by click: edit via "click update" and remove via "click uninstall".`
 

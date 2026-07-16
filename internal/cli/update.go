@@ -21,6 +21,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	r := rendererFor(cmd, out)
 
+	// PreflightClaude must run before PreflightGit and before anything else. claude is the more
+	// fundamental dependency: `click update` re-syncs every plugin via the claude CLI itself
+	// (plugins.go's pluginCLIBinary), so a machine missing Claude Code entirely should fail on
+	// that actionable message first, not on git's.
+	if err := installer.PreflightClaude(); err != nil {
+		return err
+	}
+
 	// PreflightGit must run before anything else: `click update` re-syncs the plugin marketplace
 	// via SyncMarketplacePlugins, exactly like `click install` does, and that shells out to
 	// `git clone` under the hood — see runInstall's PreflightGit call for the full rationale.
