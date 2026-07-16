@@ -1062,6 +1062,226 @@ func readEngramStateForTest(t *testing.T, cfg Config) engramState {
 	return state
 }
 
+// TestLoadEngramState_MigratesLegacyPathDirToPathDirs is the T4-1 follow-up migration contract: a
+// state file written by v0.4.3 or earlier (only PathDir set, no PathDirs field at all) must load
+// with PathDirs seeded from it in memory — an install upgrading from that version must not silently
+// "forget" the one directory it already knew about.
+func TestLoadEngramState_MigratesLegacyPathDirToPathDirs(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+
+	legacyDir := filepath.Join(t.TempDir(), "gobin")
+	if err := writeJSONFile(cfg.EngramStatePath(), engramState{
+		InstalledByClick:   true,
+		PathMutatedByClick: true,
+		PathDir:            legacyDir,
+	}); err != nil {
+		t.Fatalf("writeJSONFile(EngramStatePath) error = %v", err)
+	}
+
+	state, found, err := loadEngramState(cfg)
+	if err != nil {
+		t.Fatalf("loadEngramState() error = %v", err)
+	}
+	if !found {
+		t.Fatal("loadEngramState() found = false, want true")
+	}
+	if len(state.PathDirs) != 1 || state.PathDirs[0] != legacyDir {
+		t.Fatalf("state.PathDirs = %#v, want exactly [%q] migrated from the legacy PathDir field", state.PathDirs, legacyDir)
+	}
+	if state.PathDir != legacyDir {
+		t.Fatalf("state.PathDir = %q, want it preserved as %q", state.PathDir, legacyDir)
+	}
+}
+
+// TestSyncEngram_TracksAllPathDirsAcrossGoBinDirMoves is the T4-1 follow-up core contract: TWO
+// separate SyncEngram runs, each resolving a DIFFERENT GoBinDir and each actually mutating the
+// persisted PATH, must leave BOTH directories recorded in PathDirs — not just the latest one (which
+// is all the older PathDir-only tracking preserved).
+func TestSyncEngram_TracksAllPathDirsAcrossGoBinDirMoves(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreSource := SetEngramMarketplaceSourceForTests("https://github.com/Gentleman-Programming/engram")
+	defer restoreSource()
+
+	store := &fakeConfigurablePathStore{}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+
+	firstGobin, _ := seedResolvableEngramBinaryInGoBinDir(t, runner)
+	if _, _, err := SyncEngram(cfg, m); err != nil {
+		t.Fatalf("first SyncEngram() error = %v", err)
+	}
+
+	// Simulate Go being reinstalled with a different GOPATH/GOBIN between two `click update` runs —
+	// a brand-new gobin, distinct from the first.
+	secondGobin, _ := seedResolvableEngramBinaryInGoBinDir(t, runner)
+	if _, _, err := SyncEngram(cfg, m); err != nil {
+		t.Fatalf("second SyncEngram() error = %v", err)
+	}
+
+	state := readEngramStateForTest(t, cfg)
+	if len(state.PathDirs) != 2 {
+		t.Fatalf("state.PathDirs = %#v, want exactly 2 entries — both GoBinDir moves must be tracked", state.PathDirs)
+	}
+	if state.PathDirs[0] != firstGobin || state.PathDirs[1] != secondGobin {
+		t.Fatalf("state.PathDirs = %#v, want [%q, %q] in first-added order", state.PathDirs, firstGobin, secondGobin)
+	}
+}
+
+// TestSyncEngram_DedupesRepeatedPathDirMutations proves the append-only PathDirs accumulation is
+// deduped: even a store that reports changed=true on EVERY call (not a realistic idempotent
+// EnsureOnPath, but a defensive edge case) against the SAME dir across two SyncEngram runs must not
+// grow PathDirs past one entry for that dir.
+func TestSyncEngram_DedupesRepeatedPathDirMutations(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreSource := SetEngramMarketplaceSourceForTests("https://github.com/Gentleman-Programming/engram")
+	defer restoreSource()
+
+	gobin, _ := seedResolvableEngramBinaryInGoBinDir(t, runner)
+
+	// ensureOnPathNoChange stays false: store.EnsureOnPath reports changed=true on every call, even
+	// against the same, already-tracked dir on the second run — SyncEngram's own dedupe guard (not
+	// the store) must be what keeps PathDirs from growing.
+	store := &fakeConfigurablePathStore{}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+
+	if _, _, err := SyncEngram(cfg, m); err != nil {
+		t.Fatalf("first SyncEngram() error = %v", err)
+	}
+	if _, _, err := SyncEngram(cfg, m); err != nil {
+		t.Fatalf("second SyncEngram() error = %v", err)
+	}
+
+	state := readEngramStateForTest(t, cfg)
+	if len(state.PathDirs) != 1 || state.PathDirs[0] != gobin {
+		t.Fatalf("state.PathDirs = %#v after two runs against the same dir, want exactly [%q]", state.PathDirs, gobin)
+	}
+}
+
+// TestRemoveEngramPlugin_ReversesAllTrackedPathDirs is the T4-1 follow-up counterpart of
+// TestRemoveEngramPlugin_ReversesClickOwnedPath: a state recording TWO PathDirs entries must call
+// pathStoreFactory().RemoveFromPath for BOTH, not just the latest (state.PathDir).
+func TestRemoveEngramPlugin_ReversesAllTrackedPathDirs(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	firstDir := filepath.Join(t.TempDir(), "gobin-old")
+	secondDir := filepath.Join(t.TempDir(), "gobin-new")
+	if err := writeJSONFile(cfg.EngramStatePath(), engramState{
+		InstalledByClick:   true,
+		PathMutatedByClick: true,
+		PathDir:            secondDir,
+		PathDirs:           []string{firstDir, secondDir},
+	}); err != nil {
+		t.Fatalf("writeJSONFile(EngramStatePath) error = %v", err)
+	}
+
+	store := &fakeConfigurablePathStore{}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	pathWarning, err := RemoveEngramPlugin(cfg)
+	if err != nil {
+		t.Fatalf("RemoveEngramPlugin() error = %v", err)
+	}
+	if pathWarning != "" {
+		t.Fatalf("RemoveEngramPlugin() pathWarning = %q, want empty on a successful reversal of both dirs", pathWarning)
+	}
+	if len(store.removeFromPathCalls) != 2 {
+		t.Fatalf("store.removeFromPathCalls = %#v, want exactly 2 calls (one per tracked PathDirs entry)", store.removeFromPathCalls)
+	}
+	if store.removeFromPathCalls[0] != firstDir || store.removeFromPathCalls[1] != secondDir {
+		t.Fatalf("store.removeFromPathCalls = %#v, want [%q, %q] in tracked order", store.removeFromPathCalls, firstDir, secondDir)
+	}
+}
+
+// partialFailPathStore is a pathStore double that fails RemoveFromPath only for one specific,
+// pre-configured directory — letting
+// TestRemoveEngramPlugin_PathRemovalFailureOnOneDirStillAttemptsTheOther prove a failure removing
+// ONE tracked directory does not prevent removeClickOwnedPath from attempting the OTHERS (T4-1
+// follow-up).
+type partialFailPathStore struct {
+	failDir             string
+	failErr             error
+	removeFromPathCalls []string
+}
+
+func (f *partialFailPathStore) PersistedPathContains(dir string) (bool, error) { return false, nil }
+
+func (f *partialFailPathStore) EnsureOnPath(dir string) (bool, error) { return true, nil }
+
+func (f *partialFailPathStore) RemoveFromPath(dir string) (bool, error) {
+	f.removeFromPathCalls = append(f.removeFromPathCalls, dir)
+	if dir == f.failDir {
+		return false, f.failErr
+	}
+	return true, nil
+}
+
+// TestRemoveEngramPlugin_PathRemovalFailureOnOneDirStillAttemptsTheOther is the T4-1 follow-up
+// resilience contract: RemoveFromPath failing for ONE tracked directory must not prevent
+// removeClickOwnedPath from attempting the OTHER — both are always attempted, and the failure is
+// folded into pathWarning, never fatal.
+func TestRemoveEngramPlugin_PathRemovalFailureOnOneDirStillAttemptsTheOther(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	firstDir := filepath.Join(t.TempDir(), "gobin-old")
+	secondDir := filepath.Join(t.TempDir(), "gobin-new")
+	if err := writeJSONFile(cfg.EngramStatePath(), engramState{
+		InstalledByClick:   true,
+		PathMutatedByClick: true,
+		PathDir:            secondDir,
+		PathDirs:           []string{firstDir, secondDir},
+	}); err != nil {
+		t.Fatalf("writeJSONFile(EngramStatePath) error = %v", err)
+	}
+
+	removeErr := errors.New("acceso denegado al registro")
+	store := &partialFailPathStore{failDir: firstDir, failErr: removeErr}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	pathWarning, err := RemoveEngramPlugin(cfg)
+	if err != nil {
+		t.Fatalf("RemoveEngramPlugin() error = %v, want nil — a PATH-removal failure must not fail uninstall", err)
+	}
+	if !strings.Contains(pathWarning, removeErr.Error()) {
+		t.Fatalf("pathWarning = %q, want it to mention %q", pathWarning, removeErr.Error())
+	}
+	if !strings.Contains(pathWarning, firstDir) {
+		t.Fatalf("pathWarning = %q, want it to mention the failing directory %q", pathWarning, firstDir)
+	}
+	if len(store.removeFromPathCalls) != 2 || store.removeFromPathCalls[0] != firstDir || store.removeFromPathCalls[1] != secondDir {
+		t.Fatalf("store.removeFromPathCalls = %#v, want both %q and %q attempted despite the first failing", store.removeFromPathCalls, firstDir, secondDir)
+	}
+}
+
 // fakeHonestGoInstallRunner is a CommandRunner fake that models what a real `go install` actually
 // does — unlike fakeGoInstallRunner above (per JD-001, the root cause of why 5 rounds of prior
 // review missed this bug): it writes the provisioned binary to disk at binaryPath, but it does NOT
