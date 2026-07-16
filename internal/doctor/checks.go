@@ -354,7 +354,7 @@ func checkAppliedPluginConfig(cfg installer.Config) CheckResult {
 		return CheckResult{
 			Name:    name,
 			Healthy: false,
-			Detail:  "pluginConfigs[\"" + installer.ClickSDDPluginID + "\"] ausente en " + cfg.SettingsPath() + " — ejecuta `click update` para aplicarla",
+			Detail:  "pluginConfigs[\"" + installer.ClickSDDPluginID + "\"] ausente en " + cfg.SettingsPath() + " — ejecute `click update` para aplicarla",
 		}
 	}
 
@@ -371,7 +371,7 @@ func checkAppliedPluginConfig(cfg installer.Config) CheckResult {
 			Healthy: false,
 			Detail: "Claude Code no aplicó " + strconv.Itoa(len(missing)) + " de " + strconv.Itoa(len(expected)) +
 				" claves esperadas (posible schema en caché desactualizado): " + strings.Join(missing, ", ") +
-				" — ejecuta `click update` para forzar un refresh del marketplace y reaplicarlas",
+				" — ejecute `click update` para forzar un refresh del marketplace y reaplicarlas",
 		}
 	}
 

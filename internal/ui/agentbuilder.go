@@ -342,23 +342,23 @@ func (m AgentBuilderModel) updatePlacement(keyMsg tea.KeyMsg) (tea.Model, tea.Cm
 func (m AgentBuilderModel) View() string {
 	switch m.Step {
 	case StepEngine:
-		return m.renderList("Elegí el motor del agente", engineLabels(m.engines), "↑/↓ mover · enter confirmar · q/esc cancelar")
+		return m.renderList("Elija el motor del agente", engineLabels(m.engines), "↑/↓ mover · enter confirmar · q/esc cancelar")
 	case StepDescription:
 		return renderInputWithError("Describa el agente que quiere crear", m.input, m.PreviewError)
 	case StepSDDMode:
-		return m.renderList("Elegí la integración SDD", sddModeLabels(), "↑/↓ mover · enter confirmar · q/esc cancelar")
+		return m.renderList("Elija la integración SDD", sddModeLabels(), "↑/↓ mover · enter confirmar · q/esc cancelar")
 	case StepPhase:
-		return m.renderList("Elegí la fase SDD que este agente va a apoyar", phaseLabelsForAgentBuilder(), "↑/↓ mover · enter confirmar · q/esc cancelar")
+		return m.renderList("Elija la fase SDD que este agente va a apoyar", phaseLabelsForAgentBuilder(), "↑/↓ mover · enter confirmar · q/esc cancelar")
 	case StepThemes:
 		prompt := agentBuilderThemePrompts[m.ThemeIndex]
 		return renderInputWithError(fmt.Sprintf("%d/%d · %s", m.ThemeIndex+1, len(agentBuilderThemePrompts), prompt.title), m.input, m.PreviewError)
 	case StepPreview:
 		if m.EditingPreview {
-			return renderInput("Editá el Markdown final", m.input)
+			return renderInput("Edite el Markdown final", m.input)
 		}
 		return m.renderPreview()
 	case StepPlacement:
-		return m.renderList("Elegí dónde instalar el agente", placementLabels(), "↑/↓ mover · enter instalar · q/esc cancelar")
+		return m.renderList("Elija dónde instalar el agente", placementLabels(), "↑/↓ mover · enter instalar · q/esc cancelar")
 	case StepDone:
 		return "Agente confirmado"
 	default:

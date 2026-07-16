@@ -27,7 +27,7 @@ var profileDescriptions = map[modelconfig.ProfileName]string{
 	modelconfig.ProfileBalanced:  "equilibrado: sonnet en la mayoría de fases, opus en las críticas",
 	modelconfig.ProfileCostSaver: "económico: haiku en la mayoría de fases, opus solo en las críticas",
 	modelconfig.ProfileQuality:   "calidad: opus en casi todas las fases",
-	modelconfig.ProfileCustom:    "personalizado: elige el modelo fase por fase",
+	modelconfig.ProfileCustom:    "personalizado: elija el modelo fase por fase",
 }
 
 // ProfileSelectModel is the bubbletea model that drives `click install`'s profile-select step
@@ -111,7 +111,7 @@ func (m *ProfileSelectModel) moveCursor(delta int) {
 // description, plus a short Spanish key-help line matching modelselect.go's own.
 func (m ProfileSelectModel) View() string {
 	var b strings.Builder
-	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Elegí un perfil de orquestación para click-sdd"))
+	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Elija un perfil de orquestación para click-sdd"))
 	b.WriteString("\n\n")
 
 	for i, name := range profileSelectNames {

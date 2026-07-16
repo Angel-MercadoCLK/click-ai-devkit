@@ -129,7 +129,7 @@ func (m *ModelSelectModel) cycleCurrent(delta int) {
 // selected model, plus a short Spanish key-help line (D10: dev-facing CLI text may be Spanish).
 func (m ModelSelectModel) View() string {
 	var b strings.Builder
-	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Elegí el modelo por fase para click-sdd"))
+	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Elija el modelo por fase para click-sdd"))
 	b.WriteString("\n\n")
 
 	for i, phase := range modelconfig.Phases {
