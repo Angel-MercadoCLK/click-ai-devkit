@@ -1,7 +1,7 @@
 ---
 name: click-memory-curator
 description: Curate durable technical knowledge from a finished Click Seguros SDD cycle and propose only safe memory entries for persistence.
-tools: Read, Write, Edit, Glob, Grep
+tools: Read, Write, Edit, Glob, Grep, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation
 model: sonnet
 ---
 

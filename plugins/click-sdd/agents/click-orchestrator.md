@@ -1,7 +1,7 @@
 ---
 name: click-orchestrator
 description: Default SDD orchestrator for Click Seguros sessions. Drive the click-sdd flow, explain each phase in plain Spanish, and delegate artifact creation to specialist agents.
-tools: Read, Write, Edit, Glob, Grep, Bash, Agent
+tools: Read, Write, Edit, Glob, Grep, Bash, Agent, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_save, mcp__plugin_engram_engram__mem_update
 model: sonnet
 ---
 
