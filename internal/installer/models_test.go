@@ -91,8 +91,12 @@ func TestSaveModels_Overwrites(t *testing.T) {
 }
 
 func TestConfig_ModelsPath(t *testing.T) {
-	cfg := Config{ClaudeHome: filepath.Join("C:", "fake-home")}
-	want := filepath.Join("C:", "fake-home", "click-ai-devkit", "models.json")
+	// Use a real cross-platform temp dir as the home base rather than a hardcoded "C:" drive letter:
+	// the test only asserts how ModelsPath joins segments, and a drive-letter fixture is the exact
+	// fragile pattern the crossplatformlint guardrail forbids (T3-1).
+	home := t.TempDir()
+	cfg := Config{ClaudeHome: home}
+	want := filepath.Join(home, "click-ai-devkit", "models.json")
 	if got := cfg.ModelsPath(); got != want {
 		t.Fatalf("Config.ModelsPath() = %q, want %q", got, want)
 	}
