@@ -59,11 +59,22 @@ func SetEngramMarketplaceSourceForTests(source string) func() {
 // machine, and whether click itself installed the engram@engram plugin — as opposed to finding
 // one a developer had already set up independently. RemoveEngramPlugin reads InstalledByClick to
 // decide whether it is safe to remove the plugin: click only ever reverses what it added.
+//
+// PathMutatedByClick/PathDir (D-9, T4-1) are the same "only reverse what click added" ownership
+// tracking, but for the PATH-persistence side effect of EnsureEngramBinary's own
+// persistPathToBinaryDir step — a SEPARATE mutation from the plugin install above, gated
+// independently: a developer can have InstalledByClick==false (Engram was already installed) while
+// still having PathMutatedByClick==true (their pre-existing binary happened to resolve from inside
+// GoBinDir, and click's own EnsureOnPath call — which runs unconditionally, regardless of plugin
+// ownership — actually added that dir to their PATH). RemoveEngramPlugin therefore checks these two
+// ownership flags independently, not as a single combined gate.
 type engramState struct {
-	Version          string `json:"version"`
-	BinaryPath       string `json:"binary_path"`
-	Source           string `json:"source"`
-	InstalledByClick bool   `json:"installed_by_click"`
+	Version            string `json:"version"`
+	BinaryPath         string `json:"binary_path"`
+	Source             string `json:"source"`
+	InstalledByClick   bool   `json:"installed_by_click"`
+	PathMutatedByClick bool   `json:"path_mutated_by_click"`
+	PathDir            string `json:"path_dir"`
 }
 
 // SyncEngram registers the Engram marketplace and installs engram@engram through the native
@@ -86,16 +97,34 @@ type engramState struct {
 // partly failed. It is never an error on its own — the binary is still resolvable regardless of
 // whether the persisted-PATH write succeeded — so callers surface it (e.g. via ui.Renderer.Warn),
 // they don't treat it as a reason to fail install/update.
+//
+// PathMutatedByClick/PathDir ownership (D-9, T4-1): merged with the previously-persisted state the
+// same way InstalledByClick already is — but NOT via the identical "found ? always keep existing"
+// rule, because the two have different lifecycles. InstalledByClick is decided EXACTLY ONCE, the
+// very first time SyncEngram ever runs against a given ClaudeHome (see that field's own doc
+// comment) — every later run's derived "!alreadyInstalled" is meaningless noise and must always be
+// discarded in favor of whatever was first recorded. PathMutatedByClick has no such single
+// decisive-first-run moment: EnsureOnPath can legitimately fail (or never even be attempted — e.g.
+// the binary hadn't yet started resolving from inside GoBinDir) on an earlier run and only succeed
+// on a later one, so "this run mutated the PATH" must be able to flip false -> true on ANY run, not
+// only the first. It is therefore OR-merged with the previously-persisted value — which still
+// satisfies the one hard invariant that actually matters (mirroring InstalledByClick's own "never
+// flip back" contract): once true, it can never flip back to false on a later idempotent
+// (EnsureOnPath changed==false) run. PathDir mirrors this: preserved from the existing state on a
+// non-mutating run, and only overwritten with THIS run's freshly-resolved dir when THIS run itself
+// actually mutated the PATH (so a later GoBinDir move is still tracked correctly).
 func SyncEngram(cfg Config, m *manifest.Manifest) (alreadyInstalled bool, pathWarning string, err error) {
 	alreadyInstalled, err = SyncEngramPlugin(cfg)
 	if err != nil {
 		return false, "", err
 	}
-	// EnsureEngramBinary (Slice 3b) both resolves the binary path AND, when it's missing and Go is
-	// available, attempts to provision it via `go install`. It never fails this call — a missing
+	// ensureEngramBinaryWithPathInfo is EnsureEngramBinary's own implementation, additionally
+	// reporting whether this call's PATH-persistence attempt actually mutated the persisted PATH and
+	// which directory — see that function's own doc comment for why EnsureEngramBinary's long-standing
+	// public signature is left untouched for its other callers. It never fails this call — a missing
 	// binary/toolchain is reported via remediation, not an error — so its own error return here is
 	// reserved for genuine I/O failures resolving state, not "binary not found".
-	binaryPath, _, _, pathWarning, err := EnsureEngramBinary(cfg, m.Engram.Version)
+	binaryPath, _, _, pathMutated, pathDir, pathWarning, err := ensureEngramBinaryWithPathInfo(cfg, m.Engram.Version)
 	if err != nil {
 		return alreadyInstalled, "", err
 	}
@@ -105,15 +134,24 @@ func SyncEngram(cfg Config, m *manifest.Manifest) (alreadyInstalled bool, pathWa
 	if err != nil {
 		return alreadyInstalled, pathWarning, err
 	}
+
+	pathMutatedByClick := pathMutated
+	pathDirToPersist := pathDir
 	if found {
 		installedByClick = existing.InstalledByClick
+		pathMutatedByClick = existing.PathMutatedByClick || pathMutated
+		if !pathMutated {
+			pathDirToPersist = existing.PathDir
+		}
 	}
 
 	state := engramState{
-		Version:          m.Engram.Version,
-		BinaryPath:       binaryPath,
-		Source:           m.Engram.Source,
-		InstalledByClick: installedByClick,
+		Version:            m.Engram.Version,
+		BinaryPath:         binaryPath,
+		Source:             m.Engram.Source,
+		InstalledByClick:   installedByClick,
+		PathMutatedByClick: pathMutatedByClick,
+		PathDir:            pathDirToPersist,
 	}
 	if err := writeJSONFile(cfg.EngramStatePath(), state); err != nil {
 		return alreadyInstalled, pathWarning, fmt.Errorf("installer: write engram state: %w", err)
@@ -147,39 +185,85 @@ func SyncEngramPlugin(cfg Config) (alreadyInstalled bool, err error) {
 	return false, nil
 }
 
-// RemoveEngramPlugin reverses SyncEngram, but ONLY when click's own state says click installed
-// Engram in the first place. If a developer already had Engram working before running `click
-// install`, click uninstall leaves it running untouched — click only ever removes what it added.
+// RemoveEngramPlugin reverses SyncEngram, but ONLY when click's own state says click made the
+// corresponding change in the first place. It reverses TWO independently-gated things (D-9, T4-1):
+//
+//   - The engram@engram plugin install itself — ONLY when state.InstalledByClick is true. If a
+//     developer already had Engram working before running `click install`, click uninstall leaves
+//     it running untouched.
+//   - Click's own PATH mutation from EnsureEngramBinary's PATH-persistence step — ONLY when
+//     state.PathMutatedByClick is true AND state.PathDir is non-empty. This is checked
+//     INDEPENDENTLY of the plugin-ownership gate above, because it is a separate mutation with its
+//     own ownership: EnsureOnPath runs unconditionally regardless of whether the plugin itself was
+//     already installed, so a developer's pre-existing Engram binary happening to resolve from
+//     inside GoBinDir can mean PathMutatedByClick==true even when InstalledByClick==false.
+//
+// A failure removing the PATH entry is surfaced back as pathWarning (never as err) — mirroring
+// EnsureEngramBinary/SyncEngram's own "a PATH operation failure is a warning, never fatal" contract
+// — so it can never abort the rest of `click uninstall`'s own steps.
+//
 // It is idempotent: safe to call when Engram was never touched by click, or has already been
 // removed.
-func RemoveEngramPlugin(cfg Config) error {
+func RemoveEngramPlugin(cfg Config) (pathWarning string, err error) {
 	state, found, err := loadEngramState(cfg)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !found {
 		// click's Install() never ran against this home (or ran before this feature existed) —
 		// nothing click-managed to reverse.
-		return nil
+		return "", nil
 	}
+
+	pathWarning = removeClickOwnedPath(state)
+
 	if !state.InstalledByClick {
-		// click never owned this install; leave Engram alone, just drop click's own bookkeeping.
-		return removeEngramState(cfg)
+		// click never owned this plugin install; leave Engram alone, just drop click's own
+		// bookkeeping. The PATH reversal above (if any) still applies independently.
+		if err := removeEngramState(cfg); err != nil {
+			return pathWarning, err
+		}
+		return pathWarning, nil
 	}
 	installed, err := HasInstalledPluginID(cfg, EngramPluginID)
 	if err != nil {
-		return err
+		return pathWarning, err
 	}
 	if installed {
 		runner := commandRunnerFactory()
 		if err := uninstallPluginID(runner, engramPluginName, engramMarketplaceName); err != nil {
-			return err
+			return pathWarning, err
 		}
 		if err := removeMarketplace(runner, engramMarketplaceName); err != nil {
-			return err
+			return pathWarning, err
 		}
 	}
-	return removeEngramState(cfg)
+	if err := removeEngramState(cfg); err != nil {
+		return pathWarning, err
+	}
+	return pathWarning, nil
+}
+
+// removeClickOwnedPath reverses click's own PATH mutation recorded in state (D-9) via
+// pathStoreFactory().RemoveFromPath — but ONLY when state actually recorded one:
+// state.PathMutatedByClick must be true AND state.PathDir must be non-empty. This is the exact
+// "only reverse what click added" safety rule this feature exists to guarantee — a state where
+// click never mutated the PATH (PathMutatedByClick==false, e.g. the binary never resolved from
+// inside GoBinDir, or every PATH-persistence attempt ever made failed) must leave the developer's
+// PATH completely untouched; RemoveFromPath is not even called in that case. A RemoveFromPath
+// failure is folded into a non-empty pathWarning string (never an error) — see RemoveEngramPlugin's
+// own doc comment for why.
+func removeClickOwnedPath(state engramState) (pathWarning string) {
+	if !state.PathMutatedByClick || state.PathDir == "" {
+		return ""
+	}
+	if pathStoreFactory == nil {
+		return ""
+	}
+	if _, err := pathStoreFactory().RemoveFromPath(state.PathDir); err != nil {
+		return fmt.Sprintf("no se pudo quitar %s del PATH persistente: %v", state.PathDir, err)
+	}
+	return ""
 }
 
 func loadEngramState(cfg Config) (engramState, bool, error) {
@@ -331,15 +415,30 @@ func goAvailable() bool {
 // the binary IS still provisioned and resolvable, so a PATH-persistence hiccup must never make
 // EnsureEngramBinary itself report failure.
 func EnsureEngramBinary(cfg Config, version string) (path string, resolvable bool, remediation string, pathWarning string, err error) {
+	path, resolvable, remediation, _, _, pathWarning, err = ensureEngramBinaryWithPathInfo(cfg, version)
+	return path, resolvable, remediation, pathWarning, err
+}
+
+// ensureEngramBinaryWithPathInfo is EnsureEngramBinary's real implementation, additionally
+// reporting whether THIS call's PATH-persistence attempt actually mutated the user's persisted
+// PATH (pathMutated) and which directory (pathDir) — the two extra signals SyncEngram needs (D-9,
+// T4-1) to record engramState.PathMutatedByClick/PathDir, so `click uninstall` can later safely
+// reverse ONLY what click itself added. EnsureEngramBinary's own long-standing public signature —
+// used by every existing caller/test in this package, plus `click doctor`'s checkEngramBinary and
+// `click install`'s non-fatal remediation fallback — is intentionally left unchanged: those callers
+// never needed pathMutated/pathDir, only pathWarning, so widening EnsureEngramBinary itself would
+// force every one of them (and every existing test) to change for no behavioral benefit.
+func ensureEngramBinaryWithPathInfo(cfg Config, version string) (path string, resolvable bool, remediation string, pathMutated bool, pathDir string, pathWarning string, err error) {
 	path, resolvable, err = EngramBinaryResolvable(cfg)
 	if err != nil {
-		return "", false, "", "", err
+		return "", false, "", false, "", "", err
 	}
 	if resolvable {
-		return path, true, "", persistPathToBinaryDir(cfg, path), nil
+		pathMutated, pathDir, pathWarning = persistPathToBinaryDir(cfg, path)
+		return path, true, "", pathMutated, pathDir, pathWarning, nil
 	}
 	if !goAvailable() {
-		return path, false, EngramBinaryRemediationMessage(version), "", nil
+		return path, false, EngramBinaryRemediationMessage(version), false, "", "", nil
 	}
 
 	runner := commandRunnerFactory()
@@ -349,7 +448,7 @@ func EnsureEngramBinary(cfg Config, version string) (path string, resolvable boo
 
 	path, resolvable, err = EngramBinaryResolvable(cfg)
 	if err != nil {
-		return "", false, "", "", err
+		return "", false, "", false, "", "", err
 	}
 	if !resolvable {
 		// JD-001 fix: `resolvable` reflects THIS process's own LookPath-based prediction of whether
@@ -359,26 +458,30 @@ func EnsureEngramBinary(cfg Config, version string) (path string, resolvable boo
 		// has verifiably written the binary to disk. PATH persistence must therefore be attempted
 		// independently of `resolvable`: check directly whether the binary now exists on disk at
 		// GoBinDir(cfg), and if so, persist that directory regardless of what LookPath reports.
-		return path, false, EngramBinaryRemediationMessage(version), pathWarningAfterGoInstall(cfg), nil
+		pathMutated, pathDir, pathWarning = pathWarningAfterGoInstall(cfg)
+		return path, false, EngramBinaryRemediationMessage(version), pathMutated, pathDir, pathWarning, nil
 	}
-	return path, true, "", persistPathToBinaryDir(cfg, path), nil
+	pathMutated, pathDir, pathWarning = persistPathToBinaryDir(cfg, path)
+	return path, true, "", pathMutated, pathDir, pathWarning, nil
 }
 
 // pathWarningAfterGoInstall independently checks whether the Engram binary now exists on disk at
 // GoBinDir(cfg) — regardless of what the LookPath-based EngramBinaryResolvable reports — and, if
 // so, attempts to persist that directory onto the user's PATH via persistPathToBinaryDir (JD-001).
 // It never errors itself: GoBinDir failing to resolve, or the binary simply not existing there
-// (e.g. no Go toolchain, or `go install` itself failed), both mean "not attempted" (empty
-// pathWarning) — matching persistPathToBinaryDir's own no-error contract.
-func pathWarningAfterGoInstall(cfg Config) (pathWarning string) {
+// (e.g. no Go toolchain, or `go install` itself failed), both mean "not attempted" (mutated=false,
+// dir="", empty pathWarning) — matching persistPathToBinaryDir's own no-error contract. mutated/dir
+// (D-9, T4-1) are persistPathToBinaryDir's own extra ownership-tracking signals, forwarded
+// unchanged.
+func pathWarningAfterGoInstall(cfg Config) (mutated bool, dir string, pathWarning string) {
 	gobin, err := GoBinDir(cfg)
 	if err != nil {
-		return ""
+		return false, "", ""
 	}
 	candidate := filepath.Join(gobin, engramBinaryName())
 	info, statErr := os.Stat(candidate)
 	if statErr != nil || info.IsDir() {
-		return ""
+		return false, "", ""
 	}
 	return persistPathToBinaryDir(cfg, candidate)
 }
@@ -390,32 +493,44 @@ func pathWarningAfterGoInstall(cfg Config) (pathWarning string) {
 // closes JD-B-008's residual gap by applying this same rule from BOTH the already-resolvable
 // early-return path AND the post-`go install` path in EnsureEngramBinary above).
 //
+// mutated/dir (D-9, T4-1) are the ownership-tracking signals SyncEngram needs to record
+// engramState.PathMutatedByClick/PathDir: mutated reports whether pathStoreFactory().EnsureOnPath
+// ACTUALLY changed the persisted PATH this call (i.e. its own changed==true — including the case
+// where the registry write itself durably succeeded but the WM_SETTINGCHANGE broadcast afterward
+// failed; the mutation still happened), and dir is the exact directory that was (or would have
+// been) persisted — gobin — regardless of whether this specific call mutated anything, so a caller
+// merging against previously-persisted state always knows which dir an OLDER successful call must
+// have used. Both are false/empty on every early-return path below, where no EnsureOnPath call is
+// even made.
+//
 // It never returns an error itself: GoBinDir failing to resolve, or the binary living outside
-// GoBinDir, both mean "not attempted" (empty pathWarning) — not a warning. Only an actual
-// pathStoreFactory().EnsureOnPath failure produces a non-empty, wrapped pathWarning.
+// GoBinDir, both mean "not attempted" (mutated=false, dir="", empty pathWarning) — not a warning.
+// Only an actual pathStoreFactory().EnsureOnPath failure produces a non-empty, wrapped pathWarning
+// (mutated then reflects whatever EnsureOnPath itself reported — see above).
 // pathStoreFactory().EnsureOnPath is already idempotent (a no-op, changed=false, on a directory
 // already present in the persisted PATH), so calling it directly here — rather than pre-checking
 // PersistedPathContains first — never produces redundant writes on its own.
-func persistPathToBinaryDir(cfg Config, binaryPath string) (pathWarning string) {
+func persistPathToBinaryDir(cfg Config, binaryPath string) (mutated bool, dir string, pathWarning string) {
 	gobin, err := GoBinDir(cfg)
 	if err != nil {
 		// No `go env`-resolvable GOBIN/GOPATH at all — nothing to compare binaryPath against.
-		return ""
+		return false, "", ""
 	}
 	if !sameDir(filepath.Dir(binaryPath), gobin) {
 		// Resolved from somewhere other than GoBinDir — pathStore has nothing to do here.
-		return ""
+		return false, "", ""
 	}
 	if pathStoreFactory == nil {
 		// No platform pathStore wired in (e.g. a build with neither pathenv_windows.go nor
 		// pathenv_unix.go compiled in, which never happens in a real release build, only in some
 		// narrowly-scoped unit tests) — nothing to attempt.
-		return ""
+		return false, "", ""
 	}
-	if _, err := pathStoreFactory().EnsureOnPath(gobin); err != nil {
-		return fmt.Sprintf("no se pudo agregar %s al PATH persistente: %v", gobin, err)
+	changed, err := pathStoreFactory().EnsureOnPath(gobin)
+	if err != nil {
+		return changed, gobin, fmt.Sprintf("no se pudo agregar %s al PATH persistente: %v", gobin, err)
 	}
-	return ""
+	return changed, gobin, ""
 }
 
 // sameDir reports whether a and b refer to the same directory, comparing case-insensitively on

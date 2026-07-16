@@ -131,6 +131,51 @@ func (osPathStore) EnsureOnPath(dir string) (bool, error) {
 	return true, nil
 }
 
+// RemoveFromPath removes dir from HKCU\Environment\Path if present (D-9, reversal half of
+// EnsureOnPath), preserving whichever registry value type (REG_EXPAND_SZ or REG_SZ) the value
+// already had, and preserving every OTHER entry's exact text and relative order — only the matching
+// entry/entries are dropped (via computeRemovedPath's same case-insensitive,
+// trailing-separator-normalized comparison EnsureOnPath itself uses), so a sibling entry is never
+// corrupted or truncated. changed=false with NO registry write at all when dir is not present (a
+// missing Path value is treated as empty — nothing to remove, not an error, mirroring
+// PersistedPathContains' own missing-value handling). On an actual mutation it broadcasts
+// WM_SETTINGCHANGE, exactly like EnsureOnPath, so already-running processes observe the removal
+// without a reboot.
+func (osPathStore) RemoveFromPath(dir string) (bool, error) {
+	key, err := openEnvironmentKey(registry.QUERY_VALUE | registry.SET_VALUE)
+	if err != nil {
+		return false, fmt.Errorf("installer: open HKCU\\Environment for read-write: %w", err)
+	}
+	defer key.Close()
+
+	current, valtype, err := key.GetStringValue(pathValueName)
+	if err != nil {
+		if errors.Is(err, registry.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("installer: read HKCU\\Environment\\%s: %w", pathValueName, err)
+	}
+
+	newValue, changed := computeRemovedPath(current, dir)
+	if !changed {
+		return false, nil
+	}
+
+	if valtype == registry.EXPAND_SZ {
+		err = key.SetExpandStringValue(pathValueName, newValue)
+	} else {
+		err = key.SetStringValue(pathValueName, newValue)
+	}
+	if err != nil {
+		return false, fmt.Errorf("installer: write HKCU\\Environment\\%s: %w", pathValueName, err)
+	}
+
+	if err := broadcastEnv(); err != nil {
+		return true, fmt.Errorf("installer: broadcast WM_SETTINGCHANGE after PATH update: %w", err)
+	}
+	return true, nil
+}
+
 // Windows WM_SETTINGCHANGE broadcast constants. See
 // https://learn.microsoft.com/windows/win32/winmsg/wm-settingchange.
 const (

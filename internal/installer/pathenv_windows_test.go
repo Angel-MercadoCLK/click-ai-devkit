@@ -235,6 +235,169 @@ func TestOsPathStore_EnsureOnPath_BroadcastFailure(t *testing.T) {
 	}
 }
 
+// TestOsPathStore_RemoveFromPath_RemovesPresentEntryPreservesOthersAndType is D-9's core reversal
+// contract: removing a present dir must preserve every other entry's exact text (here proven with
+// TWO neighbors, one on each side) and must write back via the SAME registry type
+// (SetExpandStringValue for REG_EXPAND_SZ) the value already had — mirroring EnsureOnPath's own
+// type-preservation guarantee, just in reverse.
+func TestOsPathStore_RemoveFromPath_RemovesPresentEntryPreservesOthersAndType(t *testing.T) {
+	key := &fakeRegistryKey{
+		getVal:  `C:\Windows\system32;C:\Users\dev\go\bin;C:\Program Files\Git\bin`,
+		getType: registry.EXPAND_SZ,
+	}
+	broadcastCalls := withFakeRegistry(t, key, nil, nil)
+
+	changed, err := osPathStore{}.RemoveFromPath(`C:\Users\dev\go\bin`)
+	if err != nil {
+		t.Fatalf("RemoveFromPath() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("RemoveFromPath() changed = false, want true")
+	}
+	if len(key.setExpandCalls) != 1 {
+		t.Fatalf("SetExpandStringValue calls = %d, want 1 (got SetStringValue calls = %d)", len(key.setExpandCalls), len(key.setStringCalls))
+	}
+	want := `C:\Windows\system32;C:\Program Files\Git\bin`
+	if key.setExpandCalls[0].value != want {
+		t.Fatalf("SetExpandStringValue value = %q, want %q (neighbors on both sides must survive intact)", key.setExpandCalls[0].value, want)
+	}
+	if len(key.setStringCalls) != 0 {
+		t.Fatalf("SetStringValue calls = %d, want 0 (REG_EXPAND_SZ must be preserved, not downgraded)", len(key.setStringCalls))
+	}
+	if *broadcastCalls != 1 {
+		t.Fatalf("broadcastEnv calls = %d, want 1", *broadcastCalls)
+	}
+}
+
+// TestOsPathStore_RemoveFromPath_PreservesRegSz triangulates the type-preservation requirement
+// against the opposite starting type: REG_SZ must write back via SetStringValue, never "upgraded"
+// to REG_EXPAND_SZ.
+func TestOsPathStore_RemoveFromPath_PreservesRegSz(t *testing.T) {
+	key := &fakeRegistryKey{getVal: `C:\Windows\system32;C:\Users\dev\go\bin`, getType: registry.SZ}
+	broadcastCalls := withFakeRegistry(t, key, nil, nil)
+
+	changed, err := osPathStore{}.RemoveFromPath(`C:\Users\dev\go\bin`)
+	if err != nil {
+		t.Fatalf("RemoveFromPath() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("RemoveFromPath() changed = false, want true")
+	}
+	if len(key.setStringCalls) != 1 || key.setStringCalls[0].value != `C:\Windows\system32` {
+		t.Fatalf("SetStringValue calls = %#v, want exactly one call leaving C:\\Windows\\system32", key.setStringCalls)
+	}
+	if len(key.setExpandCalls) != 0 {
+		t.Fatalf("SetExpandStringValue calls = %d, want 0 (REG_SZ must not be upgraded)", len(key.setExpandCalls))
+	}
+	if *broadcastCalls != 1 {
+		t.Fatalf("broadcastEnv calls = %d, want 1", *broadcastCalls)
+	}
+}
+
+// TestOsPathStore_RemoveFromPath_NoOpWhenAbsent covers the safety-critical idempotency case: dir is
+// not on the persisted PATH at all, so RemoveFromPath must not write anything and must not
+// broadcast — this is what makes it safe for RemoveEngramPlugin to call unconditionally once it has
+// already confirmed engramState.PathMutatedByClick/PathDir.
+func TestOsPathStore_RemoveFromPath_NoOpWhenAbsent(t *testing.T) {
+	key := &fakeRegistryKey{getVal: `C:\Windows\system32`, getType: registry.EXPAND_SZ}
+	broadcastCalls := withFakeRegistry(t, key, nil, nil)
+
+	changed, err := osPathStore{}.RemoveFromPath(`C:\Users\dev\go\bin`)
+	if err != nil {
+		t.Fatalf("RemoveFromPath() error = %v", err)
+	}
+	if changed {
+		t.Fatal("RemoveFromPath() changed = true, want false (dir was never present)")
+	}
+	if len(key.setStringCalls) != 0 || len(key.setExpandCalls) != 0 {
+		t.Fatalf("Set*Value calls made on a no-op: string=%d expand=%d, want 0/0", len(key.setStringCalls), len(key.setExpandCalls))
+	}
+	if *broadcastCalls != 0 {
+		t.Fatalf("broadcastEnv calls = %d, want 0 (no mutation happened)", *broadcastCalls)
+	}
+}
+
+// TestOsPathStore_RemoveFromPath_MissingValueIsNoOp covers the edge case where HKCU\Environment\Path
+// does not exist at all (ErrNotExist): an absent value is treated as empty — nothing to remove, not
+// an error.
+func TestOsPathStore_RemoveFromPath_MissingValueIsNoOp(t *testing.T) {
+	key := &fakeRegistryKey{getErr: registry.ErrNotExist}
+	broadcastCalls := withFakeRegistry(t, key, nil, nil)
+
+	changed, err := osPathStore{}.RemoveFromPath(`C:\Users\dev\go\bin`)
+	if err != nil {
+		t.Fatalf("RemoveFromPath() error = %v", err)
+	}
+	if changed {
+		t.Fatal("RemoveFromPath() changed = true, want false when the Path value does not exist yet")
+	}
+	if *broadcastCalls != 0 {
+		t.Fatalf("broadcastEnv calls = %d, want 0", *broadcastCalls)
+	}
+}
+
+// TestOsPathStore_RemoveFromPath_RegistryOpenFailure is the strict-TDD-required failure branch:
+// when opening HKCU\Environment fails, RemoveFromPath must surface the error and never call Set*
+// or broadcast.
+func TestOsPathStore_RemoveFromPath_RegistryOpenFailure(t *testing.T) {
+	openErr := errors.New("injected registry open failure")
+	broadcastCalls := withFakeRegistry(t, &fakeRegistryKey{}, openErr, nil)
+
+	_, err := osPathStore{}.RemoveFromPath(`C:\Users\dev\go\bin`)
+	if err == nil {
+		t.Fatal("RemoveFromPath() error = nil, want the injected open error to propagate")
+	}
+	if !errors.Is(err, openErr) {
+		t.Fatalf("RemoveFromPath() error = %v, want it to wrap %v", err, openErr)
+	}
+	if *broadcastCalls != 0 {
+		t.Fatalf("broadcastEnv calls = %d, want 0 (open failed before any mutation)", *broadcastCalls)
+	}
+}
+
+// TestOsPathStore_RemoveFromPath_RegistrySetFailure is the strict-TDD-required failure branch: when
+// the registry write itself fails, RemoveFromPath must surface the error and must NOT broadcast (no
+// mutation actually landed).
+func TestOsPathStore_RemoveFromPath_RegistrySetFailure(t *testing.T) {
+	setErr := errors.New("injected registry set failure")
+	key := &fakeRegistryKey{getVal: `C:\Windows\system32;C:\Users\dev\go\bin`, getType: registry.EXPAND_SZ, setErr: setErr}
+	broadcastCalls := withFakeRegistry(t, key, nil, nil)
+
+	_, err := osPathStore{}.RemoveFromPath(`C:\Users\dev\go\bin`)
+	if err == nil {
+		t.Fatal("RemoveFromPath() error = nil, want the injected set error to propagate")
+	}
+	if !errors.Is(err, setErr) {
+		t.Fatalf("RemoveFromPath() error = %v, want it to wrap %v", err, setErr)
+	}
+	if *broadcastCalls != 0 {
+		t.Fatalf("broadcastEnv calls = %d, want 0 (write failed, nothing to broadcast)", *broadcastCalls)
+	}
+}
+
+// TestOsPathStore_RemoveFromPath_BroadcastFailure covers the same "write succeeded, broadcast
+// failed" edge case as EnsureOnPath's own equivalent test: changed must still report true (the
+// registry value is already durably written) even though the broadcast error propagates.
+func TestOsPathStore_RemoveFromPath_BroadcastFailure(t *testing.T) {
+	broadcastErr := errors.New("injected broadcast failure")
+	key := &fakeRegistryKey{getVal: `C:\Windows\system32;C:\Users\dev\go\bin`, getType: registry.EXPAND_SZ}
+	broadcastCalls := withFakeRegistry(t, key, nil, broadcastErr)
+
+	changed, err := osPathStore{}.RemoveFromPath(`C:\Users\dev\go\bin`)
+	if err == nil {
+		t.Fatal("RemoveFromPath() error = nil, want the injected broadcast error to propagate")
+	}
+	if !errors.Is(err, broadcastErr) {
+		t.Fatalf("RemoveFromPath() error = %v, want it to wrap %v", err, broadcastErr)
+	}
+	if !changed {
+		t.Fatal("RemoveFromPath() changed = false, want true (the registry write itself succeeded)")
+	}
+	if *broadcastCalls != 1 {
+		t.Fatalf("broadcastEnv calls = %d, want 1", *broadcastCalls)
+	}
+}
+
 // TestOsPathStore_PersistedPathContains_TrueWhenPresent covers the read-only query path.
 func TestOsPathStore_PersistedPathContains_TrueWhenPresent(t *testing.T) {
 	key := &fakeRegistryKey{getVal: `C:\Windows\system32;C:\Users\dev\go\bin`, getType: registry.EXPAND_SZ}

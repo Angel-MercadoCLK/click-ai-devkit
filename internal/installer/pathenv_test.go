@@ -294,6 +294,7 @@ type fakePathStore struct{}
 
 func (fakePathStore) PersistedPathContains(dir string) (bool, error) { return false, nil }
 func (fakePathStore) EnsureOnPath(dir string) (bool, error)          { return false, nil }
+func (fakePathStore) RemoveFromPath(dir string) (bool, error)        { return false, nil }
 
 // TestSetPathStoreFactoryForTests_OverridesAndRestores proves the injectable-factory seam PR2/PR3
 // rely on actually works: overriding returns the fake, and calling the restore func puts
@@ -385,6 +386,66 @@ func TestComputeNewPath(t *testing.T) {
 	}
 }
 
+// TestComputeRemovedPath covers computeNewPath's reversal counterpart (D-9): removing a present
+// entry (case-insensitive, trailing-"\"-normalized, matching EnsureOnPath's own comparison),
+// leaving every other entry's exact text/order intact, and a true no-op (changed=false, value
+// byte-for-byte unchanged) when dir is not present at all.
+func TestComputeRemovedPath(t *testing.T) {
+	tests := []struct {
+		name        string
+		current     string
+		dir         string
+		wantValue   string
+		wantChanged bool
+	}{
+		{
+			name:        "removes a present entry, preserving neighbors",
+			current:     `C:\Windows\system32;C:\Users\dev\go\bin;C:\Program Files\Git\bin`,
+			dir:         `C:\Users\dev\go\bin`,
+			wantValue:   `C:\Windows\system32;C:\Program Files\Git\bin`,
+			wantChanged: true,
+		},
+		{
+			name:        "case-insensitive match is still removed",
+			current:     `C:\Windows\system32;C:\USERS\DEV\GO\BIN`,
+			dir:         `C:\Users\dev\go\bin`,
+			wantValue:   `C:\Windows\system32`,
+			wantChanged: true,
+		},
+		{
+			name:        "trailing backslash on the stored entry is still removed",
+			current:     `C:\Windows\system32;C:\Users\dev\go\bin\`,
+			dir:         `C:\Users\dev\go\bin`,
+			wantValue:   `C:\Windows\system32`,
+			wantChanged: true,
+		},
+		{
+			name:        "dir not present is a byte-for-byte no-op",
+			current:     `C:\Windows\system32;C:\Program Files\Git\bin`,
+			dir:         `C:\Users\dev\go\bin`,
+			wantValue:   `C:\Windows\system32;C:\Program Files\Git\bin`,
+			wantChanged: false,
+		},
+		{
+			name:        "sole entry removed leaves an empty value",
+			current:     `C:\Users\dev\go\bin`,
+			dir:         `C:\Users\dev\go\bin`,
+			wantValue:   ``,
+			wantChanged: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotValue, gotChanged := computeRemovedPath(tt.current, tt.dir)
+			if gotValue != tt.wantValue || gotChanged != tt.wantChanged {
+				t.Fatalf("computeRemovedPath(%q, %q) = (%q, %v), want (%q, %v)",
+					tt.current, tt.dir, gotValue, gotChanged, tt.wantValue, tt.wantChanged)
+			}
+		})
+	}
+}
+
 // fakePersistedPathStore is a pathStore double used only to prove PathPersisted forwards
 // PersistedPathContains's result/error verbatim, in isolation from any real platform pathStore.
 type fakePersistedPathStore struct {
@@ -395,7 +456,8 @@ type fakePersistedPathStore struct {
 func (f fakePersistedPathStore) PersistedPathContains(dir string) (bool, error) {
 	return f.persisted, f.err
 }
-func (f fakePersistedPathStore) EnsureOnPath(dir string) (bool, error) { return false, nil }
+func (f fakePersistedPathStore) EnsureOnPath(dir string) (bool, error)   { return false, nil }
+func (f fakePersistedPathStore) RemoveFromPath(dir string) (bool, error) { return false, nil }
 
 // TestPathPersisted_ForwardsPathStoreResult is PR5's checkEngramPath dependency: `click doctor`
 // (a different package) needs a way to ask "is dir on the persisted PATH" without this package

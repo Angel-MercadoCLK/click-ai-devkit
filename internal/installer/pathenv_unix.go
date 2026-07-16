@@ -306,6 +306,62 @@ func splicePosixManagedBlock(existing string, block []string) (result string, ch
 	return joinLines(newLines), true
 }
 
+// removePosixManagedBlock removes click's OWN managed PATH block from existing if one is present,
+// mirroring splicePosixManagedBlock's marker-location logic but in reverse (D-9): it locates the
+// exact same begin/end marker pair and drops every line between them (inclusive), leaving every
+// other line in the file completely untouched — including a developer's own manual `export
+// PATH=...` line, which never carries click's markers and so can never be matched here. changed is
+// false, existing returned unchanged, when no well-formed managed block is found at all (nothing of
+// click's to remove).
+func removePosixManagedBlock(existing string) (result string, changed bool) {
+	lines := splitLines(existing)
+	begin, end := findPosixMarkers(lines)
+	if begin == -1 || end == -1 {
+		return existing, false
+	}
+	newLines := make([]string, 0, len(lines)-(end-begin+1))
+	newLines = append(newLines, lines[:begin]...)
+	newLines = append(newLines, lines[end+1:]...)
+	return joinLines(newLines), true
+}
+
+// RemoveFromPath removes click's OWN managed PATH block from every applicable target rc file for
+// the current user's detected shell (D-9, reversal half of EnsureOnPath) — never a developer's own
+// manual PATH line, since removePosixManagedBlock only ever recognizes click's marker-delimited
+// block. dir is accepted for pathStore interface symmetry with the Windows implementation and
+// EnsureOnPath, but is not itself consulted: POSIX reversal is block-based (there is at most one
+// managed block per target file — splicePosixManagedBlock replaces it in place rather than
+// accumulating stale duplicates — so locating and removing IT is unambiguous without needing to
+// match its content against dir). changed reports whether ANY target file was actually mutated.
+// Mutation reuses PR1's atomicWriteFile, same as EnsureOnPath, so a write failure leaves that file's
+// original content byte-for-byte intact.
+func (osPathStore) RemoveFromPath(dir string) (bool, error) {
+	targets, err := posixShellTargets()
+	if err != nil {
+		return false, err
+	}
+	changedAny := false
+	for _, path := range targets {
+		content, err := readFileOrEmpty(path)
+		if err != nil {
+			return changedAny, fmt.Errorf("installer: read %s: %w", path, err)
+		}
+		updated, changed := removePosixManagedBlock(content)
+		if !changed {
+			continue
+		}
+		mode := os.FileMode(0o644)
+		if info, err := os.Stat(path); err == nil {
+			mode = info.Mode()
+		}
+		if err := atomicWriteFile(path, []byte(updated), mode); err != nil {
+			return changedAny, fmt.Errorf("installer: atomic write %s: %w", path, err)
+		}
+		changedAny = true
+	}
+	return changedAny, nil
+}
+
 // writeManagedBlockAtomicUnix splices click's managed PATH block (for dir) into existingContent
 // and, if that changes anything, atomically writes the result to path via PR1's atomicWriteFile —
 // preserving path's existing file mode if it already exists, defaulting to 0o644 for a brand-new

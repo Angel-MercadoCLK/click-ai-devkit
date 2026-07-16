@@ -60,7 +60,11 @@ func Uninstall(cfg Config) error {
 	if err := RemoveMarketplacePlugins(); err != nil {
 		return err
 	}
-	if err := RemoveEngramPlugin(cfg); err != nil {
+	// pathWarning is deliberately discarded here for the same reason Install() discards SyncEngram's
+	// own pathWarning above: Uninstall has no ui.Renderer to surface it through — the CLI-layer
+	// caller (cli/uninstall.go) captures and surfaces it itself instead of going through this
+	// lower-level orchestration function.
+	if _, err := RemoveEngramPlugin(cfg); err != nil {
 		return err
 	}
 	if err := RemoveContext7(cfg); err != nil {

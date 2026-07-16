@@ -3,9 +3,12 @@
 // later PRs of this chain and each assign pathStoreFactory via a build-tagged init(). This file
 // intentionally never references a concrete platform type, so it builds and tests standalone.
 //
-// Scope note: D-9 (ownership tracking + PATH-reversal on `click uninstall`) is explicitly OUT OF
-// SCOPE for v0.4.2 per Judgment Day Round 2 FINAL (sdd/engram-mcp-resolution — obs #1438) — the
-// pathStore interface below intentionally has no RemoveFromPath method.
+// D-9 (ownership tracking + PATH-reversal on `click uninstall`, T4-1): out of scope for v0.4.2 per
+// Judgment Day Round 2 FINAL (sdd/engram-mcp-resolution — obs #1438), but now a real, user-approved
+// follow-up. pathStore's RemoveFromPath below is its reversal half: EnsureOnPath adds a dir,
+// RemoveFromPath takes it back out — but ONLY the exact thing click itself is capable of having
+// added (see pathenv_windows.go/pathenv_unix.go's own doc comments for the platform-specific
+// "never touch what click didn't add" guarantees).
 package installer
 
 import (
@@ -25,6 +28,15 @@ type pathStore interface {
 	// EnsureOnPath adds dir to the persisted user PATH if not already present. changed reports
 	// whether a mutation actually happened (false on a no-op idempotent re-run).
 	EnsureOnPath(dir string) (changed bool, err error)
+	// RemoveFromPath reverses EnsureOnPath: it removes dir from the persisted user PATH (Windows)
+	// or removes click's own managed block that added it (POSIX — the block is the unit of
+	// reversal there, not a raw string match against dir). changed reports whether a mutation
+	// actually happened (false when there was nothing of click's to remove). Callers MUST only
+	// invoke this for a dir click itself recorded adding (engramState.PathMutatedByClick/PathDir,
+	// D-9) — RemoveFromPath itself has no way to know whether dir was click's own addition versus
+	// something a developer configured independently; that ownership check is the CALLER's
+	// responsibility (mirrors RemoveEngramPlugin's existing InstalledByClick gate).
+	RemoveFromPath(dir string) (changed bool, err error)
 }
 
 // pathStoreFactory returns the platform-specific pathStore implementation. It has no default
@@ -158,6 +170,30 @@ func computeNewPath(current, dir string) (newValue string, changed bool) {
 		return dir, true
 	}
 	return current + ";" + dir, true
+}
+
+// computeRemovedPath is computeNewPath's reversal counterpart (D-9): given the current
+// semicolon-joined PATH value and a directory to remove, it returns the new value to write
+// (unchanged from current when dir is not present) and whether a write is actually needed. It uses
+// the exact same case-insensitive, trailing-separator-normalized comparison as computeNewPath (via
+// pathListContains/normalizePathEntry) so a dir EnsureOnPath added is reliably recognized for
+// removal regardless of how it was cased or whether a trailing "\" was present. Every OTHER entry
+// keeps its original text and relative order — this only ever drops the matching entry/entries and
+// rejoins the rest with ";", it never rewrites, reorders, or normalizes anything else in the list.
+func computeRemovedPath(current, dir string) (newValue string, changed bool) {
+	if !pathListContains(current, dir) {
+		return current, false
+	}
+	target := normalizePathEntry(dir)
+	entries := strings.Split(current, ";")
+	kept := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if normalizePathEntry(entry) == target {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return strings.Join(kept, ";"), true
 }
 
 // pathListContains reports whether dir is already present (per normalizePathEntry) among the
