@@ -275,7 +275,8 @@ func SetBinaryLookupFactoryForTests(factory func() BinaryLookup) func() {
 
 // engramBinaryModulePath is the Go module path for Engram's CLI/MCP binary. Confirmed resolvable
 // via `go install` in this slice's Step 0 spike (documentacion/spikes/spike-e-engram-install.md):
-// both `@latest` and the manifest-pinned `@v1.15.3` resolve and produce a binary that actually runs.
+// both `@latest` and the manifest-pinned `@v1.19.0` resolve and produce a binary that actually runs
+// (v1.19.0 re-verified installing cleanly via `go install` when the pin was bumped from v1.15.3).
 const engramBinaryModulePath = "github.com/Gentleman-Programming/engram/cmd/engram"
 
 // EngramInstallCommand is the exact `go install` command line click recommends — and, when the Go
