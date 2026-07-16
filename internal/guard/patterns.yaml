@@ -27,17 +27,37 @@ categories:
     reason: "blocked: detected policy number"
     rules:
       - id: policy-numbers/placeholder
-        description: "Placeholder policy-number format for v0.1 (TODO: confirm real Click policy formats before shipping)."
-        pattern: '(?i)\b(?:p[oó]liza|policy|pol)[:\s#-]*[A-Z0-9][A-Z0-9-]{5,19}\b'
+        # Placeholder policy-number format for v0.1 (TODO: confirm real Click policy formats before
+        # shipping). T2-3 tuning discriminator: the ID token must CONTAIN A DIGIT anywhere
+        # ([A-Z0-9-]*[0-9][A-Z0-9-]* — RE2 has no lookahead, and this forces >=1 digit at any
+        # position, index 0 included). Real IDs carry digits; prose words ("policy layer", "policy
+        # enforcement", "the policy is") do not, so they no longer false-positive — a precision gain,
+        # not a coverage cut (every structured ID in engine_test.go has a digit). The abbreviated
+        # keyword "pol" is KEPT but pinned to a whole word (\bpol\b) so it catches the day-to-day
+        # abbreviation "Pol 12-345-6" WITHOUT matching prose words that merely start with those
+        # letters ("polygon", "polling", "pollution").
+        description: "Placeholder policy-number format for v0.1: policy keyword (incl. whole-word 'pol') + a digit-bearing ID token (TODO: confirm real Click policy formats before shipping)."
+        pattern: '(?i)\b(?:p[oó]liza|policy|pol)\b[:\s#-]*[A-Z0-9-]*[0-9][A-Z0-9-]*\b'
   - name: claim-ids
     reason: "blocked: detected claim identifier"
     rules:
       - id: claim-ids/placeholder
-        description: "Placeholder claim-id format for v0.1 (TODO: confirm real Click siniestro formats before shipping)."
-        pattern: '(?i)\b(?:siniestro|claim|sin)[:\s#-]*[A-Z0-9][A-Z0-9-]{4,19}\b'
+        # T2-3 tuning: require the ID token to CONTAIN A DIGIT anywhere, so prose like "claim that",
+        # "claim identifier", "the claim-ids category", "sin conflicto" no longer false-positives
+        # while a real reference ("Siniestro SIN-2026-000123") still blocks. The abbreviated keyword
+        # "sin" (siniestro) is KEPT but pinned to a whole word (\bsin\b) so it catches "Sin 123456"
+        # WITHOUT matching prose words that merely start with those letters ("single", "since",
+        # "sinusoid"). This is the R1-001 correction: dropping "sin"/"pol" entirely was an
+        # over-correction that lost coverage of the domain's own everyday abbreviations.
+        description: "Placeholder claim-id format for v0.1: claim keyword (incl. whole-word 'sin') + a digit-bearing ID token (TODO: confirm real Click siniestro formats before shipping)."
+        pattern: '(?i)\b(?:siniestro|claim|sin)\b[:\s#-]*[A-Z0-9-]*[0-9][A-Z0-9-]*\b'
   - name: customer-identifiers
     reason: "blocked: detected customer identifier"
     rules:
       - id: customer-identifiers/placeholder
-        description: "Placeholder customer-id format for v0.1 (TODO: confirm real Click customer identifier formats before shipping)."
-        pattern: '(?i)\b(?:customer|cliente)[-_\s]*(?:id|identifier|number|nro)?[:\s#-]*[A-Z0-9][A-Z0-9-]{3,19}\b'
+        # T2-3 tuning: require the ID token to CONTAIN A DIGIT anywhere, so "customer data",
+        # "customer identifiers", "customer boundary" no longer false-positive while "customer-id
+        # CLI-998877" still blocks. (No whole-word abbreviation change here — customer/cliente had no
+        # bare-abbreviation alternative to restore, unlike sin/pol above.)
+        description: "Placeholder customer-id format for v0.1: keyword + a digit-bearing ID token (TODO: confirm real Click customer identifier formats before shipping)."
+        pattern: '(?i)\b(?:customer|cliente)[-_\s]*(?:id|identifier|number|nro)?[:\s#-]*[A-Z0-9-]*[0-9][A-Z0-9-]*\b'
