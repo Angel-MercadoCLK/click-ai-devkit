@@ -12,7 +12,7 @@ import "errors"
 // hitting that mid-clone failure. Both `click install` and `click update`'s preflight, and
 // doctor's checkGit, share this exact text so they never give a developer conflicting instructions
 // — the same contract EngramBinaryRemediationMessage already establishes for the Engram binary.
-const GitMissingMessage = "git no está instalado o no está en el PATH. click lo necesita para registrar el marketplace de plugins. Instalalo con: scoop install git (o https://git-scm.com/download/win) y volvé a intentar."
+const GitMissingMessage = "git no está instalado o no está en el PATH. click lo necesita para registrar el marketplace de plugins. Instálelo con: scoop install git (o https://git-scm.com/download/win) y vuelva a intentar."
 
 // GitPath resolves git's absolute path via the same injectable BinaryLookup used for the
 // Engram/Go toolchain lookups (engram.go's ResolveEngramBinaryPath/goAvailable) — so tests can

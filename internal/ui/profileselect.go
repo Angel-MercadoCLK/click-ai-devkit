@@ -27,7 +27,7 @@ var profileDescriptions = map[modelconfig.ProfileName]string{
 	modelconfig.ProfileBalanced:  "equilibrado: sonnet en la mayoría de fases, opus en las críticas",
 	modelconfig.ProfileCostSaver: "económico: haiku en la mayoría de fases, opus solo en las críticas",
 	modelconfig.ProfileQuality:   "calidad: opus en casi todas las fases",
-	modelconfig.ProfileCustom:    "personalizado: elegís el modelo fase por fase",
+	modelconfig.ProfileCustom:    "personalizado: elige el modelo fase por fase",
 }
 
 // ProfileSelectModel is the bubbletea model that drives `click install`'s profile-select step

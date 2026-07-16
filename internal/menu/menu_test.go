@@ -74,10 +74,17 @@ func TestModel_Update_EnterOnActiveItemSetsChosenAndQuits(t *testing.T) {
 	}
 }
 
+// TestModel_Update_EnterOnInertItemShowsStatusAndDoesNotQuit guards selectCurrent's
+// inert-item branch, which every current real Items row is now Active and no longer
+// exercises (this change activated "Gestionar backups" and removed the other two inert
+// placeholders entirely). The dispatch mechanism itself is unchanged and must still work
+// correctly if a future item is ever added inert again, so this test swaps in a synthetic
+// inert item via setItemsForTest instead of relying on real Items to contain one.
 func TestModel_Update_EnterOnInertItemShowsStatusAndDoesNotQuit(t *testing.T) {
-	idx := firstItemIndexWhere(t, func(it Item) bool { return !it.Active })
+	defer setItemsForTest(t, []Item{{Label: "Inert placeholder", Active: false}})()
+
 	m := NewModel()
-	m.Cursor = idx
+	m.Cursor = 0
 
 	m, cmd := updateModel(m, keyMsg("enter"))
 	if m.Chosen != "" {
@@ -92,19 +99,54 @@ func TestModel_Update_EnterOnInertItemShowsStatusAndDoesNotQuit(t *testing.T) {
 }
 
 func TestAgentBuilderMenuItemIsActiveAndDispatchable(t *testing.T) {
-	idx := firstItemIndexWhere(t, func(it Item) bool { return it.Label == "Crear tu propio agente" })
+	idx := firstItemIndexWhere(t, func(it Item) bool { return it.Label == "Crear agente propio" })
 	item := Items[idx]
 	if !item.Active {
-		t.Fatal("Crear tu propio agente Active = false, want true")
+		t.Fatal("Crear agente propio Active = false, want true")
 	}
 	if item.Action != ActionAgentBuilder {
-		t.Fatalf("Crear tu propio agente Action = %q, want %q", item.Action, ActionAgentBuilder)
+		t.Fatalf("Crear agente propio Action = %q, want %q", item.Action, ActionAgentBuilder)
 	}
 
 	got := ActionArgs(item.Action)
 	want := []string{"agent-builder"}
 	if len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("ActionArgs(%q) = %v, want %v", item.Action, got, want)
+	}
+}
+
+// TestManageBackupsMenuItemIsActiveAndDispatchable guards the menu-side half of the
+// "Gestionar backups" activation: the item must be active, wired to ActionManageBackups,
+// and ActionArgs must map that action to the exact args click's fresh root command needs
+// to reach `click manage-backups`.
+func TestManageBackupsMenuItemIsActiveAndDispatchable(t *testing.T) {
+	idx := firstItemIndexWhere(t, func(it Item) bool { return it.Label == "Gestionar backups" })
+	item := Items[idx]
+	if !item.Active {
+		t.Fatal("Gestionar backups Active = false, want true")
+	}
+	if item.Action != ActionManageBackups {
+		t.Fatalf("Gestionar backups Action = %q, want %q", item.Action, ActionManageBackups)
+	}
+
+	got := ActionArgs(item.Action)
+	want := []string{"manage-backups"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("ActionArgs(%q) = %v, want %v", item.Action, got, want)
+	}
+}
+
+// TestItems_NoLongerContainsRemovedInertPlaceholders guards the removal of the two inert
+// "coming soon" rows that were dropped entirely (not merely deactivated) by this change:
+// "Presets de instalación" and "Sincronizar configuración" no longer exist in Items at all.
+func TestItems_NoLongerContainsRemovedInertPlaceholders(t *testing.T) {
+	removed := []string{"Presets de instalación", "Sincronizar configuración"}
+	for _, label := range removed {
+		for _, item := range Items {
+			if item.Label == label {
+				t.Fatalf("Items still contains removed placeholder %q", label)
+			}
+		}
 	}
 }
 
@@ -154,7 +196,12 @@ func TestModel_View_RendersEveryItemLabel(t *testing.T) {
 	}
 }
 
+// TestModel_View_InertItemsShowComingSoonSuffix guards View's inert-row rendering, which no
+// current real Items row exercises anymore (see TestModel_Update_EnterOnInertItemShowsStatusAndDoesNotQuit's
+// comment) — swaps in a synthetic inert item so this rendering path stays covered.
 func TestModel_View_InertItemsShowComingSoonSuffix(t *testing.T) {
+	defer setItemsForTest(t, []Item{{Label: "Inert placeholder", Active: false}})()
+
 	m := NewModel()
 	view := m.View()
 	lines := strings.Split(view, "\n")
@@ -183,6 +230,7 @@ func TestActionArgs_MapsEachActiveDispatchableAction(t *testing.T) {
 		ActionAgentBuilder:    {"agent-builder"},
 		ActionDoctor:          {"doctor"},
 		ActionUninstall:       {"uninstall"},
+		ActionManageBackups:   {"manage-backups"},
 	}
 	for action, want := range cases {
 		got := ActionArgs(action)
@@ -203,6 +251,16 @@ func TestActionArgs_QuitAndUnknownReturnNil(t *testing.T) {
 			t.Errorf("ActionArgs(%q) = %v, want nil", action, got)
 		}
 	}
+}
+
+// setItemsForTest swaps the package-level Items with a temporary slice for the duration of a
+// test, returning a restore func the caller must defer immediately. Used to exercise code paths
+// (like the inert-item branch of selectCurrent/View) that no current real Items row triggers.
+func setItemsForTest(t *testing.T, items []Item) func() {
+	t.Helper()
+	original := Items
+	Items = items
+	return func() { Items = original }
 }
 
 func firstItemIndexWhere(t *testing.T, pred func(Item) bool) int {

@@ -1,5 +1,14 @@
 # Design: Gestionar backups (backup manager: list / restore / prune / pin)
 
+> **Estado (2026-07-16):** este diseño completo NO se implementó todavía. En su lugar se
+> publicó una versión mínima (`internal/cli/managebackups.go`, comando `click manage-backups`)
+> que solo ve/restaura/elimina la única copia de seguridad existente hoy (`models.json.bak`,
+> generada por `installer.MigrateIfStale`), sin interfaz interactiva ni deduplicación por
+> contenido. Fue una decisión explícita: entregar algo real y de bajo riesgo ahora en vez de dejar
+> el ítem del menú inactivo, sin descartar este diseño más completo para una iteración futura.
+> Si se retoma este diseño, `internal/cli/managebackups.go` y su `ActionManageBackups` deberían
+> reemplazarse o convivir con `internal/cli/backups.go`/`ActionBackups` según se decida entonces.
+
 ## Technical Approach
 
 Introduce a content-addressed backup manager that snapshots click's two managed artifacts —

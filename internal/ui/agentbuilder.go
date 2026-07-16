@@ -344,7 +344,7 @@ func (m AgentBuilderModel) View() string {
 	case StepEngine:
 		return m.renderList("Elegí el motor del agente", engineLabels(m.engines), "↑/↓ mover · enter confirmar · q/esc cancelar")
 	case StepDescription:
-		return renderInputWithError("Describí el agente que querés crear", m.input, m.PreviewError)
+		return renderInputWithError("Describa el agente que quiere crear", m.input, m.PreviewError)
 	case StepSDDMode:
 		return m.renderList("Elegí la integración SDD", sddModeLabels(), "↑/↓ mover · enter confirmar · q/esc cancelar")
 	case StepPhase:
@@ -387,7 +387,7 @@ func (m AgentBuilderModel) renderList(title string, rows []string, help string) 
 
 func (m AgentBuilderModel) renderPreview() string {
 	var b strings.Builder
-	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Revisá el agente antes de instalar"))
+	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Revise el agente antes de instalar"))
 	b.WriteString("\n\n")
 	if m.PreviewError != "" {
 		b.WriteString(styleRenderer.NewStyle().Foreground(lipgloss.Color("9")).Render(m.PreviewError))
@@ -422,7 +422,7 @@ func renderInputWithError(title, value, errorMessage string) string {
 	}
 	b.WriteString(value)
 	b.WriteString("\n\n")
-	b.WriteString(styleRenderer.NewStyle().Faint(true).Render("escribí tu respuesta · enter continuar · esc cancelar"))
+	b.WriteString(styleRenderer.NewStyle().Faint(true).Render("escriba su respuesta · enter continuar · esc cancelar"))
 	return b.String()
 }
 
@@ -463,9 +463,9 @@ func translateAgentBuilderError(err error) string {
 		// case above), so the honest recovery path is: cancel and retry with a
 		// different description, or clear the conflicting file first. Do not imply an
 		// in-place rename is possible here (RRAB-001).
-		return fmt.Sprintf("Ya existe un agente o plugin con ese nombre. Cancelá (Esc) y volvé a intentar con una descripción distinta, o eliminá el agente/plugin existente antes de instalar. (Detalle técnico: %s)", detail)
+		return fmt.Sprintf("Ya existe un agente o plugin con ese nombre. Cancele (Esc) y vuelva a intentar con una descripción distinta, o elimine el agente/plugin existente antes de instalar. (Detalle técnico: %s)", detail)
 	case strings.Contains(msg, "invalid agent name") || strings.Contains(msg, "invalid generated agent name"):
-		return "El nombre del agente no es válido: usá letras minúsculas, números y guiones (sin espacios ni tildes)."
+		return "El nombre del agente no es válido: use letras minúsculas, números y guiones (sin espacios ni tildes)."
 	case strings.Contains(msg, "contains a newline"):
 		return "El valor ingresado no puede contener saltos de línea."
 	case strings.Contains(msg, "is required"):

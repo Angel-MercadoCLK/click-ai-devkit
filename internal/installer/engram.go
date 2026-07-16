@@ -439,10 +439,10 @@ func EngramInstallCommand(version string) string {
 // share this exact text, so the two call sites never drift apart.
 func EngramBinaryRemediationMessage(version string) string {
 	return fmt.Sprintf(
-		"El binario de engram no se encuentra en el PATH. Instalalo manualmente con:\n"+
+		"El binario de engram no se encuentra en el PATH. Instálelo manualmente con:\n"+
 			"  %s\n"+
-			"Después asegurate de que tu directorio de binarios de Go (GOPATH/bin, o GOBIN si lo definiste) esté en el PATH.\n"+
-			"En macOS también podés usar: brew install gentleman-programming/tap/engram",
+			"Después asegúrese de que su directorio de binarios de Go (GOPATH/bin, o GOBIN si lo definió) esté en el PATH.\n"+
+			"En macOS también puede usar: brew install gentleman-programming/tap/engram",
 		EngramInstallCommand(version),
 	)
 }
