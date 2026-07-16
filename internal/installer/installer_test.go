@@ -93,6 +93,14 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 		"claude plugin install click-skills@click-ai-devkit",
 		"claude plugin marketplace add https://github.com/Gentleman-Programming/engram",
 		"claude plugin install engram@engram",
+		// EnsureEngramBinary's Phase 4 signal-wiring (D-5) always queries GoBinDir once the binary
+		// is confirmed resolvable, to decide whether the resolved binary lives inside it and PATH
+		// persistence should be attempted. seedResolvableEngram points the binary at a temp dir
+		// outside any real GOBIN/GOPATH, and this fake runner never stubs "go env GOBIN"/"go env
+		// GOPATH", so GoBinDir errors and no pathStore call follows — but the two `go env` lookups
+		// themselves are still genuinely issued.
+		"go env GOBIN",
+		"go env GOPATH",
 		"claude mcp add --transport http --scope user context7 https://mcp.context7.com/mcp",
 	}
 	if got := runner.commandStrings(); !reflect.DeepEqual(got, wantCommands) {

@@ -120,6 +120,18 @@ func (r *Renderer) Info(msg string) string {
 	return styleRenderer.NewStyle().Foreground(lipgloss.Color("4")).Render(msg)
 }
 
+// Warn renders a non-fatal warning line: "⚠ msg" (lipgloss color 3 / yellow) in color mode,
+// "[warn] msg" in plain mode. Distinct from Fail's ✗/red error styling on purpose — a warning
+// reports a degraded-but-not-broken outcome (e.g. the Engram binary provisioned successfully but
+// PATH persistence failed) rather than a failed step, so it must read as "heads up", not "this
+// broke" (design D-5, sdd/engram-mcp-resolution obs #1436).
+func (r *Renderer) Warn(msg string) string {
+	if !r.Color {
+		return "[warn] " + msg
+	}
+	return styleRenderer.NewStyle().Foreground(lipgloss.Color("3")).Render("⚠ " + msg)
+}
+
 // spinnerTick is how often RunStep redraws its spinner frame in color mode.
 const spinnerTick = 80 * time.Millisecond
 
