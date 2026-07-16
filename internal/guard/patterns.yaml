@@ -6,8 +6,14 @@ categories:
         description: "Email addresses are always forbidden in memory."
         pattern: '(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b'
       - id: pii/dni
-        description: "Argentine DNI-like numbers (TODO: confirm additional Click-specific context cues if false positives appear)."
-        pattern: '\b[0-9]{7,8}\b'
+        # Tuned like the policy/claim/customer placeholders: the bare `\b[0-9]{7,8}\b` pattern
+        # false-positived on ANY standalone 7-8 digit run (release dates like 20260716, build
+        # counters, issue numbers), making memory unusable for routine technical content. It now
+        # requires a document keyword (dni/documento/cedula/carnet) before the digit run, so a real
+        # labeled DNI still blocks while bare numbers pass. Trade-off (accepted): an UNLABELED bare
+        # DNI is no longer caught — revisit once real Click document formats are confirmed.
+        description: "DNI-like numbers preceded by a document keyword (TODO: confirm real Click document formats before shipping)."
+        pattern: '(?i)\b(?:dni|documento|cedula|carnet)\b[:\s#-]*[0-9]{7,8}\b'
       - id: pii/cuit-cuil
         description: "Argentine CUIT/CUIL identifiers."
         pattern: '\b[0-9]{2}-?[0-9]{8}-?[0-9]\b'

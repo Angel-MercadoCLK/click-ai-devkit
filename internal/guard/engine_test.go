@@ -51,6 +51,12 @@ func TestScan_AllowsBenignTechnicalKnowledge(t *testing.T) {
 		`{"title":"ADR: switch installer copy strategy","content":"Store only architecture decisions and Go packaging gotchas."}`,
 		`{"content":"Bugfix: Normalize Cobra exit handling for doctor and uninstall commands."}`,
 		`{"topic_key":"architecture/installer-hooks","content":"Pattern: resolve Claude home via env override for tests."}`,
+		// DNI tuning: the pii/dni rule now requires a document keyword (dni/documento/cedula/carnet)
+		// before the digit run, mirroring the policy/claim/customer discriminator. A bare 7-8 digit
+		// number with no such keyword — a release date (20260716), a build counter (1234567), an
+		// issue number — is ordinary technical content and must NOT be blocked. The old bare
+		// `\b[0-9]{7,8}\b` pattern false-positived on all of these.
+		`{"content":"Release tag cut on 20260716, build counter 1234567 deployed to prod."}`,
 	}
 
 	for _, payload := range cases {
