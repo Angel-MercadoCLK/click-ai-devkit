@@ -270,7 +270,7 @@ func checkEngramPath(cfg installer.Config) CheckResult {
 			Name:    name,
 			Healthy: true,
 			Detail: gobin + " ya está persistido en el PATH, pero esta sesión (o cualquier Claude Code ya en ejecución) " +
-				"todavía no lo ve — reiniciá la terminal o Claude Code para que tome efecto",
+				"todavía no lo ve — reinicie la terminal o Claude Code para que tome efecto",
 		}
 	case !persisted && live:
 		return CheckResult{Name: name, Healthy: true, Detail: gobin + " está en el PATH de esta sesión, aunque no fue persistido por click"}
@@ -279,7 +279,7 @@ func checkEngramPath(cfg installer.Config) CheckResult {
 			Name:    name,
 			Healthy: false,
 			Detail: gobin + " no está en el PATH persistido ni en el de esta sesión — el MCP de engram podría no conectar " +
-				"en una sesión nueva. Ejecutá `click install` o `click update` para reintentar la persistencia.",
+				"en una sesión nueva. Ejecute `click install` o `click update` para reintentar la persistencia.",
 		}
 	}
 }

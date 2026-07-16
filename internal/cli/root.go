@@ -61,6 +61,7 @@ func NewRootCommand() *cobra.Command {
 		newMemoryGuardCommand(),
 		newConfigureModelsCommand(),
 		newAgentBuilderCommand(),
+		newManageBackupsCommand(),
 	)
 
 	return root

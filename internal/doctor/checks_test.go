@@ -481,7 +481,7 @@ func TestCheckEngramPath_PersistedButNotLive_ReportsHealthyWithRestartMessage(t 
 	if !c.Healthy {
 		t.Fatalf("checkEngramPath() Healthy = false, want true (non-fatal) for persisted-but-not-live drift: %s", c.Detail)
 	}
-	if !strings.Contains(c.Detail, "reiniciá") {
+	if !strings.Contains(c.Detail, "reinicie") {
 		t.Fatalf("checkEngramPath() Detail = %q, want an actionable message telling the user to restart their terminal/Claude Code", c.Detail)
 	}
 }

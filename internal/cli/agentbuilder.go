@@ -23,7 +23,7 @@ type agentBuilderCommandDeps struct {
 func newAgentBuilderCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent-builder",
-		Short: "Crear tu propio agente para Claude Code",
+		Short: "Crear agente propio para Claude Code",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAgentBuilder(cmd, agentBuilderCommandDeps{})
 		},

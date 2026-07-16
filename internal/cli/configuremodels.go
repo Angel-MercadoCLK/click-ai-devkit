@@ -37,7 +37,7 @@ func runConfigureModels(cmd *cobra.Command) error {
 	// directly (not only through the already-TTY-gated menu), so it must never spin up a real
 	// bubbletea program against a non-terminal output.
 	if !isTerminalWriter(out) {
-		fmt.Fprintln(out, r.Info("No hay terminal interactiva disponible; usá `click install` o `click update` para aplicar los modelos por defecto."))
+		fmt.Fprintln(out, r.Info("No hay terminal interactiva disponible; use `click install` o `click update` para aplicar los modelos por defecto."))
 		return nil
 	}
 

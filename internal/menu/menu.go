@@ -28,6 +28,7 @@ const (
 	ActionAgentBuilder    = "agent-builder"
 	ActionDoctor          = "doctor"
 	ActionUninstall       = "uninstall"
+	ActionManageBackups   = "manage-backups"
 	ActionQuit            = "quit"
 )
 
@@ -39,20 +40,21 @@ type Item struct {
 	Active bool
 }
 
-// Items is the fixed, ordered menu item list: active items first (they dispatch to real click
-// subcommands or exit the menu), then the inert ecosystem-parity placeholders, per the approved
-// proposal's menu shape. j/k cursor movement treats every row the same way — including inert
-// ones — so cursor math never needs to skip rows.
+// Items is the fixed, ordered menu item list. Every current row is active — the two remaining
+// inert "coming soon" placeholders ("Presets de instalación", "Sincronizar configuración") were
+// removed, and "Gestionar backups" was activated, per the neutral-spanish-and-backups change. The
+// inert-item mechanism itself (Item.Active, selectCurrent's comingSoonMsg branch, View's
+// "(próximamente)" suffix) is kept intact for any future placeholder row. j/k cursor movement
+// treats every row the same way — including inert ones, if any are ever added back — so cursor
+// math never needs to skip rows.
 var Items = []Item{
 	{Label: "Iniciar instalación", Action: ActionInstall, Active: true},
 	{Label: "Actualizar herramientas", Action: ActionUpdate, Active: true},
 	{Label: "Configurar modelos", Action: ActionConfigureModels, Active: true},
 	{Label: "Ejecutar diagnóstico", Action: ActionDoctor, Active: true},
 	{Label: "Desinstalar", Action: ActionUninstall, Active: true},
-	{Label: "Presets de instalación", Active: false},
-	{Label: "Crear tu propio agente", Action: ActionAgentBuilder, Active: true},
-	{Label: "Sincronizar configuración", Active: false},
-	{Label: "Gestionar backups", Active: false},
+	{Label: "Crear agente propio", Action: ActionAgentBuilder, Active: true},
+	{Label: "Gestionar backups", Action: ActionManageBackups, Active: true},
 	{Label: "Salir", Action: ActionQuit, Active: true},
 }
 
@@ -195,6 +197,8 @@ func ActionArgs(action string) []string {
 		return []string{"doctor"}
 	case ActionUninstall:
 		return []string{"uninstall"}
+	case ActionManageBackups:
+		return []string{"manage-backups"}
 	default:
 		return nil
 	}

@@ -12,7 +12,7 @@ import "errors"
 // TUI. PreflightClaude surfaces this same requirement up front, before any other install step —
 // mirroring PreflightGit/GitMissingMessage's exact pattern, so `click install`/`click update` never
 // give a developer conflicting instructions for their two most fundamental dependencies.
-const ClaudeMissingMessage = "claude no está instalado o no está en el PATH. click lo necesita para registrar sus plugins en Claude Code. Instalá Claude Code (https://docs.claude.com/en/docs/claude-code) y asegurate de que el comando claude quede disponible en el PATH antes de volver a ejecutar click install/click update."
+const ClaudeMissingMessage = "claude no está instalado o no está en el PATH. click lo necesita para registrar sus plugins en Claude Code. Instale Claude Code (https://docs.claude.com/en/docs/claude-code) y asegúrese de que el comando claude quede disponible en el PATH antes de volver a ejecutar click install/click update."
 
 // ClaudePath resolves claude's absolute path via the same injectable BinaryLookup used by
 // GitPath/ResolveEngramBinaryPath (engram.go's binaryLookupFactory) — so tests can fake PATH
