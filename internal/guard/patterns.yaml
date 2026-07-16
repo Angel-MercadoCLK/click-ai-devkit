@@ -27,17 +27,30 @@ categories:
     reason: "blocked: detected policy number"
     rules:
       - id: policy-numbers/placeholder
-        description: "Placeholder policy-number format for v0.1 (TODO: confirm real Click policy formats before shipping)."
-        pattern: '(?i)\b(?:p[oó]liza|policy|pol)[:\s#-]*[A-Z0-9][A-Z0-9-]{5,19}\b'
+        # Placeholder policy-number format for v0.1 (TODO: confirm real Click policy formats before
+        # shipping). T2-3 tuning: the ID token must contain a digit and the bare "pol" alternative
+        # was dropped, so ordinary prose ("policy layer", "policy enforcement", "the policy is") no
+        # longer false-positives while a real digit-bearing reference ("póliza POL-ABC12345") still
+        # blocks. Real IDs carry digits; prose words do not — this is a precision gain, not a
+        # coverage cut (every previously-caught structured ID in engine_test.go has a digit).
+        description: "Placeholder policy-number format for v0.1: keyword + a digit-bearing ID token (TODO: confirm real Click policy formats before shipping)."
+        pattern: '(?i)\b(?:p[oó]liza|policy)[:\s#-]*[A-Z0-9-]{3,}[0-9][A-Z0-9-]*\b'
   - name: claim-ids
     reason: "blocked: detected claim identifier"
     rules:
       - id: claim-ids/placeholder
-        description: "Placeholder claim-id format for v0.1 (TODO: confirm real Click siniestro formats before shipping)."
-        pattern: '(?i)\b(?:siniestro|claim|sin)[:\s#-]*[A-Z0-9][A-Z0-9-]{4,19}\b'
+        # T2-3 tuning: dropped the bare "sin" alternative (collided with "sin conflicto", "since",
+        # "single", etc.) and now require the ID token to contain a digit, so prose like "claim that",
+        # "claim identifier", "the claim-ids category" no longer false-positives while a real
+        # reference ("Siniestro SIN-2026-000123") still blocks.
+        description: "Placeholder claim-id format for v0.1: keyword + a digit-bearing ID token (TODO: confirm real Click siniestro formats before shipping)."
+        pattern: '(?i)\b(?:siniestro|claim)[:\s#-]*[A-Z0-9-]{3,}[0-9][A-Z0-9-]*\b'
   - name: customer-identifiers
     reason: "blocked: detected customer identifier"
     rules:
       - id: customer-identifiers/placeholder
-        description: "Placeholder customer-id format for v0.1 (TODO: confirm real Click customer identifier formats before shipping)."
-        pattern: '(?i)\b(?:customer|cliente)[-_\s]*(?:id|identifier|number|nro)?[:\s#-]*[A-Z0-9][A-Z0-9-]{3,19}\b'
+        # T2-3 tuning: require the ID token to contain a digit, so "customer data", "customer
+        # identifiers", "customer boundary" no longer false-positive while "customer-id CLI-998877"
+        # still blocks.
+        description: "Placeholder customer-id format for v0.1: keyword + a digit-bearing ID token (TODO: confirm real Click customer identifier formats before shipping)."
+        pattern: '(?i)\b(?:customer|cliente)[-_\s]*(?:id|identifier|number|nro)?[:\s#-]*[A-Z0-9-]{3,}[0-9][A-Z0-9-]*\b'
