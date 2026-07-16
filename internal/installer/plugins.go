@@ -2,12 +2,14 @@ package installer
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
@@ -65,10 +67,28 @@ func (r execCommandRunner) Run(name string, args ...string) error {
 	return cmd.Run()
 }
 
+// commandOutputTimeout bounds execCommandRunner.Output so a query subprocess can never hang the
+// caller. Hardening T3-2 (review-resilience R4-001 on the doctor PATH check): Output backs quick
+// queries like `go env GOBIN` via GoBinDir, which `click doctor`'s read-only checkEngramPath now
+// depends on — and doctor must never hang (NFR-012). A `go` invocation can stall unpredictably (a
+// locked build cache, a network-mounted GOPATH, EDR/AV interception on Windows); without a bound
+// that would hang the whole doctor run. 30s is generous headroom for a legitimately slow-but-real
+// `go env` while still guaranteeing termination. It is a package var (not a const) only so tests can
+// shrink it to force the deadline path deterministically. Output-only on purpose: Run() streams the
+// interactive `claude plugin ...` calls that legitimately take longer (git clone under the hood),
+// so it is deliberately left unbounded.
+var commandOutputTimeout = 30 * time.Second
+
 func (r execCommandRunner) Output(name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), commandOutputTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = r.commandEnv()
-	return cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("installer: command %q timed out after %s", name, commandOutputTimeout)
+	}
+	return out, err
 }
 
 var (
