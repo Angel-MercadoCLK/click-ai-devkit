@@ -17,6 +17,14 @@ func TestRedTeamBlocksForbiddenPayloads(t *testing.T) {
 		{name: "policy number", payload: `{"title":"Guardar póliza POL-ABC12345"}`, category: "policy-numbers"},
 		{name: "claim id", payload: `{"content":"Siniestro SIN-2026-000123 escalado"}`, category: "claim-ids"},
 		{name: "customer identifier", payload: `{"topic_key":"customer-id CLI-998877"}`, category: "customer-identifiers"},
+		// R1-001 coverage guard: the domain's day-to-day abbreviated forms — "Sin" for siniestro,
+		// "Pol" for póliza — with a real digit-bearing ID must still block. These are the exact
+		// abbreviations dropping the bare sin/pol alternatives would have silently let through.
+		{name: "claim abbrev sin+digits", payload: `{"content":"Sin 123456 fue rechazado, revisar"}`, category: "claim-ids"},
+		{name: "policy abbrev pol+digits", payload: `{"content":"Pol 12-345-6 vigente al día"}`, category: "policy-numbers"},
+		// R1-002 coverage guard: an ID token whose only digit is at the START (index 0) must still
+		// block — the digit requirement means "contains a digit ANYWHERE", not "at position >= 3".
+		{name: "claim digit-first token", payload: `{"content":"siniestro 1ABCDE escalado"}`, category: "claim-ids"},
 	}
 
 	for _, tt := range cases {
