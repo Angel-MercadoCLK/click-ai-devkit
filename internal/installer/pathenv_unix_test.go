@@ -137,6 +137,234 @@ func TestRcContainsDir(t *testing.T) {
 	}
 }
 
+// TestRemovePosixManagedBlock covers removePosixManagedBlock's pure splice-out logic (D-9): it
+// drops exactly click's own marker-delimited block (inclusive of both markers), leaves every other
+// line untouched, and is a true no-op (changed=false, content byte-for-byte unchanged) when no
+// well-formed block is present at all — including when only an unrelated manual PATH line exists.
+func TestRemovePosixManagedBlock(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing string
+		want     string
+		changed  bool
+	}{
+		{
+			name: "removes the block, preserves surrounding lines",
+			existing: strings.Join([]string{
+				"# my existing zshrc",
+				"alias ll='ls -la'",
+				posixManagedBeginMarker,
+				`export PATH="$PATH:/home/dev/go/bin"`,
+				posixManagedEndMarker,
+				"export EDITOR=vim",
+			}, "\n") + "\n",
+			want: strings.Join([]string{
+				"# my existing zshrc",
+				"alias ll='ls -la'",
+				"export EDITOR=vim",
+			}, "\n") + "\n",
+			changed: true,
+		},
+		{
+			name:     "no managed block at all is a no-op",
+			existing: "# my existing zshrc\nalias ll='ls -la'\n",
+			want:     "# my existing zshrc\nalias ll='ls -la'\n",
+			changed:  false,
+		},
+		{
+			name:     "an unrelated manual PATH line is left completely alone",
+			existing: "export PATH=\"$PATH:$GOPATH/bin\"\n",
+			want:     "export PATH=\"$PATH:$GOPATH/bin\"\n",
+			changed:  false,
+		},
+		{
+			name:     "empty file is a no-op",
+			existing: "",
+			want:     "",
+			changed:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, changed := removePosixManagedBlock(tt.existing)
+			if got != tt.want || changed != tt.changed {
+				t.Fatalf("removePosixManagedBlock(%q) = (%q, %v), want (%q, %v)", tt.existing, got, changed, tt.want, tt.changed)
+			}
+		})
+	}
+}
+
+// --- osPathStore.RemoveFromPath integration tests (real t.TempDir() files) ---------------------
+
+// TestRemoveFromPath_RemovesClickOwnManagedBlock is D-9's core reversal contract: after
+// EnsureOnPath wrote its managed block, RemoveFromPath must remove exactly that block and leave the
+// rc file's other content (a pre-existing alias the developer had) completely intact.
+func TestRemoveFromPath_RemovesClickOwnManagedBlock(t *testing.T) {
+	home := t.TempDir()
+	resetPosixEnv(t, home, "/usr/bin/zsh")
+	zshrc := filepath.Join(home, ".zshrc")
+	preexisting := "# my existing zshrc\nalias ll='ls -la'\n"
+	if err := os.WriteFile(zshrc, []byte(preexisting), 0o644); err != nil {
+		t.Fatalf("WriteFile(.zshrc) error = %v", err)
+	}
+	dir := "/home/dev/go/bin"
+
+	if _, err := (osPathStore{}).EnsureOnPath(dir); err != nil {
+		t.Fatalf("EnsureOnPath() error = %v", err)
+	}
+	afterEnsure := readFileString(t, zshrc)
+	if !rcContainsDir(afterEnsure, dir) {
+		t.Fatalf(".zshrc after EnsureOnPath = %q, want it to contain %q", afterEnsure, dir)
+	}
+
+	changed, err := osPathStore{}.RemoveFromPath(dir)
+	if err != nil {
+		t.Fatalf("RemoveFromPath() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("RemoveFromPath() changed = false, want true (click's own managed block was present)")
+	}
+
+	after := readFileString(t, zshrc)
+	if rcContainsDir(after, dir) {
+		t.Fatalf(".zshrc after RemoveFromPath = %q, still contains %q, want it removed", after, dir)
+	}
+	if !stringsContainsLine(after, "alias ll='ls -la'") {
+		t.Fatalf(".zshrc after RemoveFromPath = %q, want the pre-existing alias line preserved", after)
+	}
+	if begin, end := findPosixMarkers(splitLines(after)); begin != -1 || end != -1 {
+		t.Fatalf(".zshrc after RemoveFromPath still has a managed block marker pair: %q", after)
+	}
+}
+
+// TestRemoveFromPath_LeavesUnrelatedManualPathLineUntouched proves the "never touch what click
+// didn't add" safety rule: a developer's own manual `export PATH=...` line (no click markers at
+// all) must survive RemoveFromPath byte-for-byte, and RemoveFromPath must report changed=false —
+// there was never anything of click's to remove in the first place.
+func TestRemoveFromPath_LeavesUnrelatedManualPathLineUntouched(t *testing.T) {
+	home := t.TempDir()
+	resetPosixEnv(t, home, "/usr/bin/zsh")
+	t.Setenv("GOPATH", filepath.Join(home, "gopath"))
+	zshrc := filepath.Join(home, ".zshrc")
+	manual := "export PATH=\"$PATH:$GOPATH/bin\"\n"
+	if err := os.WriteFile(zshrc, []byte(manual), 0o644); err != nil {
+		t.Fatalf("WriteFile(.zshrc) error = %v", err)
+	}
+	dir := filepath.Join(home, "gopath", "bin")
+
+	changed, err := osPathStore{}.RemoveFromPath(dir)
+	if err != nil {
+		t.Fatalf("RemoveFromPath() error = %v", err)
+	}
+	if changed {
+		t.Fatal("RemoveFromPath() changed = true, want false — the PATH line here is the developer's own, not click's managed block")
+	}
+	after := readFileString(t, zshrc)
+	if after != manual {
+		t.Fatalf(".zshrc content = %q after RemoveFromPath, want it byte-for-byte unchanged from %q", after, manual)
+	}
+}
+
+// TestRemoveFromPath_NoOpOnFreshFileWithNoManagedBlock covers the never-ran-EnsureOnPath case: no
+// rc file mutation ever happened, so RemoveFromPath must be a clean no-op, not an error.
+func TestRemoveFromPath_NoOpOnFreshFileWithNoManagedBlock(t *testing.T) {
+	home := t.TempDir()
+	resetPosixEnv(t, home, "/usr/bin/zsh")
+
+	changed, err := osPathStore{}.RemoveFromPath("/home/dev/go/bin")
+	if err != nil {
+		t.Fatalf("RemoveFromPath() error = %v, want nil", err)
+	}
+	if changed {
+		t.Fatal("RemoveFromPath() changed = true, want false (no rc file, nothing to remove)")
+	}
+	mustNotExist(t, filepath.Join(home, ".zshrc"))
+}
+
+// TestRemoveFromPath_BashRemovesFromBothTargets triangulates against bash's two-target-file case
+// (login-chain file + .bashrc): RemoveFromPath must remove click's managed block from BOTH, mirroring
+// EnsureOnPath's own "both targets must independently end up correct" guarantee, just in reverse.
+func TestRemoveFromPath_BashRemovesFromBothTargets(t *testing.T) {
+	home := t.TempDir()
+	resetPosixEnv(t, home, "/bin/bash")
+	dir := "/home/dev/go/bin"
+
+	if _, err := (osPathStore{}).EnsureOnPath(dir); err != nil {
+		t.Fatalf("EnsureOnPath() error = %v", err)
+	}
+
+	changed, err := osPathStore{}.RemoveFromPath(dir)
+	if err != nil {
+		t.Fatalf("RemoveFromPath() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("RemoveFromPath() changed = false, want true")
+	}
+
+	for _, name := range []string{".bash_profile", ".bashrc"} {
+		content := readFileString(t, filepath.Join(home, name))
+		if rcContainsDir(content, dir) {
+			t.Fatalf("%s still contains %q after RemoveFromPath, want it removed: %q", name, dir, content)
+		}
+	}
+}
+
+// TestRemoveFromPath_FishShellNoOpWithoutError mirrors EnsureOnPath's own fish-skip contract: fish
+// has no applicable target files at all, so RemoveFromPath must report changed=false, nil error,
+// and never touch the filesystem.
+func TestRemoveFromPath_FishShellNoOpWithoutError(t *testing.T) {
+	home := t.TempDir()
+	resetPosixEnv(t, home, "/usr/bin/fish")
+
+	changed, err := osPathStore{}.RemoveFromPath("/home/dev/go/bin")
+	if err != nil {
+		t.Fatalf("RemoveFromPath() error = %v, want nil for fish", err)
+	}
+	if changed {
+		t.Fatal("RemoveFromPath() changed = true for fish, want false")
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		t.Fatalf("ReadDir(home) error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("home dir has %d entries after RemoveFromPath() on fish, want 0", len(entries))
+	}
+}
+
+// TestRemoveFromPath_AtomicWriteFailureLeavesOriginalIntact reuses PR1's injected-write-error
+// pattern at the osPathStore.RemoveFromPath level: when the underlying atomic write fails
+// mid-mutation, the rc file's original content (including click's still-present managed block)
+// must survive byte-for-byte and the error must propagate.
+func TestRemoveFromPath_AtomicWriteFailureLeavesOriginalIntact(t *testing.T) {
+	home := t.TempDir()
+	resetPosixEnv(t, home, "/usr/bin/zsh")
+	zshrc := filepath.Join(home, ".zshrc")
+	dir := "/home/dev/go/bin"
+
+	if _, err := (osPathStore{}).EnsureOnPath(dir); err != nil {
+		t.Fatalf("EnsureOnPath() error = %v", err)
+	}
+	original := readFileString(t, zshrc)
+
+	injectedErr := errors.New("injected write failure (unix rc RemoveFromPath)")
+	old := createTempFile
+	createTempFile = func(dir, pattern string) (tempFileWriter, error) {
+		return &fakeFailingTempFile{name: filepath.Join(dir, ".click-injected-fake-unix-remove"), writeErr: injectedErr}, nil
+	}
+	defer func() { createTempFile = old }()
+
+	_, err := osPathStore{}.RemoveFromPath(dir)
+	if err == nil {
+		t.Fatal("RemoveFromPath() error = nil, want the injected write error to propagate")
+	}
+
+	got := readFileString(t, zshrc)
+	if got != original {
+		t.Fatalf(".zshrc content = %q after a failed RemoveFromPath write, want untouched original %q", got, original)
+	}
+}
+
 func TestBashLoginFile(t *testing.T) {
 	t.Run("no candidate files exist: defaults to .bash_profile", func(t *testing.T) {
 		home := t.TempDir()

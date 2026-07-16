@@ -199,7 +199,7 @@ func TestSyncEngram_SecondRunPreservesClickOwnership(t *testing.T) {
 
 	// The real-world symptom: Uninstall must still remove an install click owns, even after
 	// multiple `click install`/`click update` runs in between.
-	if err := RemoveEngramPlugin(cfg); err != nil {
+	if _, err := RemoveEngramPlugin(cfg); err != nil {
 		t.Fatalf("RemoveEngramPlugin() error = %v", err)
 	}
 	installed, err := HasInstalledPluginID(cfg, EngramPluginID)
@@ -231,7 +231,7 @@ func TestRemoveEngramPlugin_RemovesWhenClickInstalledIt(t *testing.T) {
 		t.Fatalf("SyncEngram() error = %v", err)
 	}
 
-	if err := RemoveEngramPlugin(cfg); err != nil {
+	if _, err := RemoveEngramPlugin(cfg); err != nil {
 		t.Fatalf("RemoveEngramPlugin() error = %v", err)
 	}
 
@@ -268,7 +268,7 @@ func TestRemoveEngramPlugin_RespectsPreExistingInstall(t *testing.T) {
 		t.Fatalf("SyncEngram() error = %v", err)
 	}
 
-	if err := RemoveEngramPlugin(cfg); err != nil {
+	if _, err := RemoveEngramPlugin(cfg); err != nil {
 		t.Fatalf("RemoveEngramPlugin() error = %v", err)
 	}
 
@@ -302,11 +302,170 @@ func TestRemoveEngramPlugin_NoopWhenNeverSynced(t *testing.T) {
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
 
-	if err := RemoveEngramPlugin(cfg); err != nil {
+	if _, err := RemoveEngramPlugin(cfg); err != nil {
 		t.Fatalf("RemoveEngramPlugin() on a never-synced home error = %v, want nil", err)
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("RemoveEngramPlugin() issued commands %#v on a never-synced home, want zero", runner.commands)
+	}
+}
+
+// TestRemoveEngramPlugin_ReversesClickOwnedPath is D-9's core uninstall-reversal contract: when
+// click's own state recorded PathMutatedByClick=true and a PathDir, RemoveEngramPlugin must call
+// pathStoreFactory().RemoveFromPath with exactly that dir.
+func TestRemoveEngramPlugin_ReversesClickOwnedPath(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	dir := filepath.Join(t.TempDir(), "gobin")
+	if err := writeJSONFile(cfg.EngramStatePath(), engramState{
+		InstalledByClick:   true,
+		PathMutatedByClick: true,
+		PathDir:            dir,
+	}); err != nil {
+		t.Fatalf("writeJSONFile(EngramStatePath) error = %v", err)
+	}
+
+	store := &fakeConfigurablePathStore{}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	pathWarning, err := RemoveEngramPlugin(cfg)
+	if err != nil {
+		t.Fatalf("RemoveEngramPlugin() error = %v", err)
+	}
+	if pathWarning != "" {
+		t.Fatalf("RemoveEngramPlugin() pathWarning = %q, want empty on a successful reversal", pathWarning)
+	}
+	if len(store.removeFromPathCalls) != 1 || store.removeFromPathCalls[0] != dir {
+		t.Fatalf("store.removeFromPathCalls = %#v, want exactly one call with %q", store.removeFromPathCalls, dir)
+	}
+}
+
+// TestRemoveEngramPlugin_DoesNotTouchPathWhenNotClickOwned is D-9's "only reverse what click
+// added" safety rule: when state.PathMutatedByClick is false (click never mutated the PATH itself),
+// RemoveEngramPlugin must never call RemoveFromPath at all — even though state.PathDir happens to
+// be set (e.g. a stale/legacy value from before this ownership flag existed), it must not be
+// trusted on its own.
+func TestRemoveEngramPlugin_DoesNotTouchPathWhenNotClickOwned(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	if err := writeJSONFile(cfg.EngramStatePath(), engramState{
+		InstalledByClick:   true,
+		PathMutatedByClick: false,
+		PathDir:            filepath.Join(t.TempDir(), "gobin"),
+	}); err != nil {
+		t.Fatalf("writeJSONFile(EngramStatePath) error = %v", err)
+	}
+
+	store := &fakeConfigurablePathStore{}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	pathWarning, err := RemoveEngramPlugin(cfg)
+	if err != nil {
+		t.Fatalf("RemoveEngramPlugin() error = %v", err)
+	}
+	if pathWarning != "" {
+		t.Fatalf("RemoveEngramPlugin() pathWarning = %q, want empty (nothing to reverse)", pathWarning)
+	}
+	if len(store.removeFromPathCalls) != 0 {
+		t.Fatalf("store.removeFromPathCalls = %#v, want zero — click never recorded mutating the PATH itself", store.removeFromPathCalls)
+	}
+}
+
+// TestRemoveEngramPlugin_DoesNotTouchPathWhenPathDirEmpty triangulates the same safety rule against
+// the other half of the guard: PathMutatedByClick alone, without a recorded PathDir, must also
+// never call RemoveFromPath (there is nothing to pass it).
+func TestRemoveEngramPlugin_DoesNotTouchPathWhenPathDirEmpty(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	if err := writeJSONFile(cfg.EngramStatePath(), engramState{
+		InstalledByClick:   true,
+		PathMutatedByClick: true,
+		PathDir:            "",
+	}); err != nil {
+		t.Fatalf("writeJSONFile(EngramStatePath) error = %v", err)
+	}
+
+	store := &fakeConfigurablePathStore{}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	if _, err := RemoveEngramPlugin(cfg); err != nil {
+		t.Fatalf("RemoveEngramPlugin() error = %v", err)
+	}
+	if len(store.removeFromPathCalls) != 0 {
+		t.Fatalf("store.removeFromPathCalls = %#v, want zero — PathDir was empty", store.removeFromPathCalls)
+	}
+}
+
+// TestRemoveEngramPlugin_PathRemovalFailureSurfacesAsWarningNotError covers the non-fatal
+// requirement: a RemoveFromPath failure must surface as a non-empty pathWarning while
+// RemoveEngramPlugin itself still returns err=nil AND still completes the rest of its own
+// reversal (plugin uninstall, state file removal) — mirroring EnsureEngramBinary/SyncEngram's own
+// "a PATH operation failure is a warning, never fatal" contract.
+func TestRemoveEngramPlugin_PathRemovalFailureSurfacesAsWarningNotError(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreSource := SetEngramMarketplaceSourceForTests("https://github.com/Gentleman-Programming/engram")
+	defer restoreSource()
+	seedResolvableEngramBinary(t)
+
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+	if _, _, err := SyncEngram(cfg, m); err != nil {
+		t.Fatalf("SyncEngram() error = %v", err)
+	}
+
+	dir := filepath.Join(t.TempDir(), "gobin")
+	state := readEngramStateForTest(t, cfg)
+	state.PathMutatedByClick = true
+	state.PathDir = dir
+	if err := writeJSONFile(cfg.EngramStatePath(), state); err != nil {
+		t.Fatalf("writeJSONFile(EngramStatePath) error = %v", err)
+	}
+
+	removeErr := errors.New("acceso denegado al registro")
+	store := &fakeConfigurablePathStore{removeFromPathErr: removeErr}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	pathWarning, err := RemoveEngramPlugin(cfg)
+	if err != nil {
+		t.Fatalf("RemoveEngramPlugin() error = %v, want nil — a PATH-removal failure must not fail uninstall", err)
+	}
+	if pathWarning == "" {
+		t.Fatal("RemoveEngramPlugin() pathWarning = \"\", want a non-empty warning")
+	}
+	if !strings.Contains(pathWarning, removeErr.Error()) {
+		t.Fatalf("pathWarning = %q, want it to wrap %q", pathWarning, removeErr.Error())
+	}
+	installed, err := HasInstalledPluginID(cfg, EngramPluginID)
+	if err != nil {
+		t.Fatalf("HasInstalledPluginID() error = %v", err)
+	}
+	if installed {
+		t.Fatal("RemoveEngramPlugin() left engram@engram registered despite the unrelated PATH-removal failure")
+	}
+	if _, err := os.Stat(cfg.EngramStatePath()); !os.IsNotExist(err) {
+		t.Fatalf("RemoveEngramPlugin() left the engram state file behind despite the unrelated PATH-removal failure (err = %v)", err)
 	}
 }
 
@@ -596,6 +755,15 @@ func countGoInstalls(commands []commandInvocation) int {
 type fakeConfigurablePathStore struct {
 	ensureOnPathCalls []string
 	ensureOnPathErr   error
+	// ensureOnPathNoChange, when true, makes EnsureOnPath report changed=false (still recording the
+	// call) instead of its default true — simulating an idempotent no-op re-run (e.g. dir already
+	// on the persisted PATH) without needing an error. Used by the D-9 ownership-merge tests to
+	// exercise SyncEngram's SECOND-run behavior against a store that mutated on the first call and
+	// legitimately does not mutate again on the second.
+	ensureOnPathNoChange bool
+
+	removeFromPathCalls []string
+	removeFromPathErr   error
 }
 
 func (f *fakeConfigurablePathStore) PersistedPathContains(dir string) (bool, error) {
@@ -606,6 +774,17 @@ func (f *fakeConfigurablePathStore) EnsureOnPath(dir string) (bool, error) {
 	f.ensureOnPathCalls = append(f.ensureOnPathCalls, dir)
 	if f.ensureOnPathErr != nil {
 		return false, f.ensureOnPathErr
+	}
+	if f.ensureOnPathNoChange {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (f *fakeConfigurablePathStore) RemoveFromPath(dir string) (bool, error) {
+	f.removeFromPathCalls = append(f.removeFromPathCalls, dir)
+	if f.removeFromPathErr != nil {
+		return false, f.removeFromPathErr
 	}
 	return true, nil
 }
@@ -778,6 +957,109 @@ func TestSyncEngram_ForwardsPathWarningFromEnsureEngramBinary(t *testing.T) {
 	if !strings.Contains(pathWarning, persistErr.Error()) {
 		t.Fatalf("SyncEngram() pathWarning = %q, want it to wrap %q (forwarded from EnsureEngramBinary)", pathWarning, persistErr.Error())
 	}
+}
+
+// TestSyncEngram_RecordsPathOwnershipWhenPathMutated is D-9's core ownership-recording contract: a
+// run whose PATH-persistence attempt actually mutated the persisted PATH (EnsureOnPath
+// changed==true) must record engramState.PathMutatedByClick=true and PathDir=the exact directory
+// that was added — the two signals RemoveEngramPlugin later needs to know it is safe to reverse.
+func TestSyncEngram_RecordsPathOwnershipWhenPathMutated(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreSource := SetEngramMarketplaceSourceForTests("https://github.com/Gentleman-Programming/engram")
+	defer restoreSource()
+
+	gobin, _ := seedResolvableEngramBinaryInGoBinDir(t, runner)
+
+	store := &fakeConfigurablePathStore{}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+
+	if _, _, err := SyncEngram(cfg, m); err != nil {
+		t.Fatalf("SyncEngram() error = %v", err)
+	}
+
+	state := readEngramStateForTest(t, cfg)
+	if !state.PathMutatedByClick {
+		t.Fatal("state.PathMutatedByClick = false after a SyncEngram() run whose EnsureOnPath reported changed=true, want true")
+	}
+	if state.PathDir != gobin {
+		t.Fatalf("state.PathDir = %q, want %q", state.PathDir, gobin)
+	}
+}
+
+// TestSyncEngram_SecondRunPreservesPathOwnership is TestSyncEngram_SecondRunPreservesClickOwnership's
+// D-9 counterpart: once PathMutatedByClick is true, a LATER idempotent SyncEngram() run whose
+// EnsureOnPath is a no-op (changed==false, dir already on the persisted PATH) must NOT flip it back
+// to false, and must NOT blank out the previously-recorded PathDir.
+func TestSyncEngram_SecondRunPreservesPathOwnership(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreSource := SetEngramMarketplaceSourceForTests("https://github.com/Gentleman-Programming/engram")
+	defer restoreSource()
+
+	gobin, _ := seedResolvableEngramBinaryInGoBinDir(t, runner)
+
+	store := &fakeConfigurablePathStore{}
+	restoreStore := SetPathStoreFactoryForTests(func() pathStore { return store })
+	defer restoreStore()
+
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+
+	if _, _, err := SyncEngram(cfg, m); err != nil {
+		t.Fatalf("first SyncEngram() error = %v", err)
+	}
+	firstState := readEngramStateForTest(t, cfg)
+	if !firstState.PathMutatedByClick || firstState.PathDir != gobin {
+		t.Fatalf("first SyncEngram() state = %+v, want PathMutatedByClick=true PathDir=%q", firstState, gobin)
+	}
+
+	// Simulate the second run's EnsureOnPath being a genuine idempotent no-op (dir already on the
+	// persisted PATH from the first run) — NOT an error.
+	store.ensureOnPathNoChange = true
+
+	if _, _, err := SyncEngram(cfg, m); err != nil {
+		t.Fatalf("second SyncEngram() error = %v", err)
+	}
+	secondState := readEngramStateForTest(t, cfg)
+	if !secondState.PathMutatedByClick {
+		t.Fatal("state.PathMutatedByClick flipped to false after a second, idempotent (EnsureOnPath changed=false) SyncEngram() run — it must be preserved, not re-derived from this run's own result")
+	}
+	if secondState.PathDir != gobin {
+		t.Fatalf("state.PathDir = %q after the idempotent second run, want it preserved as %q", secondState.PathDir, gobin)
+	}
+}
+
+// readEngramStateForTest reads and unmarshals cfg's persisted engramState, failing the test on any
+// error — a small shared helper for the D-9 ownership tests above/below that need to assert on
+// PathMutatedByClick/PathDir specifically (the existing tests in this file that only cared about
+// InstalledByClick each inlined this themselves; this is intentionally the same read+unmarshal
+// they use, factored out only for the newer tests to avoid repeating it four more times).
+func readEngramStateForTest(t *testing.T, cfg Config) engramState {
+	t.Helper()
+	data, err := os.ReadFile(cfg.EngramStatePath())
+	if err != nil {
+		t.Fatalf("ReadFile(EngramStatePath) error = %v", err)
+	}
+	var state engramState
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatalf("json.Unmarshal(state) error = %v", err)
+	}
+	return state
 }
 
 // fakeHonestGoInstallRunner is a CommandRunner fake that models what a real `go install` actually

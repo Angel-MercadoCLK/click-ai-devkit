@@ -46,12 +46,18 @@ func runUninstall(cmd *cobra.Command) error {
 	}
 
 	// RemoveEngramPlugin only reverses Engram when click's own state says click installed it —
-	// a pre-existing developer setup is left running untouched.
+	// a pre-existing developer setup is left running untouched. It also independently reverses
+	// click's own PATH mutation (D-9, T4-1) when it recorded owning one; a failure doing so is
+	// surfaced as engramPathWarning below rather than aborting the rest of the uninstall.
+	engramPathWarning := ""
 	if err := r.RunStep("Quitando Engram (si click lo instaló)…", "Engram procesado", func() error {
-		return installer.RemoveEngramPlugin(cfg)
+		var pathErr error
+		engramPathWarning, pathErr = installer.RemoveEngramPlugin(cfg)
+		return pathErr
 	}); err != nil {
 		return err
 	}
+	surfacePathWarning(out, r, engramPathWarning)
 
 	// RemoveContext7 mirrors RemoveEngramPlugin's exact respect-ownership contract: only removes
 	// Context7 when click's own state says click registered it.
