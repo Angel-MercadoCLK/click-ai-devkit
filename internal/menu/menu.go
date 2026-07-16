@@ -17,6 +17,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/ui"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/version"
 )
 
 // Action keys identify what a selected active item should do once the menu program exits.
@@ -58,14 +61,39 @@ var Items = []Item{
 	{Label: "Salir", Action: ActionQuit, Active: true},
 }
 
-// headerVersion is a static placeholder for the menu's updates-indicator header line. Real
-// update-availability checking is out of scope for this change (no network/version-compare
-// logic was specified) — this line only establishes the header's structural position for a
-// future task to wire real data into. See the apply-progress note for this simplification.
-const headerVersion = "click-ai-devkit (actualizaciones: sin verificar)"
-
 // comingSoonMsg is the transient status line shown when Enter is pressed on an inert item.
 const comingSoonMsg = "próximamente — todavía no implementado"
+
+// --- branded header + menu theming (per the approved menu redesign) ---
+
+// wordmarkRamp colors the CLICK-AI wordmark top-to-bottom, white fading into orange — one color
+// per art line. This is the menu's own palette, deliberately distinct from the install banner's
+// cyan→blue ramp in internal/ui; both share the same raw glyphs via ui.BannerArt().
+var wordmarkRamp = []string{"#ffffff", "#ffe2c4", "#ffc48c", "#ffa654", "#ff8c2e", "#ff7a1a"}
+
+const (
+	menuOrange = "#ff8c2e" // accent: spark core, active row, pointer, footer keys
+	menuRay    = "#b5701f" // spark rays
+	menuWhite  = "#ffffff" // spark companion star
+	menuDust   = "#6b5138" // spark dust dot
+	menuLabel  = "#d3dae2" // inactive item label
+	menuNum    = "#4b5663" // item number
+	menuBorder = "#3d4753" // menu box border
+	menuTitle  = "#b98a5a" // "MENÚ" caption
+	menuDim    = "#5a6470" // tagline, footer text, coming-soon notice
+)
+
+// sparkLogo is the AI-spark brand mark shown to the left of the wordmark: a four-point star with
+// its burst rays, a small companion star, and a dust dot. Rendered in renderSpark with color.
+var sparkLogo = struct{ star2, rayTop, rayMidL, star1, rayMidR, rayBot, dust string }{
+	star2:   "        ✧",
+	rayTop:  "      ╲ │ ╱",
+	rayMidL: "     ─  ",
+	star1:   "✦",
+	rayMidR: "  ─",
+	rayBot:  "      ╱ │ ╲",
+	dust:    "        ·",
+}
 
 // Model is the bubbletea model driving the standing menu.
 type Model struct {
@@ -138,44 +166,109 @@ func (m Model) selectCurrent() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-// View satisfies tea.Model, rendering the header, one row per item (dimmed + "(próximamente)" for
-// inert ones), and the transient status line if set.
+// renderSpark renders the AI-spark logo block (5 lines), colored: white companion star, orange
+// core with dim-orange burst rays, and a dust dot.
+func renderSpark() string {
+	white := lipgloss.NewStyle().Foreground(lipgloss.Color(menuWhite))
+	ray := lipgloss.NewStyle().Foreground(lipgloss.Color(menuRay))
+	star := lipgloss.NewStyle().Foreground(lipgloss.Color(menuOrange)).Bold(true)
+	dust := lipgloss.NewStyle().Foreground(lipgloss.Color(menuDust))
+	return strings.Join([]string{
+		white.Render(sparkLogo.star2),
+		ray.Render(sparkLogo.rayTop),
+		ray.Render(sparkLogo.rayMidL) + star.Render(sparkLogo.star1) + ray.Render(sparkLogo.rayMidR),
+		ray.Render(sparkLogo.rayBot),
+		dust.Render(sparkLogo.dust),
+	}, "\n")
+}
+
+// renderWordmark renders the CLICK-AI wordmark in the white→orange ramp, one color per art line,
+// reusing the shared raw glyphs from internal/ui.
+func renderWordmark() string {
+	lines := strings.Split(ui.BannerArt(), "\n")
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		color := wordmarkRamp[i%len(wordmarkRamp)]
+		out[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(line)
+	}
+	return strings.Join(out, "\n")
+}
+
+// renderHeader joins the spark logo and the wordmark side by side (vertically centered) and adds
+// the dim tagline with the live build version below.
+func renderHeader() string {
+	brand := lipgloss.JoinHorizontal(lipgloss.Center, renderSpark(), "   ", renderWordmark())
+	tagline := "AI Devkit · Click Seguros · " + version.Version
+	tag := lipgloss.NewStyle().Foreground(lipgloss.Color(menuDim)).Render(tagline)
+	return brand + "\n\n" + tag
+}
+
+// renderRow renders one menu row: the active-row pointer (▸ under the cursor, blank otherwise),
+// a dim item number, and the label. The active row's label is orange/bold; inert rows are dim
+// and carry the "(próximamente)" suffix.
+func (m Model) renderRow(index int, item Item) string {
+	pointer := " "
+	if index == m.Cursor {
+		pointer = "▸"
+	}
+	pointerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(menuOrange)).Bold(true)
+	numStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(menuNum))
+
+	label := item.Label
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(menuLabel))
+	switch {
+	case !item.Active:
+		label += " (próximamente)"
+		labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(menuDim)).Faint(true)
+	case index == m.Cursor:
+		labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(menuOrange)).Bold(true)
+	}
+
+	return fmt.Sprintf("%s %s  %s",
+		pointerStyle.Render(pointer),
+		numStyle.Render(fmt.Sprintf("%d", index+1)),
+		labelStyle.Render(label),
+	)
+}
+
+// renderMenu renders the "MENÚ" caption and the rounded box that frames every item row.
+func (m Model) renderMenu() string {
+	rows := make([]string, len(Items))
+	for i, item := range Items {
+		rows[i] = m.renderRow(i, item)
+	}
+	title := lipgloss.NewStyle().Foreground(lipgloss.Color(menuTitle)).Render("MENÚ")
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(menuBorder)).
+		Padding(0, 3).
+		Render(strings.Join(rows, "\n"))
+	return title + "\n" + box
+}
+
+// renderFooter renders the dim key-help line with the accent-colored key chords.
+func renderFooter() string {
+	key := lipgloss.NewStyle().Foreground(lipgloss.Color(menuOrange)).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color(menuDim))
+	return dim.Render("  ") + key.Render("↑/↓ · j/k") + dim.Render(" mover    ") +
+		key.Render("enter") + dim.Render(" elegir    ") +
+		key.Render("q · esc") + dim.Render(" salir")
+}
+
+// View satisfies tea.Model, rendering the branded header (spark logo + wordmark + tagline), the
+// boxed item list with the active row highlighted, an optional transient status line, and the
+// key-help footer.
 func (m Model) View() string {
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render(headerVersion))
+	b.WriteString(renderHeader())
 	b.WriteString("\n\n")
-
-	for i, item := range Items {
-		marker := "  "
-		if i == m.Cursor {
-			marker = "> "
-		}
-		label := item.Label
-		if !item.Active {
-			label = fmt.Sprintf("%s (próximamente)", label)
-		}
-		line := marker + label
-
-		switch {
-		case !item.Active:
-			line = lipgloss.NewStyle().Faint(true).Render(line)
-		case i == m.Cursor:
-			line = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render(line)
-		}
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-
+	b.WriteString(m.renderMenu())
 	if m.StatusMsg != "" {
-		b.WriteString("\n")
+		b.WriteString("\n\n")
 		b.WriteString(lipgloss.NewStyle().Faint(true).Render(m.StatusMsg))
-		b.WriteString("\n")
 	}
-
-	b.WriteString("\n")
-	b.WriteString(lipgloss.NewStyle().Faint(true).Render(
-		"j/k mover · enter seleccionar · q/esc salir",
-	))
+	b.WriteString("\n\n")
+	b.WriteString(renderFooter())
 	return b.String()
 }
 
