@@ -48,6 +48,14 @@ func runInstall(cmd *cobra.Command) error {
 
 	fmt.Fprintln(out, r.Banner())
 
+	// PreflightClaude must run before PreflightGit and before anything else, including the
+	// interactive model-selection TUI below. claude is the more fundamental dependency here: click
+	// registers every plugin via the claude CLI itself (plugins.go's pluginCLIBinary), so a machine
+	// missing Claude Code entirely should fail on that actionable message first, not on git's.
+	if err := installer.PreflightClaude(); err != nil {
+		return err
+	}
+
 	// PreflightGit must run before anything else — including the interactive model-selection TUI
 	// below. `click install` registers the plugin marketplace via `claude plugin marketplace add`,
 	// which shells out to `git clone` under the hood; on a machine with no git on PATH that clone
