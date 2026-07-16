@@ -52,6 +52,7 @@ func (r Report) Healthy() bool {
 func Run(cfg installer.Config) Report {
 	return Report{Checks: []CheckResult{
 		checkGit(cfg),
+		checkClaude(cfg),
 		checkPlugin(cfg),
 		checkMemoryPlugin(cfg),
 		checkReviewPlugin(cfg),
@@ -84,6 +85,28 @@ func checkGit(cfg installer.Config) CheckResult {
 		return CheckResult{Name: name, Healthy: true, Detail: "resuelto en " + path}
 	}
 	return CheckResult{Name: name, Healthy: false, Detail: installer.GitMissingMessage}
+}
+
+// checkClaude reports whether the claude CLI is resolvable on PATH. It is foundational and read
+// right after checkGit (NFR-012: read-only — it only resolves PATH, never installs anything): click
+// registers every plugin by shelling out to the claude CLI itself (SyncMarketplacePlugins →
+// `claude plugin marketplace add`/`claude plugin install`, plugins.go's pluginCLIBinary), so a
+// missing claude breaks install/update deep inside plugin registration with a cryptic "exec:
+// \"claude\": executable file not found" — the exact PATH-lookup failure PreflightClaude guards
+// against up front. When missing, Detail carries the exact same actionable message
+// installer.ClaudeMissingMessage that `click install`/`click update`'s own PreflightClaude uses, so
+// doctor and install/update never give a developer conflicting instructions (the same shared-message
+// contract checkGit holds via GitMissingMessage, and checkEngramBinary via
+// EngramBinaryRemediationMessage). This closes the observability asymmetry where a claude that fell
+// off PATH after a working install would show doctor healthy while install/update immediately fail.
+func checkClaude(cfg installer.Config) CheckResult {
+	const name = "claude"
+
+	path, ok := installer.ClaudePath()
+	if ok {
+		return CheckResult{Name: name, Healthy: true, Detail: "resuelto en " + path}
+	}
+	return CheckResult{Name: name, Healthy: false, Detail: installer.ClaudeMissingMessage}
 }
 
 func checkPlugin(cfg installer.Config) CheckResult {

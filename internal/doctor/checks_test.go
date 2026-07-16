@@ -27,13 +27,16 @@ func (f fakeGitLookup) LookPath(name string) (string, error) {
 	return "", errors.New("fakeGitLookup: not found: " + name)
 }
 
-// seedResolvableGit makes installer.GitAvailable/GitPath see git as resolvable on a fake PATH, so
-// doctor tests that assert overall Report.Healthy() are deterministic regardless of the real test
-// machine's PATH. Returns the restore func so callers can defer it.
+// seedResolvableGit makes installer.GitAvailable/GitPath AND installer.ClaudeAvailable/ClaudePath
+// see git and claude as resolvable on a fake PATH, so doctor tests that assert overall
+// Report.Healthy() are deterministic regardless of the real test machine's PATH. Both binaries are
+// seeded because Run() now includes both checkGit and checkClaude; leaving claude out would make
+// TestRun_AfterInstall_ReportsHealthy flake on the claude check. Returns the restore func so
+// callers can defer it.
 func seedResolvableGit(t *testing.T) func() {
 	t.Helper()
 	return installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
-		return fakeGitLookup{resolved: map[string]string{"git": "/usr/bin/git"}}
+		return fakeGitLookup{resolved: map[string]string{"git": "/usr/bin/git", "claude": "/usr/bin/claude"}}
 	})
 }
 
@@ -114,9 +117,9 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	report := Run(cfg)
 
-	const wantChecks = 9 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 10 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (git, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, context7 MCP)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d (git, claude, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, context7 MCP)", len(report.Checks), wantChecks)
 	}
 }
 
@@ -176,6 +179,67 @@ func TestCheckGit_ReportsUnhealthyWithActionableMessageWhenMissing(t *testing.T)
 	}
 	if !checked {
 		t.Fatal(`Run() did not include a "git" check`)
+	}
+}
+
+// TestCheckClaude_ReportsHealthyWhenResolvable guards the "present" branch: claude resolvable on
+// PATH must report healthy, with the resolved path surfaced in Detail — mirroring checkGit's shape.
+func TestCheckClaude_ReportsHealthyWhenResolvable(t *testing.T) {
+	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return fakeGitLookup{resolved: map[string]string{"claude": "/usr/bin/claude"}}
+	})
+	defer restore()
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "claude" {
+			continue
+		}
+		checked = true
+		if !c.Healthy {
+			t.Fatalf("checkClaude reports unhealthy when claude is resolvable: %s", c.Detail)
+		}
+		if !strings.Contains(c.Detail, "/usr/bin/claude") {
+			t.Fatalf("checkClaude Detail = %q, want it to contain the resolved path", c.Detail)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "claude" check`)
+	}
+}
+
+// TestCheckClaude_ReportsUnhealthyWithActionableMessageWhenMissing is the doctor counterpart to
+// PreflightClaude: reproduces the "no claude on PATH" scenario and asserts checkClaude's Detail
+// carries the exact same actionable message `click install`/`click update`'s preflight uses
+// (installer.ClaudeMissingMessage) — doctor and install/update must never give conflicting
+// instructions, the same shared-message contract checkGit already holds for git.
+func TestCheckClaude_ReportsUnhealthyWithActionableMessageWhenMissing(t *testing.T) {
+	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return fakeGitLookup{resolved: map[string]string{}}
+	})
+	defer restore()
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "claude" {
+			continue
+		}
+		checked = true
+		if c.Healthy {
+			t.Fatal("checkClaude reports healthy when claude is not resolvable on PATH, want unhealthy")
+		}
+		if c.Detail != installer.ClaudeMissingMessage {
+			t.Fatalf("checkClaude Detail = %q, want exactly installer.ClaudeMissingMessage %q", c.Detail, installer.ClaudeMissingMessage)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "claude" check`)
 	}
 }
 
