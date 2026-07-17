@@ -48,6 +48,8 @@ func TestClickSDDPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
 		filepath.Join("agents", "click-review-risk.md"),
 		filepath.Join("agents", "click-review-readability.md"),
 		filepath.Join("agents", "click-review-reliability.md"),
+		filepath.Join("agents", "click-review-resilience.md"),
+		filepath.Join("agents", "click-review-refuter.md"),
 		filepath.Join("skills", "explore", "SKILL.md"),
 		filepath.Join("skills", "propose", "SKILL.md"),
 		filepath.Join("skills", "spec", "SKILL.md"),
