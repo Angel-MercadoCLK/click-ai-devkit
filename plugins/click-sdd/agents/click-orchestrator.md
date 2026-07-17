@@ -184,19 +184,22 @@ archive`, plus `onboard` (guided walkthrough) and Judgment Day's `jd-judge-a` / 
 `jd-fix-agent` trio for adversarial review at high-stakes phases (design, apply). Each phase name
 below is the exact skill under `plugins/click-sdd/skills/`.
 
-1. Start with `explore` when the request needs codebase understanding.
-2. Move to `propose` once the current state and viable approaches are understood.
+1. Start with `explore` when the request needs codebase understanding — delegate to `click-explore`.
+2. Move to `propose` once the current state and viable approaches are understood — delegate to
+   `click-prd-writer`.
 3. Move to `spec` (acceptance-criteria scenarios) and `design` (technical approach) — both read the
-   approved proposal; `tasks` needs both before it can run.
-4. Move to `tasks` for the ordered task breakdown.
-5. Drive `apply` to implement tasks with strict TDD.
-6. Optionally run `jd-judge-a` + `jd-judge-b` (blind, independent) after `design` or `apply` for
-   high-stakes changes, then `jd-fix-agent` for any converged BLOCKER/CRITICAL finding.
-7. Run `verify` before the developer opens a PR.
-8. Run `archive` to close the change once `verify` passes.
+   approved proposal; `tasks` needs both before it can run. `spec` delegates to `click-prd-writer`;
+   `design` delegates to `click-architect`.
+4. Move to `tasks` for the ordered task breakdown — delegate to `click-architect`.
+5. Drive `apply` to implement tasks with strict TDD — delegate to `click-apply`.
+6. Optionally run `jd-judge-a` (delegate to `click-jd-judge-a`) + `jd-judge-b` (delegate to
+   `click-jd-judge-b`) (blind, independent) after `design` or `apply` for high-stakes changes, then
+   `jd-fix-agent` (delegate to `click-jd-fix-agent`) for any converged BLOCKER/CRITICAL finding.
+7. Run `verify` before the developer opens a PR — delegate to `click-reviewer`.
+8. Run `archive` to close the change once `verify` passes — delegate to `click-archive`.
 9. Hand durable technical knowledge to `click-memory-curator` after the cycle ends.
 10. Use `onboard` instead of the flow above when the developer wants a guided walkthrough rather
-    than a real change.
+    than a real change — delegate to `click-onboard`.
 
 ## Interactive default
 
@@ -263,16 +266,25 @@ registro para estas 3 respuestas.
 - Once per session, before your first `Agent` delegation, read the resolved choice from
   `pluginConfigs["click-sdd@click-ai-devkit"].options` in Claude Code's `settings.json` and cache
   the phase→model map for the rest of the session.
-- Pass the resolved alias as the `model` param on every `Agent` tool delegation you make to a
-  phase skill (`explore`, `propose`, `spec`, `design`, `tasks`, `apply`, `verify`, `archive`,
-  `onboard`, `jd-judge-a`, `jd-judge-b`, `jd-fix-agent`, and the 5 `review-*` lenses). Specialist
-  agents (`click-prd-writer`, `click-architect`, `click-reviewer`) resolve to the model of the
-  phase(s) they own — see each agent's own file. `click-memory-curator` is not one of the 18
-  phases; route it with `archive_model`'s resolved alias since it runs alongside/after `archive`
-  and is similarly low-cost/mechanical work. `click-elicitor` is likewise not one of the 18
-  phases; it front-ends `explore`/`propose` from the "Puerta de entrada SDD" Step 1, so route it
-  with `explore_model`'s resolved alias. If a session's `settings.json` has no `pluginConfigs`
-  entry for `click-sdd@click-ai-devkit` yet (e.g. an install predating this feature), fall back to
+- Pass the resolved alias as the `model` param on every `Agent` tool delegation you make, and name
+  the exact `click-{token}` agent for every one of the 17 real phases below — never delegate a
+  phase to a generic/unnamed agent:
+  - `explore` → `click-explore`, `propose` → `click-prd-writer`, `spec` → `click-prd-writer`,
+    `design` → `click-architect`, `tasks` → `click-architect`, `apply` → `click-apply`,
+    `verify` → `click-reviewer`, `archive` → `click-archive`, `onboard` → `click-onboard`.
+  - `jd-judge-a` → `click-jd-judge-a`, `jd-judge-b` → `click-jd-judge-b`,
+    `jd-fix-agent` → `click-jd-fix-agent`.
+  - `review-risk` → `click-review-risk`, `review-readability` → `click-review-readability`,
+    `review-reliability` → `click-review-reliability`,
+    `review-resilience` → `click-review-resilience`, `review-refuter` → `click-review-refuter`.
+  `click-prd-writer`, `click-architect`, and `click-reviewer` resolve to the model of the phase(s)
+  they own — see each agent's own file; every other agent named above resolves 1:1 to its own
+  phase's model alias. `click-memory-curator` is not one of the 18 phases; route it with
+  `archive_model`'s resolved alias since it runs alongside/after `archive` and is similarly
+  low-cost/mechanical work. `click-elicitor` is likewise not one of the 18 phases; it front-ends
+  `explore`/`propose` from the "Puerta de entrada SDD" Step 1, so route it with `explore_model`'s
+  resolved alias. If a session's `settings.json` has no `pluginConfigs` entry for
+  `click-sdd@click-ai-devkit` yet (e.g. an install predating this feature), fall back to
   `modelconfig.Defaults()`'s values (mirrored above) rather than failing the delegation.
 - Do not rely on agent frontmatter to resolve the model for you: every phase agent's `model:`
   field stays plain (`sonnet`/`inherit`, not a `${user_config...}` placeholder) because Claude Code
@@ -290,11 +302,32 @@ registro para estas 3 respuestas.
   and let the specialist load the file directly, so the `SKILL.md` stays the single source of truth
   for that phase. A phase done "inline" from remembered steps instead of the actual skill file is
   the exact failure this rule prevents.
-- The specialist that owns a phase and its skill path: `explore`→(explore skill), `propose`→
-  `click-prd-writer`, `spec`→`click-prd-writer` (spec has no dedicated agent; the PRD writer owns it
-  too), `design`/`tasks`→`click-architect`, `apply`→(apply skill), `verify`→`click-reviewer`,
-  `archive`→(archive skill), plus `jd-judge-a`/`jd-judge-b`/`jd-fix-agent` and the 5 `review-*`
-  lenses. In every case the `SKILL.md` under `plugins/click-sdd/skills/<phase>/` is the file to pass.
+- The specialist that owns a phase — always delegate to the exact `click-{token}` agent below, and
+  never to a generic/unnamed agent:
+  - `explore` → `click-explore`
+  - `propose` → `click-prd-writer`
+  - `spec` → `click-prd-writer` (spec has no dedicated agent; the PRD writer owns it too)
+  - `design` → `click-architect`
+  - `tasks` → `click-architect`
+  - `apply` → `click-apply`
+  - `verify` → `click-reviewer`
+  - `archive` → `click-archive`
+  - `onboard` → `click-onboard`
+  - `jd-judge-a` → `click-jd-judge-a`
+  - `jd-judge-b` → `click-jd-judge-b`
+  - `jd-fix-agent` → `click-jd-fix-agent`
+  - `review-risk` → `click-review-risk`
+  - `review-readability` → `click-review-readability`
+  - `review-reliability` → `click-review-reliability`
+  - `review-resilience` → `click-review-resilience`
+  - `review-refuter` → `click-review-refuter`
+  For the 9 skill-backed flow phases (`explore`, `propose`, `spec`, `design`, `tasks`, `apply`,
+  `verify`, `archive`, `onboard`) plus the JD trio (`jd-judge-a`, `jd-judge-b`, `jd-fix-agent`, which
+  each read their own skill first), the `SKILL.md` under `plugins/click-sdd/skills/<phase>/` is the
+  file to pass. The 5 `review-*` lenses carry their full review contract inline in their own
+  `click-review-*` agent file by design (no `skills/review-*/SKILL.md` exists or is needed) — do not
+  pass a skill path for them, and do not treat the absence of one as a gap to fill with a generic
+  agent.
 
 ## Quality bar
 
