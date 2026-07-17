@@ -1,104 +1,182 @@
 # click-ai-devkit
 
-An installable Claude Code system for Click Seguros: a custom orchestrator
-(`ClickOrchestrator`), an internal SDD flow, specialized agents and skills, a deterministic
-memory-safety guard, and a bundled, pinned Engram instance — installed and managed by a single
-Go CLI, `click`.
+CLI en Go (`click`) que instala y gestiona un sistema completo de Claude Code para
+desarrolladores de Click Seguros.
 
-## Status
+## Qué es / qué hace
 
-**v0.2.1**, released and installable today via `scoop install click` (see Install below). The
-`click` CLI has a real install/uninstall/update/doctor implementation, a standing interactive
-menu (bare `click` on a TTY), an 18-phase per-phase model configuration (9 SDD flow phases +
-Judgment Day's 3 roles + the 5 review-lens roles) with orchestration profiles
-(balanced/cost-saver/quality/custom), and an agent-builder flow nearing merge on its own branch
-(see `internal/cli/`, `internal/installer/`, `internal/modelconfig/`, `internal/menu/`) — see
-`documentacion/implementation-plan.md` for the full build plan and slice history.
+`click-ai-devkit` es un instalador y gestor de línea de comandos, escrito en Go, que deja
+configurado en Claude Code todo lo que un desarrollador de Click Seguros necesita para trabajar
+con el flujo SDD (Spec-Driven Development) interno de la compañía: un orquestador propio
+(`ClickOrchestrator`), agentes y skills especializados, una guardia de memoria determinística, y
+una instancia de Engram (memoria persistente) integrada y fijada a una versión concreta.
 
-## Install
+El CLI en sí es deliberadamente delgado: no es el "cerebro" de la orquestación, sino la
+herramienta que registra, actualiza y desinstala ese sistema dentro de Claude Code, de forma
+repetible y verificable (`click doctor` comprueba en cualquier momento que todo sigue instalado
+correctamente).
 
-`click` is installable via scoop directly from this repo — GoReleaser publishes the manifest
-into the `bucket/` folder on every tagged release, so no separate bucket repo is needed:
+## Requisitos
 
-```
+- **Sistema operativo:** el flujo de instalación soportado y probado es **Windows**, vía Scoop.
+  GoReleaser también publica binarios para macOS y Linux en cada release (ver sección
+  [Instalación](#instalación)), pero hoy no existe un gestor de paquetes (brew, apt, etc.)
+  integrado para esas plataformas; el tap de Homebrew está contemplado pero diferido (ver
+  `.goreleaser.yaml`).
+- **[Scoop](https://scoop.sh/):** gestor de paquetes para Windows usado para instalar y actualizar
+  `click`.
+- **Git:** imprescindible por dos motivos independientes:
+  - Scoop actualiza sus buckets con `git pull`; si Scoop no tiene git en el PATH,
+    `scoop update click` sigue leyendo el manifiesto local desactualizado y reporta la versión
+    ya instalada como "la última", aunque exista un release más reciente.
+  - `click install` y `click update` usan git internamente (a través de
+    `claude plugin marketplace add`) para registrar el marketplace de plugins de Click.
+
+  > **Importante:** si una versión nueva de `click` no aparece al actualizar, instale git primero
+  > (`scoop install git`) y luego ejecute `scoop update; scoop update click`. Esto es un
+  > requisito propio de Scoop, independiente del git que `click install`/`click update` necesitan
+  > para registrar el marketplace de plugins.
+
+- **Go 1.25+ (opcional):** solo necesario si se quiere compilar `click` desde el código fuente en
+  lugar de instalar el binario publicado.
+
+## Instalación
+
+`click` se instala directamente desde este repositorio vía Scoop — GoReleaser publica el
+manifiesto en la carpeta `bucket/` en cada release etiquetado, así que no hace falta un
+repositorio de bucket aparte:
+
+```powershell
 scoop bucket add click https://github.com/Angel-MercadoCLK/click-ai-devkit
 scoop install click
 ```
 
-This works today (`bucket/click.json` is published and live at v0.2.1+). Brew tap for
-macOS/Linux is scaffolded in `.goreleaser.yaml` but deferred — see `documentacion/tech-spec.md` §6.
+### Compilar desde el código fuente
 
-> **`scoop update` needs git.** scoop refreshes its buckets with `git pull`; if git is not
-> installed for scoop, `scoop update click` silently keeps reading the stale local manifest and
-> reports the currently-installed version as "latest" even when a newer `click` release exists. If
-> a new version is not showing up, run `scoop install git` first, then `scoop update; scoop update
-> click`. (This is scoop's own requirement, separate from the `git` that `click install`/`update`
-> need to register the plugin marketplace — see `PreflightGit`.)
+Si prefiere compilar el binario usted mismo (por ejemplo, para probar un cambio local):
 
-## Commands
+```powershell
+go build ./cmd/click
+```
 
-| Command | What it does |
+Esto genera un ejecutable `click` (o `click.exe` en Windows) en el directorio actual, usando el
+mismo punto de entrada (`cmd/click/`) que usa el proceso de release oficial.
+
+## Comandos
+
+| Comando | Qué hace |
 |---|---|
-| `click` (no args, TTY) | Launches the standing interactive menu (`internal/menu`) to reach install/update/doctor/uninstall/configure-models without memorizing flags. Non-TTY or `--no-interactive` prints help instead. |
-| `click install` | Registers the Click marketplace with `claude plugin marketplace add`, installs `click-sdd`, `click-memory`, and `click-review` via the native `claude plugin` CLI, writes/updates the managed `CLAUDE.md` block, registers the `memory-guard` PreToolUse hook, and lets you choose per-phase models (or an orchestration profile) interactively. |
-| `click doctor` | Read-only health check: verifies the three plugins are actually registered in Claude Code, the managed `CLAUDE.md` block, and the `memory-guard` hook registration. Never mutates state. |
-| `click uninstall` | Reverses everything `install`/`update` write: uninstalls the three plugins through the native `claude plugin` CLI, removes the Click marketplace registration, strips the managed `CLAUDE.md` block, deregisters the `memory-guard` hook, and removes the Engram MCP config/state if `update` ever configured it. Idempotent. |
-| `click update` | Re-runs the native `claude plugin` install flow to re-sync the three plugins, rewrites the managed `CLAUDE.md` block, re-registers the `memory-guard` hook, and configures the pinned Engram MCP entry. |
-| `click configure-models` | Reopens the per-phase model selection TUI (18 phases, or pick an orchestration profile) without a full install/update, preserving the currently persisted profile label. Hidden from `--help`, reached primarily through the standing menu. |
-| `click --version` | Prints the CLI version, injected at build time via `ldflags` (`internal/version`). |
+| `click` (sin argumentos, en una TTY) | Lanza el menú interactivo (`internal/menu`) para llegar a instalar/actualizar/diagnosticar/desinstalar/configurar modelos sin memorizar flags. Fuera de una TTY, o con `--no-interactive`, imprime la ayuda en su lugar. |
+| `click install` | Registra el marketplace de Click con `claude plugin marketplace add`, instala los plugins `click-sdd`, `click-memory`, `click-review` y `click-skills` vía el CLI nativo `claude plugin`, escribe/actualiza el bloque gestionado de `CLAUDE.md`, registra el hook `memory-guard` (PreToolUse) y permite elegir los modelos por fase (o un perfil de orquestación) de forma interactiva. Acepta `--yes`/`--non-interactive` para saltar el TUI y `--profile` para fijar el perfil (`balanced`/`cost-saver`/`quality`) sin interacción. |
+| `click update` | Vuelve a sincronizar los cuatro plugins, reescribe el bloque gestionado de `CLAUDE.md`, re-registra el hook `memory-guard` y sincroniza el pin de Engram a la versión fijada en el manifiesto de release. |
+| `click doctor` | Chequeo de salud de solo lectura: verifica que los cuatro plugins estén realmente registrados en Claude Code, que exista el bloque gestionado de `CLAUDE.md`, y que el hook `memory-guard` esté registrado. Nunca modifica el estado. |
+| `click uninstall` | Revierte todo lo que `install`/`update` escribieron: desinstala los cuatro plugins vía el CLI nativo `claude plugin`, quita el registro del marketplace de Click, elimina el bloque gestionado de `CLAUDE.md`, da de baja el hook `memory-guard`, y quita la configuración/estado de Engram y Context7 si `click` los llegó a instalar. Idempotente. |
+| `click agent-builder` | Asistente interactivo (TUI) para crear un agente propio de Claude Code, personal o compartible, guiando al desarrollador paso a paso hasta generar y colocar el archivo `.md` del agente. |
+| `click manage-backups` | Comando de solo flags (oculto de `--help`, alcanzable desde el menú) para inspeccionar, restaurar (`--restore`) o eliminar (`--delete`) la copia de seguridad de `models.json` que genera una migración de configuración obsoleta. |
+| `click configure-models` | Reabre el selector interactivo de modelos por fase (18 fases, o un perfil de orquestación completo) sin pasar por una instalación/actualización completa, preservando el perfil actualmente guardado. Oculto de `--help`, se alcanza principalmente desde el menú interactivo. |
+| `click --version` | Imprime la versión del CLI, inyectada en tiempo de compilación vía `ldflags` (`internal/version`). |
 
-## What gets installed
+## Qué se instala
 
-- Three Claude Code plugins registered through the native marketplace/registry flow: `click-sdd`,
-  `click-memory`, and `click-review`.
-- A managed block in `~/.claude/CLAUDE.md`, delimited by markers so it can be inserted, replaced,
-  or fully removed without touching the rest of the file.
-- The `memory-guard` PreToolUse hook entry in `~/.claude/settings.json`.
-- Engram installed as a Claude Code plugin (`engram@engram`), idempotent and respectful of a
-  pre-existing setup; its binary is provisioned via `go install` when missing. A small click state
-  file records what click itself installed, so `uninstall` never removes a dev's pre-existing Engram.
-- Context7 registered as a user-scope HTTP MCP via `claude mcp add` — also idempotent and respectful.
+- Cuatro plugins de Claude Code registrados a través del flujo nativo de marketplace/registro:
+  `click-sdd` (el flujo SDD, sus agentes y sus 18 fases configurables por modelo), `click-memory`
+  (política y curación de memoria), `click-review` (revisión de PR y checklist de pre-merge) y
+  `click-skills` (skills de ingeniería de Click Seguros para backend .NET, frontend Next.js/React
+  y móvil Ionic/Capacitor).
+- Un bloque gestionado en `~/.claude/CLAUDE.md`, delimitado por marcadores, para poder insertarlo,
+  reemplazarlo o eliminarlo por completo sin tocar el resto del archivo.
+- La entrada del hook `memory-guard` (PreToolUse) en `~/.claude/settings.json`.
+- Engram instalado como plugin de Claude Code (`engram@engram`), de forma idempotente y
+  respetuosa con una instalación previa; su binario se provee vía `go install` cuando falta. Un
+  pequeño archivo de estado de `click` registra qué instaló `click` exactamente, para que
+  `uninstall` nunca elimine un Engram que el desarrollador ya tenía instalado por su cuenta.
+- Context7 registrado como MCP HTTP de ámbito de usuario vía `claude mcp add` — también
+  idempotente y respetuoso con una configuración previa.
+
+## El menú interactivo
+
+Ejecutar `click` sin argumentos en una terminal interactiva abre un menú visual con logo de marca
+(el "spark" de Click AI Devkit) y las siguientes opciones:
+
+- Iniciar instalación
+- Actualizar herramientas
+- Configurar modelos
+- Ejecutar diagnóstico
+- Desinstalar
+- Crear agente propio
+- Gestionar backups
+- Salir
+
+La navegación se hace con las flechas ↑/↓ o con `j`/`k` (estilo vim), `Enter` selecciona la
+opción resaltada, y `q`/`Esc` sale del menú. Cada opción dispara internamente el mismo comando
+que existe como subcomando de `click` (por ejemplo, "Iniciar instalación" ejecuta `click
+install`), así que el menú es una capa de descubrimiento, no un camino paralelo. Fuera de una TTY
+(scripts, CI) `click` sin argumentos imprime la ayuda en vez de intentar abrir el menú.
 
 ## memory-guard
 
-`memory-guard` is a Claude Code PreToolUse hook that intercepts every `mem_save` call before it
-can reach Engram. It is:
+`memory-guard` es un hook PreToolUse de Claude Code que intercepta cada llamada a `mem_save`
+antes de que pueda llegar a Engram. Es:
 
-- **Block-only** as of v0.2.1 (`internal/guard`): a matching forbidden pattern denies the call
-  outright; there is no redaction path yet (still planned, not scheduled).
-- **Fail-closed**: any internal error (payload decode failure, pattern-load failure, panic) also
-  results in a deny, never a silent allow.
-- **Hash-only audit**: every decision is appended to a local JSONL log
-  (`~/.claude/logs/click-memory-guard.jsonl`) containing only a SHA-256 hash of the payload, the
-  decision, category, and session id — never the raw content (`internal/audit`).
+- **Solo bloqueo:** si el contenido coincide con un patrón prohibido, la llamada se deniega por
+  completo; todavía no existe una ruta de redacción/edición parcial (está contemplada, pero sin
+  fecha).
+- **Fail-closed:** cualquier error interno (fallo al decodificar el payload, fallo al cargar los
+  patrones, panic) también resulta en una denegación, nunca en una autorización silenciosa.
+- **Auditoría solo con hash:** cada decisión se añade a un log JSONL local
+  (`~/.claude/logs/click-memory-guard.jsonl`) que contiene únicamente un hash SHA-256 del
+  payload, la decisión, la categoría y el id de sesión — nunca el contenido en crudo
+  (`internal/audit`).
 
-## Repo layout
+## Estructura del repositorio
 
-- `cmd/click/` — CLI entrypoint.
-- `internal/cli/` — cobra command tree (install/doctor/uninstall/update/configure-models/memory-guard).
-- `internal/installer/` — install/uninstall logic: plugins, `CLAUDE.md` block, hook registration, Engram MCP config.
-- `internal/doctor/` — read-only health checks.
-- `internal/guard/` — the memory-guard pattern-matching engine.
-- `internal/audit/` — hash-only audit logging for guard decisions.
-- `internal/manifest/` — the embedded release manifest (plugin/Engram version pins).
-- `internal/menu/` — the standing interactive menu (bare `click` on a TTY).
-- `internal/modelconfig/` — the 18-phase per-phase model taxonomy, defaults, and orchestration profiles.
-- `internal/ui/` — shared bubbletea TUI screens (model selection, profile selection, rendering helpers).
-- `internal/version/` — build-time version metadata injected via `ldflags`.
-- `plugins/` — the three plugin source trees served by the Click marketplace.
+- `cmd/click/` — punto de entrada del CLI.
+- `internal/cli/` — árbol de comandos de cobra (install/update/doctor/uninstall/agent-builder/
+  manage-backups/configure-models/memory-guard).
+- `internal/installer/` — lógica de instalación/desinstalación: plugins, bloque de `CLAUDE.md`,
+  registro del hook, configuración de MCP de Engram y Context7.
+- `internal/doctor/` — chequeos de salud de solo lectura.
+- `internal/guard/` — el motor de coincidencia de patrones de memory-guard.
+- `internal/audit/` — logging de auditoría solo-hash para las decisiones de la guardia.
+- `internal/agentbuilder/` — lógica del asistente `agent-builder`: especificación del agente,
+  motores disponibles, validación y escritura del archivo final.
+- `internal/manifest/` — el manifiesto de release embebido (pines de versión de plugins y Engram).
+- `internal/menu/` — el menú interactivo permanente (`click` sin argumentos en una TTY).
+- `internal/modelconfig/` — la taxonomía de 18 fases por modelo, sus valores por defecto y los
+  perfiles de orquestación.
+- `internal/ui/` — pantallas compartidas de TUI en bubbletea (selección de modelo, selección de
+  perfil, utilidades de render).
+- `internal/version/` — metadatos de versión inyectados en tiempo de compilación vía `ldflags`.
+- `internal/crossplatformlint/` — comprobaciones de lint específicas para mantener el código
+  compatible entre plataformas (Windows/macOS/Linux).
+- `plugins/` — los árboles de código fuente de los cuatro plugins servidos por el marketplace de
+  Click (`click-sdd`, `click-memory`, `click-review`, `click-skills`).
+- `bucket/` — el manifiesto de Scoop (`click.json`), publicado automáticamente por GoReleaser en
+  cada release.
 
-## Docs
+## Documentación adicional
 
-Full planning and design docs live in [`documentacion/`](documentacion/), including the vision,
-decisions log (`00-decisions-and-open-questions.md`), technical spec, and implementation plan.
+La documentación de planeación y diseño vive en [`documentacion/`](documentacion/), entre otros:
 
-## Development
+- [`documentacion/implementation-plan.md`](documentacion/implementation-plan.md) — plan de
+  construcción e historial de slices.
+- [`documentacion/tech-spec.md`](documentacion/tech-spec.md) — especificación técnica.
+- [`documentacion/00-decisions-and-open-questions.md`](documentacion/00-decisions-and-open-questions.md)
+  — registro de decisiones (incluida D13, el mandato de TDD estricto) y preguntas abiertas.
+- [`documentacion/vision.md`](documentacion/vision.md), [`documentacion/architecture.md`](documentacion/architecture.md),
+  [`documentacion/prd.md`](documentacion/prd.md) — visión, arquitectura y PRD del proyecto.
 
-```
+## Desarrollo
+
+```powershell
 go build ./...
 go test ./...
 ```
 
-STRICT TDD is mandatory for any Go change in this repo: write a failing test first, then the
-minimal implementation to make it pass. See `documentacion/00-decisions-and-open-questions.md`
-(D13) and `CLAUDE.md`.
+TDD estricto es obligatorio para cualquier cambio en Go en este repositorio: primero se escribe
+una prueba que falla, luego la implementación mínima para que pase. Ver la decisión D13 en
+`documentacion/00-decisions-and-open-questions.md` y `CLAUDE.md`.
+
+## Versión actual
+
+**v0.4.7**, publicada y disponible hoy vía `scoop install click` (ver [Instalación](#instalación)).
