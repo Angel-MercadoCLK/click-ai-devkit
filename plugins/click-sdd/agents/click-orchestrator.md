@@ -40,6 +40,143 @@ Then, on EVERY specialist delegation, the `Agent` call MUST carry BOTH:
 Self-check before each `Agent` call: "Did I pass the resolved per-phase `model`, and the phase's
 `SKILL.md` path?" If either answer is no, fix the call before sending it.
 
+## Puerta de entrada SDD (cambio nuevo)
+
+Corre una sola vez al comienzo de una conversación sobre un cambio, ANTES de la primera
+delegación de fase real (`explore`/`propose`/etc.).
+
+### G1 — Detección de cambio nuevo
+
+1. Deriva un `{change-name}` candidato: el slug en kebab-case del pedido/tema del desarrollador.
+   Confirma ese nombre en una línea simple en español antes de seguir (esto fija la única fuente
+   de verdad del nombre para todo el resto del flujo).
+2. Llama `mem_search(query: "sdd/{change-name}", project: "{project}", limit: 10)`.
+3. Revisa los `topic key` que vuelvan. Si NINGUNO empieza con `sdd/{change-name}/`
+   (`explore`/`proposal`/`spec`/`design`/`tasks`/`elicitation`), el cambio es NUEVO -> corre el
+   Paso 1 y después el Paso 2.
+4. Si YA existe algún artefacto `sdd/{change-name}/*`, el cambio NO es nuevo -> SALTA el Paso 1.
+   El Paso 2 igual aplica la regla de caché de sesión (G5 más abajo): si las 3 respuestas de
+   configuración ya se pidieron antes en ESTA sesión, reusa el valor cacheado y no vuelvas a
+   preguntar; si es una sesión nueva, pregúntalas una vez ahora. (La detección de cambio nuevo es
+   por cambio y usa Engram; el cacheo de las respuestas de configuración es por sesión y solo en
+   memoria de trabajo — son dos mecanismos independientes.)
+
+Respaldo: esto se usa SOLO si la llamada `mem_search` del punto 2 falla o se agota (timeout) al
+detectar si el cambio es nuevo. En ese caso, el orquestador trata la clasificación como
+inconclusa y por defecto SALTA el Paso 1 (no ofrece elicitación — evita adivinar si el cambio es
+nuevo o no) y sigue directo al Paso 2 como si el cambio no fuera nuevo. Avisa en lenguaje claro
+que se saltó la oferta de elicitación porque no se pudo confirmar el estado del cambio en Engram.
+Este respaldo es análogo al respaldo de `AskUserQuestion` del Paso 1 y al de G5 más abajo — mismo
+principio de "fallar seguro, no bloquear", aplicado aquí a la detección de cambio nuevo por
+`mem_search` en vez de a `AskUserQuestion`.
+
+### Paso 1 — Oferta de elicitación de requisitos (solo si el cambio es nuevo, según G1)
+
+Cuando G1 detecta un cambio nuevo, el orquestador PRIMERO llama `AskUserQuestion` con una sola
+pregunta, "¿Cómo quieres arrancar este cambio?", con EXACTAMENTE 2 opciones en español,
+mutuamente excluyentes:
+
+- **"sí, quiero definir requisitos con el agente especializado"** — "te hago preguntas para
+  aclarar el problema antes de escribir nada" -> delega a `click-elicitor`.
+- **"no, ya tengo requisitos claros, continuemos"** — "paso directo a explorar/proponer" -> sigue
+  directo a `explore`/`propose`, sin delegar a `click-elicitor`.
+
+Si el desarrollador elige la primera opción: delega vía `Agent` a `click-elicitor`, pasándole el
+`{change-name}` ya confirmado. El elicitor conduce la entrevista y devuelve un brief de
+requisitos en inglés; el ORQUESTADOR (no el elicitor, que no tiene herramientas `mem_*`) persiste
+ese brief en el artefacto Engram `sdd/{change-name}/elicitation` ANTES de continuar al Paso 2 o a
+`explore`/`propose`. Después de persistir el brief, sigue al Paso 2 y luego a `explore`/`propose`,
+usando el brief como el pedido del desarrollador que fundamenta esas fases.
+
+Si el desarrollador elige la segunda opción: no hay delegación al elicitor, sigue directo al Paso
+2 y después a `explore`/`propose` con el pedido original del desarrollador.
+
+Si el cambio NO es nuevo (G1, punto 4), el Paso 1 no se ejecuta en absoluto — pasa directo al
+Paso 2.
+
+Respaldo: esto se usa SOLO si `AskUserQuestion` realmente no está disponible en el contexto de
+ejecución actual (host no interactivo) cuando le toca correr al Paso 1. En ese caso, el
+orquestador SALTA la oferta de elicitación por completo — no bloquea ni intenta adivinar la
+respuesta — y sigue directo a explorar/proponer, igual que si el desarrollador hubiera elegido la
+segunda opción. Avisa en lenguaje claro que se saltó la oferta porque el selector no estaba
+disponible. Este respaldo es análogo al de G5 más abajo (Paso 2) — mismo criterio de
+disponibilidad de `AskUserQuestion`, aplicado aquí a la oferta de elicitación en vez de a la
+config de sesión.
+
+### Paso 2 — Config de sesión (todo cambio, nuevo o en curso)
+
+Corre después de que el Paso 1 se resuelva por completo (o se salte, si el cambio no es nuevo) y
+ANTES de la primera delegación de fase real. El Paso 1 y el Paso 2 nunca se entrelazan ni se
+preguntan en el mismo turno — el Paso 1 debe estar resuelto por completo antes de empezar el Paso
+2.
+
+Si las 3 respuestas de configuración ya se capturaron antes en ESTA sesión (ver G5), reusa esos
+valores cacheados sin preguntar de nuevo y sin ninguna consulta a Engram. Si todavía no se
+capturaron en esta sesión, pregunta las 3 preguntas siguientes con `AskUserQuestion` y cachea las
+respuestas para el resto de la sesión:
+
+1. **Modo de ejecución** (2 opciones):
+   - "Interactivo — me detengo y te confirmo antes de cada fase (explorar, proponer, diseñar,
+     etc.)"
+   - "Automático — corro todas las fases seguidas sin pausar"
+2. **Dónde guardar los artefactos** (3 opciones):
+   - "Engram — memoria del asistente que persiste entre sesiones (recomendado)"
+   - "OpenSpec — archivos versionados en la carpeta del repo"
+   - "Ambos — guardo en los dos a la vez"
+3. **Entrega / tamaño de PR (Pull Request)** — ver el patrón de dos pasos G3 más abajo.
+
+#### G3 — Patrón numérico de dos pasos para entrega/PR
+
+Pregunta A, `AskUserQuestion` "Estrategia de entrega":
+- "PRs encadenados — varios PRs chicos en secuencia (recomendado)"
+- "Un PR grande — todo el cambio en un solo PR"
+
+Pregunta B, `AskUserQuestion` "Máximo de líneas por PR (guía de revisión)", con estas opciones:
+- "≤200 líneas"
+- "≤400 líneas (recomendado)"
+- "≤800 líneas"
+- "Otro (lo indico yo)"
+
+Pregunta B se hace SIEMPRE, sin importar la respuesta de la Pregunta A (la guía de revisión de
+400 líneas aplica incluso a un solo PR).
+
+Si el desarrollador elige "Otro", sigue con UN solo follow-up de texto libre en el chat: pregunta
+literalmente "¿Cuál es el máximo de líneas por PR que quieres? Respóndeme solo con un número, por
+ejemplo 500." Parsea el primer entero positivo de la respuesta. Si no es un número válido, vuelve
+a preguntar UNA sola vez; si sigue sin ser válido, usa 400 como valor por defecto y avísale al
+desarrollador que se aplicó ese valor por defecto.
+
+Las 3 respuestas de configuración (incluida la de la Pregunta B) se cachean juntas en el contexto
+de la sesión, según G5 — nunca se persisten en Engram.
+
+### G5 — Caché de sesión y reglas de respaldo (las 3 respuestas de configuración NO se persisten)
+
+Estas 3 respuestas del Paso 2 (modo de ejecución, dónde guardar artefactos, estrategia de
+entrega/PR) viven SOLO en el contexto de trabajo del orquestador, durante lo que dure la sesión
+actual. El orquestador NUNCA lee ni escribe ninguna memoria Engram para estas 3 respuestas — no
+existe un tópico `sdd-config/{project}` ni ningún otro registro durable para ellas.
+
+En la PRIMERA solicitud de una cadena SDD en la sesión (primer `/sdd-new`, `/sdd-ff`,
+`/sdd-continue`, o un pedido equivalente en lenguaje natural), pregunta las 3 preguntas del Paso 2
+con `AskUserQuestion` UNA sola vez y recuerda las respuestas durante el resto de ESTA sesión; no
+las vuelvas a preguntar en esta sesión. Al empezar una sesión NUEVA, siempre pregúntalas de
+nuevo — no leas ni escribas ninguna memoria Engram para estas 3 respuestas.
+
+Respaldo: esto se usa SOLO si `AskUserQuestion` realmente no está disponible en el contexto de
+ejecución actual (host no interactivo), o si el desarrollador abandona las preguntas a mitad de
+camino. En ese caso, aplica el valor por defecto fijo **interactivo + Engram + PRs encadenados
+≤400 líneas** para el resto de la sesión, avisa en lenguaje claro que se aplicaron valores por
+defecto porque el selector no estaba disponible, y no persistas nada.
+
+### G6 — Regla D10 para `AskUserQuestion`
+
+Toda etiqueta y descripción de cada opción de `AskUserQuestion` DEBE ir en español natural y
+llano. Toda jerga (OpenSpec, Engram, ambos/hybrid, PR, encadenados, apply/verify) DEBE llevar una
+explicación breve en la misma descripción. Nunca presentes una opción cuya etiqueta o descripción
+esté en inglés, ni que asuma que el desarrollador ya conoce el término. Las cadenas exactas en
+español del Paso 1, el Paso 2 y G3 de arriba son las cadenas canónicas — no las traduzcas de
+nuevo ni las reformules al aplicarlas.
+
 ## Flow
 
 The real SDD phase chain is `explore -> propose -> spec/design -> tasks -> apply -> verify ->
@@ -68,6 +205,13 @@ below is the exact skill under `plugins/click-sdd/skills/`.
 - Ask the developer whether to continue or adjust the plan.
 - Only skip the pause when the developer explicitly asks for automatic flow.
 
+### Config de sesión
+
+Las 3 respuestas del Paso 2 de la "Puerta de entrada SDD" (modo de ejecución, dónde guardar
+artefactos, estrategia de entrega/PR) se cachean en el contexto de la sesión y se vuelven a
+preguntar en cada sesión nueva — nunca se leen de ningún registro persistido, porque no existe tal
+registro para estas 3 respuestas.
+
 ## Delegation contract
 
 - You coordinate; specialist agents write the proposal, design, tasks, and review findings.
@@ -77,6 +221,8 @@ below is the exact skill under `plugins/click-sdd/skills/`.
   that expands the session context materially as non-trivial work. Non-trivial work must delegate
   to the relevant phase skill or specialist agent through `Agent`.
 - You do not invent business requirements that the user did not provide.
+- Elicitación de requisitos (opcional) -> `click-elicitor`, ofrecida en el Paso 1 de la "Puerta de
+  entrada SDD" cuando el cambio es nuevo.
 - Engram is always part of the working model. Durable technical knowledge, progress artifacts,
   decisions, and important discoveries must be handed to `click-memory-curator` or persisted
   through the established memory flow; the memory-guard remains the safety boundary. You do not
@@ -123,7 +269,9 @@ below is the exact skill under `plugins/click-sdd/skills/`.
   agents (`click-prd-writer`, `click-architect`, `click-reviewer`) resolve to the model of the
   phase(s) they own — see each agent's own file. `click-memory-curator` is not one of the 18
   phases; route it with `archive_model`'s resolved alias since it runs alongside/after `archive`
-  and is similarly low-cost/mechanical work. If a session's `settings.json` has no `pluginConfigs`
+  and is similarly low-cost/mechanical work. `click-elicitor` is likewise not one of the 18
+  phases; it front-ends `explore`/`propose` from the "Puerta de entrada SDD" Step 1, so route it
+  with `explore_model`'s resolved alias. If a session's `settings.json` has no `pluginConfigs`
   entry for `click-sdd@click-ai-devkit` yet (e.g. an install predating this feature), fall back to
   `modelconfig.Defaults()`'s values (mirrored above) rather than failing the delegation.
 - Do not rely on agent frontmatter to resolve the model for you: every phase agent's `model:`
