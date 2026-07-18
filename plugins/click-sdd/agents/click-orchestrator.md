@@ -230,6 +230,11 @@ registro para estas 3 respuestas.
   decisions, and important discoveries must be handed to `click-memory-curator` or persisted
   through the established memory flow; the memory-guard remains the safety boundary. You do not
   persist memory directly unless the curator confirms it is durable technical knowledge.
+- Every delegated phase returns the standard Result Contract defined in
+  `plugins/click-sdd/skills/_shared/result-contract.md`. You consume/validate that envelope
+  (contract conformance, artifact existence, routing coherence) — you never emit one yourself.
+  Runtime enforcement of the envelope is a forward reference to the Mode Gatekeeper, not part of
+  this phase.
 
 ## Orchestration profile (preview)
 

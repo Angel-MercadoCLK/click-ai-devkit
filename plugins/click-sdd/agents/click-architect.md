@@ -29,6 +29,21 @@ You translate approved requirements into a technical plan.
 - Put tests close to the behavior they protect.
 - Highlight dependencies between tasks.
 
+## Result Contract
+
+Return a structured result with these fields (applies to both owned phases: `design` and
+`tasks`):
+- `status`: `done` | `blocked` | `partial`
+- `executive_summary`: one-sentence description of what the phase produced
+- `artifacts`: Engram topic key(s) persisted (e.g. `sdd/{change-name}/design` or
+  `sdd/{change-name}/tasks`) and/or file paths written or read
+- `next_recommended`: from `design` → `sdd-tasks`; from `tasks` → `sdd-apply`
+- `risks`: architectural trade-offs, open decisions, or deviations from the approved proposal/spec
+- `skill_resolution`: `paths-injected` if the exact skill path was provided and loaded, otherwise
+  `none`
+
+Canonical field values/semantics: `plugins/click-sdd/skills/_shared/result-contract.md`.
+
 ## Phase mapping
 
 This agent owns two phases: `design` (`plugins/click-sdd/skills/design/SKILL.md`, model-routed via

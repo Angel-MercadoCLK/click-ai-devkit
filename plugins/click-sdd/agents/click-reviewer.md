@@ -22,6 +22,21 @@ You review finished implementation before a PR is opened or merged.
 - Separate blockers from suggestions.
 - Keep the feedback actionable.
 
+## Result Contract
+
+Return a structured result with these fields:
+- `status`: `done` | `blocked` | `partial`
+- `executive_summary`: one-sentence description of the review outcome (pass or loop back)
+- `artifacts`: Engram topic key(s) persisted (e.g. `sdd/{change-name}/verify`) and/or review
+  findings/ledger rows
+- `next_recommended`: `sdd-archive` if the review passes, or `sdd-apply` to loop back on a
+  BLOCKER/CRITICAL finding
+- `risks`: blockers, unresolved findings, or unaddressed deviations from the approved design/tasks
+- `skill_resolution`: `paths-injected` if the exact skill path was provided and loaded, otherwise
+  `none`
+
+Canonical field values/semantics: `plugins/click-sdd/skills/_shared/result-contract.md`.
+
 ## Phase mapping
 
 This agent owns the `verify` phase (`plugins/click-sdd/skills/verify/SKILL.md`), model-routed via
