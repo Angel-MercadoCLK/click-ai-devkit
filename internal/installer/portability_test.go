@@ -71,3 +71,87 @@ func TestDefaultManagedContent_IsSelfContained(t *testing.T) {
 		}
 	}
 }
+
+// resultContractFieldTokens are the 6 canonical Result Contract field names, defined once in
+// plugins/click-sdd/skills/_shared/result-contract.md and echoed inline by every phase-executor
+// agent file.
+var resultContractFieldTokens = []string{
+	"status",
+	"executive_summary",
+	"artifacts",
+	"next_recommended",
+	"risks",
+	"skill_resolution",
+}
+
+// phaseExecutorAgentTokens are the 15 agent-file tokens (basename minus "click-") that MUST carry
+// the full inline Result Contract: the 12 orphanRoleAgentTokens (already contract-bearing) plus
+// prd-writer, architect, and reviewer (the 3 agents this change adds the contract to). These are
+// agent-file tokens, not phase tokens: propose/spec -> prd-writer, design/tasks -> architect,
+// verify -> reviewer.
+var phaseExecutorAgentTokens = append(append([]string{}, orphanRoleAgentTokens...),
+	"prd-writer",
+	"architect",
+	"reviewer",
+)
+
+// resultContractExemptAgentTokens documents the 3 roles that are NOT required to carry the full
+// 6-field Result Contract, each with the rationale for its exemption.
+var resultContractExemptAgentTokens = []string{
+	// orchestrator: consumer of the contract, not a returner — never emits its own envelope.
+	"orchestrator",
+	// memory-curator: post-cycle memory curation, not a chained phase in the taxonomy.
+	"memory-curator",
+	// elicitor: conversational interviewer with no Write/mem/skill tools; returns a requirements
+	// brief, not a structured envelope.
+	"elicitor",
+}
+
+// TestResultContractSharedDocExists guards Decision 1 (design doc): the shared Result Contract
+// doc must exist, be non-empty, and enumerate all 6 canonical field names.
+func TestResultContractSharedDocExists(t *testing.T) {
+	relPath := filepath.Join("plugins", "click-sdd", "skills", "_shared", "result-contract.md")
+	data := mustReadRepoFile(t, "plugins", "click-sdd", "skills", "_shared", "result-contract.md")
+	content := string(data)
+
+	if len(strings.TrimSpace(content)) == 0 {
+		t.Fatalf("expected shared doc %s to be non-empty", relPath)
+	}
+	for _, field := range resultContractFieldTokens {
+		if !strings.Contains(content, field) {
+			t.Errorf("shared doc %s does not enumerate field %q", relPath, field)
+		}
+	}
+}
+
+// TestPhaseExecutorAgentsDeclareResultContract asserts every one of the 15 phase-executor agent
+// tokens declares all 6 Result Contract fields inline in its agents/click-{token}.md file.
+func TestPhaseExecutorAgentsDeclareResultContract(t *testing.T) {
+	for _, token := range phaseExecutorAgentTokens {
+		token := token
+		t.Run(token, func(t *testing.T) {
+			relPath := filepath.Join("plugins", "click-sdd", "agents", "click-"+token+".md")
+			data := mustReadRepoFile(t, "plugins", "click-sdd", "agents", "click-"+token+".md")
+			content := string(data)
+
+			for _, field := range resultContractFieldTokens {
+				if !strings.Contains(content, field) {
+					t.Errorf("agent file %s does not declare Result Contract field %q", relPath, field)
+				}
+			}
+		})
+	}
+}
+
+// TestResultContractExemptAgentsNotRequired documents intent: the 3 exempt roles must never be
+// silently promoted into the required phaseExecutorAgentTokens set. This is a static-list guard,
+// not a content assertion — exempt files may still mention a field name in prose.
+func TestResultContractExemptAgentsNotRequired(t *testing.T) {
+	for _, exempt := range resultContractExemptAgentTokens {
+		for _, required := range phaseExecutorAgentTokens {
+			if exempt == required {
+				t.Errorf("exempt agent token %q must not appear in phaseExecutorAgentTokens", exempt)
+			}
+		}
+	}
+}

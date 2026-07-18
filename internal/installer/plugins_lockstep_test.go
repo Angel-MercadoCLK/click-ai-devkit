@@ -59,6 +59,8 @@ func TestClickSDDSkills_NoOrphanPhaseDirectories(t *testing.T) {
 	// Directories that intentionally exist under skills/ but are not one of modelconfig.Phases.
 	nonPhaseSkillDirs := map[string]bool{
 		"agent-builder": true,
+		// _shared holds cross-phase reference docs (e.g. result-contract.md), not a phase skill.
+		"_shared": true,
 	}
 
 	skillsDir := filepath.Join("..", "..", "plugins", "click-sdd", "skills")
