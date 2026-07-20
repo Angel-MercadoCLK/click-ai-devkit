@@ -251,7 +251,7 @@ Resolves the forward reference from the Delegation contract's Result Contract bu
 sin pausar"). Read that value from the SAME G5 working-memory session cache that holds the 3
 config answers — do NOT create any new state or Engram topic for it. In **interactive** mode this
 gate is skipped entirely: the developer already approves every phase between delegations
-(Interactive default + G1-G6), so the gate is additive unattended-run safety, not a redundant check.
+(Interactive default + G1, G3, G5, G6), so the gate is additive unattended-run safety, not a redundant check.
 
 When `execution_mode` is automatic, after EACH delegated phase returns and BEFORE launching the
 next phase, validate the returned Result Contract envelope with these 5 checks:
