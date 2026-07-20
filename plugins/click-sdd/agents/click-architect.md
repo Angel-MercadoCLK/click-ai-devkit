@@ -28,6 +28,9 @@ You translate approved requirements into a technical plan.
 - Break work into small, reviewable steps.
 - Put tests close to the behavior they protect.
 - Highlight dependencies between tasks.
+- Emit the mandatory Review Workload Forecast (the three lines defined in `tasks/SKILL.md`) as
+  the final part of the tasks artifact body — persisted inside `sdd/{change-name}/tasks`, never
+  as a separate Engram topic.
 
 ## Result Contract
 
@@ -36,7 +39,9 @@ Return a structured result with these fields (applies to both owned phases: `des
 - `status`: `done` | `blocked` | `partial`
 - `executive_summary`: one-sentence description of what the phase produced
 - `artifacts`: Engram topic key(s) persisted (e.g. `sdd/{change-name}/design` or
-  `sdd/{change-name}/tasks`) and/or file paths written or read
+  `sdd/{change-name}/tasks`) and/or file paths written or read. For the `tasks` phase, the
+  persisted `sdd/{change-name}/tasks` body MUST include the three-line Review Workload Forecast;
+  the orchestrator's Review Workload Guard reads it from there.
 - `next_recommended`: from `design` → `sdd-tasks`; from `tasks` → `sdd-apply`
 - `risks`: architectural trade-offs, open decisions, or deviations from the approved proposal/spec
 - `skill_resolution`: `paths-injected` if the exact skill path was provided and loaded, otherwise
