@@ -155,3 +155,85 @@ func TestResultContractExemptAgentsNotRequired(t *testing.T) {
 		}
 	}
 }
+
+// TestClickOrchestrator_HasModeGatekeeperSection asserts click-orchestrator.md defines the
+// Automatic Mode Gatekeeper section (Phase 4/5 design Decision 1): scoped to execution_mode
+// automatic, naming all 5 gate checks, and stating the retry-once/stop mechanics.
+func TestClickOrchestrator_HasModeGatekeeperSection(t *testing.T) {
+	data := mustReadRepoFile(t, "plugins", "click-sdd", "agents", "click-orchestrator.md")
+	content := string(data)
+
+	marker := "## Automatic Mode Gatekeeper"
+	start := strings.Index(content, marker)
+	if start == -1 {
+		t.Fatalf("click-orchestrator.md does not contain section heading %q", marker)
+	}
+
+	rest := content[start+len(marker):]
+	section := rest
+	if end := strings.Index(rest, "\n## "); end != -1 {
+		section = rest[:end]
+	}
+	lowerSection := strings.ToLower(section)
+
+	required := []string{
+		"execution_mode",
+		"automatic",
+		"contract conformance",
+		"artifact existence",
+		"no hallucination",
+		"no drift",
+		"routing coherence",
+		"once",
+		"stop",
+	}
+	for _, want := range required {
+		if !strings.Contains(lowerSection, want) {
+			t.Errorf("Automatic Mode Gatekeeper section does not contain %q", want)
+		}
+	}
+}
+
+// TestClickOrchestrator_JudgmentDayMandatory asserts Flow item 6 requires Judgment Day review
+// (jd-judge-a + jd-judge-b + jd-fix-agent) unconditionally after design and after apply, in both
+// execution modes, with no "optionally"/conditional language left in that flow item (Phase 4/5
+// design Decision 4).
+func TestClickOrchestrator_JudgmentDayMandatory(t *testing.T) {
+	data := mustReadRepoFile(t, "plugins", "click-sdd", "agents", "click-orchestrator.md")
+	content := string(data)
+
+	marker := "6. **Mandatory Judgment Day"
+	start := strings.Index(content, marker)
+	if start == -1 {
+		t.Fatalf("click-orchestrator.md does not contain Flow item marker %q", marker)
+	}
+
+	rest := content[start:]
+	section := rest
+	if end := strings.Index(rest, "\n7. "); end != -1 {
+		section = rest[:end]
+	}
+
+	requiredExact := []string{
+		"click-jd-judge-a",
+		"click-jd-judge-b",
+		"click-jd-fix-agent",
+	}
+	for _, want := range requiredExact {
+		if !strings.Contains(section, want) {
+			t.Errorf("Mandatory Judgment Day flow item does not contain %q", want)
+		}
+	}
+
+	lowerSection := strings.ToLower(section)
+	requiredCaseInsensitive := []string{"mandatory", "must", "both"}
+	for _, want := range requiredCaseInsensitive {
+		if !strings.Contains(lowerSection, want) {
+			t.Errorf("Mandatory Judgment Day flow item does not contain (case-insensitive) %q", want)
+		}
+	}
+
+	if strings.Contains(lowerSection, "optional") {
+		t.Errorf("Mandatory Judgment Day flow item still contains conditional/optional language")
+	}
+}

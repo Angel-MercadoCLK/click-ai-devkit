@@ -192,9 +192,16 @@ below is the exact skill under `plugins/click-sdd/skills/`.
    `design` delegates to `click-architect`.
 4. Move to `tasks` for the ordered task breakdown — delegate to `click-architect`.
 5. Drive `apply` to implement tasks with strict TDD — delegate to `click-apply`.
-6. Optionally run `jd-judge-a` (delegate to `click-jd-judge-a`) + `jd-judge-b` (delegate to
-   `click-jd-judge-b`) (blind, independent) after `design` or `apply` for high-stakes changes, then
-   `jd-fix-agent` (delegate to `click-jd-fix-agent`) for any converged BLOCKER/CRITICAL finding.
+6. **Mandatory Judgment Day review — always required, never skippable.** After `design` completes AND after `apply`
+   completes — in BOTH execution modes (interactive and automatic) — you MUST run `jd-judge-a`
+   (delegate to `click-jd-judge-a`) and `jd-judge-b` (delegate to `click-jd-judge-b`) as a blind,
+   independent pair, passing each the confirmed `{change-name}` and naming what is under review
+   (the `sdd/{change-name}/design` artifact after `design`; the apply diff after `apply`) so each
+   judge can `mem_get_observation` the `sdd/{change-name}/spec` and `sdd/{change-name}/design` it
+   must satisfy. Both judges return their own findings ledgers; YOU merge both into the
+   `sdd/{change-name}/review-ledger` topic, then run `jd-fix-agent` (delegate to
+   `click-jd-fix-agent`) on every BLOCKER/CRITICAL finding that converges between the two judges.
+   This gate is non-skippable and is never reserved for 'high-stakes' changes only.
 7. Run `verify` before the developer opens a PR — delegate to `click-reviewer`.
 8. Run `archive` to close the change once `verify` passes — delegate to `click-archive`.
 9. Hand durable technical knowledge to `click-memory-curator` after the cycle ends.
@@ -235,6 +242,59 @@ registro para estas 3 respuestas.
   (contract conformance, artifact existence, routing coherence) — you never emit one yourself.
   Runtime enforcement of the envelope is a forward reference to the Mode Gatekeeper, not part of
   this phase.
+
+## Automatic Mode Gatekeeper
+
+Resolves the forward reference from the Delegation contract's Result Contract bullet and from
+`plugins/click-sdd/skills/_shared/result-contract.md`. Runs ONLY when the session's cached
+`execution_mode` is **automatic** (the Paso 2 answer "Automático — corro todas las fases seguidas
+sin pausar"). Read that value from the SAME G5 working-memory session cache that holds the 3
+config answers — do NOT create any new state or Engram topic for it. In **interactive** mode this
+gate is skipped entirely: the developer already approves every phase between delegations
+(Interactive default + G1-G6), so the gate is additive unattended-run safety, not a redundant check.
+
+When `execution_mode` is automatic, after EACH delegated phase returns and BEFORE launching the
+next phase, validate the returned Result Contract envelope with these 5 checks:
+
+1. Contract conformance — confirm all 6 fields (`status`, `executive_summary`, `artifacts`,
+   `next_recommended`, `risks`, `skill_resolution`) are present and well-formed: `status` in
+   {done,partial,blocked}; `next_recommended` in the allowed token set
+   (sdd-explore/sdd-propose/sdd-spec/sdd-design/sdd-tasks/sdd-apply/sdd-verify/sdd-archive/
+   review-refuter/jd-fix-agent/none); `skill_resolution` in the accepted superset
+   (paths-injected/none/fallback-registry/fallback-path). Missing/out-of-vocabulary field FAILS.
+2. Artifact existence — for every Engram topic key in `artifacts`, run
+   `mem_search(query:"{topic-key}", project:"{project}")` then `mem_get_observation(id)` and
+   confirm non-empty content; for every file path in `artifacts`, confirm it exists via Read/Glob.
+   Any declared artifact that does not resolve FAILS.
+3. No hallucination — cross-check every concrete file path, Engram topic, and command named in
+   `executive_summary`/`artifacts`/`risks` against reality (files via Read/Glob, topics via
+   mem_search, commands against the plugin's real skill/agent set). A referenced-but-nonexistent
+   path/topic/command FAILS.
+4. No drift — confirm the result is consistent with the inputs you fed the phase: the `{change-name}`
+   in the returned topic keys matches the change you delegated; the phase produced the artifact type
+   it was asked for (a delegated `design` returns `sdd/{change-name}/design`, not another topic); and
+   `executive_summary` describes the requested scope, not a different change. Mismatch FAILS.
+5. Routing coherence — confirm `next_recommended` follows the real graph
+   (explore->propose->spec/design->tasks->apply->verify->archive; `design` branches off `spec`;
+   `apply->verify` OR `apply->apply` for a continuation batch) and no CRITICAL/BLOCKER item in
+   `risks` is left unaddressed. When the DELEGATED PHASE ITSELF was `apply`, a `status: partial`
+   result whose `next_recommended` is `sdd-apply` (apply recommending itself for the next
+   continuation batch) is a VALID pass, matching the established
+   `sdd/{change-name}/apply-progress` merge-not-overwrite continuation convention every prior apply
+   batch uses — this carve-out applies ONLY when the delegated phase was `apply`; the same
+   `status`/`next_recommended` pair returned by any other phase is an out-of-graph jump and FAILS.
+   `jd-judge-a`/`jd-judge-b` recommending `jd-fix-agent`, and `jd-fix-agent` recommending
+   `sdd-tasks` (after a `design`-round fix) or `sdd-verify` (after an `apply`-round fix), are valid
+   graph edges introduced by the mandatory Judgment Day flow (item 6) — not out-of-graph jumps. An
+   out-of-graph jump or an unaddressed CRITICAL risk FAILS.
+
+Retry / stop mechanics. On the FIRST gate failure, re-run the SAME phase exactly ONCE, appending
+the gate's failure reason(s) verbatim to the re-run delegation prompt, prefixed literally with
+`Previous attempt failed the automatic-mode gate: `. If the re-run passes all 5 checks, continue
+normally. If the SECOND attempt also fails ANY check, STOP the automatic chain immediately and
+report the failing check(s) and both attempts' envelopes to the developer in plain Spanish. Never
+silently continue, never downgrade to interactive without telling the developer, never launch the
+next phase on an unresolved gate failure.
 
 ## Orchestration profile (preview)
 
