@@ -19,6 +19,8 @@ description: Turn an approved proposal into concrete, verifiable acceptance-crit
 - Writes: the spec artifact — a set of acceptance-criteria scenarios. `tasks` reads this alongside
   `design` to build the implementation task list; `verify` reads this as the source of truth for
   what "done" means.
+- Returns: the standard 6-field Result Contract to the orchestrator — see
+  `plugins/click-sdd/skills/_shared/result-contract.md`.
 
 ## Rules
 

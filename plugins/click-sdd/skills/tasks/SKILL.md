@@ -16,6 +16,8 @@ description: Break an approved spec and design into an ordered, reviewable imple
 - Reads: `spec` and `design` (both required — the task list must satisfy the spec's acceptance
   criteria using the design's chosen approach).
 - Writes: the ordered task list. This is what `apply` executes, task by task.
+- Returns: the standard 6-field Result Contract to the orchestrator — see
+  `plugins/click-sdd/skills/_shared/result-contract.md`.
 
 ## Rules
 

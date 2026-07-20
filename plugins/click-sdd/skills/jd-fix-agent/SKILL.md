@@ -19,6 +19,8 @@ description: Apply surgical fixes for BLOCKER/CRITICAL findings that converged b
   the fix pass scoped and prevents re-litigating already-resolved parts of the change.
 - Writes: a fix diff and a per-finding resolution note. The re-review pass that follows checks only
   this fix diff against the ledger, not the whole original change again.
+- Returns: the standard 6-field Result Contract to the orchestrator — see
+  `plugins/click-sdd/skills/_shared/result-contract.md`.
 
 ## Rules
 
