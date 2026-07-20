@@ -18,6 +18,8 @@ description: Define the technical approach, affected architecture, and implement
 - Writes: the design artifact — affected modules, data flow, chosen approach vs. rejected
   alternatives, test strategy, and rollback/migration notes. `tasks` reads both `spec` and `design`
   before breaking work into an ordered list.
+- Returns: the standard 6-field Result Contract to the orchestrator — see
+  `plugins/click-sdd/skills/_shared/result-contract.md`.
 
 ## Rules
 

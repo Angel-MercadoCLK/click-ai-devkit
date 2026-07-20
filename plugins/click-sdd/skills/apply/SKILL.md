@@ -18,6 +18,8 @@ description: "Implement approved Click Seguros tasks with strict TDD by default:
 - Writes: actual code changes plus updated task checkmarks. Returns a progress summary (files
   changed, tests written, remaining tasks) so a follow-up `apply` batch or `verify` can pick up
   cleanly.
+- Returns: the standard 6-field Result Contract to the orchestrator — see
+  `plugins/click-sdd/skills/_shared/result-contract.md`.
 
 ## Default mode
 

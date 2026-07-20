@@ -22,6 +22,8 @@ description: Guide a developer end-to-end through the Click Seguros SDD workflow
   reference a real (or freshly-started) change's artifacts as a live example.
 - Writes: nothing persisted to the SDD chain itself. `onboard` never produces a proposal, spec,
   design, tasks, apply, verify, or archive artifact on the developer's behalf.
+- Returns: the standard 6-field Result Contract to the orchestrator — see
+  `plugins/click-sdd/skills/_shared/result-contract.md`.
 
 ## Rules
 

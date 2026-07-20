@@ -17,6 +17,8 @@ description: Investigate the existing codebase and compare candidate approaches 
   the chain (`explore -> propose -> spec/design -> tasks -> apply -> verify -> archive`).
 - Writes: exploration notes only (current state, affected files, compared approaches, a
   recommendation). No proposal, spec, design, tasks, or code changes come out of this phase.
+- Returns: the standard 6-field Result Contract to the orchestrator — see
+  `plugins/click-sdd/skills/_shared/result-contract.md`.
 
 ## Rules
 

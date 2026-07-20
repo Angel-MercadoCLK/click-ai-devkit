@@ -19,6 +19,8 @@ description: Close a finished, verified Click Seguros SDD change and persist its
 - Reads: every prior artifact for the change (proposal, spec, design, tasks, apply-progress,
   verify-report).
 - Writes: the archive report — a closing summary plus a pointer to where the durable record lives.
+- Returns: the standard 6-field Result Contract to the orchestrator — see
+  `plugins/click-sdd/skills/_shared/result-contract.md`.
 
 ## Rules
 

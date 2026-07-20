@@ -19,6 +19,8 @@ description: Judgment Day blind judge B — independently review a diff or compl
 - Reads: the diff/change under review, plus the relevant spec and design artifacts.
 - Writes: an independent findings ledger. The orchestrator merges this with `jd-judge-a`'s ledger
   and looks for convergence (both judges flagging the same issue) before treating it as confirmed.
+- Returns: the standard 6-field Result Contract to the orchestrator — see
+  `plugins/click-sdd/skills/_shared/result-contract.md`.
 
 ## Rules
 

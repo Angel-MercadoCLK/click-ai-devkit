@@ -17,6 +17,8 @@ description: Turn an approved idea (and any exploration notes) into an English p
 - Writes: the proposal artifact — problem statement, scope boundaries, functional requirements,
   high-level acceptance criteria, and open questions. This is the foundational document the rest of
   the chain builds on.
+- Returns: the standard 6-field Result Contract to the orchestrator — see
+  `plugins/click-sdd/skills/_shared/result-contract.md`.
 
 ## Rules
 

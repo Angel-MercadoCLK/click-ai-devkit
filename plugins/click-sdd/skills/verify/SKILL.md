@@ -16,6 +16,8 @@ description: Review a completed Click Seguros change before PR/merge, validate t
 - Reads: `spec`, `tasks`, and the apply-progress artifact (what was actually implemented and how).
 - Writes: a verify report with findings classified as CRITICAL / WARNING / SUGGESTION and a clear
   verdict (pass, pass with warnings, or send back to `apply`).
+- Returns: the standard 6-field Result Contract to the orchestrator — see
+  `plugins/click-sdd/skills/_shared/result-contract.md`.
 
 ## Rules
 
