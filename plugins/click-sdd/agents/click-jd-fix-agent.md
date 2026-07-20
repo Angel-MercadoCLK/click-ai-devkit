@@ -50,7 +50,9 @@ Return a structured result with these fields:
 - `executive_summary`: one-sentence description of what was fixed (findings fixed / converged total)
 - `artifacts`: fix diff and a per-finding resolution note (finding ID -> what changed), plus the
   updated `sdd/{change-name}/review-ledger` topic key
-- `next_recommended`: scoped re-review of the fix diff against the ledger
+- `next_recommended`: `sdd-tasks` if the fixed findings came from a `design`-phase Judgment Day
+  round, or `sdd-verify` if they came from an `apply`-phase round — either way, a scoped re-review
+  of the fix diff against the ledger is expected before that next phase actually starts
 - `risks`: findings that could not be fixed without expanding scope, or findings still open after
   the fix-round budget
 - `skill_resolution`: `paths-injected` if the exact skill path was provided and loaded, otherwise `none`

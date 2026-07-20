@@ -26,9 +26,17 @@ This doc is also the source Phase 4's Mode Gatekeeper validates the envelope aga
 
 4. `next_recommended` — the next phase token for the orchestrator to run, or `none` if terminal.
    Allowed tokens: `sdd-explore`, `sdd-propose`, `sdd-spec`, `sdd-design`, `sdd-tasks`,
-   `sdd-apply`, `sdd-verify`, `sdd-archive`, the review-routing token `review-refuter`, or `none`.
+   `sdd-apply`, `sdd-verify`, `sdd-archive`, the review-routing token `review-refuter`, the
+   Judgment Day routing token `jd-fix-agent`, or `none`.
    (Derived examples: `explore` → `sdd-propose`; `apply` → `sdd-verify` or `sdd-apply`;
-   `archive` → `none`; `review-risk` → `review-refuter` or `sdd-verify`.)
+   `archive` → `none`; `review-risk` → `review-refuter` or `sdd-verify`; `jd-judge-a`/`jd-judge-b` →
+   `jd-fix-agent` when BLOCKER/CRITICAL findings are expected to converge, else `sdd-verify`;
+   `jd-fix-agent` → `sdd-tasks` if the fixed findings came from a `design`-phase Judgment Day round,
+   or `sdd-verify` if they came from an `apply`-phase round.)
+   `jd-fix-agent` is a routing signal, not an unconditional launch instruction: per
+   `click-orchestrator.md` Flow item 6, the orchestrator only actually delegates to
+   `click-jd-fix-agent` after merging BOTH judges' ledgers and confirming the finding converged —
+   a single judge naming `jd-fix-agent` here is not itself sufficient to launch it.
 
 5. `risks` — unresolved unknowns, assumptions, design deviations, or blocked items; `None` if
    there are none.
