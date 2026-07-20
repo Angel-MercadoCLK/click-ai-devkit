@@ -237,3 +237,117 @@ func TestClickOrchestrator_JudgmentDayMandatory(t *testing.T) {
 		t.Errorf("Mandatory Judgment Day flow item still contains conditional/optional language")
 	}
 }
+
+// TestTasksSkill_HasReviewWorkloadForecast asserts plugins/click-sdd/skills/tasks/SKILL.md
+// requires the mandatory 3-line Review Workload Forecast (Phase 5 design Decision 1): the three
+// exact plain-text forecast lines with their allowed-value vocabulary.
+func TestTasksSkill_HasReviewWorkloadForecast(t *testing.T) {
+	data := mustReadRepoFile(t, "plugins", "click-sdd", "skills", "tasks", "SKILL.md")
+	content := string(data)
+
+	required := []string{
+		"Decision needed before apply: Yes|No",
+		"Chained PRs recommended: Yes|No",
+		"400-line budget risk: Low|Medium|High",
+	}
+	for _, want := range required {
+		if !strings.Contains(content, want) {
+			t.Errorf("tasks/SKILL.md does not contain forecast line %q", want)
+		}
+	}
+}
+
+// TestClickArchitect_TasksForecastPersisted asserts click-architect.md documents that the Review
+// Workload Forecast is persisted inside the sdd/{change-name}/tasks artifact body (Phase 5 design
+// Decision 2), not as a separate Engram topic.
+func TestClickArchitect_TasksForecastPersisted(t *testing.T) {
+	data := mustReadRepoFile(t, "plugins", "click-sdd", "agents", "click-architect.md")
+	content := strings.ToLower(string(data))
+
+	required := []string{
+		"review workload forecast",
+		"sdd/{change-name}/tasks",
+	}
+	for _, want := range required {
+		if !strings.Contains(content, want) {
+			t.Errorf("click-architect.md does not contain %q", want)
+		}
+	}
+}
+
+// TestClickOrchestrator_HasReviewWorkloadGuardSection asserts click-orchestrator.md defines the
+// Review Workload Guard section (Phase 5 design Decision 3): the 4 named delivery_strategy modes,
+// that it runs in both execution modes, and that it reads the tasks forecast before apply.
+func TestClickOrchestrator_HasReviewWorkloadGuardSection(t *testing.T) {
+	data := mustReadRepoFile(t, "plugins", "click-sdd", "agents", "click-orchestrator.md")
+	content := string(data)
+
+	marker := "## Review Workload Guard"
+	start := strings.Index(content, marker)
+	if start == -1 {
+		t.Fatalf("click-orchestrator.md does not contain section heading %q", marker)
+	}
+
+	rest := content[start+len(marker):]
+	section := rest
+	if end := strings.Index(rest, "\n## "); end != -1 {
+		section = rest[:end]
+	}
+	lowerSection := strings.ToLower(section)
+
+	required := []string{
+		"delivery_strategy",
+		"ask-on-risk",
+		"auto-chain",
+		"single-pr",
+		"exception-ok",
+		"both",
+		"forecast",
+		"apply",
+	}
+	for _, want := range required {
+		if !strings.Contains(lowerSection, want) {
+			t.Errorf("Review Workload Guard section does not contain %q", want)
+		}
+	}
+}
+
+// TestClickOrchestrator_GuardPositionedBetweenTasksAndApply asserts the Review Workload Guard
+// section sits between the Flow section and the Interactive default / Automatic Mode Gatekeeper
+// sections, and that Flow item 5 (apply) forward-references it (Phase 5 design Decision 3).
+func TestClickOrchestrator_GuardPositionedBetweenTasksAndApply(t *testing.T) {
+	data := mustReadRepoFile(t, "plugins", "click-sdd", "agents", "click-orchestrator.md")
+	content := string(data)
+
+	guardIdx := strings.Index(content, "## Review Workload Guard")
+	flowIdx := strings.Index(content, "## Flow")
+	interactiveIdx := strings.Index(content, "## Interactive default")
+	gatekeeperIdx := strings.Index(content, "## Automatic Mode Gatekeeper")
+
+	if guardIdx == -1 || flowIdx == -1 || interactiveIdx == -1 || gatekeeperIdx == -1 {
+		t.Fatalf("missing one of the required section markers (guard=%d flow=%d interactive=%d gatekeeper=%d)", guardIdx, flowIdx, interactiveIdx, gatekeeperIdx)
+	}
+
+	if !(guardIdx > flowIdx) {
+		t.Errorf("expected Review Workload Guard section (%d) to come after Flow section (%d)", guardIdx, flowIdx)
+	}
+	if !(guardIdx < interactiveIdx) {
+		t.Errorf("expected Review Workload Guard section (%d) to come before Interactive default section (%d)", guardIdx, interactiveIdx)
+	}
+	if !(guardIdx < gatekeeperIdx) {
+		t.Errorf("expected Review Workload Guard section (%d) to come before Automatic Mode Gatekeeper section (%d)", guardIdx, gatekeeperIdx)
+	}
+
+	itemStart := strings.Index(content, "5. **Before ")
+	if itemStart == -1 {
+		t.Fatalf("click-orchestrator.md does not contain Flow item 5 marker %q", "5. **Before ")
+	}
+	rest := content[itemStart:]
+	itemSection := rest
+	if end := strings.Index(rest, "\n6. "); end != -1 {
+		itemSection = rest[:end]
+	}
+	if !strings.Contains(itemSection, "Review Workload Guard") {
+		t.Errorf("Flow item 5 does not forward-reference the Review Workload Guard section")
+	}
+}

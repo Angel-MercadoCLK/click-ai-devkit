@@ -191,7 +191,9 @@ below is the exact skill under `plugins/click-sdd/skills/`.
    approved proposal; `tasks` needs both before it can run. `spec` delegates to `click-prd-writer`;
    `design` delegates to `click-architect`.
 4. Move to `tasks` for the ordered task breakdown — delegate to `click-architect`.
-5. Drive `apply` to implement tasks with strict TDD — delegate to `click-apply`.
+5. **Before `apply`, run the Review Workload Guard (see the section further below titled Review
+   Workload Guard), passing its resolved `delivery_strategy` decision and PR boundary/exception.**
+   Then drive `apply` to implement tasks with strict TDD — delegate to `click-apply`.
 6. **Mandatory Judgment Day review — always required, never skippable.** After `design` completes AND after `apply`
    completes — in BOTH execution modes (interactive and automatic) — you MUST run `jd-judge-a`
    (delegate to `click-jd-judge-a`) and `jd-judge-b` (delegate to `click-jd-judge-b`) as a blind,
@@ -207,6 +209,55 @@ below is the exact skill under `plugins/click-sdd/skills/`.
 9. Hand durable technical knowledge to `click-memory-curator` after the cycle ends.
 10. Use `onboard` instead of the flow above when the developer wants a guided walkthrough rather
     than a real change — delegate to `click-onboard`.
+
+## Review Workload Guard
+
+Runs once after the `tasks` phase returns and BEFORE the `apply` delegation, in BOTH
+execution modes (interactive and automatic). Unlike the Automatic Mode Gatekeeper — which
+validates a returned Result Contract envelope and so runs only in automatic mode — this
+guard is a PLANNING decision (chain vs single PR, and whether a decision must be settled
+before coding). An interactive developer still needs their tasks chunked sensibly before
+apply, so this guard runs regardless of mode, mirroring the mandatory Judgment Day
+precedent (Flow item 6, both modes).
+
+Steps:
+
+1. Read the three-line Review Workload Forecast from the `sdd/{change-name}/tasks` artifact
+   body (persisted there by `click-architect`; never a separate topic): `Decision needed
+   before apply`, `Chained PRs recommended`, `400-line budget risk`.
+2. Resolve the session's `delivery_strategy` by DERIVING it from the cached G3 answers — do
+   NOT ask a new question. Mapping:
+   - G3 Pregunta A = "Un PR grande" (single) -> base strategy `single-pr`.
+   - G3 Pregunta A = "PRs encadenados" (chained) -> base strategy `ask-on-risk` (default).
+3. Apply the base strategy against the forecast:
+   - `ask-on-risk` (default, from chained): if the forecast flags NO risk (`Decision needed
+     before apply: No`, `Chained PRs recommended: No`, `400-line budget risk: Low` or
+     `Medium`), proceed to `apply` as a single batch, noting the chained preference. If ANY
+     risk is flagged (`Decision needed before apply: Yes`, `Chained PRs recommended: Yes`,
+     or `400-line budget risk: High`): in INTERACTIVE mode ask the developer once (plain
+     Spanish) whether to split into chained PRs at the forecast-suggested boundary or
+     proceed as one PR, then adopt their choice; in AUTOMATIC mode resolve to `auto-chain`
+     (cannot ask; smaller PRs are the safe default).
+   - `auto-chain`: split the tasks into the forecast-suggested chained PR groups and forward
+     each PR boundary to `apply` WITHOUT asking. Reached when the developer confirms chaining
+     at the ask-on-risk fork, or automatically as above.
+   - `single-pr` (from "Un PR grande"): deliver as one PR. If `400-line budget risk: High`,
+     surface the budget warning; in INTERACTIVE mode ask once whether to accept the overrun
+     or reconsider, in AUTOMATIC mode resolve to `exception-ok` and record the overrun
+     rationale.
+   - `exception-ok`: one PR knowingly allowed to exceed the configured line budget; the
+     over-budget exception rationale is carried forward. Reached from `single-pr` + high
+     budget risk when the overrun is accepted.
+4. Forward the RESOLVED decision to `apply` (`click-apply` / `sdd-apply`): the final
+   `delivery_strategy` value, the PR boundary/boundaries (chained modes), and any
+   over-budget exception rationale (`exception-ok`). If `Decision needed before apply: Yes`,
+   ensure that decision is settled (developer confirmation in interactive; the Judgment Day
+   design-round output in automatic) before the first apply batch.
+
+Fallback: if the tasks artifact cannot be read or the forecast lines are missing/malformed,
+default to `ask-on-risk` treated as risk-flagged — interactive asks the developer, automatic
+resolves to `auto-chain` — and tell the developer in plain Spanish that the forecast could
+not be read so a conservative chaining default was applied.
 
 ## Interactive default
 
