@@ -1,7 +1,7 @@
 ---
 name: click-prd-writer
 description: "Write the proposal (this plugin's PRD) for a Click Seguros change: goals, scope, requirements, and acceptance criteria in English."
-tools: Read, Write, Edit, Glob, Grep
+tools: Read, Write, Edit, Glob, Grep, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_save
 model: sonnet
 ---
 
@@ -24,6 +24,39 @@ artifact that phase produces.
 - Functional requirements
 - Acceptance criteria
 - Risks or open questions that block design
+
+## Engram Read
+
+- Before `propose`: `mem_search` then `mem_get_observation` for `sdd/{change-name}/exploration`
+  when it exists (the `explore` phase is optional, so this artifact may be absent).
+- Before `spec`: `mem_search` then `mem_get_observation` for `sdd/{change-name}/proposal`
+  (required).
+
+## Engram Save
+
+Persist each owned phase's artifact so downstream phases (`spec`, `design`, `tasks`) can find it:
+
+```
+mem_save(
+  title: "sdd/{change-name}/proposal",
+  topic_key: "sdd/{change-name}/proposal",
+  type: "architecture",
+  project: "{project}",
+  capture_prompt: false,
+  content: "{full proposal: problem statement, scope boundaries, functional requirements, high-level acceptance criteria, open questions}"
+)
+```
+
+```
+mem_save(
+  title: "sdd/{change-name}/spec",
+  topic_key: "sdd/{change-name}/spec",
+  type: "architecture",
+  project: "{project}",
+  capture_prompt: false,
+  content: "{acceptance-criteria scenarios: happy path, edge cases, explicit non-goals}"
+)
+```
 
 ## Result Contract
 

@@ -6,6 +6,7 @@
 package doctor
 
 import (
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,6 +60,7 @@ func Run(cfg installer.Config) Report {
 		checkSkillsPlugin(cfg),
 		checkClaudeMD(cfg),
 		checkMemoryGuardHook(cfg),
+		checkClickBinary(cfg),
 		checkModelsConfig(cfg),
 		checkAppliedPluginConfig(cfg),
 		checkEngramPlugin(cfg),
@@ -407,4 +409,54 @@ func checkMemoryGuardHook(cfg installer.Config) CheckResult {
 		return CheckResult{Name: name, Healthy: false, Detail: "hook PreToolUse ausente en " + cfg.SettingsPath()}
 	}
 	return CheckResult{Name: name, Healthy: true, Detail: "hook PreToolUse registrado"}
+}
+
+// ClickBinaryMissingMessage is the actionable Spanish message shown when checkClickBinary cannot
+// resolve the click binary on the live PATH (D10 convention: neutral register, no voseo). This is a
+// security-relevant check, not a convenience one: the memory-guard PreToolUse hook is registered as
+// the bare, PATH-resolved command "click memory-guard" (installer.MemoryGuardCommand,
+// installer/hooksettings.go) — Claude Code itself resolves that command on PATH when it spawns the
+// hook process. checkMemoryGuardHook above only confirms the hook ENTRY exists in settings.json; it
+// says nothing about whether the command it names can actually run. On a machine where click is not
+// on the PATH Claude Code's own process sees, the hook silently never fires: every mem_save payload
+// flows straight into persistent memory with zero secrets/PII scanning, and nothing else in this
+// package would ever surface it.
+const ClickBinaryMissingMessage = "el binario click no está en el PATH visible para Claude Code. El hook memory-guard está registrado como el comando \"click memory-guard\" (resuelto por PATH cuando Claude Code lo ejecuta), así que si click no resuelve ahí el hook nunca se dispara y mem_save queda sin el escaneo de secretos/PII, sin ningún aviso. Verifique la instalación de click y asegúrese de que el comando click esté disponible en el PATH; luego reinicie Claude Code para que la sesión lo vea."
+
+// clickBinaryLookup resolves the click binary on the live PATH. It is a package-level var — not a
+// direct exec.LookPath call — so checkClickBinary's tests can override it deterministically,
+// mirroring the injectable BinaryLookup seam installer.GitPath/ClaudePath use for the same reason:
+// doctor tests must not depend on whether click happens to be on the real test machine's PATH.
+var clickBinaryLookup = exec.LookPath
+
+// SetClickBinaryLookupForTests overrides checkClickBinary's PATH-lookup dependency and returns a
+// restore function, mirroring installer.SetEngramMarketplaceSourceForTests/
+// SetBinaryLookupFactoryForTests's exported-seam-plus-restore-func shape. clickBinaryLookup itself
+// stays package-private (this package's own checks_test.go pokes it directly), but downstream
+// packages need a way in too: internal/cli's end-to-end command tests (TestDoctorCommand_AfterInstall_
+// Succeeds and friends) run `click install` then `click doctor` and assert the install reports
+// healthy — a real CI runner never has the click binary it just built anywhere on PATH, so without
+// this seam those assertions are only true by accident of whichever machine happens to run them (a
+// developer machine with click on PATH via scoop passes; CI, which never installed click to PATH,
+// fails checkClickBinary and therefore the whole doctor report). Exported so those tests can force a
+// deterministic outcome instead of depending on the real test machine's PATH.
+func SetClickBinaryLookupForTests(lookup func(name string) (string, error)) func() {
+	old := clickBinaryLookup
+	clickBinaryLookup = lookup
+	return func() { clickBinaryLookup = old }
+}
+
+// checkClickBinary reports whether the click binary itself is resolvable on the live PATH — the
+// blind spot checkMemoryGuardHook cannot see (see ClickBinaryMissingMessage for the full rationale).
+// This check is read-only (NFR-012: `click doctor` never mutates state) — it only resolves PATH, it
+// never installs or repairs anything, mirroring checkGit/checkClaude's shape for the same class of
+// "is this executable resolvable" question.
+func checkClickBinary(cfg installer.Config) CheckResult {
+	const name = "click binary"
+
+	path, err := clickBinaryLookup("click")
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: ClickBinaryMissingMessage}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: "resuelto en " + path}
 }

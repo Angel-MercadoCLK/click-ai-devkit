@@ -154,7 +154,12 @@ func MigrateIfStale(cfg Config) (migrated bool, err error) {
 	if err != nil {
 		return false, fmt.Errorf("installer: read stale models.json for backup: %w", err)
 	}
-	if err := os.WriteFile(cfg.ModelsPath()+".bak", data, 0o600); err != nil {
+	// Routed through atomicWriteFile (pathenv.go) rather than a direct os.WriteFile — see
+	// writeJSONFile's doc comment (hooksettings.go) for why: this backup IS the safety net for the
+	// migration below (SaveModels regenerates models.json right after this write), so a crash
+	// mid-write leaving a truncated .bak would silently make the safety net itself unsafe, exactly
+	// the class of bug atomicWriteFile's temp-file+rename approach exists to prevent.
+	if err := atomicWriteFile(cfg.ModelsPath()+".bak", data, 0o600); err != nil {
 		return false, fmt.Errorf("installer: back up stale models.json: %w", err)
 	}
 	if err := SaveModels(cfg, modelconfig.Defaults()); err != nil {

@@ -14,6 +14,7 @@ package installer
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -233,6 +234,23 @@ func SyncEngramPlugin(cfg Config) (alreadyInstalled bool, err error) {
 func RemoveEngramPlugin(cfg Config) (pathWarning string, err error) {
 	state, found, err := loadEngramState(cfg)
 	if err != nil {
+		if errors.Is(err, errEngramStateCorrupted) {
+			// Finding 3 (review-resilience WARNING): a truncated/hand-edited engram.json means click
+			// can no longer tell what it owns here — the SAME safety property InstalledByClick/
+			// PathMutatedByClick exist to guarantee ("only ever reverse what click itself added")
+			// requires treating "we don't know" as "touch nothing", exactly like the found=false
+			// branch below already does for a MISSING state file. The one difference: an absent file
+			// is the expected, silent case (click never touched this machine); a corrupted one is
+			// anomalous and worth telling the developer about — surfaced as a non-empty pathWarning
+			// (never fatal), mirroring every other warning this function already produces, instead of
+			// the previous hard error that used to abort the rest of `click uninstall`'s own steps
+			// (the exact compound bug Finding 2 + Finding 3 describe together). The file itself is
+			// left untouched (not deleted) so the developer can inspect or repair it manually.
+			return fmt.Sprintf(
+				"no se pudo leer el estado de Engram (%s): el archivo parece estar dañado, así que por seguridad no se modificó nada relacionado con Engram. Revíselo o elimínelo manualmente; si desea desinstalar Engram usted mismo, ejecute: claude plugin uninstall %s",
+				cfg.EngramStatePath(), EngramPluginID,
+			), nil
+		}
 		return "", err
 	}
 	if !found {
@@ -325,6 +343,13 @@ func containsPathDir(dirs []string, dir string) bool {
 // PathDirs = []string{PathDir} in memory (never rewriting the file itself here) so an install
 // upgrading from that version doesn't silently "forget" the one directory it already knew about.
 // A state that already has PathDirs populated is left untouched by this step.
+// errEngramStateCorrupted is a sentinel wrapped into loadEngramState's returned error specifically
+// when the state file's JSON itself can't be parsed — as opposed to a genuine I/O failure reading it
+// (permission denied, etc.), which stays a plain hard error. RemoveEngramPlugin checks
+// errors.Is(err, errEngramStateCorrupted) to treat corrupted state as a safe, non-fatal "unknown
+// ownership, touch nothing" case (Finding 3) instead of aborting.
+var errEngramStateCorrupted = errors.New("engram state file is corrupted")
+
 func loadEngramState(cfg Config) (engramState, bool, error) {
 	data, err := os.ReadFile(cfg.EngramStatePath())
 	if err != nil {
@@ -335,7 +360,7 @@ func loadEngramState(cfg Config) (engramState, bool, error) {
 	}
 	var state engramState
 	if err := json.Unmarshal(data, &state); err != nil {
-		return engramState{}, false, fmt.Errorf("installer: parse engram state: %w", err)
+		return engramState{}, false, fmt.Errorf("installer: parse engram state: %w: %w", errEngramStateCorrupted, err)
 	}
 	if len(state.PathDirs) == 0 && state.PathDir != "" {
 		state.PathDirs = []string{state.PathDir}

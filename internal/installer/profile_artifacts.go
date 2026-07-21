@@ -135,7 +135,11 @@ func SaveMarkdownAgent(cfg Config, profile modelconfig.ProfileName, agent Markdo
 		return "", fmt.Errorf("installer: create profile agents dir: %w", err)
 	}
 	path := dir + string(os.PathSeparator) + agent.Name + ".md"
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	// Routed through atomicWriteFile (pathenv.go) rather than a direct os.WriteFile — see
+	// writeJSONFile's doc comment (hooksettings.go) for why: a crash mid-write here would leave a
+	// truncated, half-written agent markdown file behind instead of either the old or the new
+	// content.
+	if err := atomicWriteFile(path, []byte(content), 0o600); err != nil {
 		return "", fmt.Errorf("installer: write markdown agent: %w", err)
 	}
 	return path, nil

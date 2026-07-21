@@ -2,6 +2,7 @@ package installer
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -295,6 +296,57 @@ func TestMigrateIfStale_StaleFile_BacksUpThenRegenerates(t *testing.T) {
 	}
 	if stale {
 		t.Fatal("IsStale() = true right after MigrateIfStale(), want false")
+	}
+}
+
+// TestMigrateIfStale_InjectedBackupWriteErrorLeavesModelsJSONUntouched is the strict-TDD RED/GREEN
+// proof that the models.json.bak backup write now goes through atomicWriteFile's temp-file+rename
+// path (pathenv.go) instead of a direct os.WriteFile: injecting a failing createTempFile must
+// surface an error AND leave the ORIGINAL (stale) models.json completely untouched — MigrateIfStale
+// must never regenerate models.json when the backup that is supposed to precede it failed to write.
+// Against the old direct os.WriteFile implementation this injection is a no-op (createTempFile is
+// never consulted for that write), so the test's real value — proving the SAME atomic seam this
+// package already established for writeSettingsFile/writeJSONFile (hooksettings_test.go) also covers
+// this backup write — would go unexercised.
+func TestMigrateIfStale_InjectedBackupWriteErrorLeavesModelsJSONUntouched(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	legacy := map[string]string{
+		"orchestrator":   "haiku",
+		"prd_writer":     "opus",
+		"architect":      "opus",
+		"reviewer":       "opus",
+		"memory_curator": "sonnet",
+	}
+	writeLegacyModelsFile(t, cfg, legacy)
+	originalRaw, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) error = %v", err)
+	}
+
+	injectedErr := errors.New("injected write failure")
+	old := createTempFile
+	createTempFile = func(dir, pattern string) (tempFileWriter, error) {
+		return &fakeFailingTempFile{name: filepath.Join(dir, ".click-injected-fake"), writeErr: injectedErr}, nil
+	}
+	defer func() { createTempFile = old }()
+
+	migrated, err := MigrateIfStale(cfg)
+	if err == nil {
+		t.Fatal("MigrateIfStale() error = nil, want the injected backup-write error to propagate")
+	}
+	if migrated {
+		t.Fatal("MigrateIfStale() migrated = true despite the injected backup-write failure, want false")
+	}
+
+	if _, statErr := os.Stat(cfg.ModelsPath() + ".bak"); !os.IsNotExist(statErr) {
+		t.Fatalf("Stat(models.json.bak) error = %v, want no partial backup left behind after a failed write", statErr)
+	}
+	gotRaw, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) error = %v", err)
+	}
+	if string(gotRaw) != string(originalRaw) {
+		t.Fatalf("models.json = %q after a failed backup write, want the original stale content untouched %q (never regenerate without a successful backup first)", gotRaw, originalRaw)
 	}
 }
 

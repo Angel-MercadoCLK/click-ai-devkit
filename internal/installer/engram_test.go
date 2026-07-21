@@ -310,6 +310,51 @@ func TestRemoveEngramPlugin_NoopWhenNeverSynced(t *testing.T) {
 	}
 }
 
+// TestRemoveEngramPlugin_CorruptedStateFile is Finding 3's safety-preserving contract
+// (review-resilience WARNING): a truncated/hand-corrupted engram.json must NOT hard-fail
+// RemoveEngramPlugin — which used to abort the rest of `click uninstall`'s own steps (the Finding 2
+// fail-fast bug) — and must NOT touch the engram@engram plugin at all, since click can no longer
+// tell whether it owns it. This mirrors the exact "only ever reverse what click itself added"
+// safety property InstalledByClick/PathMutatedByClick already guarantee for the normal case: "we
+// don't know" must mean "touch nothing", exactly like the found=false branch already does for a
+// MISSING state file — the only difference is a corrupted file is anomalous and worth telling the
+// developer about, so it comes back as a non-empty pathWarning (never a fatal error), mirroring
+// every other warning this function already produces. The corrupted file itself is left on disk
+// untouched (not deleted) so the developer can inspect or repair it manually.
+func TestRemoveEngramPlugin_CorruptedStateFile(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	if err := os.MkdirAll(filepath.Dir(cfg.EngramStatePath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll(EngramStatePath dir) error = %v", err)
+	}
+	corrupt := []byte("{not valid json")
+	if err := os.WriteFile(cfg.EngramStatePath(), corrupt, 0o600); err != nil {
+		t.Fatalf("WriteFile(EngramStatePath) error = %v", err)
+	}
+
+	pathWarning, err := RemoveEngramPlugin(cfg)
+	if err != nil {
+		t.Fatalf("RemoveEngramPlugin() error = %v, want nil — a corrupted state file must be a warning, never fatal", err)
+	}
+	if pathWarning == "" {
+		t.Fatal("RemoveEngramPlugin() pathWarning = \"\", want a non-empty warning about the corrupted state file")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("RemoveEngramPlugin() issued commands %#v against a corrupted state file, want zero — unknown ownership must never be touched", runner.commands)
+	}
+	got, err := os.ReadFile(cfg.EngramStatePath())
+	if err != nil {
+		t.Fatalf("ReadFile(EngramStatePath) error = %v, want the corrupted file left in place for inspection", err)
+	}
+	if string(got) != string(corrupt) {
+		t.Fatalf("EngramStatePath content = %q, want the original corrupted content left untouched", got)
+	}
+}
+
 // TestRemoveEngramPlugin_ReversesClickOwnedPath is D-9's core uninstall-reversal contract: when
 // click's own state recorded PathMutatedByClick=true and a PathDir, RemoveEngramPlugin must call
 // pathStoreFactory().RemoveFromPath with exactly that dir.

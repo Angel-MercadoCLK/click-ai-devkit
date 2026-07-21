@@ -92,12 +92,12 @@ func HasManagedBlock(path string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("installer: read %s: %w", path, err)
 	}
-	begin, end := findMarkers(splitLines(existing))
+	begin, end := findMarkers(crlfAwareSplitLines(existing))
 	return begin != -1 && end != -1, nil
 }
 
 func buildManagedBlock(content string) []string {
-	body := splitLines(content)
+	body := crlfAwareSplitLines(content)
 	lines := make([]string, 0, len(body)+2)
 	lines = append(lines, managedBeginMarker)
 	lines = append(lines, body...)
@@ -107,6 +107,12 @@ func buildManagedBlock(content string) []string {
 
 // splitLines splits s into lines with no trailing empty element for a trailing newline. An empty
 // string yields a nil slice (zero lines), matching "file doesn't exist / is empty".
+//
+// NOTE: this does NOT strip a trailing "\r" from CRLF-ended lines — it is also used unchanged by
+// pathenv_unix.go's POSIX shell-rc-file managed-block logic, which is out of scope for the CRLF
+// fix below and must not have its behavior altered as a side effect. claudemd.go's own managed-
+// block logic uses crlfAwareSplitLines (below) instead, precisely to avoid touching this shared
+// helper.
 func splitLines(s string) []string {
 	if s == "" {
 		return nil
@@ -115,12 +121,78 @@ func splitLines(s string) []string {
 }
 
 // joinLines is splitLines's inverse: it always terminates the result with a single trailing
-// newline (or returns "" for zero lines), so files written by this package end cleanly.
+// newline (or returns "" for zero lines), so files written by this package end cleanly. Also used
+// unchanged by pathenv_unix.go — see splitLines's note above.
 func joinLines(lines []string) string {
 	if len(lines) == 0 {
 		return ""
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// crlfAwareSplitLines is claudemd.go's own line-ending-agnostic variant of splitLines: it splits
+// exactly like splitLines, then additionally trims a trailing "\r" from every line. This is the
+// fix for the CRLF managed-block bug: on a CRLF-saved file (Notepad, or any editor configured with
+// files.eol: "\r\n" — the common case on Windows, this project's primary supported platform),
+// plain strings.Split(s, "\n") leaves every line ending in "\r", so findMarkers's exact-string
+// comparison against the \r-free managedBeginMarker/managedEndMarker constants never matched.
+// That made WriteManagedBlock append a brand-new managed block on every run instead of replacing
+// the existing one (breaking the "idempotent by construction" contract), StripManagedBlock a
+// silent no-op that could never find the block to remove, and HasManagedBlock report a present
+// block as missing.
+//
+// Deliberately kept separate from splitLines/joinLines (rather than changing them in place):
+// those two are also used unchanged by pathenv_unix.go's POSIX shell-rc-file managed-block logic,
+// which is a different file/behavior out of scope for this fix.
+func crlfAwareSplitLines(s string) []string {
+	lines := splitLines(s)
+	for i, l := range lines {
+		lines[i] = strings.TrimSuffix(l, "\r")
+	}
+	return lines
+}
+
+// detectLineEnding inspects s — the file's ORIGINAL, unmodified content — and reports which line
+// ending WriteManagedBlock/StripManagedBlock should use when writing the file back out.
+//
+// Design decision (finding: CRLF handling must be line-ending agnostic): PRESERVE the file's
+// existing dominant line ending rather than normalizing everything to LF. Normalizing would
+// silently rewrite EVERY line of a developer's CRLF-saved CLAUDE.md into a massive, unrelated git
+// diff on their very next `click update`, even though only the managed block's own content
+// actually changed — a much worse outcome than simply matching what their editor already writes.
+//
+// It counts CRLF ("\r\n") occurrences against bare-LF ("\n" not immediately preceded by "\r") and
+// returns whichever style is more frequent — the file's DOMINANT ending. A genuinely
+// mixed-line-ending file (e.g. hand-edited across two different editors/tools) is handled by this
+// same majority rule rather than treated as an error: nothing crashes and no line's content is
+// lost (crlfAwareSplitLines strips "\r" from every line regardless of position before any
+// comparison happens) — the file is simply normalized to ONE consistent ending on write, matching
+// whichever style already predominates. Ties — including an empty file, a file with no newlines at
+// all, or an exact count tie — default to "\n", matching this package's original LF-only behavior
+// and the correct choice for a file this package is creating from scratch.
+//
+// Out of scope: legacy Mac-classic bare-"\r" (no "\n") line endings are not specifically detected
+// or normalized; such content is exceptionally rare from any editor still in use and was not part
+// of the reported finding (CRLF vs LF specifically).
+func detectLineEnding(s string) string {
+	crlf := strings.Count(s, "\r\n")
+	lf := strings.Count(s, "\n") - crlf
+	if crlf > lf {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+// joinWithLineEnding is crlfAwareSplitLines's inverse: it terminates the result with a single
+// trailing lineEnding (or returns "" for zero lines), letting callers thread detectLineEnding's
+// result through so the file's original style round-trips instead of always emitting "\n" (see
+// joinLines's note above for why this is a separate function rather than a change to joinLines
+// itself).
+func joinWithLineEnding(lines []string, lineEnding string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, lineEnding) + lineEnding
 }
 
 // findMarkers locates the first well-formed begin/end marker pair in lines. Returns -1, -1 if
@@ -146,8 +218,9 @@ func findMarkers(lines []string) (begin, end int) {
 // is found, appending otherwise). changed is false when the result would be byte-identical to
 // existing, so callers can skip an unnecessary write.
 func spliceManagedBlock(existing string, block []string) (result string, changed bool) {
-	lines := splitLines(existing)
+	lines := crlfAwareSplitLines(existing)
 	begin, end := findMarkers(lines)
+	lineEnding := detectLineEnding(existing)
 
 	if begin != -1 && end != -1 {
 		current := lines[begin : end+1]
@@ -158,20 +231,20 @@ func spliceManagedBlock(existing string, block []string) (result string, changed
 		newLines = append(newLines, lines[:begin]...)
 		newLines = append(newLines, block...)
 		newLines = append(newLines, lines[end+1:]...)
-		return joinLines(newLines), true
+		return joinWithLineEnding(newLines, lineEnding), true
 	}
 
 	newLines := make([]string, 0, len(lines)+len(block))
 	newLines = append(newLines, lines...)
 	newLines = append(newLines, block...)
-	return joinLines(newLines), true
+	return joinWithLineEnding(newLines, lineEnding), true
 }
 
 // removeManagedBlock strips the first well-formed marker pair (and everything between, inclusive)
 // from existing. changed is false when no such pair was found, so callers can treat it as a
 // true no-op.
 func removeManagedBlock(existing string) (result string, changed bool) {
-	lines := splitLines(existing)
+	lines := crlfAwareSplitLines(existing)
 	begin, end := findMarkers(lines)
 	if begin == -1 || end == -1 {
 		return existing, false
@@ -179,7 +252,7 @@ func removeManagedBlock(existing string) (result string, changed bool) {
 	newLines := make([]string, 0, len(lines)-(end-begin+1))
 	newLines = append(newLines, lines[:begin]...)
 	newLines = append(newLines, lines[end+1:]...)
-	return joinLines(newLines), true
+	return joinWithLineEnding(newLines, detectLineEnding(existing)), true
 }
 
 func equalLines(a, b []string) bool {
@@ -205,9 +278,15 @@ func readFileOrEmpty(path string) (string, error) {
 	return string(data), nil
 }
 
+// writeFileEnsuringDir creates path's parent directory if missing, then writes content via
+// atomicWriteFile (pathenv.go) rather than a direct os.WriteFile. This reuses the SAME
+// symlink-resolving, temp-file+rename helper already relied on for shell rc files instead of a
+// second parallel implementation: a plain os.WriteFile is non-atomic (a crash mid-write can leave
+// a truncated CLAUDE.md) and, combined with a broken symlink, can behave surprisingly — see
+// atomicWriteFile's own doc comment for the full symlink-safety contract.
 func writeFileEnsuringDir(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return atomicWriteFile(path, []byte(content), 0o644)
 }

@@ -59,14 +59,6 @@ func (r execCommandRunner) commandEnv() []string {
 	return append(os.Environ(), "CLAUDE_CONFIG_DIR="+r.claudeConfigDirOverride)
 }
 
-func (r execCommandRunner) Run(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = r.commandEnv()
-	return cmd.Run()
-}
-
 // commandOutputTimeout bounds execCommandRunner.Output so a query subprocess can never hang the
 // caller. Hardening T3-2 (review-resilience R4-001 on the doctor PATH check): Output backs quick
 // queries like `go env GOBIN` via GoBinDir, which `click doctor`'s read-only checkEngramPath now
@@ -74,9 +66,11 @@ func (r execCommandRunner) Run(name string, args ...string) error {
 // locked build cache, a network-mounted GOPATH, EDR/AV interception on Windows); without a bound
 // that would hang the whole doctor run. 30s is generous headroom for a legitimately slow-but-real
 // `go env` while still guaranteeing termination. It is a package var (not a const) only so tests can
-// shrink it to force the deadline path deterministically. Output-only on purpose: Run() streams the
-// interactive `claude plugin ...` calls that legitimately take longer (git clone under the hood),
-// so it is deliberately left unbounded.
+// shrink it to force the deadline path deterministically. Output-only tuning: Run() streams the
+// interactive, MUTATING `claude plugin ...`/`claude mcp ...` calls (and the Engram `go install`
+// fallback), which legitimately take longer (git clone / module compilation under the hood) — it
+// has its own, separately-tuned bound, commandRunTimeout, defined below (Finding 1 / review-
+// resilience WARNING: Run() used to have NO bound at all).
 var commandOutputTimeout = 30 * time.Second
 
 func (r execCommandRunner) Output(name string, args ...string) ([]byte, error) {
@@ -89,6 +83,51 @@ func (r execCommandRunner) Output(name string, args ...string) ([]byte, error) {
 		return out, fmt.Errorf("installer: command %q timed out after %s", name, commandOutputTimeout)
 	}
 	return out, err
+}
+
+// commandRunTimeout bounds execCommandRunner.Run so a MUTATING subprocess — `claude plugin
+// marketplace add/update`, `claude plugin install/uninstall`, `claude mcp add/remove`, and the
+// Engram `go install` fallback in EnsureEngramBinary — can never hang `click install`/`click
+// update`/`click uninstall` forever (Finding 1, review-resilience WARNING). Before this, Run() had
+// no deadline at all: a `claude plugin install` whose underlying `git clone` stalls on a flaky
+// network, or a stuck `go install` fetching modules, blocked the whole command indefinitely — the
+// spinner in ui.Renderer.RunStep keeps animating forever with no way for the developer to tell
+// "slow" from "permanently stuck" until they kill the process by hand, possibly mid-write.
+//
+// 5 minutes, deliberately NOT commandOutputTimeout's 30s: that 30s bound is tuned for quick
+// READ-ONLY queries (`go env GOBIN` — see commandOutputTimeout's own doc comment above); blindly
+// reusing it here would false-positive on legitimate mutating work. `claude plugin install` clones a
+// real git repository, and the Engram fallback runs `go install`, which resolves and compiles a
+// module graph — both can legitimately take low single-digit minutes on a slow, throttled, or
+// freshly-cold-cache connection without anything actually being stuck. 5 minutes is chosen as
+// generous headroom for that legitimate case while still guaranteeing the process eventually
+// terminates instead of hanging forever, directly matching this finding's own impact description.
+// It is a package var (not a const), mirroring commandOutputTimeout, purely so tests can shrink it
+// to force the deadline path deterministically without ever waiting a real 5 minutes.
+var commandRunTimeout = 5 * time.Minute
+
+func (r execCommandRunner) Run(name string, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), commandRunTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = r.commandEnv()
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		full := strings.TrimSpace(name + " " + strings.Join(args, " "))
+		// Spanish, actionable (D10): names the exact command that timed out and gives the developer
+		// two concrete next steps — check connectivity, or run it by hand to see exactly where it's
+		// stuck — instead of a raw context-deadline error with no guidance.
+		return fmt.Errorf(
+			"installer: el comando «%s» no respondió dentro de %s y fue cancelado. "+
+				"Verifique su conexión de red (una clonación de git o `go install` pueden tardar en redes lentas o inestables) "+
+				"o si el proceso quedó bloqueado esperando entrada; vuelva a ejecutar el comando y, si el problema persiste, "+
+				"ejecútelo manualmente para diagnosticarlo: %s",
+			full, commandRunTimeout, full,
+		)
+	}
+	return err
 }
 
 var (
