@@ -67,3 +67,46 @@ categories:
         # bare-abbreviation alternative to restore, unlike sin/pol above.)
         description: "Placeholder customer-id format for v0.1: keyword + a digit-bearing ID token (TODO: confirm real Click customer identifier formats before shipping)."
         pattern: '(?i)\b(?:customer|cliente)[-_\s]*(?:id|identifier|number|nro)?[:\s#-]*[A-Z0-9-]*[0-9][A-Z0-9-]*\b'
+  # Finding 1 (CRITICAL, security-review): the guard had zero credential/secret patterns despite
+  # memory-policy.md documenting the hook's purpose as scanning every mem_save payload for sensitive
+  # data. Every rule below is either shape-anchored to a format that is genuinely unique (AKIA/ASIA
+  # prefix, ghp_/gho_/.../github_pat_ prefix, PEM headers, eyJ...eyJ...+ base64url JWT segments,
+  # xox[baprs]- Slack prefix, sk-/sk-ant- prefix) or keyword-anchored where the value shape alone is
+  # ambiguous (aws_secret_access_key, api_key/secret/password/passwd/token/bearer + an actual
+  # assignment) — mirroring the pii/policy-numbers/claim-ids keyword-anchor discriminator style
+  # above. None of these match on the keyword alone: a bare mention of "token"/"secret"/"password" in
+  # prose, without an assigned value, must not block (see engine_test.go's negative corpus: git SHAs,
+  # UUIDs, semver, file paths, and base64-looking non-secrets must all still pass).
+  - name: secrets
+    reason: "blocked: detected credential or secret"
+    rules:
+      - id: secrets/aws-access-key-id
+        description: "AWS access key ID: AKIA/ASIA prefix (uppercase only, deliberately case-sensitive to avoid matching lowercase prose) + 16 uppercase alphanumerics."
+        pattern: '\b(?:AKIA|ASIA)[0-9A-Z]{16}\b'
+      - id: secrets/aws-secret-access-key
+        description: "AWS secret access key: keyword-anchored on aws_secret_access_key (the value shape alone, a 40-char base64-ish string, is indistinguishable from a hash and too false-positive-prone on its own)."
+        pattern: '(?i)\baws_secret_access_key\b\s*[:=]\s*[A-Za-z0-9/+]{40}'
+      - id: secrets/github-token
+        description: "Classic GitHub token prefixes (ghp_, gho_, ghu_, ghs_, ghr_) followed by the token body."
+        pattern: '\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b'
+      - id: secrets/github-pat
+        description: "GitHub fine-grained personal access token prefix (github_pat_)."
+        pattern: '\bgithub_pat_[A-Za-z0-9_]{20,}\b'
+      - id: secrets/private-key-pem
+        description: "PEM-encoded private key block header (RSA/EC/OPENSSH/ENCRYPTED/plain)."
+        pattern: '-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----'
+      - id: secrets/jwt
+        description: "JSON Web Token: three dot-separated base64url segments, header segment starting with eyJ (base64 of the literal '{\"' JSON opener)."
+        pattern: '\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b'
+      - id: secrets/slack-token
+        description: "Slack token prefixes (xoxb-, xoxa-, xoxp-, xoxr-, xoxs-)."
+        pattern: '\bxox[baprs]-[A-Za-z0-9-]+\b'
+      - id: secrets/openai-anthropic-key
+        description: "OpenAI/Anthropic-style API key prefixes (sk- / sk-ant-), requiring enough trailing length to avoid matching short incidental sk- substrings."
+        pattern: '\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\b'
+      - id: secrets/generic-keyword-value
+        description: "Generic keyword-anchored secret: api_key/apikey/secret/password/passwd/token assigned (: or =) to a non-trivial value. Keyword alone (no assignment) does not match, so prose like 'the token vocabulary' or 'the password field' passes."
+        pattern: '(?i)\b(?:api[_-]?key|apikey|secret|password|passwd|token)\b\s*[:=]\s*[A-Za-z0-9_\-+/.=!@#$%^&*]{8,}'
+      - id: secrets/bearer-token
+        description: "Bearer-prefixed authorization value (space-separated, as in an Authorization header, no assignment operator)."
+        pattern: '(?i)\bbearer\s+[A-Za-z0-9_\-.+/=]{16,}\b'

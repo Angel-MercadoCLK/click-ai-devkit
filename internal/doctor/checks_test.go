@@ -58,6 +58,8 @@ func TestRun_AfterInstall_ReportsHealthy(t *testing.T) {
 
 	restoreGit := seedResolvableGit(t)
 	defer restoreGit()
+	restoreClick := seedResolvableClickBinary(t, "/usr/bin/click")
+	defer restoreClick()
 	seedInstalledState(t, cfg)
 	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
 		t.Fatalf("WriteManagedBlock() error = %v", err)
@@ -117,9 +119,9 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	report := Run(cfg)
 
-	const wantChecks = 10 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 11 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (git, claude, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, context7 MCP)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d (git, claude, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, click binary, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, context7 MCP)", len(report.Checks), wantChecks)
 	}
 }
 
@@ -241,6 +243,88 @@ func TestCheckClaude_ReportsUnhealthyWithActionableMessageWhenMissing(t *testing
 	if !checked {
 		t.Fatal(`Run() did not include a "claude" check`)
 	}
+}
+
+// TestCheckClickBinary_ReportsHealthyWhenResolvable guards the "present" branch: click resolvable on
+// the live PATH must report healthy, with the resolved path surfaced in Detail — mirroring
+// checkGit/checkClaude's shape.
+func TestCheckClickBinary_ReportsHealthyWhenResolvable(t *testing.T) {
+	restore := seedResolvableClickBinary(t, "/usr/bin/click")
+	defer restore()
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "click binary" {
+			continue
+		}
+		checked = true
+		if !c.Healthy {
+			t.Fatalf("checkClickBinary reports unhealthy when click is resolvable: %s", c.Detail)
+		}
+		if !strings.Contains(c.Detail, "/usr/bin/click") {
+			t.Fatalf("checkClickBinary Detail = %q, want it to contain the resolved path", c.Detail)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "click binary" check`)
+	}
+}
+
+// TestCheckClickBinary_ReportsUnhealthyWithActionableMessageWhenMissing is the RED-then-GREEN core
+// of Finding 2: the memory-guard hook is registered as the bare, PATH-resolved command `click
+// memory-guard` (installer.MemoryGuardCommand). checkMemoryGuardHook only confirms the hook ENTRY
+// exists in settings.json; it says nothing about whether the command it names can actually run. On a
+// machine where click is not on the PATH Claude Code's own process sees, the hook silently never
+// fires and mem_save skips the secrets/PII scan with no other signal. This test reproduces that
+// missing-PATH scenario and asserts the check reports unhealthy with an actionable Spanish message.
+func TestCheckClickBinary_ReportsUnhealthyWithActionableMessageWhenMissing(t *testing.T) {
+	restore := seedUnresolvableClickBinary(t)
+	defer restore()
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "click binary" {
+			continue
+		}
+		checked = true
+		if c.Healthy {
+			t.Fatal("checkClickBinary reports healthy when click is not resolvable on PATH, want unhealthy")
+		}
+		if c.Detail != ClickBinaryMissingMessage {
+			t.Fatalf("checkClickBinary Detail = %q, want exactly ClickBinaryMissingMessage %q", c.Detail, ClickBinaryMissingMessage)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "click binary" check`)
+	}
+}
+
+// seedResolvableClickBinary makes checkClickBinary's clickBinaryLookup dependency resolve
+// deterministically to path, regardless of whether the real test machine's PATH actually contains
+// click — mirroring seedResolvableGit's role for checkGit. Returns the restore func.
+func seedResolvableClickBinary(t *testing.T, path string) func() {
+	t.Helper()
+	orig := clickBinaryLookup
+	clickBinaryLookup = func(string) (string, error) { return path, nil }
+	return func() { clickBinaryLookup = orig }
+}
+
+// seedUnresolvableClickBinary makes checkClickBinary's clickBinaryLookup dependency deterministically
+// fail, reproducing the "click not on PATH" scenario regardless of the real test machine's PATH.
+// Returns the restore func.
+func seedUnresolvableClickBinary(t *testing.T) func() {
+	t.Helper()
+	orig := clickBinaryLookup
+	clickBinaryLookup = func(string) (string, error) {
+		return "", errors.New("exec: \"click\": executable file not found in %PATH%")
+	}
+	return func() { clickBinaryLookup = orig }
 }
 
 // TestCheckModelsConfig_AbsentFile_ReportsHealthy guards the "absent = healthy" contract from the

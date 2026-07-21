@@ -97,6 +97,13 @@ func HasMemoryGuardHook(cfg Config) (bool, error) {
 
 // writeJSONFile is a small shared helper for the handful of Click-managed JSON files this package
 // writes (per-phase models, Engram state, ...) that aren't Claude Code's own settings.json shape.
+//
+// Writes go through atomicWriteFile (pathenv.go) rather than a direct os.WriteFile, reusing the
+// SAME symlink-resolving, temp-file+rename helper already relied on for shell rc files instead of
+// a second parallel implementation — that inconsistency (this helper writing non-atomically,
+// straight through/over a symlink) is exactly how the symlink-safety finding this fixes came to
+// exist in the first place. Every caller of writeJSONFile (engram.go, plugins.go, models.go,
+// context7.go, profile_artifacts.go) gets the fix automatically without needing its own change.
 func writeJSONFile(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -106,7 +113,7 @@ func writeJSONFile(path string, v any) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o600)
+	return atomicWriteFile(path, data, 0o600)
 }
 
 func readSettingsFile(path string) (map[string]any, error) {
@@ -130,6 +137,11 @@ func readSettingsFile(path string) (map[string]any, error) {
 	return settings, nil
 }
 
+// writeSettingsFile writes Claude Code's settings.json via atomicWriteFile (pathenv.go) instead of
+// a direct os.WriteFile — see writeJSONFile's doc comment above for why: settings.json is exactly
+// the file a dotfiles-managed ~/.claude/ commonly symlinks, and a non-atomic write through/over it
+// is the concrete risk this fixes (broken symlink at best, a corrupted file if interrupted
+// mid-write at worst).
 func writeSettingsFile(path string, settings map[string]any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("installer: create settings dir: %w", err)
@@ -139,7 +151,7 @@ func writeSettingsFile(path string, settings map[string]any) error {
 		return fmt.Errorf("installer: marshal settings: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := atomicWriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("installer: write settings: %w", err)
 	}
 	return nil

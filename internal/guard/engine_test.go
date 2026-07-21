@@ -25,6 +25,24 @@ func TestRedTeamBlocksForbiddenPayloads(t *testing.T) {
 		// R1-002 coverage guard: an ID token whose only digit is at the START (index 0) must still
 		// block — the digit requirement means "contains a digit ANYWHERE", not "at position >= 3".
 		{name: "claim digit-first token", payload: `{"content":"siniestro 1ABCDE escalado"}`, category: "claim-ids"},
+		// Finding 1 (CRITICAL): the secrets category previously did not exist at all, so any
+		// credential pasted into a mem_save payload flowed straight into persistent memory. These
+		// cases cover the high-confidence, low-false-positive credential formats.
+		{name: "aws access key id", payload: `{"content":"AWS access key AKIAIOSFODNN7EXAMPLE leaked in commit"}`, category: "secrets"},
+		{name: "aws secret access key", payload: `{"content":"aws_secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}`, category: "secrets"},
+		{name: "github personal token", payload: `{"content":"leaked token ghp_16C7e42F292c6912E7710c838347Ae178B4a in logs"}`, category: "secrets"},
+		{name: "github fine-grained pat", payload: `{"content":"leaked github_pat_11AAAAAAA0abcdefghijklmnopqrstuvwxyz0123456789 in logs"}`, category: "secrets"},
+		{name: "private key pem block", payload: `{"content":"-----BEGIN RSA PRIVATE KEY-----MIIEowIBAAKCAQEA-----END RSA PRIVATE KEY-----"}`, category: "secrets"},
+		{name: "jwt", payload: `{"content":"session eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U leaked"}`, category: "secrets"},
+		// Fixture is deliberately non-realistic (no long digit groups): a lifelike Slack token here
+		// trips GitHub push protection and blocks the repo's own pushes. The rule only needs the
+		// xox[baprs]- prefix plus [A-Za-z0-9-]+, so this still exercises the pattern faithfully.
+		{name: "slack token", payload: `{"content":"slack webhook xoxb-EXAMPLE-FAKE-TOKEN-FOR-TESTS-ONLY exposed"}`, category: "secrets"},
+		{name: "openai key", payload: `{"content":"OPENAI_API_KEY sk-1234567890abcdefghijklmnopqrstuvwxyzABCDEF committed"}`, category: "secrets"},
+		{name: "anthropic key", payload: `{"content":"ANTHROPIC_API_KEY sk-ant-api03-1234567890abcdefghijklmnopqrstuvwxyz committed"}`, category: "secrets"},
+		{name: "generic api_key assignment", payload: `{"content":"api_key: abcdef1234567890 in .env"}`, category: "secrets"},
+		{name: "generic password assignment", payload: `{"content":"password=Str0ngP@ssw0rd12026 in config"}`, category: "secrets"},
+		{name: "bearer token", payload: `{"content":"Authorization: Bearer AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 sent"}`, category: "secrets"},
 	}
 
 	for _, tt := range cases {
@@ -57,6 +75,17 @@ func TestScan_AllowsBenignTechnicalKnowledge(t *testing.T) {
 		// issue number — is ordinary technical content and must NOT be blocked. The old bare
 		// `\b[0-9]{7,8}\b` pattern false-positived on all of these.
 		`{"content":"Release tag cut on 20260716, build counter 1234567 deployed to prod."}`,
+		// Finding 1 negative-corpus guard: real technical content from this repo's own domain that
+		// the new secrets/* rules must NOT block. If any new pattern is too broad, one of these will
+		// start failing — fix the pattern, not the test.
+		`{"content":"Root-caused the regression to commit 96b996d2f2af8baca22ac712d7712a4156c26692."}`,
+		`{"content":"Correlation UUID 550e8400-e29b-41d4-a716-446655440000 attached to the trace."}`,
+		`{"content":"Bumped the guard module to v0.5.0 in go.mod."}`,
+		`{"content":"See internal/guard/patterns.yaml for the compiled rule set."}`,
+		`{"content":"the token vocabulary is documented in result-contract.md"}`,
+		`{"content":"Icon asset blob: iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="}`,
+		`{"content":"Never log the password field in plaintext; hash it before storage."}`,
+		`{"content":"There is no secret sauce here, just deterministic pattern matching."}`,
 	}
 
 	for _, payload := range cases {

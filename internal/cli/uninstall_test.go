@@ -2,11 +2,35 @@ package cli
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 )
+
+// failingClaudeRunner simulates a machine where the `claude` CLI genuinely cannot run: every
+// invocation with name=="claude" fails, mirroring the raw, unwrapped exec error a real machine with
+// claude removed from PATH would produce once a claude-dependent step actually tries to shell out.
+// Used to prove Finding 2(b)'s resilience contract (every OTHER step still runs to completion) and
+// Finding 2(a)'s friendly-message wrapping (the raw failure gets ClaudeMissingMessage attached) end
+// to end, without depending on a real missing claude binary.
+type failingClaudeRunner struct{ commands []string }
+
+func (r *failingClaudeRunner) Run(name string, args ...string) error {
+	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
+	if name == "claude" {
+		return fmt.Errorf("exec: %q: executable file not found in $PATH", name)
+	}
+	return nil
+}
+
+func (r *failingClaudeRunner) Output(name string, args ...string) ([]byte, error) {
+	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
+	return []byte{}, nil
+}
 
 // TestUninstallCommand_SurfacesEngramPathWarning_WarningOnlyNoError is the pre-existing-shaped half
 // of the T4-1 follow-up regression coverage: a warning-only RemoveEngramPlugin result (err == nil)
@@ -61,5 +85,123 @@ func TestUninstallCommand_SurfacesEngramPathWarning_EvenOnFatalError(t *testing.
 	}
 	if !strings.Contains(out, wantWarning) {
 		t.Fatalf("uninstall output = %q, want it to contain the PATH warning %q even though RemoveEngramPlugin also returned a fatal error", out, wantWarning)
+	}
+}
+
+// TestUninstallCommand_ContinuesEveryStepAfterAnEarlierOneFails is Finding 2(b)'s core regression
+// test: `click uninstall` must be RESILIENT, not fail-fast. Before this fix, runUninstall returned
+// immediately on step 1's error (`return err`) — since step 1 (RemoveMarketplacePlugins) shells out
+// to `claude`, a realistic uninstall scenario (claude already removed as part of tearing the setup
+// down) meant CLAUDE.md and the memory-guard hook NEVER got cleaned up, contradicting installer's own
+// doc comment that Uninstall "reverses everything Install can have written". This proves every LATER
+// step still runs to completion — and its own state change lands on disk — even though the FIRST
+// step was forced to fail.
+func TestUninstallCommand_ContinuesEveryStepAfterAnEarlierOneFails(t *testing.T) {
+	home := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home}
+
+	// Stand in for a real prior `click install`: a managed CLAUDE.md block and a registered
+	// memory-guard hook, both of which must still get cleaned up below despite step 1 failing.
+	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
+		t.Fatalf("WriteManagedBlock() error = %v", err)
+	}
+	if err := installer.RegisterMemoryGuardHook(cfg); err != nil {
+		t.Fatalf("RegisterMemoryGuardHook() error = %v", err)
+	}
+
+	runner := &failingClaudeRunner{}
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	out, err := execRoot(t, home, "uninstall")
+	if err == nil {
+		t.Fatalf("uninstall command error = nil, want non-nil — RemoveMarketplacePlugins was forced to fail, output:\n%s", out)
+	}
+
+	md, readErr := os.ReadFile(cfg.ClaudeMDPath())
+	if readErr != nil {
+		t.Fatalf("ReadFile(ClaudeMDPath) error = %v", readErr)
+	}
+	if strings.Contains(string(md), "click-ai-devkit (managed)") {
+		t.Fatalf("CLAUDE.md still contains the managed block after uninstall, want it stripped even though step 1 failed:\n%s", md)
+	}
+
+	hasHook, hookErr := installer.HasMemoryGuardHook(cfg)
+	if hookErr != nil {
+		t.Fatalf("HasMemoryGuardHook() error = %v", hookErr)
+	}
+	if hasHook {
+		t.Fatal("memory-guard hook still registered after uninstall, want it removed even though step 1 failed")
+	}
+
+	// The failure must be reported, not silently swallowed (Finding 2(b)): the overall summary must
+	// name the step that failed.
+	if !strings.Contains(out, "Plugins de Claude Code") {
+		t.Fatalf("uninstall output = %q, want the final summary to name the failed \"Plugins de Claude Code\" step", out)
+	}
+}
+
+// TestUninstallCommand_ClaudeMissing_StillRunsEveryStepAndReportsFriendlyMessage is Finding 2(a)'s
+// regression test: unlike install.go/update.go (which abort BEFORE issuing any command when claude
+// is missing), `click uninstall` must still run every cleanup step when claude is missing — and the
+// claude-dependent steps' failures must report the SAME actionable ClaudeMissingMessage text
+// install/update already show, not a bare unwrapped exec error.
+func TestUninstallCommand_ClaudeMissing_StillRunsEveryStepAndReportsFriendlyMessage(t *testing.T) {
+	home := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home}
+	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
+		t.Fatalf("WriteManagedBlock() error = %v", err)
+	}
+
+	runner := &failingClaudeRunner{}
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	missingClaude := cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git"}}
+
+	out, err := execRootWithGitLookup(t, home, missingClaude, "uninstall")
+	if err == nil {
+		t.Fatalf("uninstall command error = nil when claude is missing, want non-nil, output:\n%s", out)
+	}
+	if !strings.Contains(out, installer.ClaudeMissingMessage) && !strings.Contains(err.Error(), installer.ClaudeMissingMessage) {
+		t.Fatalf("uninstall output/error did not contain the actionable ClaudeMissingMessage; output:\n%s\nerror: %v", out, err)
+	}
+
+	// Resilience: CLAUDE.md must still have been stripped even though claude is missing and every
+	// claude-dependent step failed.
+	md, readErr := os.ReadFile(cfg.ClaudeMDPath())
+	if readErr != nil {
+		t.Fatalf("ReadFile(ClaudeMDPath) error = %v", readErr)
+	}
+	if strings.Contains(string(md), "click-ai-devkit (managed)") {
+		t.Fatalf("CLAUDE.md still contains the managed block after uninstall with claude missing, want it stripped:\n%s", md)
+	}
+}
+
+// TestUninstallCommand_CorruptedEngramState_SucceedsWithWarning is Finding 3's CLI-level regression
+// test: a truncated/corrupted engram.json must not abort `click uninstall` — RemoveEngramPlugin now
+// reports it as a warning (installer.RemoveEngramPlugin's own corrupted-state handling), so with
+// every other step healthy the overall command must still succeed, and the warning must be visible
+// in the output rather than silently dropped.
+func TestUninstallCommand_CorruptedEngramState_SucceedsWithWarning(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	cfg := installer.Config{ClaudeHome: home}
+	statePath := cfg.EngramStatePath()
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(engram state dir) error = %v", err)
+	}
+	if err := os.WriteFile(statePath, []byte("{not valid json"), 0o600); err != nil {
+		t.Fatalf("WriteFile(engram.json) error = %v", err)
+	}
+
+	out, err := execRoot(t, home, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall command error = %v, want nil — a corrupted engram.json must be a warning, not a fatal failure, output:\n%s", err, out)
+	}
+	if !strings.Contains(out, "dañado") {
+		t.Fatalf("uninstall output = %q, want it to contain the corrupted-state warning", out)
 	}
 }
