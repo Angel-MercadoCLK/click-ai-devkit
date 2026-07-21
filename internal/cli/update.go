@@ -46,6 +46,19 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
+	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
+	// snapshot — all BEFORE MigrateIfStale/step 1 below (the first external `claude` subprocess
+	// invocation). A decline here means zero writes: nothing below this point has run yet.
+	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version))
+	if err != nil {
+		return err
+	}
+	if !proceed {
+		fmt.Fprintln(out, r.Info("Actualización cancelada."))
+		return nil
+	}
+
 	// Confirmed migration behavior for the real-SDD-taxonomy realignment: a stale (pre-realignment
 	// or otherwise outdated schema_version) models.json is backed up to models.json.bak FIRST,
 	// then fully regenerated with new-taxonomy defaults — old per-phase overrides are never

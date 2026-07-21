@@ -72,12 +72,26 @@ func runInstall(cmd *cobra.Command) error {
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome}
 
+	nonInteractive := isNonInteractiveInstall(cmd, out)
 	profileFlagValue, _ := cmd.Flags().GetString(profileFlag)
-	profile, models, cancelled, err := resolveInstallModels(cmd, out, r, cfg, isNonInteractiveInstall(cmd, out), profileFlagValue, runInstallSelectTUI)
+	profile, models, cancelled, err := resolveInstallModels(cmd, out, r, cfg, nonInteractive, profileFlagValue, runInstallSelectTUI)
 	if err != nil {
 		return err
 	}
 	if cancelled {
+		return nil
+	}
+
+	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
+	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
+	// snapshot — all BEFORE step 1 below (the first external `claude` subprocess invocation). A
+	// decline here means zero writes: nothing below this point has run yet.
+	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, nonInteractive, installWriteSteps)
+	if err != nil {
+		return err
+	}
+	if !proceed {
+		fmt.Fprintln(out, r.Info("Instalación cancelada."))
 		return nil
 	}
 
