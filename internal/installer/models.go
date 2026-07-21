@@ -138,9 +138,13 @@ func IsStale(cfg Config) (bool, error) {
 // MigrateIfStale checks cfg.ModelsPath() and, if it holds a stale (pre-realignment or otherwise
 // outdated) file, backs it up verbatim to models.json.bak FIRST, then fully regenerates
 // models.json with modelconfig.Defaults() — confirmed migration behavior: old per-phase overrides
-// are never preserved or merged, per D8 ("never clobber a working setup without a backup"). It is
-// a safe no-op when models.json is absent or already current. Callers that must stay read-only
-// (e.g. `click doctor`) should use IsStale instead — MigrateIfStale writes to disk.
+// are never preserved or merged. Always backing up before regenerating is the same
+// never-clobber-without-a-backup principle the install-reliability-foundation change generalizes
+// into the run-start snapshot/rollback mechanism (internal/installer/snapshot.go) — this function
+// predates that change and keeps its own simpler, single-file `.bak` sibling convention rather than
+// being folded into the newer snapshot/manifest mechanism. It is a safe no-op when models.json is
+// absent or already current. Callers that must stay read-only (e.g. `click doctor`) should use
+// IsStale instead — MigrateIfStale writes to disk.
 func MigrateIfStale(cfg Config) (migrated bool, err error) {
 	stale, err := IsStale(cfg)
 	if err != nil {

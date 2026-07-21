@@ -163,6 +163,32 @@ func checkSkillsPlugin(cfg installer.Config) CheckResult {
 	return CheckResult{Name: name, Healthy: true, Detail: "registrado y habilitado"}
 }
 
+// checkClaudeMD reports whether the CLAUDE.md managed block is present and, if so, whether its
+// BODY content still matches this click version's DefaultManagedContent (spec capability
+// managed-block-integrity; design's "Drift hash" decision: no sidecar state file — the expected
+// hash is computed fresh from DefaultManagedContent on every call via
+// installer.ExpectedManagedBlockHash, never persisted anywhere). Strictly read-only end to end
+// (NFR-012): this function only reads and hashes, it never writes, repairs, or mutates CLAUDE.md —
+// there is no `doctor repair` action, remediation is always "re-run `click install`/`click
+// update`", surfaced directly in the Detail messages below.
+//
+// Three genuinely distinct outcomes (never conflated):
+//  1. Healthy — a baseline snapshot exists (installer.HasRunSnapshot: click actually wrote this
+//     block at least once) AND the live body hash matches installer.ExpectedManagedBlockHash().
+//  2. Drift (Healthy: false) — a baseline snapshot exists but the live body hash differs. This
+//     covers BOTH a hand-edit AND a block from an older click version that manages different
+//     content — the two are indistinguishable by hash alone, so the message deliberately says the
+//     block "differs from what this click version manages" and never "tampered"/"manipulated":
+//     accusing the developer of manipulation would be wrong whenever the real cause is simply
+//     "run `click update`".
+//  3. Unknown (Healthy: true, non-blocking/informational) — markers are present, but
+//     installer.HasRunSnapshot is false: no install/update ever completed a run-start snapshot on
+//     this ClaudeHome, so there is no way to have ever established a baseline for this exact case
+//     (e.g. a pre-existing hand-written block that merely happens to use click's exact marker
+//     strings). This is Healthy: true — like checkEngramPath's persisted-but-not-live state — because
+//     "cannot verify" is not itself proof of a problem the way an actual mismatch against a known
+//     baseline is; it must still read distinctly from both the healthy-match and drift messages so
+//     it is never silently folded into either.
 func checkClaudeMD(cfg installer.Config) CheckResult {
 	const name = "CLAUDE.md managed block"
 
@@ -173,7 +199,40 @@ func checkClaudeMD(cfg installer.Config) CheckResult {
 	if !ok {
 		return CheckResult{Name: name, Healthy: false, Detail: "bloque gestionado ausente en " + cfg.ClaudeMDPath()}
 	}
-	return CheckResult{Name: name, Healthy: true, Detail: "bloque gestionado presente"}
+
+	hasBaseline, err := installer.HasRunSnapshot(cfg)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	if !hasBaseline {
+		return CheckResult{
+			Name:    name,
+			Healthy: true,
+			Detail: "bloque gestionado presente, pero no se pudo verificar: nunca se registró una instantánea de referencia " +
+				"(línea base) para esta instalación — pudo haberse escrito a mano. Ejecute `click install` o `click update` " +
+				"para establecer una línea base verificable",
+		}
+	}
+
+	bodyHash, bodyOK, err := installer.ManagedBlockBodyHash(cfg.ClaudeMDPath())
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	if !bodyOK {
+		return CheckResult{Name: name, Healthy: false, Detail: "bloque gestionado ausente en " + cfg.ClaudeMDPath()}
+	}
+
+	if bodyHash == installer.ExpectedManagedBlockHash() {
+		return CheckResult{Name: name, Healthy: true, Detail: "bloque gestionado presente y coincide con esta versión de click"}
+	}
+
+	return CheckResult{
+		Name:    name,
+		Healthy: false,
+		Detail: "el contenido del bloque gestionado difiere de lo que gestiona esta versión de click (puede tratarse de una edición " +
+			"manual o de una versión anterior de click que gestiona un contenido distinto) — ejecute `click install` o `click update` " +
+			"para sincronizarlo",
+	}
 }
 
 // checkEngramPlugin reports whether the engram@engram plugin is registered and enabled — the

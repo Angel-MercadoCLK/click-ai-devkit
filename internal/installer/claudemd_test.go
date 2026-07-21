@@ -446,6 +446,128 @@ func TestWriteManagedBlock_WritesThroughSymlinkPreservingIt(t *testing.T) {
 	}
 }
 
+// --- Managed-block body-hash drift primitives (PR4: doctor drift check) ---
+//
+// These exercise ManagedBlockBody/ManagedBlockBodyHash/ExpectedManagedBlockHash directly — the
+// primitives internal/doctor's checkClaudeMD (PR4) reuses. No sidecar state is ever written or
+// read here: ExpectedManagedBlockHash is always computed fresh from the compile-time
+// DefaultManagedContent const (design's "Drift hash" decision).
+
+func TestManagedBlockBody_NoFile_ReportsNotOK(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+
+	body, ok, err := ManagedBlockBody(path)
+	if err != nil {
+		t.Fatalf("ManagedBlockBody() on missing file error = %v", err)
+	}
+	if ok {
+		t.Fatalf("ManagedBlockBody() on missing file ok = true, want false (body = %q)", body)
+	}
+}
+
+func TestManagedBlockBody_NoMarkers_ReportsNotOK(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+	if err := os.WriteFile(path, []byte("just developer notes, no click block\n"), 0o644); err != nil {
+		t.Fatalf("seed WriteFile() error = %v", err)
+	}
+
+	_, ok, err := ManagedBlockBody(path)
+	if err != nil {
+		t.Fatalf("ManagedBlockBody() error = %v", err)
+	}
+	if ok {
+		t.Fatal("ManagedBlockBody() with no markers ok = true, want false")
+	}
+}
+
+func TestManagedBlockBody_ExtractsExactBodyBetweenMarkers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+	if err := WriteManagedBlock(path, "line one\nline two"); err != nil {
+		t.Fatalf("WriteManagedBlock() error = %v", err)
+	}
+
+	body, ok, err := ManagedBlockBody(path)
+	if err != nil {
+		t.Fatalf("ManagedBlockBody() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ManagedBlockBody() ok = false, want true after WriteManagedBlock()")
+	}
+	want := "line one\nline two\n"
+	if body != want {
+		t.Fatalf("ManagedBlockBody() = %q, want %q", body, want)
+	}
+}
+
+func TestManagedBlockBodyHash_MatchesExpectedWhenBodyIsDefaultManagedContent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+	if err := WriteManagedBlock(path, DefaultManagedContent); err != nil {
+		t.Fatalf("WriteManagedBlock() error = %v", err)
+	}
+
+	got, ok, err := ManagedBlockBodyHash(path)
+	if err != nil {
+		t.Fatalf("ManagedBlockBodyHash() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ManagedBlockBodyHash() ok = false, want true")
+	}
+	want := ExpectedManagedBlockHash()
+	if got != want {
+		t.Fatalf("ManagedBlockBodyHash() = %q, want ExpectedManagedBlockHash() %q when the body is DefaultManagedContent verbatim", got, want)
+	}
+}
+
+func TestManagedBlockBodyHash_DiffersWhenBodyIsHandEdited(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+	if err := WriteManagedBlock(path, DefaultManagedContent+"\nhand-edited extra line"); err != nil {
+		t.Fatalf("WriteManagedBlock() error = %v", err)
+	}
+
+	got, ok, err := ManagedBlockBodyHash(path)
+	if err != nil {
+		t.Fatalf("ManagedBlockBodyHash() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ManagedBlockBodyHash() ok = false, want true")
+	}
+	if got == ExpectedManagedBlockHash() {
+		t.Fatal("ManagedBlockBodyHash() matches ExpectedManagedBlockHash() for a hand-edited body, want it to differ")
+	}
+}
+
+func TestManagedBlockBodyHash_CRLFAndLFBodiesHashEqual(t *testing.T) {
+	lfDir := t.TempDir()
+	lfPath := filepath.Join(lfDir, "CLAUDE.md")
+	if err := WriteManagedBlock(lfPath, DefaultManagedContent); err != nil {
+		t.Fatalf("WriteManagedBlock(lf) error = %v", err)
+	}
+	lfHash, ok, err := ManagedBlockBodyHash(lfPath)
+	if err != nil || !ok {
+		t.Fatalf("ManagedBlockBodyHash(lf) ok=%v err=%v", ok, err)
+	}
+
+	crlfDir := t.TempDir()
+	crlfPath := filepath.Join(crlfDir, "CLAUDE.md")
+	crlfContent := managedBeginMarker + "\r\n" + strings.ReplaceAll(DefaultManagedContent, "\n", "\r\n") + "\r\n" + managedEndMarker + "\r\n"
+	if err := os.WriteFile(crlfPath, []byte(crlfContent), 0o644); err != nil {
+		t.Fatalf("seed WriteFile(crlf) error = %v", err)
+	}
+	crlfHash, ok, err := ManagedBlockBodyHash(crlfPath)
+	if err != nil || !ok {
+		t.Fatalf("ManagedBlockBodyHash(crlf) ok=%v err=%v", ok, err)
+	}
+
+	if lfHash != crlfHash {
+		t.Fatalf("ManagedBlockBodyHash() LF = %q, CRLF = %q, want equal (CRLF must not count as drift)", lfHash, crlfHash)
+	}
+}
+
 // TestWriteManagedBlock_InjectedWriteErrorLeavesOriginalIntact is the strict-TDD RED/GREEN proof
 // that writeFileEnsuringDir now goes through atomicWriteFile's temp-file+rename path instead of a
 // direct, non-atomic os.WriteFile: injecting a failing createTempFile must surface an error AND

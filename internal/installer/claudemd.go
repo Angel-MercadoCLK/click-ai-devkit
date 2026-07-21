@@ -96,6 +96,47 @@ func HasManagedBlock(path string) (bool, error) {
 	return begin != -1 && end != -1, nil
 }
 
+// ManagedBlockBody returns the current managed block's BODY — the lines strictly between the
+// begin/end markers — as it exists in the file at path right now. ok is false (with no error)
+// when the file has no well-formed managed block, mirroring HasManagedBlock's own "well-formed"
+// definition, so callers can tell "nothing to hash" apart from a real read error. Used by `click
+// doctor`'s body-hash drift check (managed-block-integrity capability) — this function only reads,
+// it never writes.
+func ManagedBlockBody(path string) (body string, ok bool, err error) {
+	existing, err := readFileOrEmpty(path)
+	if err != nil {
+		return "", false, fmt.Errorf("installer: read %s: %w", path, err)
+	}
+	lines := crlfAwareSplitLines(existing)
+	begin, end := findMarkers(lines)
+	if begin == -1 || end == -1 {
+		return "", false, nil
+	}
+	return joinLines(lines[begin+1 : end]), true, nil
+}
+
+// ManagedBlockBodyHash returns the canonical sha256 hex digest of the live managed block's body at
+// path, via canonicalContentHash (snapshot.go) — the SAME LF-canonicalization + hash algorithm
+// PR3's rollback drift check already uses, so a CRLF-saved managed block never counts as drift
+// here either. ok mirrors ManagedBlockBody's: false (no error) means there is no well-formed
+// managed block to hash at all.
+func ManagedBlockBodyHash(path string) (hash string, ok bool, err error) {
+	body, ok, err := ManagedBlockBody(path)
+	if err != nil || !ok {
+		return "", ok, err
+	}
+	return canonicalContentHash(body), true, nil
+}
+
+// ExpectedManagedBlockHash returns the canonical sha256 hash of THIS click version's compile-time
+// DefaultManagedContent — `click doctor`'s expected-value baseline for the managed-block drift
+// check (design's "Drift hash" decision: no sidecar, compare live body to DefaultManagedContent).
+// It is always computed fresh at call time; nothing about it is ever persisted or cached, so there
+// is no baseline file that can itself drift out of sync with the binary.
+func ExpectedManagedBlockHash() string {
+	return canonicalContentHash(DefaultManagedContent)
+}
+
 func buildManagedBlock(content string) []string {
 	body := crlfAwareSplitLines(content)
 	lines := make([]string, 0, len(body)+2)

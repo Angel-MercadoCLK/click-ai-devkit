@@ -429,6 +429,157 @@ func TestCheckEngramBinary_ReportsRemediationWhenMissing(t *testing.T) {
 	}
 }
 
+// --- Managed-block body-hash drift check (PR4) ---
+//
+// checkClaudeMD previously verified marker PRESENCE only (installer.HasManagedBlock). These tests
+// cover the extended body-content drift check: three genuinely distinct outcomes — healthy (hash
+// match), drift (hash mismatch, once a baseline snapshot exists), and unknown (markers present but
+// no run-start snapshot was ever recorded for this ClaudeHome, so there is no way to have ever
+// established a baseline — e.g. a pre-existing hand-written block that merely happens to use
+// click's exact marker strings). All three read-only; none of them mutate CLAUDE.md.
+
+// TestCheckClaudeMD_HashMatchesBaseline_ReportsHealthy covers outcome 1: once a run-start snapshot
+// exists (installer.SnapshotRun ran, proving click actually wrote this block at least once) and the
+// live body hash matches ExpectedManagedBlockHash(), the check must report healthy.
+func TestCheckClaudeMD_HashMatchesBaseline_ReportsHealthy(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
+		t.Fatalf("WriteManagedBlock() error = %v", err)
+	}
+	if err := installer.SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "CLAUDE.md managed block" {
+			continue
+		}
+		checked = true
+		if !c.Healthy {
+			t.Fatalf("checkClaudeMD reports unhealthy when the body matches DefaultManagedContent and a baseline snapshot exists: %s", c.Detail)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "CLAUDE.md managed block" check`)
+	}
+}
+
+// TestCheckClaudeMD_DriftAfterBaseline_ReportsUnhealthyWithoutTamperedWording covers outcome 2: a
+// baseline snapshot exists, but the live body hash no longer matches — the developer hand-edited
+// the block, OR it is simply from an older click version managing different content. Both look
+// identical by hash, so the message must say something like "differs from what this click version
+// manages" and MUST NOT accuse the user of manipulation ("tampered"/"manipulated") — it might just
+// mean "run click update". This must also never mutate the file (doctor stays read-only).
+func TestCheckClaudeMD_DriftAfterBaseline_ReportsUnhealthyWithoutTamperedWording(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
+		t.Fatalf("WriteManagedBlock() error = %v", err)
+	}
+	if err := installer.SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent+"\nhand-edited extra line"); err != nil {
+		t.Fatalf("WriteManagedBlock(edited) error = %v", err)
+	}
+
+	before, err := os.ReadFile(cfg.ClaudeMDPath())
+	if err != nil {
+		t.Fatalf("ReadFile() before Run() error = %v", err)
+	}
+
+	report := Run(cfg)
+
+	var checked bool
+	var detail string
+	for _, c := range report.Checks {
+		if c.Name != "CLAUDE.md managed block" {
+			continue
+		}
+		checked = true
+		detail = c.Detail
+		if c.Healthy {
+			t.Fatal("checkClaudeMD reports healthy for a hand-edited managed block body, want unhealthy (drift)")
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "CLAUDE.md managed block" check`)
+	}
+	if !strings.Contains(detail, "difiere de lo que gestiona esta versión de click") {
+		t.Fatalf("checkClaudeMD Detail = %q, want wording equivalent to \"differs from what this click version manages\"", detail)
+	}
+	lower := strings.ToLower(detail)
+	if strings.Contains(lower, "tamper") || strings.Contains(lower, "manipul") {
+		t.Fatalf("checkClaudeMD Detail = %q, must NOT use tampered/manipulated wording (a stale block from an older click version looks identical to a hand-edit)", detail)
+	}
+
+	after, err := os.ReadFile(cfg.ClaudeMDPath())
+	if err != nil {
+		t.Fatalf("ReadFile() after Run() error = %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("Run() mutated CLAUDE.md (doctor must be read-only, NFR-012): before=%q after=%q", before, after)
+	}
+}
+
+// TestCheckClaudeMD_NoBaselineEverRecorded_ReportsDistinctUnknownStatus covers outcome 3: markers
+// are present (simulating a pre-existing hand-written block using click's exact marker strings)
+// but no install/update ever ran on this ClaudeHome, so installer.HasRunSnapshot is false — there
+// is no way to have ever established a baseline for THIS case. This must be a genuinely distinct
+// status from both healthy and drift, not silently folded into either — and it must be Healthy:
+// true (non-blocking/informational, like checkEngramPath's persisted-but-not-live state), because
+// "can't verify" is not itself proof of a problem the way an actual hash mismatch against a known
+// baseline is.
+func TestCheckClaudeMD_NoBaselineEverRecorded_ReportsDistinctUnknownStatus(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
+		t.Fatalf("WriteManagedBlock() error = %v", err)
+	}
+	// Deliberately no installer.SnapshotRun(cfg) call — no run-start snapshot was ever recorded.
+
+	before, err := os.ReadFile(cfg.ClaudeMDPath())
+	if err != nil {
+		t.Fatalf("ReadFile() before Run() error = %v", err)
+	}
+
+	report := Run(cfg)
+
+	var checked bool
+	var detail string
+	for _, c := range report.Checks {
+		if c.Name != "CLAUDE.md managed block" {
+			continue
+		}
+		checked = true
+		detail = c.Detail
+		if !c.Healthy {
+			t.Fatalf("checkClaudeMD reports unhealthy for the no-baseline-ever-recorded case, want Healthy:true (non-blocking unknown status): %s", c.Detail)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include a "CLAUDE.md managed block" check`)
+	}
+	if strings.Contains(detail, "coincide con esta versión de click") {
+		t.Fatalf("checkClaudeMD Detail = %q, want a distinct unknown status, not the plain healthy-match wording", detail)
+	}
+	if strings.Contains(detail, "difiere de lo que gestiona esta versión de click") {
+		t.Fatalf("checkClaudeMD Detail = %q, want a distinct unknown status, not the drift wording", detail)
+	}
+	if !strings.Contains(detail, "instantánea") && !strings.Contains(detail, "línea base") {
+		t.Fatalf("checkClaudeMD Detail = %q, want it to explain no baseline snapshot was ever recorded", detail)
+	}
+
+	after, err := os.ReadFile(cfg.ClaudeMDPath())
+	if err != nil {
+		t.Fatalf("ReadFile() after Run() error = %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("Run() mutated CLAUDE.md (doctor must be read-only, NFR-012): before=%q after=%q", before, after)
+	}
+}
+
 // TestCheckContext7_ReportsMissingByDefault guards the "not registered yet" case: a fresh
 // ClaudeHome where `click install` never ran (or context7 was never synced) must report
 // unhealthy, not silently skip the check.
