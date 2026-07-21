@@ -369,7 +369,10 @@ next phase on an unresolved gate failure.
   `propose`/`design`/`verify`, `haiku` for `archive`/`onboard`, `sonnet` for every other phase
   (including all 5 review lenses).
 - The 5 review-lens roles back the 4R adversarial code-review pattern used at `pre-commit`,
-  `pre-push`, `pre-pr`, and post-`design`/post-`apply` review triggers:
+  `pre-push`, `pre-pr`, and post-`design`/post-`apply` review triggers. This 4R gate is
+  code-quality review only — it does NOT automatically run tests or scan for secrets. Before any
+  push, the developer must separately run `click scan-diff` (secret/credential gate) and
+  `go test ./...` (test gate) by hand; no git hook or CI step currently enforces either one:
   - `review-risk` — security, permissions, data exposure/loss, architecture, and dependency
     findings.
   - `review-readability` — naming, structure, and maintainability findings.
