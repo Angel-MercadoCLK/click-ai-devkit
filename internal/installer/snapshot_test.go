@@ -351,3 +351,119 @@ func TestCanonicalContentHash_DifferentContentDiffers(t *testing.T) {
 		t.Fatalf("canonicalContentHash(%q) == canonicalContentHash(%q) == %q, want different hashes for different content", "content A\n", "content B\n", got1)
 	}
 }
+
+// TestHasRestorableSnapshot_FalseWhenNoSnapshotAtAll guards the base "never ran" case: no manifest
+// at all means nothing to restore (PR3's `click rollback` "No snapshot exists" scenario).
+func TestHasRestorableSnapshot_FalseWhenNoSnapshotAtAll(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+
+	has, err := HasRestorableSnapshot(cfg)
+	if err != nil {
+		t.Fatalf("HasRestorableSnapshot() error = %v, want nil", err)
+	}
+	if has {
+		t.Fatal("HasRestorableSnapshot() = true when no snapshot ever ran, want false")
+	}
+}
+
+// TestHasRestorableSnapshot_FalseWhenAllEntriesNoPriorState guards the finer half of the same
+// scenario: a real run completed (HasRunSnapshot=true) but every entry is a no-prior-state
+// marker (both CLAUDE.md and settings.json were absent at snapshot time) -> still nothing to
+// restore. This is exactly the distinction HasRunSnapshot's own doc comment defers to a future
+// caller — this is that caller.
+func TestHasRestorableSnapshot_FalseWhenAllEntriesNoPriorState(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	has, err := HasRestorableSnapshot(cfg)
+	if err != nil {
+		t.Fatalf("HasRestorableSnapshot() error = %v, want nil", err)
+	}
+	if has {
+		t.Fatal("HasRestorableSnapshot() = true for an all-no-prior-state manifest, want false (nothing to restore)")
+	}
+}
+
+// TestHasRestorableSnapshot_TrueWhenAtLeastOneEntryExisted triangulates against the trivial
+// "always false" implementation: a real snapshot with actual backed-up content must report true.
+func TestHasRestorableSnapshot_TrueWhenAtLeastOneEntryExisted(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	writeTestFile(t, cfg.ClaudeMDPath(), "content\n")
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	has, err := HasRestorableSnapshot(cfg)
+	if err != nil {
+		t.Fatalf("HasRestorableSnapshot() error = %v, want nil", err)
+	}
+	if !has {
+		t.Fatal("HasRestorableSnapshot() = false when CLAUDE.md existed at snapshot time, want true")
+	}
+}
+
+// TestSnapshotDrift_NoEdits_ReportsNoDrift guards the "matching hash" half of spec install-rollback
+// Decision 3: content unchanged since the snapshot must report zero drifted paths.
+func TestSnapshotDrift_NoEdits_ReportsNoDrift(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	writeTestFile(t, cfg.ClaudeMDPath(), "unchanged content\n")
+	writeTestFile(t, cfg.SettingsPath(), `{"unchanged":true}`)
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	drifted, err := SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+	}
+	if len(drifted) != 0 {
+		t.Fatalf("SnapshotDrift() = %v, want empty (no edits since snapshot)", drifted)
+	}
+}
+
+// TestSnapshotDrift_EditedFile_ReportsDrift triangulates against the trivial "always empty"
+// implementation: editing CLAUDE.md after the snapshot must be reported as drift for that path,
+// while the untouched settings.json must not be reported.
+func TestSnapshotDrift_EditedFile_ReportsDrift(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	writeTestFile(t, cfg.ClaudeMDPath(), "original content\n")
+	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	writeTestFile(t, cfg.ClaudeMDPath(), "hand-edited after snapshot\n")
+
+	drifted, err := SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+	}
+	if len(drifted) != 1 || drifted[0] != cfg.ClaudeMDPath() {
+		t.Fatalf("SnapshotDrift() = %v, want exactly [%s]", drifted, cfg.ClaudeMDPath())
+	}
+}
+
+// TestSnapshotDrift_MissingCurrentFile_NotReportedAsDrift guards the deliberate exception: a file
+// deleted since the snapshot is not reported as "drift" (RestoreRun would simply recreate the
+// known-good content, which is the safe, expected outcome — not a hand-edit to warn about).
+func TestSnapshotDrift_MissingCurrentFile_NotReportedAsDrift(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	writeTestFile(t, cfg.ClaudeMDPath(), "content\n")
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	if err := os.Remove(cfg.ClaudeMDPath()); err != nil {
+		t.Fatalf("os.Remove(CLAUDE.md) error = %v", err)
+	}
+
+	drifted, err := SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+	}
+	if len(drifted) != 0 {
+		t.Fatalf("SnapshotDrift() = %v, want empty (a missing current file is not drift)", drifted)
+	}
+}

@@ -201,6 +201,75 @@ func HasRunSnapshot(cfg Config) (bool, error) {
 	return true, nil
 }
 
+// HasRestorableSnapshot reports whether a completed run-start snapshot exists AND has at least one
+// entry with real backed-up content to restore (Existed=true). It is false both when no snapshot
+// has ever completed (see HasRunSnapshot) and when a snapshot completed but recorded only
+// no-prior-state markers for every entry (both CLAUDE.md and settings.json were absent at snapshot
+// time) — the rollback command's (PR3) "No snapshot exists" scenario (spec install-rollback).
+// HasRunSnapshot's own doc comment deliberately defers this finer distinction to a future caller;
+// this is that caller.
+func HasRestorableSnapshot(cfg Config) (bool, error) {
+	has, err := HasRunSnapshot(cfg)
+	if err != nil || !has {
+		return false, err
+	}
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range manifest.Entries {
+		if entry.Existed {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// SnapshotDrift reports which of the snapshot's backed-up original paths have been hand-edited
+// since the snapshot was taken: their current on-disk content hash no longer matches the content
+// hash of what SnapshotRun backed up (spec install-rollback Decision 3: refuse-by-default). Only
+// entries with Existed=true are compared — there is nothing recorded to compare a no-prior-state
+// entry against. A current file that is now missing is NOT reported as drift: RestoreRun would
+// simply recreate the exact known-good content in that case, which is the safe, expected outcome,
+// not a hand-edit to warn about.
+//
+// SnapshotDrift assumes a manifest already exists; callers should check HasRestorableSnapshot (or
+// HasRunSnapshot) first — mirroring RestoreRun's own contract. Extracted here (rather than
+// duplicated in cli/rollback.go, which cannot reach the unexported canonicalContentHash directly)
+// because both PR3's rollback drift check and PR4's future doctor drift check must reuse the exact
+// same LF-canonicalization + hash algorithm (see canonicalContentHash's own doc comment) — PR4's
+// doctor-side check itself is explicitly out of scope for this change and is NOT implemented here.
+func SnapshotDrift(cfg Config) ([]string, error) {
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	latestDir := snapshotLatestDir(cfg)
+	var drifted []string
+	for _, entry := range manifest.Entries {
+		if !entry.Existed {
+			continue
+		}
+		backupPath := filepath.Join(latestDir, entry.BackupFile)
+		backupData, readBackupErr := os.ReadFile(backupPath)
+		if readBackupErr != nil {
+			return nil, fmt.Errorf("installer: read snapshot backup %s: %w", backupPath, readBackupErr)
+		}
+		currentData, readCurrentErr := os.ReadFile(entry.OriginalPath)
+		if readCurrentErr != nil {
+			if os.IsNotExist(readCurrentErr) {
+				continue
+			}
+			return nil, fmt.Errorf("installer: read %s to check drift: %w", entry.OriginalPath, readCurrentErr)
+		}
+		if canonicalContentHash(string(currentData)) != canonicalContentHash(string(backupData)) {
+			drifted = append(drifted, entry.OriginalPath)
+		}
+	}
+	return drifted, nil
+}
+
 // loadSnapshotManifest reads and parses BackupDir()/latest/manifest.json.
 func loadSnapshotManifest(cfg Config) (runManifest, error) {
 	data, err := os.ReadFile(snapshotManifestPath(cfg))

@@ -63,6 +63,7 @@ func NewRootCommand() *cobra.Command {
 		newAgentBuilderCommand(),
 		newManageBackupsCommand(),
 		newScanDiffCommand(),
+		newRollbackCommand(),
 	)
 
 	return root
