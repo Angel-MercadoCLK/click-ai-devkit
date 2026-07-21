@@ -147,17 +147,21 @@ func runUninstall(cmd *cobra.Command) error {
 	surfacePathWarning(out, r, engramPathWarning)
 
 	// RemoveContext7 mirrors RemoveEngramPlugin's exact respect-ownership contract: only removes
-	// Context7 when click's own state says click registered it. context7.go's own malformed-JSON
-	// handling is intentionally left as a hard error here (outside this fix's file-ownership scope)
-	// — but this resilient step loop already ensures that error can no longer abort any OTHER step,
-	// and it always surfaces in the final summary below, never silently dropped.
+	// Context7 when click's own state says click registered it. Malformed state is unknown ownership,
+	// so the installer leaves Context7 and its state file untouched and reports a warning.
+	context7Warning := ""
 	runStep(
 		"Context7",
 		"Quitando Context7 (si click lo instaló)…",
 		"Context7 procesado",
 		true,
-		func() error { return installer.RemoveContext7(cfg) },
+		func() error {
+			var stepErr error
+			context7Warning, stepErr = installer.RemoveContext7(cfg)
+			return stepErr
+		},
 	)
+	surfacePathWarning(out, r, context7Warning)
 
 	return reportUninstallOutcome(out, r, outcomes)
 }

@@ -3,6 +3,7 @@ package installer
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -125,7 +126,7 @@ func TestSyncContext7_SecondRunPreservesClickOwnership(t *testing.T) {
 		t.Fatal("state.InstalledByClick flipped to false after a second, idempotent SyncContext7() run — ownership must be preserved, not re-derived")
 	}
 
-	if err := RemoveContext7(cfg); err != nil {
+	if _, err := RemoveContext7(cfg); err != nil {
 		t.Fatalf("RemoveContext7() error = %v", err)
 	}
 	present, err := HasContext7(cfg)
@@ -149,7 +150,7 @@ func TestRemoveContext7_RemovesWhenClickInstalledIt(t *testing.T) {
 		t.Fatalf("SyncContext7() error = %v", err)
 	}
 
-	if err := RemoveContext7(cfg); err != nil {
+	if _, err := RemoveContext7(cfg); err != nil {
 		t.Fatalf("RemoveContext7() error = %v", err)
 	}
 
@@ -180,7 +181,7 @@ func TestRemoveContext7_RespectsPreExistingInstall(t *testing.T) {
 		t.Fatalf("SyncContext7() error = %v", err)
 	}
 
-	if err := RemoveContext7(cfg); err != nil {
+	if _, err := RemoveContext7(cfg); err != nil {
 		t.Fatalf("RemoveContext7() error = %v", err)
 	}
 
@@ -208,11 +209,55 @@ func TestRemoveContext7_NoopWhenNeverSynced(t *testing.T) {
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
 	defer restoreRunner()
 
-	if err := RemoveContext7(cfg); err != nil {
+	if _, err := RemoveContext7(cfg); err != nil {
 		t.Fatalf("RemoveContext7() on a never-synced home error = %v, want nil", err)
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("RemoveContext7() issued commands %#v on a never-synced home, want zero", runner.commands)
+	}
+}
+
+// TestRemoveContext7_CorruptedStateFile preserves the ownership safety boundary: malformed state
+// means click cannot prove it owns Context7, so uninstall must warn without touching either file.
+func TestRemoveContext7_CorruptedStateFile(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	corrupt := []byte("{not valid json")
+	if err := os.MkdirAll(filepath.Dir(cfg.Context7StatePath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll(Context7StatePath dir) error = %v", err)
+	}
+	seedContext7AlreadyPresent(t, cfg)
+	if err := os.WriteFile(cfg.Context7StatePath(), corrupt, 0o600); err != nil {
+		t.Fatalf("WriteFile(Context7StatePath) error = %v", err)
+	}
+
+	warning, err := RemoveContext7(cfg)
+	if err != nil {
+		t.Fatalf("RemoveContext7() error = %v, want nil for corrupted state", err)
+	}
+	if warning == "" {
+		t.Fatal("RemoveContext7() warning = empty, want a warning about corrupted state")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("RemoveContext7() issued commands %#v, want zero for unknown ownership", runner.commands)
+	}
+	got, err := os.ReadFile(cfg.Context7StatePath())
+	if err != nil {
+		t.Fatalf("ReadFile(Context7StatePath) error = %v, want state file preserved", err)
+	}
+	if string(got) != string(corrupt) {
+		t.Fatalf("Context7 state content = %q, want original corrupted content %q", got, corrupt)
+	}
+	present, err := HasContext7(cfg)
+	if err != nil {
+		t.Fatalf("HasContext7() error = %v", err)
+	}
+	if !present {
+		t.Fatal("RemoveContext7() modified Context7 despite unknown ownership")
 	}
 }
 

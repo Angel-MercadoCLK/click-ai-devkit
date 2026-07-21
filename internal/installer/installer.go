@@ -67,7 +67,7 @@ func Uninstall(cfg Config) error {
 	if _, err := RemoveEngramPlugin(cfg); err != nil {
 		return err
 	}
-	if err := RemoveContext7(cfg); err != nil {
+	if _, err := RemoveContext7(cfg); err != nil {
 		return err
 	}
 	if err := StripManagedBlock(cfg.ClaudeMDPath()); err != nil {
