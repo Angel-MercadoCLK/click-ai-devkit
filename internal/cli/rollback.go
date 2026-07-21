@@ -22,6 +22,7 @@ func newRollbackCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "rollback",
 		Short:  "Restaurar CLAUDE.md y settings.json desde el último respaldo de instalación/actualización",
+		Long:   "Rollback restaura la instantánea general y puede revertir también cambios realizados por el CLI externo `claude` desde la última ejecución de instalación o actualización, no solo cambios de Click.",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRollback(cmd)

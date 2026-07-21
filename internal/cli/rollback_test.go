@@ -157,6 +157,10 @@ func TestRollback_DriftWithForce_Proceeds(t *testing.T) {
 // configure-models' precedent: reachable directly but hidden from `click --help`.
 func TestRollback_HiddenFromHelp(t *testing.T) {
 	home := t.TempDir()
+	cmd := newRollbackCommand()
+	if !strings.Contains(cmd.Long, "CLI externo `claude`") || !strings.Contains(cmd.Long, "no solo cambios de Click") {
+		t.Fatalf("rollback Long = %q, want coarse-snapshot warning about external claude changes", cmd.Long)
+	}
 
 	out, err := execRoot(t, home, "--help")
 	if err != nil {

@@ -150,7 +150,8 @@ func SnapshotRun(cfg Config) error {
 // NOT exist (a no-prior-state marker), any file that has since appeared at the original path is
 // removed instead of being left in place or having content fabricated for it. The snapshot itself
 // is left completely intact afterward (read+write, never a consuming move) so it can be restored
-// from again later.
+// from again later. settings.json restoration is coarse and may also revert unrelated writes made
+// by the external `claude` CLI during the same run because they are captured in the same snapshot.
 //
 // RestoreRun assumes a manifest already exists; callers that need to distinguish "no snapshot to
 // restore" from a real error should check HasRunSnapshot first (the rollback command, PR3, owns
