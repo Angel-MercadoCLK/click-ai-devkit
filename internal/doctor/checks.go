@@ -429,6 +429,23 @@ const ClickBinaryMissingMessage = "el binario click no está en el PATH visible 
 // doctor tests must not depend on whether click happens to be on the real test machine's PATH.
 var clickBinaryLookup = exec.LookPath
 
+// SetClickBinaryLookupForTests overrides checkClickBinary's PATH-lookup dependency and returns a
+// restore function, mirroring installer.SetEngramMarketplaceSourceForTests/
+// SetBinaryLookupFactoryForTests's exported-seam-plus-restore-func shape. clickBinaryLookup itself
+// stays package-private (this package's own checks_test.go pokes it directly), but downstream
+// packages need a way in too: internal/cli's end-to-end command tests (TestDoctorCommand_AfterInstall_
+// Succeeds and friends) run `click install` then `click doctor` and assert the install reports
+// healthy — a real CI runner never has the click binary it just built anywhere on PATH, so without
+// this seam those assertions are only true by accident of whichever machine happens to run them (a
+// developer machine with click on PATH via scoop passes; CI, which never installed click to PATH,
+// fails checkClickBinary and therefore the whole doctor report). Exported so those tests can force a
+// deterministic outcome instead of depending on the real test machine's PATH.
+func SetClickBinaryLookupForTests(lookup func(name string) (string, error)) func() {
+	old := clickBinaryLookup
+	clickBinaryLookup = lookup
+	return func() { clickBinaryLookup = old }
+}
+
 // checkClickBinary reports whether the click binary itself is resolvable on the live PATH — the
 // blind spot checkMemoryGuardHook cannot see (see ClickBinaryMissingMessage for the full rationale).
 // This check is read-only (NFR-012: `click doctor` never mutates state) — it only resolves PATH, it

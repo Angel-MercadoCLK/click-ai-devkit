@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/doctor"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
@@ -36,6 +37,19 @@ func seedResolvableEngram(t *testing.T) {
 	// the actual test machine's real PATH/registry state.
 	t.Cleanup(installer.SetPathPersistedProbeForTests(func(dir string) (bool, error) { return true, nil }))
 	t.Cleanup(installer.SetLivePathContainsProbeForTests(func(dir string) bool { return true }))
+}
+
+// seedResolvableClickBinary makes `click doctor`'s checkClickBinary check (internal/doctor/checks.go)
+// see the click binary as resolvable on PATH, via doctor.SetClickBinaryLookupForTests, so
+// install-then-doctor CLI tests are deterministic regardless of whether the real test machine
+// actually has click installed to PATH. Without this, these tests only pass by accident of the host
+// environment: a developer machine with click on PATH (e.g. via scoop) is healthy, but CI — which
+// never installs the binary it just built to PATH — reports checkClickBinary FAIL and the whole
+// doctor report unhealthy, exactly mirroring seedResolvableEngram's rationale above for the engram
+// binary/PATH checks.
+func seedResolvableClickBinary(t *testing.T) {
+	t.Helper()
+	t.Cleanup(doctor.SetClickBinaryLookupForTests(func(string) (string, error) { return "/usr/bin/click", nil }))
 }
 
 // cliFakeBinaryLookup fakes PATH resolution for installer.BinaryLookup, mirroring the same
@@ -552,6 +566,7 @@ func TestInstallCommand_InteractiveCancel_LeavesModelsUntouched(t *testing.T) {
 
 func TestDoctorCommand_AfterInstall_Succeeds(t *testing.T) {
 	seedResolvableEngram(t)
+	seedResolvableClickBinary(t)
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -578,6 +593,7 @@ func TestDoctorCommand_BeforeInstall_ReturnsError(t *testing.T) {
 
 func TestUninstallCommand_ReversesInstall(t *testing.T) {
 	seedResolvableEngram(t)
+	seedResolvableClickBinary(t)
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1260,6 +1276,7 @@ func TestDoctorModelsLine_ResolvesMissingReviewPhasesFromActiveProfile(t *testin
 // configured per-phase models (or "defaults" pre-install) rather than staying silent about D25.
 func TestDoctorCommand_ReportsConfiguredModels(t *testing.T) {
 	seedResolvableEngram(t)
+	seedResolvableClickBinary(t)
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1285,6 +1302,7 @@ func TestDoctorCommand_ReportsConfiguredModels(t *testing.T) {
 // requirement: the persisted orchestration profile name must appear in `click doctor`'s output.
 func TestDoctorCommand_ReportsActiveProfile(t *testing.T) {
 	seedResolvableEngram(t)
+	seedResolvableClickBinary(t)
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1307,6 +1325,7 @@ func TestDoctorCommand_ReportsActiveProfile(t *testing.T) {
 // from PR2: `click doctor`'s new profile-reporting line must never write to models.json.
 func TestDoctorCommand_DoesNotMutateModelsJson(t *testing.T) {
 	seedResolvableEngram(t)
+	seedResolvableClickBinary(t)
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })

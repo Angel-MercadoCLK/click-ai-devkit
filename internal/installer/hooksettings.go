@@ -102,8 +102,13 @@ func HasMemoryGuardHook(cfg Config) (bool, error) {
 // SAME symlink-resolving, temp-file+rename helper already relied on for shell rc files instead of
 // a second parallel implementation — that inconsistency (this helper writing non-atomically,
 // straight through/over a symlink) is exactly how the symlink-safety finding this fixes came to
-// exist in the first place. Every caller of writeJSONFile (engram.go, plugins.go, models.go,
-// context7.go, profile_artifacts.go) gets the fix automatically without needing its own change.
+// exist in the first place. Every caller that goes THROUGH writeJSONFile (engram.go's
+// engramState/plugins.go/models.go's SaveModelsWithProfile/context7.go/profile_artifacts.go's
+// SaveProfileArtifact) gets the fix automatically without needing its own change. It does NOT cover
+// every write in those same files, though: models.go's MigrateIfStale (the models.json.bak backup)
+// and profile_artifacts.go's SaveMarkdownAgent (the generated agent .md) each had their own separate
+// os.WriteFile call sites that bypassed this helper entirely — those two were fixed directly by
+// routing them through atomicWriteFile at their own call sites, not through this function.
 func writeJSONFile(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

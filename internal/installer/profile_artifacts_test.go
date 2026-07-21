@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -225,5 +226,44 @@ func TestSaveMarkdownAgent_WritesUnderProfileAgentsDir(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected file at %s: %v", path, err)
+	}
+}
+
+// TestSaveMarkdownAgent_InjectedWriteErrorLeavesNoFileBehind is the strict-TDD RED/GREEN proof that
+// SaveMarkdownAgent now writes the generated agent markdown through atomicWriteFile's
+// temp-file+rename path (pathenv.go) instead of a direct os.WriteFile: injecting a failing
+// createTempFile must surface an error AND leave no partial/corrupt file behind at the target path.
+// Against the old direct os.WriteFile implementation this injection is a no-op (createTempFile is
+// never consulted), so the write silently succeeds and this test fails — mirroring
+// hooksettings_test.go's TestWriteJSONFile_InjectedWriteErrorLeavesOriginalIntact for the sibling
+// writeJSONFile helper.
+func TestSaveMarkdownAgent_InjectedWriteErrorLeavesNoFileBehind(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	agent := MarkdownAgent{
+		Name:         "helper",
+		Description:  "d",
+		Model:        "haiku",
+		Tools:        "Read",
+		Role:         "r",
+		Workflow:     "w",
+		HardRules:    "h",
+		OutputFormat: "o",
+	}
+
+	injectedErr := errors.New("injected write failure")
+	old := createTempFile
+	createTempFile = func(dir, pattern string) (tempFileWriter, error) {
+		return &fakeFailingTempFile{name: filepath.Join(dir, ".click-injected-fake"), writeErr: injectedErr}, nil
+	}
+	defer func() { createTempFile = old }()
+
+	_, err := SaveMarkdownAgent(cfg, "cost-saver", agent)
+	if err == nil {
+		t.Fatal("SaveMarkdownAgent() error = nil, want the injected write error to propagate")
+	}
+
+	wantPath := filepath.Join(cfg.ProfileAgentsDir("cost-saver"), "helper.md")
+	if _, statErr := os.Stat(wantPath); !os.IsNotExist(statErr) {
+		t.Fatalf("Stat(%s) error = %v, want no file left behind after a failed write", wantPath, statErr)
 	}
 }

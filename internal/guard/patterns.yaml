@@ -105,6 +105,18 @@ categories:
         description: "OpenAI/Anthropic-style API key prefixes (sk- / sk-ant-), requiring enough trailing length to avoid matching short incidental sk- substrings."
         pattern: '\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\b'
       - id: secrets/generic-keyword-value
+        # Tuned like pii/dni, policy-numbers/placeholder, claim-ids/placeholder, and
+        # customer-identifiers/placeholder above, but in the OPPOSITE direction: those rules were
+        # narrowed to cut false positives; this one is deliberately left broad. Known, accepted
+        # over-block: this also matches placeholder/example config documentation someone might
+        # legitimately want saved, e.g. "env template: API_KEY=your-key-here, PASSWORD=changeme123" —
+        # no real secret present, but the keyword+assignment shape is indistinguishable from one.
+        # Trade-off (accepted, not a bug to fix): RE2 has no lookahead, so there is no way to exclude
+        # placeholder-looking values (your-key-here, changeme123, xxx, <redacted>, ...) without also
+        # weakening detection of a real secret that happens to look similar — and over-blocking is the
+        # safe direction for a security control here: the failure is visible (mem_save is rejected, not
+        # silently let through) and recoverable (rephrase — e.g. describe the format in prose instead
+        # of pasting a literal key=value line).
         description: "Generic keyword-anchored secret: api_key/apikey/secret/password/passwd/token assigned (: or =) to a non-trivial value. Keyword alone (no assignment) does not match, so prose like 'the token vocabulary' or 'the password field' passes."
         pattern: '(?i)\b(?:api[_-]?key|apikey|secret|password|passwd|token)\b\s*[:=]\s*[A-Za-z0-9_\-+/.=!@#$%^&*]{8,}'
       - id: secrets/bearer-token

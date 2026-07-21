@@ -307,12 +307,13 @@ func TestCheckClickBinary_ReportsUnhealthyWithActionableMessageWhenMissing(t *te
 
 // seedResolvableClickBinary makes checkClickBinary's clickBinaryLookup dependency resolve
 // deterministically to path, regardless of whether the real test machine's PATH actually contains
-// click — mirroring seedResolvableGit's role for checkGit. Returns the restore func.
+// click — mirroring seedResolvableGit's role for checkGit. Routed through the exported
+// SetClickBinaryLookupForTests seam (rather than poking clickBinaryLookup directly) so this
+// package's own tests exercise the exact same seam internal/cli's end-to-end command tests rely on.
+// Returns the restore func.
 func seedResolvableClickBinary(t *testing.T, path string) func() {
 	t.Helper()
-	orig := clickBinaryLookup
-	clickBinaryLookup = func(string) (string, error) { return path, nil }
-	return func() { clickBinaryLookup = orig }
+	return SetClickBinaryLookupForTests(func(string) (string, error) { return path, nil })
 }
 
 // seedUnresolvableClickBinary makes checkClickBinary's clickBinaryLookup dependency deterministically
@@ -320,11 +321,9 @@ func seedResolvableClickBinary(t *testing.T, path string) func() {
 // Returns the restore func.
 func seedUnresolvableClickBinary(t *testing.T) func() {
 	t.Helper()
-	orig := clickBinaryLookup
-	clickBinaryLookup = func(string) (string, error) {
+	return SetClickBinaryLookupForTests(func(string) (string, error) {
 		return "", errors.New("exec: \"click\": executable file not found in %PATH%")
-	}
-	return func() { clickBinaryLookup = orig }
+	})
 }
 
 // TestCheckModelsConfig_AbsentFile_ReportsHealthy guards the "absent = healthy" contract from the
