@@ -110,6 +110,31 @@ func TestResolveEngramCloudConfig(t *testing.T) {
 	}
 }
 
+func TestEngramCloudPartiallyConfigured(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		manifest manifest.EngramCloud
+		want     bool
+	}{
+		{"all absent", map[string]string{}, manifest.EngramCloud{}, false},
+		{"server and project with token present", map[string]string{"ENGRAM_CLOUD_TOKEN": "tok"}, manifest.EngramCloud{Server: "http://127.0.0.1:18080", Project: "click-ai-devkit"}, false},
+		{"server and project without token", map[string]string{}, manifest.EngramCloud{Server: "http://127.0.0.1:18080", Project: "click-ai-devkit"}, true},
+		{"token only", map[string]string{"ENGRAM_CLOUD_TOKEN": "tok"}, manifest.EngramCloud{}, false},
+		{"server and token without project", map[string]string{"ENGRAM_CLOUD_TOKEN": "tok"}, manifest.EngramCloud{Server: "http://127.0.0.1:18080"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			if got := EngramCloudPartiallyConfigured(Config{}, &manifest.Manifest{EngramCloud: tt.manifest}); got != tt.want {
+				t.Errorf("EngramCloudPartiallyConfigured() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSyncEngramCloud_NoOpWhenIncomplete(t *testing.T) {
 	tests := []struct {
 		name     string

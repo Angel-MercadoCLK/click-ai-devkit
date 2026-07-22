@@ -420,7 +420,7 @@ func checkEngramCloud(cfg installer.Config) CheckResult {
 		return CheckResult{
 			Name:    name,
 			Healthy: false,
-			Detail: "estado de engram cloud ilegible: " + err.Error() + " — ejecute `click install` o `click update` para regenerarlo",
+			Detail:  "estado de engram cloud ilegible: " + err.Error() + " — ejecute `click install` o `click update` para regenerarlo",
 		}
 	}
 
@@ -428,14 +428,14 @@ func checkEngramCloud(cfg installer.Config) CheckResult {
 		return CheckResult{
 			Name:    name,
 			Healthy: false,
-			Detail: "ENGRAM_CLOUD_TOKEN está presente pero el estado local no marca inscripción — ejecute `click install` o `click update` para inscribir este equipo",
+			Detail:  "ENGRAM_CLOUD_TOKEN está presente pero el estado local no marca inscripción — ejecute `click install` o `click update` para inscribir este equipo",
 		}
 	}
 
 	return CheckResult{
 		Name:    name,
 		Healthy: true,
-		Detail: "inscrito en " + state.Project + " @ " + state.Server,
+		Detail:  "inscrito en " + state.Project + " @ " + state.Server,
 	}
 }
 

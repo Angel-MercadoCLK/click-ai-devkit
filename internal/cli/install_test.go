@@ -98,8 +98,14 @@ func TestInstallCommand_CloudConfigured_PartialTokenMissing_SkipsCloudStep(t *te
 	if cloudCalls != 0 {
 		t.Fatalf("SyncEngramCloud called %d times, want 0 when token is missing", cloudCalls)
 	}
-	if strings.Contains(out, "Cloud") {
-		t.Fatalf("install output contains cloud-related text when token missing: %q", out)
+	if !strings.Contains(out, "falta ENGRAM_CLOUD_TOKEN") {
+		t.Fatalf("install output = %q, want it to report missing ENGRAM_CLOUD_TOKEN", out)
+	}
+	if !strings.Contains(out, "Se omite la inscripción en la nube") {
+		t.Fatalf("install output = %q, want it to report skipped cloud enrollment", out)
+	}
+	if strings.Contains(out, "Enrolando Engram Cloud") || strings.Contains(out, "Engram Cloud enrolado") {
+		t.Fatalf("install output = %q, must not show cloud enrollment step labels when token is missing", out)
 	}
 }
 

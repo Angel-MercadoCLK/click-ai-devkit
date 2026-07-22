@@ -62,6 +62,13 @@ func EngramCloudConfigured(cfg Config, m *manifest.Manifest) bool {
 	return server != "" && project != "" && tokenPresent
 }
 
+// EngramCloudPartiallyConfigured reports whether server and project are resolved but the cloud
+// token is missing. This is the UI trigger for the Spanish "skipped because token is absent" report.
+func EngramCloudPartiallyConfigured(cfg Config, m *manifest.Manifest) bool {
+	server, project, tokenPresent := resolveEngramCloudConfig(cfg, m)
+	return server != "" && project != "" && !tokenPresent
+}
+
 // Uninstall reverses everything Install (and `click update`'s re-sync) can have written:
 // uninstalls the managed plugins, removes the click-ai-devkit marketplace, strips the managed
 // CLAUDE.md block, removes the managed memory-guard hook entry, and reverses the Engram plugin —

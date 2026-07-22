@@ -144,7 +144,9 @@ func runInstall(cmd *cobra.Command) error {
 	}
 	surfacePathWarning(out, r, engramPathWarning)
 
-	if cloudConfigured {
+	if installer.EngramCloudPartiallyConfigured(cfg, m) {
+		reportSkippedCloudEnrollment(out, r)
+	} else if cloudConfigured {
 		if err := r.RunStep("Enrolando Engram Cloud…", "Engram Cloud enrolado", func() error {
 			return syncEngramCloudFunc(cfg, m)
 		}); err != nil {
