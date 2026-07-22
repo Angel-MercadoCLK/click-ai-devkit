@@ -8,11 +8,10 @@
  *
  *   node --test internal/installer/assets/openclaw/click-memory-guard/plugins/hooks.test.js
  *
- * EXECUTION STATUS (this apply session): written test-first against hooks.js's actual exports and
- * manually traced line-by-line against hooks.js's source, but NEVER ACTUALLY RUN — no Bash tool was
- * available this session (matching PR-A/PR-B's original apply sessions before their own follow-up
- * Bash-capable verification passes). Needs a `node --test` execution pass before this can be called
- * verified. Every test below only exercises hooks.js's exported pure/injectable-seam functions
+ * EXECUTION STATUS: written test-first against hooks.js's actual exports and manually traced
+ * line-by-line against hooks.js's source, then confirmed executable in a Bash-capable verification
+ * pass (13/13 passing via `node --test`). Every test below only exercises hooks.js's exported
+ * pure/injectable-seam functions
  * (isEngramMemSaveTool, buildPreToolUsePayload, runClickMemoryGuard with a fake spawnFn) — NONE of
  * them spawn a real child process, matching this codebase's "small mocks/interfaces around system or
  * command execution boundaries" convention (go-testing skill, applied here to its JS counterpart).
