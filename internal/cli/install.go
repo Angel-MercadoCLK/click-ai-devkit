@@ -203,6 +203,13 @@ func runInstall(cmd *cobra.Command) error {
 		}); err != nil {
 			return err
 		}
+		// PR4: synchronize the click-owned OpenClaw skill manifests (clickhola, clickdev) after the
+		// plugin install, matching openClawWriteSteps' position for the skill sync step.
+		if err := r.RunStep("Sincronizando skills clickhola y clickdev en OpenClaw…", "Skills clickhola y clickdev sincronizados en OpenClaw", func() error {
+			return installer.SyncOpenClawSkills(cfg)
+		}); err != nil {
+			return err
+		}
 	}
 
 	fmt.Fprintln(out, r.Info("Instalación completa."))

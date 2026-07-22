@@ -30,6 +30,20 @@ func SetRemoveEngramPluginFuncForTests(fn func(installer.Config) (string, error)
 	return func() { removeEngramPluginFunc = old }
 }
 
+// removeOpenClawSkillsFunc is the injectable seam behind runUninstall's
+// installer.RemoveOpenClawSkills call, mirroring removeEngramPluginFunc above. It lets CLI-level
+// tests prove PR4's resilience contract: a failure removing the click-owned OpenClaw skill
+// directories must be recorded and reported without aborting the rest of the teardown.
+var removeOpenClawSkillsFunc = installer.RemoveOpenClawSkills
+
+// SetRemoveOpenClawSkillsFuncForTests overrides removeOpenClawSkillsFunc for tests and returns a
+// restore function.
+func SetRemoveOpenClawSkillsFuncForTests(fn func(installer.Config) error) func() {
+	old := removeOpenClawSkillsFunc
+	removeOpenClawSkillsFunc = fn
+	return func() { removeOpenClawSkillsFunc = old }
+}
+
 func newUninstallCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall",
@@ -144,6 +158,16 @@ func runUninstall(cmd *cobra.Command) error {
 		"Plugin de memory-guard para OpenClaw eliminado",
 		false,
 		func() error { return installer.RemoveOpenClawPlugin(cfg) },
+	)
+
+	// PR4: remove the click-owned OpenClaw skill directories (clickhola, clickdev) after plugin
+	// removal, leaving any user-created sibling skill directories untouched.
+	runStep(
+		"skills de OpenClaw",
+		"Quitando skills clickhola y clickdev de OpenClaw…",
+		"Skills clickhola y clickdev de OpenClaw eliminados",
+		false,
+		func() error { return removeOpenClawSkillsFunc(cfg) },
 	)
 
 	// RemoveEngramPlugin only reverses Engram when click's own state says click installed it —

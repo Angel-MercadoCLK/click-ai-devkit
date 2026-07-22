@@ -50,7 +50,7 @@ func updateWriteSteps(engramVersion string, cfg installer.Config) []string {
 // is populated (OpenClaw detected and not skipped via --skip-openclaw), or nil when absent — the
 // shared per-target write-step builder reused by both installWriteSteps and updateWriteSteps
 // (task 2.18's REFACTOR) so the two commands' preview lists can never drift from each other for the
-// OpenClaw portion either. Order matches where install.go/update.go actually run these two writes:
+// OpenClaw portion either. Order matches where install.go/update.go actually run these writes:
 // LAST, after every other write step, mirroring how they're appended here.
 func openClawWriteSteps(cfg installer.Config) []string {
 	if cfg.OpenClawHome == "" {
@@ -60,6 +60,7 @@ func openClawWriteSteps(cfg installer.Config) []string {
 		"Actualizando AGENTS.md y SOUL.md de OpenClaw…",
 		"Registrando Engram en OpenClaw (mcpServers)…",
 		"Instalando plugin de memory-guard para OpenClaw…",
+		"Sincronizando skills clickhola y clickdev en OpenClaw…",
 	}
 }
 

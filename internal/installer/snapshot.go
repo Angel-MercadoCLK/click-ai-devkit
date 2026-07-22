@@ -41,15 +41,17 @@ type snapshotSource struct {
 // settings.json ALWAYS (design's Data Flow — the two root-level files `click install`/`click
 // update` write to, ahead of any external `claude` subprocess invocation), PLUS OpenClaw's
 // AGENTS.md/SOUL.md/openclaw.json AND the click-memory-guard plugin's files (hooks.js, plugin.json —
-// PR-C task 3.9's "add file(s) to PR-B's per-target snapshot list") when cfg.OpenClawHome is
-// populated (openclaw-target-support spec's install-snapshot-preview capability — generalizing this
-// from a fixed 2-file list to a per-target list, so install-reliability-foundation's
-// backup/preview/rollback protection extends to every OpenClaw file, including the plugin). Order
-// is fixed so manifest.json's entry order is deterministic across runs.
+// PR-C task 3.9's "add file(s) to PR-B's per-target snapshot list") AND the click-owned OpenClaw
+// skill manifests (clickhola/SKILL.md, clickdev/SKILL.md — PR4's lifecycle wiring) when
+// cfg.OpenClawHome is populated (openclaw-target-support spec's install-snapshot-preview capability
+// — generalizing this from a fixed 2-file list to a per-target list, so install-reliability-
+// foundation's backup/preview/rollback protection extends to every OpenClaw file). Order is fixed
+// so manifest.json's entry order is deterministic across runs.
 //
-// The plugin's own file list (openClawPluginRelPaths, openclawplugin.go) is the single source of
-// truth iterated here — SyncOpenClawPlugin and snapshotSources can never drift out of sync about
-// which plugin files exist.
+// The plugin's own file list (openClawPluginRelPaths, openclawplugin.go) and the skill's own file
+// list (openClawSkillRelPaths, openclawskills.go) are the single sources of truth iterated here —
+// SyncOpenClawPlugin/SyncOpenClawSkills and snapshotSources can never drift out of sync about which
+// files exist.
 //
 // ZERO behavior change for a Claude-only host: when cfg.OpenClawHome == "" (the zero value, exactly
 // what every pre-existing caller that never sets it produces), this returns the identical 2-entry
@@ -71,6 +73,12 @@ func snapshotSources(cfg Config) []snapshotSource {
 		sources = append(sources, snapshotSource{
 			originalPath: filepath.Join(cfg.OpenClawPluginDir(), filepath.FromSlash(rel)),
 			backupFile:   openClawPluginBackupFileName(rel),
+		})
+	}
+	for _, rel := range openClawSkillRelPaths {
+		sources = append(sources, snapshotSource{
+			originalPath: filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel)),
+			backupFile:   openClawSkillBackupFileName(rel),
 		})
 	}
 	return sources
@@ -203,6 +211,9 @@ func RestoreRun(cfg Config) error {
 		data, readErr := os.ReadFile(backupPath)
 		if readErr != nil {
 			return fmt.Errorf("installer: read snapshot backup %s: %w", backupPath, readErr)
+		}
+		if mkdirErr := os.MkdirAll(filepath.Dir(entry.OriginalPath), 0o755); mkdirErr != nil {
+			return fmt.Errorf("installer: create restore dir for %s: %w", entry.OriginalPath, mkdirErr)
 		}
 		if writeErr := atomicWriteFile(entry.OriginalPath, data, 0o600); writeErr != nil {
 			return fmt.Errorf("installer: restore %s: %w", entry.OriginalPath, writeErr)

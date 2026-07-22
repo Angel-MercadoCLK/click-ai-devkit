@@ -61,6 +61,10 @@ func TestClickSDDSkills_NoOrphanPhaseDirectories(t *testing.T) {
 		"agent-builder": true,
 		// _shared holds cross-phase reference docs (e.g. result-contract.md), not a phase skill.
 		"_shared": true,
+		// clickhola is a thin OpenClaw skill alias, not an SDD phase.
+		"clickhola": true,
+		// clickdev is a thin OpenClaw skill alias, not an SDD phase.
+		"clickdev": true,
 	}
 
 	skillsDir := filepath.Join("..", "..", "plugins", "click-sdd", "skills")
