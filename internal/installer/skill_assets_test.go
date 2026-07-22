@@ -28,7 +28,7 @@ func TestSkillAssets(t *testing.T) {
 			path:          filepath.Join("..", "..", "internal", "installer", "assets", "openclaw", "skills", "clickhola", "SKILL.md"),
 			wantName:      "clickhola",
 			wantInvokable: true,
-			wantDesc:      "non-technical requesters who ambiguously ask to build/imagine an app, screen, or feature",
+			wantDesc:      "construir o imaginar una app, pantalla o funcionalidad",
 			wantMarkers: []string{
 				"# clickhola — captura de ideas para Click AI (perfil no técnico)",
 				"habla en español",

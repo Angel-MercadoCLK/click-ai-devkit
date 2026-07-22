@@ -1,6 +1,6 @@
 ---
 name: clickhola
-description: Spanish description for non-technical requesters who ambiguously ask to build/imagine an app, screen, or feature; says it conducts a simple interview, shows a visual prototype, and documents intent for a developer.
+description: Úsalo cuando alguien no técnico pide de forma ambigua construir o imaginar una app, pantalla o funcionalidad ("hazme una app de X", "quiero algo para Y"). Conduce una entrevista simple en español, muestra un prototipo visual y guarda un brief de intención para que un desarrollador lo retome.
 user-invocable: true
 metadata:
   openclaw:
