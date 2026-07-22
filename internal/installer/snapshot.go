@@ -37,15 +37,43 @@ type snapshotSource struct {
 	backupFile   string
 }
 
-// snapshotSources returns the fixed set of files a run-start snapshot covers: CLAUDE.md and
-// settings.json (design's Data Flow — the two root-level files `click install`/`click update`
-// write to, ahead of any external `claude` subprocess invocation). Order is fixed so
-// manifest.json's entry order is deterministic across runs.
+// snapshotSources returns the per-target set of files a run-start snapshot covers: CLAUDE.md and
+// settings.json ALWAYS (design's Data Flow — the two root-level files `click install`/`click
+// update` write to, ahead of any external `claude` subprocess invocation), PLUS OpenClaw's
+// AGENTS.md/SOUL.md/openclaw.json AND the click-memory-guard plugin's files (hooks.js, plugin.json —
+// PR-C task 3.9's "add file(s) to PR-B's per-target snapshot list") when cfg.OpenClawHome is
+// populated (openclaw-target-support spec's install-snapshot-preview capability — generalizing this
+// from a fixed 2-file list to a per-target list, so install-reliability-foundation's
+// backup/preview/rollback protection extends to every OpenClaw file, including the plugin). Order
+// is fixed so manifest.json's entry order is deterministic across runs.
+//
+// The plugin's own file list (openClawPluginRelPaths, openclawplugin.go) is the single source of
+// truth iterated here — SyncOpenClawPlugin and snapshotSources can never drift out of sync about
+// which plugin files exist.
+//
+// ZERO behavior change for a Claude-only host: when cfg.OpenClawHome == "" (the zero value, exactly
+// what every pre-existing caller that never sets it produces), this returns the identical 2-entry
+// slice it always did.
 func snapshotSources(cfg Config) []snapshotSource {
-	return []snapshotSource{
+	sources := []snapshotSource{
 		{originalPath: cfg.ClaudeMDPath(), backupFile: "CLAUDE.md"},
 		{originalPath: cfg.SettingsPath(), backupFile: "settings.json"},
 	}
+	if cfg.OpenClawHome == "" {
+		return sources
+	}
+	sources = append(sources,
+		snapshotSource{originalPath: cfg.OpenClawAgentsMDPath(), backupFile: "AGENTS.md"},
+		snapshotSource{originalPath: cfg.OpenClawSoulMDPath(), backupFile: "SOUL.md"},
+		snapshotSource{originalPath: cfg.OpenClawMCPConfigPath(), backupFile: "openclaw.json"},
+	)
+	for _, rel := range openClawPluginRelPaths {
+		sources = append(sources, snapshotSource{
+			originalPath: filepath.Join(cfg.OpenClawPluginDir(), filepath.FromSlash(rel)),
+			backupFile:   openClawPluginBackupFileName(rel),
+		})
+	}
+	return sources
 }
 
 // snapshotLatestDir is the single-latest-retention snapshot directory (design's "Retention"

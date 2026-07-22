@@ -9,6 +9,92 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 )
 
+// --- openclaw-target-support write-step generalization (tasks 2.14-2.18) ---
+
+// TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps guards the "zero behavior change"
+// contract: a Config with no OpenClawHome must produce the exact same 6-step list installWriteSteps
+// returned before OpenClaw support existed — no new prompts, no new lines.
+func TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) {
+	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir()})
+	want := []string{
+		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
+		"Instalando Engram (memoria persistente)…",
+		"Registrando Context7 (documentación de librerías)…",
+		"Actualizando CLAUDE.md…",
+		"Registrando memory-guard…",
+		"Guardando modelos por fase de click-sdd…",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("installWriteSteps() = %#v, want exactly %d steps (pre-change behavior)", got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("installWriteSteps()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestInstallWriteSteps_OpenClawPresent_AppendsThreeOpenClawSteps is task 2.14's RED test, bumped
+// from 2 to 3 OpenClaw steps (Safety Net update, PR-C/task 3.9: the click-memory-guard plugin
+// install step is appended alongside AGENTS.md/SOUL.md and the MCP registration step) — when
+// OpenClaw is detected (cfg.OpenClawHome populated), the write plan must list all three targets.
+func TestInstallWriteSteps_OpenClawPresent_AppendsThreeOpenClawSteps(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	got := installWriteSteps(cfg)
+	if len(got) != 9 {
+		t.Fatalf("installWriteSteps() = %#v, want 9 steps (6 Claude + 3 OpenClaw)", got)
+	}
+	for _, step := range got[6:] {
+		if !strings.Contains(step, "OpenClaw") {
+			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[6:])
+		}
+	}
+}
+
+// TestUpdateWriteSteps_OpenClawPresent_AppendsThreeOpenClawSteps mirrors the install-side test
+// above for updateWriteSteps.
+func TestUpdateWriteSteps_OpenClawPresent_AppendsThreeOpenClawSteps(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	got := updateWriteSteps("0.1.1", cfg)
+	if len(got) != 9 {
+		t.Fatalf("updateWriteSteps() = %#v, want 9 steps (6 Claude + 3 OpenClaw)", got)
+	}
+	for _, step := range got[6:] {
+		if !strings.Contains(step, "OpenClaw") {
+			t.Fatalf("updateWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[6:])
+		}
+	}
+}
+
+// TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps is updateWriteSteps' zero-behavior-
+// change guard, mirroring TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps.
+func TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) {
+	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()})
+	if len(got) != 6 {
+		t.Fatalf("updateWriteSteps() = %#v, want exactly 6 steps when OpenClaw is absent", got)
+	}
+}
+
+// TestOpenClawWriteSteps_Absent_ReturnsNil guards openClawWriteSteps' own base case directly.
+func TestOpenClawWriteSteps_Absent_ReturnsNil(t *testing.T) {
+	if got := openClawWriteSteps(installer.Config{}); got != nil {
+		t.Fatalf("openClawWriteSteps() = %#v, want nil when OpenClawHome is empty", got)
+	}
+}
+
+// TestOpenClawWriteSteps_Present_IncludesPluginStep is PR-C's supporting RED test: the third
+// OpenClaw step must mention the memory-guard plugin install, distinct from the AGENTS.md/SOUL.md
+// and MCP-registration steps PR-B already added.
+func TestOpenClawWriteSteps_Present_IncludesPluginStep(t *testing.T) {
+	got := openClawWriteSteps(installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()})
+	if len(got) != 3 {
+		t.Fatalf("openClawWriteSteps() = %#v, want exactly 3 steps", got)
+	}
+	if !strings.Contains(got[2], "memory-guard") {
+		t.Fatalf("openClawWriteSteps()[2] = %q, want it to mention the memory-guard plugin install", got[2])
+	}
+}
+
 // TestRenderWritePlan_ListsStepsInOrder is the RED test for renderWritePlan: it asserts the exact
 // (golden) plain-mode output — backup location line first, then a numbered list of steps in the
 // exact order given — since renderWritePlan/preview.go do not exist yet at RED time.

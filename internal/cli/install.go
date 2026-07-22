@@ -22,10 +22,15 @@ import (
 // profileFlag lets a non-interactive/scripted install pick a built-in orchestration profile
 // (design D4) without going through the interactive profile-select TUI; an empty or unrecognized
 // value falls back to "balanced" (modelconfig.ResolveProfile's own fallback rule).
+//
+// skipOpenClawFlag is openclaw-target-support's escape hatch: even when `openclaw` resolves on
+// PATH, --skip-openclaw forces a Claude-only install/update, matching the spec's "no per-target
+// wizard" decision with a single explicit opt-out instead.
 const (
 	yesFlag            = "yes"
 	nonInteractiveFlag = "non-interactive"
 	profileFlag        = "profile"
+	skipOpenClawFlag   = "skip-openclaw"
 )
 
 func newInstallCommand() *cobra.Command {
@@ -39,6 +44,7 @@ func newInstallCommand() *cobra.Command {
 	cmd.Flags().Bool(yesFlag, false, "Skip the interactive model-selection screen; install click-sdd with default per-phase models")
 	cmd.Flags().Bool(nonInteractiveFlag, false, "Alias for --yes")
 	cmd.Flags().String(profileFlag, "", "Perfil de orquestación a usar (balanced/cost-saver/quality); default balanced. En instalación no interactiva selecciona el preset directamente; en la interactiva sólo precarga el editor por fase inicial.")
+	cmd.Flags().Bool(skipOpenClawFlag, false, "Omitir la integración con OpenClaw aunque se detecte openclaw en este equipo")
 	return cmd
 }
 
@@ -72,6 +78,23 @@ func runInstall(cmd *cobra.Command) error {
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome}
 
+	// openclaw-target-support: detect+confirm, no per-target wizard. OpenClawHome stays empty
+	// (zero value) whenever --skip-openclaw is set OR openclaw doesn't resolve on PATH — every
+	// OpenClaw-aware helper below (installWriteSteps, SyncOpenClawWorkspace, SyncOpenClawMCPConfig,
+	// snapshotSources) treats an empty OpenClawHome as "absent, skip silently", so this single
+	// assignment is the ONLY place that decides whether OpenClaw is in scope for this run.
+	skipOpenClaw, err := cmd.Flags().GetBool(skipOpenClawFlag)
+	if err != nil {
+		return err
+	}
+	if !skipOpenClaw && installer.OpenClawAvailable() {
+		openClawHome, err := installer.ResolveOpenClawHome()
+		if err != nil {
+			return err
+		}
+		cfg.OpenClawHome = openClawHome
+	}
+
 	nonInteractive := isNonInteractiveInstall(cmd, out)
 	profileFlagValue, _ := cmd.Flags().GetString(profileFlag)
 	profile, models, cancelled, err := resolveInstallModels(cmd, out, r, cfg, nonInteractive, profileFlagValue, runInstallSelectTUI)
@@ -86,7 +109,7 @@ func runInstall(cmd *cobra.Command) error {
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE step 1 below (the first external `claude` subprocess invocation). A
 	// decline here means zero writes: nothing below this point has run yet.
-	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, nonInteractive, installWriteSteps)
+	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, nonInteractive, installWriteSteps(cfg))
 	if err != nil {
 		return err
 	}
@@ -155,6 +178,31 @@ func runInstall(cmd *cobra.Command) error {
 		return installer.SaveModelsWithProfile(cfg, profile, models)
 	}); err != nil {
 		return err
+	}
+
+	// openclaw-target-support: appended LAST, matching openClawWriteSteps' position at the end of
+	// installWriteSteps(cfg) — this whole block (3 RunStep calls: AGENTS.md/SOUL.md, MCP
+	// registration, and the memory-guard plugin) is gated on the same condition openClawWriteSteps
+	// used to decide whether to list them in the preview at all.
+	if cfg.OpenClawHome != "" {
+		if err := r.RunStep("Actualizando AGENTS.md y SOUL.md de OpenClaw…", "AGENTS.md y SOUL.md de OpenClaw actualizados", func() error {
+			return installer.SyncOpenClawWorkspace(cfg)
+		}); err != nil {
+			return err
+		}
+		if err := r.RunStep("Registrando Engram en OpenClaw (mcpServers)…", "Engram registrado en OpenClaw", func() error {
+			return installer.SyncOpenClawMCPConfig(cfg)
+		}); err != nil {
+			return err
+		}
+		// PR-C (design #1666's memory-guard-parity piece, OCG-1..6): installs the click-memory-guard
+		// OpenClaw plugin last, after both OpenClaw writes above, matching openClawWriteSteps'
+		// position for it in the preview plan.
+		if err := r.RunStep("Instalando plugin de memory-guard para OpenClaw…", "Plugin de memory-guard instalado en OpenClaw", func() error {
+			return installer.SyncOpenClawPlugin(cfg)
+		}); err != nil {
+			return err
+		}
 	}
 
 	fmt.Fprintln(out, r.Info("Instalación completa."))

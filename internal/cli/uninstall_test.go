@@ -177,6 +177,51 @@ func TestUninstallCommand_ClaudeMissing_StillRunsEveryStepAndReportsFriendlyMess
 	}
 }
 
+// TestUninstallCommand_RemovesOpenClawMemoryGuardPlugin is task 3.12's RED test: `click uninstall`
+// must remove the click-memory-guard OpenClaw plugin directory (parity with how the Claude Code
+// memory-guard hook gets unregistered a few lines above it in runUninstall).
+func TestUninstallCommand_RemovesOpenClawMemoryGuardPlugin(t *testing.T) {
+	claudeHome := t.TempDir()
+	openClawHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+	restoreExec := installer.SetOSExecutableForTests(func() (string, error) { return "/opt/click/bin/click", nil })
+	if err := installer.SyncOpenClawPlugin(cfg); err != nil {
+		restoreExec()
+		t.Fatalf("SyncOpenClawPlugin() error = %v", err)
+	}
+	restoreExec()
+	if _, err := os.Stat(cfg.OpenClawPluginDir()); err != nil {
+		t.Fatalf("Stat(plugin dir) before uninstall error = %v, want it to exist first", err)
+	}
+
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	out, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall command error = %v, output:\n%s", err, out)
+	}
+	if _, err := os.Stat(cfg.OpenClawPluginDir()); !os.IsNotExist(err) {
+		t.Fatalf("Stat(plugin dir) after uninstall error = %v, want os.IsNotExist", err)
+	}
+}
+
+// TestUninstallCommand_OpenClawNeverInstalled_NoOpNoError guards the "OpenClaw never touched this
+// machine" case — `click uninstall` must succeed without error even when
+// <OpenClawHome>/plugins/click-memory-guard was never created.
+func TestUninstallCommand_OpenClawNeverInstalled_NoOpNoError(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	out, err := execRoot(t, home, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall command error = %v, want nil when OpenClaw was never installed, output:\n%s", err, out)
+	}
+}
+
 // TestUninstallCommand_CorruptedEngramState_SucceedsWithWarning is Finding 3's CLI-level regression
 // test: a truncated/corrupted engram.json must not abort `click uninstall` — RemoveEngramPlugin now
 // reports it as a warning (installer.RemoveEngramPlugin's own corrupted-state handling), so with

@@ -13,11 +13,27 @@ import (
 // home directory (implementation brief's hard safety rule).
 const claudeHomeEnvOverride = "CLICK_CLAUDE_HOME"
 
+// openClawHomeEnvOverride mirrors claudeHomeEnvOverride for OpenClaw: it lets tests (and power
+// users) point click at a directory other than the real ~/.openclaw. Every test that exercises
+// OpenClaw install/update writes MUST use this override with a t.TempDir() — never the real home
+// directory, same hard safety rule as claudeHomeEnvOverride.
+const openClawHomeEnvOverride = "CLICK_OPENCLAW_HOME"
+
 // Config carries every path click's installer needs. It is deliberately just ClaudeHome today —
 // Slice 1 only touches the plugin dir and CLAUDE.md, both derived from it.
 type Config struct {
 	// ClaudeHome is the root of the target Claude Code installation, normally ~/.claude.
 	ClaudeHome string
+
+	// OpenClawHome is the root of a detected OpenClaw installation, normally ~/.openclaw. It stays
+	// the zero value (empty string) when OpenClaw is not detected on this machine (or
+	// --skip-openclaw was passed) — a valid, silent state (openclaw-target-support spec's
+	// install-config capability, "OpenClaw absent" scenario): every derived OpenClawXxxPath() below
+	// still resolves (as empty-rooted paths), and every Claude-only path (ClaudeMDPath,
+	// SettingsPath, ...) is completely unaffected. Populated by install.go/update.go via
+	// ResolveOpenClawHome(), gated on OpenClawAvailable() — see runInstall's cfg construction for
+	// the detect+confirm wiring.
+	OpenClawHome string
 }
 
 // ResolveClaudeHome resolves the Claude Code home directory click should install into: the
@@ -32,6 +48,23 @@ func ResolveClaudeHome() (string, error) {
 		return "", fmt.Errorf("installer: resolve claude home: %w", err)
 	}
 	return filepath.Join(home, ".claude"), nil
+}
+
+// ResolveOpenClawHome resolves the OpenClaw home directory click should write into when OpenClaw
+// is detected (and not skipped via --skip-openclaw): the CLICK_OPENCLAW_HOME env override if set
+// (used by tests and advanced overrides), otherwise <user home>/.openclaw. Mirrors
+// ResolveClaudeHome's exact pattern. Callers are responsible for deciding WHETHER to call this at
+// all (openclaw-target-support spec's skip-on-absent semantics) — this function only resolves the
+// path, it never probes whether OpenClaw is actually installed.
+func ResolveOpenClawHome() (string, error) {
+	if v := os.Getenv(openClawHomeEnvOverride); v != "" {
+		return v, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("installer: resolve openclaw home: %w", err)
+	}
+	return filepath.Join(home, ".openclaw"), nil
 }
 
 // ClickSDDPluginDir is where the click-sdd plugin is installed under this Config's ClaudeHome.
@@ -143,4 +176,37 @@ func (c Config) Context7ConfigPath() string {
 // install ownership — mirroring EngramStatePath's shape and purpose.
 func (c Config) Context7StatePath() string {
 	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "context7.json")
+}
+
+// OpenClawWorkspaceDir is where OpenClaw's per-workspace managed files (AGENTS.md, SOUL.md) live,
+// mirroring how ClaudeMDPath derives from ClaudeHome (openclaw-target-support spec's
+// openclaw-managed-files capability).
+func (c Config) OpenClawWorkspaceDir() string {
+	return filepath.Join(c.OpenClawHome, "workspace")
+}
+
+// OpenClawAgentsMDPath is the managed AGENTS.md file's path under this Config's
+// OpenClawWorkspaceDir — OpenClaw's counterpart to ClaudeMDPath.
+func (c Config) OpenClawAgentsMDPath() string {
+	return filepath.Join(c.OpenClawWorkspaceDir(), "AGENTS.md")
+}
+
+// OpenClawSoulMDPath is the managed SOUL.md file's path under this Config's OpenClawWorkspaceDir.
+func (c Config) OpenClawSoulMDPath() string {
+	return filepath.Join(c.OpenClawWorkspaceDir(), "SOUL.md")
+}
+
+// OpenClawMCPConfigPath is OpenClaw's own MCP server registry file, directly under OpenClawHome
+// (confirmed shape: ~/.openclaw/openclaw.json, top-level mcpServers object — design #1666's
+// resolved risk) — OpenClaw's counterpart to SettingsPath.
+func (c Config) OpenClawMCPConfigPath() string {
+	return filepath.Join(c.OpenClawHome, "openclaw.json")
+}
+
+// OpenClawPluginDir is where the click-memory-guard OpenClaw plugin (design #1666's "ADDED PIECE:
+// OpenClaw memory-guard parity", decisions OCG-1..6) is installed under this Config's OpenClawHome —
+// OpenClaw's plugins/ directory, mirroring ClickSDDPluginDir's shape under ClaudeHome's own
+// plugins/ directory.
+func (c Config) OpenClawPluginDir() string {
+	return filepath.Join(c.OpenClawHome, "plugins", "click-memory-guard")
 }

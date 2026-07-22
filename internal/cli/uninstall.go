@@ -76,7 +76,18 @@ func runUninstall(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	cfg := installer.Config{ClaudeHome: claudeHome}
+	// openclaw-target-support (PR-C, design #1666's OCG-1..6): resolved UNCONDITIONALLY, unlike
+	// install/update's detect+confirm gate — removing the plugin dir is safe and idempotent even on
+	// a machine where openclaw is no longer on PATH (or never was); RemoveOpenClawPlugin's
+	// os.RemoveAll is a no-op when the directory doesn't exist. This mirrors StripManagedBlock's own
+	// unconditional-attempt posture a few lines below, rather than RemoveEngramPlugin/RemoveContext7's
+	// ownership-gated one — there is no per-install "did click own this" state for the plugin dir to
+	// check, so "always attempt removal" is the simplest safe teardown.
+	openClawHome, err := installer.ResolveOpenClawHome()
+	if err != nil {
+		return err
+	}
+	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
 
 	claudeErr := installer.PreflightClaude()
 	if claudeErr != nil {
@@ -122,6 +133,17 @@ func runUninstall(cmd *cobra.Command) error {
 		"memory-guard eliminado",
 		false,
 		func() error { return installer.UnregisterMemoryGuardHook(cfg) },
+	)
+
+	// openclaw-target-support (PR-C, task 3.13): parity with how the Claude Code memory-guard hook
+	// above gets torn down — removes the click-memory-guard OpenClaw plugin directory. No-op (nil,
+	// no error) when it was never installed.
+	runStep(
+		"plugin de OpenClaw",
+		"Quitando plugin de memory-guard para OpenClaw…",
+		"Plugin de memory-guard para OpenClaw eliminado",
+		false,
+		func() error { return installer.RemoveOpenClawPlugin(cfg) },
 	)
 
 	// RemoveEngramPlugin only reverses Engram when click's own state says click installed it —

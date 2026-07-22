@@ -1,0 +1,11 @@
+{
+  "name": "click-memory-guard",
+  "version": "1.0.0",
+  "description": "Enforces click's memory-guard deny-by-default scan on Engram mem_save calls made by OpenClaw agents, mirroring Claude Code's PreToolUse hook (design #1666, decisions OCG-1..6).",
+  "main": "plugins/hooks.js",
+  "entry": "plugins/hooks.js",
+  "hooks": {
+    "before_tool_call": "plugins/hooks.js"
+  },
+  "_verifyAtApply": "This manifest's filename (plugin.json), top-level shape, and hook-registration key are a DOCUMENTED BEST GUESS (design #1666's 'Verify-at-apply-time' items 1-2) — no live OpenClaw Plugin SDK reference was available to this apply session. main/entry/hooks.before_tool_call all point at the SAME file (plugins/hooks.js) so whichever key OpenClaw's loader actually reads, it resolves correctly. This key itself is intentionally non-standard and can simply be deleted if OpenClaw's loader ever turns out to enforce strict-schema validation on unknown top-level fields."
+}

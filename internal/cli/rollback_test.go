@@ -72,6 +72,9 @@ func TestRollback_MatchingHash_NoForce_RestoresBothFilesAndSnapshotSurvives(t *t
 	if err != nil {
 		t.Fatalf("rollback error = %v, want nil, output:\n%s", err, out)
 	}
+	if !strings.Contains(out, "Archivos gestionados por click restaurados desde el último respaldo.") {
+		t.Fatalf("rollback output = %q, want the managed-files restore success message", out)
+	}
 
 	gotClaude, err := os.ReadFile(cfg.ClaudeMDPath())
 	if err != nil {
@@ -158,6 +161,9 @@ func TestRollback_DriftWithForce_Proceeds(t *testing.T) {
 func TestRollback_HiddenFromHelp(t *testing.T) {
 	home := t.TempDir()
 	cmd := newRollbackCommand()
+	if cmd.Short != "Restaurar los archivos gestionados por click desde el último respaldo de instalación/actualización" {
+		t.Fatalf("rollback Short = %q, want the managed-files description", cmd.Short)
+	}
 	if !strings.Contains(cmd.Long, "CLI externo `claude`") || !strings.Contains(cmd.Long, "no solo cambios de Click") {
 		t.Fatalf("rollback Long = %q, want coarse-snapshot warning about external claude changes", cmd.Long)
 	}

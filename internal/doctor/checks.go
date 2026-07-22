@@ -54,6 +54,7 @@ func Run(cfg installer.Config) Report {
 	return Report{Checks: []CheckResult{
 		checkGit(cfg),
 		checkClaude(cfg),
+		checkOpenClaw(cfg),
 		checkPlugin(cfg),
 		checkMemoryPlugin(cfg),
 		checkReviewPlugin(cfg),
@@ -109,6 +110,23 @@ func checkClaude(cfg installer.Config) CheckResult {
 		return CheckResult{Name: name, Healthy: true, Detail: "resuelto en " + path}
 	}
 	return CheckResult{Name: name, Healthy: false, Detail: installer.ClaudeMissingMessage}
+}
+
+// checkOpenClaw reports whether the openclaw CLI is resolvable on PATH — read-only detection
+// groundwork for OpenClaw as a second install target (openclaw-target-support spec's
+// openclaw-detection capability, "Doctor reports OpenClaw status" scenario). Unlike checkGit/
+// checkClaude, OpenClaw is NOT a required dependency of click itself — it is an optional second
+// target — so this check is ALWAYS Healthy: true regardless of presence; only its Detail changes.
+// This guarantees a machine without OpenClaw installed sees ZERO change in `click doctor`'s
+// overall Healthy() result, matching this slice's zero-risk-to-Claude-only-hosts requirement.
+func checkOpenClaw(cfg installer.Config) CheckResult {
+	const name = "openclaw"
+
+	path, ok := installer.OpenClawPath()
+	if ok {
+		return CheckResult{Name: name, Healthy: true, Detail: "resuelto en " + path}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: "no detectado (objetivo opcional, sin instalación de OpenClaw en este equipo)"}
 }
 
 func checkPlugin(cfg installer.Config) CheckResult {

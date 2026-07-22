@@ -12,31 +12,54 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// installWriteSteps is runInstall's fixed, ordered list of write steps — reused VERBATIM (same
-// Spanish labels) from its own r.RunStep calls, so the preview plan renderWritePlan shows can never
-// drift from what install.go actually runs (spec's install-preview capability: "the plan MUST be
-// shown ... files touched, order").
-var installWriteSteps = []string{
-	"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
-	"Instalando Engram (memoria persistente)…",
-	"Registrando Context7 (documentación de librerías)…",
-	"Actualizando CLAUDE.md…",
-	"Registrando memory-guard…",
-	"Guardando modelos por fase de click-sdd…",
+// installWriteSteps builds runInstall's ordered list of write steps for cfg — reused VERBATIM
+// (same Spanish labels) from its own r.RunStep calls, so the preview plan renderWritePlan shows
+// can never drift from what install.go actually runs (spec's install-preview capability: "the plan
+// MUST be shown ... files touched, order"). The trailing OpenClaw steps (openClawWriteSteps) are
+// appended only when cfg.OpenClawHome is populated — a Claude-only host (cfg.OpenClawHome == "")
+// gets the exact same 6-step list this returned before OpenClaw support existed.
+func installWriteSteps(cfg installer.Config) []string {
+	steps := []string{
+		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
+		"Instalando Engram (memoria persistente)…",
+		"Registrando Context7 (documentación de librerías)…",
+		"Actualizando CLAUDE.md…",
+		"Registrando memory-guard…",
+		"Guardando modelos por fase de click-sdd…",
+	}
+	return append(steps, openClawWriteSteps(cfg)...)
 }
 
-// updateWriteSteps builds runUpdate's fixed, ordered write-step list, reusing its own r.RunStep
+// updateWriteSteps builds runUpdate's ordered write-step list for cfg, reusing its own r.RunStep
 // labels verbatim — including the Engram pin version (engramVersion), matching the exact label
 // runUpdate itself prints later for that step — so the preview plan can never drift from what
-// update.go actually runs.
-func updateWriteSteps(engramVersion string) []string {
-	return []string{
+// update.go actually runs. Same OpenClaw-appending contract as installWriteSteps.
+func updateWriteSteps(engramVersion string, cfg installer.Config) []string {
+	steps := []string{
 		"Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…",
 		"Guardando modelos por fase de click-sdd…",
 		"Actualizando CLAUDE.md…",
 		"Re-registrando memory-guard…",
 		fmt.Sprintf("Sincronizando Engram (pin %s)…", engramVersion),
 		"Sincronizando Context7 (documentación de librerías)…",
+	}
+	return append(steps, openClawWriteSteps(cfg)...)
+}
+
+// openClawWriteSteps returns the extra OpenClaw write-step labels to append when cfg.OpenClawHome
+// is populated (OpenClaw detected and not skipped via --skip-openclaw), or nil when absent — the
+// shared per-target write-step builder reused by both installWriteSteps and updateWriteSteps
+// (task 2.18's REFACTOR) so the two commands' preview lists can never drift from each other for the
+// OpenClaw portion either. Order matches where install.go/update.go actually run these two writes:
+// LAST, after every other write step, mirroring how they're appended here.
+func openClawWriteSteps(cfg installer.Config) []string {
+	if cfg.OpenClawHome == "" {
+		return nil
+	}
+	return []string{
+		"Actualizando AGENTS.md y SOUL.md de OpenClaw…",
+		"Registrando Engram en OpenClaw (mcpServers)…",
+		"Instalando plugin de memory-guard para OpenClaw…",
 	}
 }
 

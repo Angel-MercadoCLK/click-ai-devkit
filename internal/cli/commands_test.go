@@ -85,6 +85,15 @@ func seedResolvableGit(t *testing.T) {
 func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	// openclaw-target-support (PR-C safety fix): `click uninstall` now unconditionally resolves
+	// OpenClawHome (installer.ResolveOpenClawHome) to remove the memory-guard plugin dir, regardless
+	// of whether openclaw itself is currently resolvable on PATH. Without this override, every
+	// execRoot-based test (this helper is used across install/update/uninstall/doctor tests, most of
+	// which never touch OpenClaw at all) would resolve ResolveOpenClawHome() to the REAL
+	// <user home>/.openclaw on whatever machine runs `go test` — violating this codebase's own hard
+	// safety rule (config.go's openClawHomeEnvOverride doc comment: "never the real home directory").
+	// Pointing it at a throwaway t.TempDir() here makes every execRoot-based test safe by default.
+	t.Setenv("CLICK_OPENCLAW_HOME", t.TempDir())
 	seedResolvableGit(t)
 
 	root := NewRootCommand()
@@ -295,6 +304,9 @@ func TestInstallCommand_Succeeds(t *testing.T) {
 func execRootWithGitLookup(t *testing.T, claudeHome string, lookup installer.BinaryLookup, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	// Same CLICK_OPENCLAW_HOME safety override as execRoot above — see its comment for the full
+	// rationale (runUninstall's unconditional ResolveOpenClawHome call).
+	t.Setenv("CLICK_OPENCLAW_HOME", t.TempDir())
 	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup { return lookup })
 	defer restore()
 
