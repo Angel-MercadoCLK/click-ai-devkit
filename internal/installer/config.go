@@ -210,3 +210,13 @@ func (c Config) OpenClawMCPConfigPath() string {
 func (c Config) OpenClawPluginDir() string {
 	return filepath.Join(c.OpenClawHome, "plugins", "click-memory-guard")
 }
+
+// OpenClawSkillsDir is where click-owned OpenClaw skill manifests (clickhola, clickdev) are
+// synchronized under this Config's OpenClawHome — OpenClaw's skills/ directory. It returns empty
+// when OpenClawHome is empty, so SyncOpenClawSkills/RemoveOpenClawSkills can no-op safely.
+func (c Config) OpenClawSkillsDir() string {
+	if c.OpenClawHome == "" {
+		return ""
+	}
+	return filepath.Join(c.OpenClawHome, "skills")
+}

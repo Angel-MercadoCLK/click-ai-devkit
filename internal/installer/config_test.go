@@ -51,6 +51,22 @@ func TestConfig_OpenClawPluginDir(t *testing.T) {
 	}
 }
 
+// TestConfig_OpenClawSkillsDir is PR3 task 3.1's RED test: OpenClawSkillsDir must join
+// OpenClawHome with "skills", and must return empty when OpenClawHome is empty (the OpenClaw
+// absent/skip scenario) so callers can no-op safely.
+func TestConfig_OpenClawSkillsDir(t *testing.T) {
+	cfg := Config{OpenClawHome: filepath.Join("home", ".openclaw")}
+	want := filepath.Join("home", ".openclaw", "skills")
+	if got := cfg.OpenClawSkillsDir(); got != want {
+		t.Fatalf("OpenClawSkillsDir() = %q, want %q", got, want)
+	}
+
+	empty := Config{}
+	if got := empty.OpenClawSkillsDir(); got != "" {
+		t.Fatalf("OpenClawSkillsDir() with empty OpenClawHome = %q, want empty string", got)
+	}
+}
+
 func TestResolveOpenClawHome_UsesEnvOverride(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("CLICK_OPENCLAW_HOME", tmp)
