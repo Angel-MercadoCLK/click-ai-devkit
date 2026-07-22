@@ -123,8 +123,150 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	// standalone PATH-based detection check (openclaw-target-support PR-A).
 	const wantChecks = 12 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (git, claude, openclaw, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, click binary, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, context7 MCP)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d (git, claude, openclaw, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, click binary, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, engram cloud enrollment, context7 MCP)", len(report.Checks), wantChecks)
 	}
+}
+
+// --- Engram Cloud enrollment check (PR2) ---
+
+func TestCheckEngramCloud_EnrolledAndTokenPresent_ReportsHealthy(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	seedEngramCloudState(t, cfg, map[string]any{"enrolled": true, "server": "http://127.0.0.1:18080", "project": "click-ai-devkit"})
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "present")
+
+	c := checkEngramCloud(cfg)
+
+	if !c.Healthy {
+		t.Fatalf("checkEngramCloud() Healthy = false, want true when enrolled and token present: %s", c.Detail)
+	}
+	if !strings.Contains(c.Detail, "inscrito") && !strings.Contains(c.Detail, "enrolled") {
+		t.Fatalf("checkEngramCloud() Detail = %q, want enrolled wording", c.Detail)
+	}
+}
+
+func TestCheckEngramCloud_NoToken_ReportsLocalOnlyHealthy(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	// State may be absent or stale; without a token the machine is local-only by choice.
+	seedEngramCloudState(t, cfg, map[string]any{"enrolled": false})
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "")
+
+	c := checkEngramCloud(cfg)
+
+	if !c.Healthy {
+		t.Fatalf("checkEngramCloud() Healthy = false, want true (local-only, not an error): %s", c.Detail)
+	}
+	if strings.Contains(c.Detail, "error") || strings.Contains(c.Detail, "fall") {
+		t.Fatalf("checkEngramCloud() Detail = %q, want a non-error local-only status", c.Detail)
+	}
+}
+
+func TestCheckEngramCloud_MissingState_ReportsUnhealthy(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "present")
+
+	c := checkEngramCloud(cfg)
+
+	if c.Healthy {
+		t.Fatal("checkEngramCloud() Healthy = true, want false when token present but state missing")
+	}
+	if !strings.Contains(c.Detail, "click install") && !strings.Contains(c.Detail, "click update") {
+		t.Fatalf("checkEngramCloud() Detail = %q, want actionable remediation mentioning install/update", c.Detail)
+	}
+}
+
+func TestCheckEngramCloud_EnrolledFalse_ReportsUnhealthy(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	seedEngramCloudState(t, cfg, map[string]any{"enrolled": false, "server": "http://127.0.0.1:18080", "project": "click-ai-devkit"})
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "present")
+
+	c := checkEngramCloud(cfg)
+
+	if c.Healthy {
+		t.Fatal("checkEngramCloud() Healthy = true, want false when enrolled=false")
+	}
+}
+
+func TestCheckEngramCloud_MalformedState_ReportsUnhealthy(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	path := cfg.EngramCloudStatePath()
+	if err := os.MkdirAll(filepathDir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte("not-json"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "present")
+
+	c := checkEngramCloud(cfg)
+
+	if c.Healthy {
+		t.Fatal("checkEngramCloud() Healthy = true, want false when state is malformed")
+	}
+}
+
+func TestCheckEngramCloud_ReadOnlyNoSubprocess(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	seedEngramCloudState(t, cfg, map[string]any{"enrolled": true, "server": "http://127.0.0.1:18080", "project": "click-ai-devkit"})
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "present")
+
+	// Any subprocess call would panic/fail; the check must stay purely filesystem + env.
+	restore := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner {
+		return panicCommandRunner{}
+	})
+	defer restore()
+
+	before, err := os.ReadFile(cfg.EngramCloudStatePath())
+	if err != nil {
+		t.Fatalf("ReadFile(state) error = %v", err)
+	}
+	entriesBefore, err := os.ReadDir(cfg.ClaudeHome)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+
+	_ = checkEngramCloud(cfg)
+
+	after, err := os.ReadFile(cfg.EngramCloudStatePath())
+	if err != nil {
+		t.Fatalf("ReadFile(state) after check error = %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("checkEngramCloud() mutated the state file: before=%s after=%s", before, after)
+	}
+	entriesAfter, err := os.ReadDir(cfg.ClaudeHome)
+	if err != nil {
+		t.Fatalf("ReadDir() after check error = %v", err)
+	}
+	if len(entriesAfter) != len(entriesBefore) {
+		t.Fatalf("checkEngramCloud() wrote files: before %d entries, after %d entries", len(entriesBefore), len(entriesAfter))
+	}
+}
+
+// seedEngramCloudState writes a non-secret Engram Cloud state fixture under cfg's ClaudeHome.
+func seedEngramCloudState(t *testing.T, cfg installer.Config, state map[string]any) {
+	t.Helper()
+	path := cfg.EngramCloudStatePath()
+	if err := os.MkdirAll(filepathDir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(engram cloud state dir) error = %v", err)
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("json.Marshal(engram cloud state) error = %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("WriteFile(engram cloud state) error = %v", err)
+	}
+}
+
+// panicCommandRunner fails any subprocess invocation, proving the check under test never calls out.
+type panicCommandRunner struct{}
+
+func (panicCommandRunner) Run(name string, args ...string) error {
+	panic("unexpected subprocess: " + name + " " + strings.Join(args, " "))
+}
+
+func (panicCommandRunner) Output(name string, args ...string) ([]byte, error) {
+	panic("unexpected subprocess output: " + name + " " + strings.Join(args, " "))
 }
 
 // TestCheckOpenClaw_ReportsHealthyWhenResolvable guards the "present" branch: openclaw resolvable
