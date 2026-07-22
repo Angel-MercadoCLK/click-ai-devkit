@@ -147,10 +147,17 @@ func runInstall(cmd *cobra.Command) error {
 	if installer.EngramCloudPartiallyConfigured(cfg, m) {
 		reportSkippedCloudEnrollment(out, r)
 	} else if cloudConfigured {
-		if err := r.RunStep("Enrolando Engram Cloud…", "Engram Cloud enrolado", func() error {
-			return syncEngramCloudFunc(cfg, m)
-		}); err != nil {
-			return err
+		// resilience W1: Engram Cloud enrollment is opt-in and supplementary — a flaky or unreachable
+		// cloud server must never abort an otherwise-valid local install. On failure we surface a
+		// Spanish warning and CONTINUE with the remaining purely-local steps (CLAUDE.md, memory-guard,
+		// models.json, OpenClaw sync) instead of returning the error. Deliberately NOT r.RunStep: a
+		// non-fatal step must not render a red ✗/[FAIL] line — the outcome is either success or a
+		// warning, never a failure marker on a successful install.
+		fmt.Fprintln(out, r.Step("Enrolando Engram Cloud…"))
+		if cloudErr := syncEngramCloudFunc(cfg, m); cloudErr != nil {
+			fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo sincronizar Engram Cloud: %v. La instalación local continúa; reintenta más tarde con `click update`.", cloudErr)))
+		} else {
+			fmt.Fprintln(out, r.Success("Engram Cloud enrolado"))
 		}
 	}
 

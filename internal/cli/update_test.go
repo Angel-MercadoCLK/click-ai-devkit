@@ -107,9 +107,11 @@ func TestUpdateCommand_CloudConfigured_PartialTokenMissing_SkipsCloudStep(t *tes
 	}
 }
 
-// TestUpdateCommand_CloudConfigured_PropagatesError is task 4.5's failure-path test: a cloud
-// re-sync failure must be returned without corrupting local Engram state.
-func TestUpdateCommand_CloudConfigured_PropagatesError(t *testing.T) {
+// TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal is resilience fix W1: an Engram Cloud
+// re-sync failure must be NON-FATAL to `click update`. The command must (a) return nil, (b) surface a
+// Spanish warning containing the underlying error, and (c) still run the remaining steps through to
+// completion (Context7 sync and the completion line follow the cloud step in runUpdate).
+func TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -126,10 +128,28 @@ func TestUpdateCommand_CloudConfigured_PropagatesError(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
 
 	out, err := execRoot(t, home, "update")
-	if err == nil {
-		t.Fatalf("update command error = nil, want cloud error, output:\n%s", out)
+	if err != nil {
+		t.Fatalf("update command error = %v, want nil (cloud failure must be non-fatal), output:\n%s", err, out)
 	}
-	if !strings.Contains(err.Error(), errTestEngramCloud.Error()) {
-		t.Fatalf("update error = %v, want it to contain %v", err, errTestEngramCloud)
+	if !strings.Contains(out, "No se pudo sincronizar Engram Cloud") {
+		t.Fatalf("update output = %q, want it to contain the Spanish cloud-failure warning", out)
+	}
+	if !strings.Contains(out, errTestEngramCloud.Error()) {
+		t.Fatalf("update output = %q, want the warning to include the underlying error %q", out, errTestEngramCloud.Error())
+	}
+	if !strings.Contains(out, "Context7 sincronizado") {
+		t.Fatalf("update output = %q, want the steps after the cloud step to still run", out)
+	}
+	if !strings.Contains(out, "Update completo.") {
+		t.Fatalf("update output = %q, want the command to continue to completion after cloud failure", out)
+	}
+	// The CLAUDE.md managed block is written by runUpdate too — its presence confirms the local
+	// pipeline completed regardless of the cloud failure.
+	has, hErr := installer.HasManagedBlock(installer.Config{ClaudeHome: home}.ClaudeMDPath())
+	if hErr != nil {
+		t.Fatalf("HasManagedBlock error = %v", hErr)
+	}
+	if !has {
+		t.Fatalf("CLAUDE.md managed block missing after cloud failure — local steps did not run")
 	}
 }

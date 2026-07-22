@@ -71,6 +71,14 @@ func SyncEngramCloud(cfg Config, m *manifest.Manifest) error {
 		// First-time enrollment with pre-existing local-only data: the Engram Cloud docs require an
 		// explicit upgrade sequence before `engram sync --cloud` can safely push local observations
 		// into the shared project. Automating it here guarantees the migration is not skipped.
+		//
+		// Re-entrancy contract (resilience W2): if a prior run died mid-sequence, state is NOT written
+		// (Enrolled stays false), so the next run re-runs the FULL sequence below rather than the
+		// short already-enrolled path. This is safe by design: the sequence runs
+		// `engram cloud upgrade doctor -> repair -> bootstrap` before `sync`, and doctor+repair
+		// reconcile any partial/inconsistent state left by the interrupted run. Combined with cloud
+		// enrollment now being non-fatal at the CLI layer (resilience W1), a partial failure never
+		// breaks the local install/update and is simply retried on the next `click update`.
 		steps := []struct {
 			name string
 			args []string

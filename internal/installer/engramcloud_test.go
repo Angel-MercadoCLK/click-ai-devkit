@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -242,6 +243,43 @@ func TestSyncEngramCloud_AlreadyEnrolled_ShortPath(t *testing.T) {
 		{Name: "engram", Args: []string{"sync", "--cloud", "--project", "click-ai-devkit"}},
 	}
 	assertCommands(t, runner.commands, want)
+}
+
+// TestSyncEngramCloud_MalformedStateFile_FailsClosed is reliability fix: with server+project+token
+// all present but a MALFORMED (invalid JSON) engram-cloud.json on disk, SyncEngramCloud must fail
+// closed — return a non-nil error, issue ZERO subprocess commands (loadEngramCloudState errors
+// before the runner is ever created), and leave the on-disk state untouched (no write/overwrite).
+func TestSyncEngramCloud_MalformedStateFile_FailsClosed(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "super-secret-token")
+
+	const malformed = "{ this is not valid json"
+	statePath := cfg.EngramCloudStatePath()
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(state dir) error = %v", err)
+	}
+	if err := os.WriteFile(statePath, []byte(malformed), 0o600); err != nil {
+		t.Fatalf("WriteFile(malformed state) error = %v", err)
+	}
+
+	runner := newFakeEngramCloudRunner()
+	restore := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restore()
+
+	m := &manifest.Manifest{EngramCloud: manifest.EngramCloud{Server: "http://127.0.0.1:18080", Project: "click-ai-devkit"}}
+	if err := SyncEngramCloud(cfg, m); err == nil {
+		t.Fatalf("SyncEngramCloud() error = nil, want a parse error for the malformed state file")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("SyncEngramCloud() issued %d commands, want 0 on malformed state: %+v", len(runner.commands), runner.commands)
+	}
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("ReadFile(state) error = %v", err)
+	}
+	if string(data) != malformed {
+		t.Fatalf("SyncEngramCloud() overwrote the malformed state file: got %q, want it untouched %q", string(data), malformed)
+	}
 }
 
 func TestSyncEngramCloud_TokenNotInArgvOrState(t *testing.T) {
