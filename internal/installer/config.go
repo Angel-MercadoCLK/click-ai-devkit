@@ -116,6 +116,16 @@ func (c Config) EngramStatePath() string {
 	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "engram.json")
 }
 
+// EngramCloudStatePath stores the Engram Cloud enrollment state ({enrolled, server, project}).
+// It mirrors EngramStatePath's location under click-ai-devkit/ but returns empty when ClaudeHome
+// is unset, letting callers no-op safely on an unconfigured installer.
+func (c Config) EngramCloudStatePath() string {
+	if c.ClaudeHome == "" {
+		return ""
+	}
+	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "engram-cloud.json")
+}
+
 // ModelsPath stores the per-phase click-sdd model selection (D25) so `click update` can re-apply
 // the same choices and `click doctor` can report them.
 func (c Config) ModelsPath() string {

@@ -1,6 +1,10 @@
 package manifest
 
-import "testing"
+import (
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
 
 // TestLoad_ParsesEmbeddedManifest is a Phase 0 smoke test: it just asserts the embedded
 // manifest.yaml parses without error and the placeholder fields we expect at bootstrap time are
@@ -40,5 +44,43 @@ func TestLoad_ParsesEmbeddedManifest(t *testing.T) {
 		if p.Path == "" {
 			t.Errorf("Plugins[%q].Path is empty, want a placeholder value", name)
 		}
+	}
+}
+
+// TestManifest_EngramCloudBlock verifies the optional engram_cloud manifest block is parsed when
+// present and remains the zero value when absent, preserving backward-compatible local-only behavior.
+func TestManifest_EngramCloudBlock(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  EngramCloud
+	}{
+		{
+			name: "present block with values",
+			input: `engram_cloud:
+  server: "http://127.0.0.1:18080"
+  project: "click-ai-devkit"`,
+			want: EngramCloud{
+				Server:  "http://127.0.0.1:18080",
+				Project: "click-ai-devkit",
+			},
+		},
+		{
+			name:  "absent block yields zero value",
+			input: "schema_version: 1\nclick_version: \"0.0.0\"\n",
+			want:  EngramCloud{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var m Manifest
+			if err := yaml.Unmarshal([]byte(tt.input), &m); err != nil {
+				t.Fatalf("yaml.Unmarshal(%q) error = %v", tt.input, err)
+			}
+			if m.EngramCloud != tt.want {
+				t.Errorf("EngramCloud = %+v, want %+v", m.EngramCloud, tt.want)
+			}
+		})
 	}
 }

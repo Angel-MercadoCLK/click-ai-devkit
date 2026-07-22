@@ -164,6 +164,23 @@ func TestConfig_BackupDir(t *testing.T) {
 	}
 }
 
+// TestConfig_EngramCloudStatePath guards the foundation slice's state-file location for the
+// Engram Cloud enrollment record: <ClaudeHome>/click-ai-devkit/engram-cloud.json (mirrors
+// EngramStatePath). It must return empty when ClaudeHome is empty so callers can no-op safely.
+func TestConfig_EngramCloudStatePath(t *testing.T) {
+	cfg := Config{ClaudeHome: filepath.Join("some", "home", ".claude")}
+
+	want := filepath.Join("some", "home", ".claude", "click-ai-devkit", "engram-cloud.json")
+	if got := cfg.EngramCloudStatePath(); got != want {
+		t.Errorf("EngramCloudStatePath() = %q, want %q", got, want)
+	}
+
+	empty := Config{}
+	if got := empty.EngramCloudStatePath(); got != "" {
+		t.Errorf("EngramCloudStatePath() with empty ClaudeHome = %q, want empty string", got)
+	}
+}
+
 // TestConfig_OpenClawPaths_Populated guards the openclaw-target-support spec's "install-config"
 // capability, "OpenClaw present" scenario: GIVEN OpenClaw detection succeeds, WHEN Config is
 // built, THEN OpenClawHome and every derived path MUST be populated — mirroring how

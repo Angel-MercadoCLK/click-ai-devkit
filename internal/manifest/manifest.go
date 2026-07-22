@@ -31,6 +31,13 @@ type Engram struct {
 	Source  string `yaml:"source"`
 }
 
+// EngramCloud holds the optional non-secret Engram Cloud enrollment config surfaced in
+// manifest.yaml. Empty values mean local-only Engram behavior (no cloud enrollment).
+type EngramCloud struct {
+	Server  string `yaml:"server"`
+	Project string `yaml:"project"`
+}
+
 // Manifest is the parsed shape of manifest.yaml, per tech-spec.md §2.3.
 type Manifest struct {
 	SchemaVersion        int               `yaml:"schema_version"`
@@ -38,6 +45,7 @@ type Manifest struct {
 	Engram               Engram            `yaml:"engram"`
 	Plugins              map[string]Plugin `yaml:"plugins"`
 	MinClaudeCodeVersion string            `yaml:"min_claude_code_version"`
+	EngramCloud          EngramCloud       `yaml:"engram_cloud"`
 }
 
 // Load parses the manifest embedded into the binary at build time.
