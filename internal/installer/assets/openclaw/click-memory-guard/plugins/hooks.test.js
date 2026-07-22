@@ -30,18 +30,18 @@ const hooks = require('./hooks.js');
 function fakeChildProcess() {
   const proc = new EventEmitter();
   proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
   proc.killed = false;
   proc.kill = () => {
     proc.killed = true;
   };
   const stdinWrites = [];
-  proc.stdin = {
-    write(data) {
-      stdinWrites.push(data);
-    },
-    end() {
-      stdinWrites.push('__END__');
-    },
+  proc.stdin = new EventEmitter();
+  proc.stdin.write = (data) => {
+    stdinWrites.push(data);
+  };
+  proc.stdin.end = () => {
+    stdinWrites.push('__END__');
   };
   proc.__stdinWrites = stdinWrites;
   return proc;
@@ -59,6 +59,14 @@ test('isEngramMemSaveTool: a genuinely different tool is NOT recognized (no fals
   assert.equal(hooks.isEngramMemSaveTool('mcp__filesystem__read_file'), false);
   assert.equal(hooks.isEngramMemSaveTool(undefined), false);
   assert.equal(hooks.isEngramMemSaveTool(''), false);
+});
+
+test('isEngramMemSaveTool: fail-safe fallback scans only names containing both engram and mem_save', () => {
+  assert.equal(hooks.isEngramMemSaveTool('OpenClaw__ENGRAM__experimental_MEM_SAVE_v2'), true);
+  assert.equal(hooks.isEngramMemSaveTool('engram_search'), false);
+  assert.equal(hooks.isEngramMemSaveTool('read_file'), false);
+  assert.equal(hooks.isEngramMemSaveTool(null), false);
+  assert.equal(hooks.isEngramMemSaveTool(undefined), false);
 });
 
 test('beforeToolCall: a non-engram tool is allowed through WITHOUT spawning anything', async () => {
@@ -158,6 +166,64 @@ test('beforeToolCall: missing binary end-to-end BLOCKS the engram tool call', as
   proc.emit('error', new Error('ENOENT'));
   const result = await resultPromise;
   assert.equal(result.block, true);
+});
+
+test('runClickMemoryGuard: a stdin error resolves allow:false without throwing in the host', async () => {
+  const proc = fakeChildProcess();
+  const resultPromise = hooks.runClickMemoryGuard('/opt/click/bin/click', '{}', () => proc);
+
+  assert.doesNotThrow(() => proc.stdin.emit('error', new Error('broken pipe')));
+
+  assert.deepEqual(await resultPromise, {
+    allow: false,
+    reason: 'click memory-guard: stdin error: broken pipe',
+  });
+});
+
+test('beforeToolCall: a stdin error blocks without throwing in the host', async () => {
+  const proc = fakeChildProcess();
+  const resultPromise = hooks.beforeToolCall(
+    { tool_name: 'mcp__engram__mem_save', tool_input: { content: 'irrelevant' } },
+    { spawnFn: () => proc }
+  );
+
+  assert.doesNotThrow(() => proc.stdin.emit('error', new Error('broken pipe')));
+
+  assert.deepEqual(await resultPromise, {
+    block: true,
+    reason: 'click memory-guard: stdin error: broken pipe',
+  });
+});
+
+test('runClickMemoryGuard: stderr data is drained without changing the allow resolution', async () => {
+  const proc = fakeChildProcess();
+  const resultPromise = hooks.runClickMemoryGuard('/opt/click/bin/click', '{}', () => proc);
+  const stderrDataListeners = proc.stderr.listenerCount('data');
+
+  // This fake proves consumption wiring, but cannot model full OS pipe saturation.
+  proc.stderr.emit('data', Buffer.from('diagnostic output'));
+  proc.stdout.emit('data', Buffer.from('{"hookSpecificOutput":{"permissionDecision":"allow"}}'));
+  proc.emit('close', 0);
+
+  assert.equal(stderrDataListeners, 1);
+  assert.deepEqual(await resultPromise, { allow: true });
+});
+
+test('runClickMemoryGuard: a stderr error cannot throw in the host or change the result', async () => {
+  const proc = fakeChildProcess();
+  const resultPromise = hooks.runClickMemoryGuard('/opt/click/bin/click', '{}', () => proc);
+  let thrown;
+
+  try {
+    proc.stderr.emit('error', new Error('stderr read failed'));
+  } catch (err) {
+    thrown = err;
+  }
+  proc.stdout.emit('data', Buffer.from('{"hookSpecificOutput":{"permissionDecision":"allow"}}'));
+  proc.emit('close', 0);
+
+  assert.equal(thrown, undefined);
+  assert.deepEqual(await resultPromise, { allow: true });
 });
 
 // --- Task 3.3: fail-closed on non-zero exit ---

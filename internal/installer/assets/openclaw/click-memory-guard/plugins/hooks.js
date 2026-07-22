@@ -31,8 +31,8 @@ const { spawn } = require('node:child_process');
 // OpenClaw side the way there is for Claude Code's engram@engram plugin). The other two candidates
 // from the design are also checked, so a small naming variance doesn't silently disable scanning.
 //
-// If the real name differs from all three, fix ONLY this list — buildPreToolUsePayload, the spawn
-// logic, and internal/cli/memoryguard.go's Go matcher (MemoryGuardToolMatcher) never need to change.
+// The explicit list documents known variants; isEngramMemSaveTool also has a conservative fallback
+// for names that still identify both Engram and mem_save.
 const ENGRAM_TOOL_NAME_CANDIDATES = [
   'mcp__engram__mem_save',
   'engram__mem_save',
@@ -60,13 +60,16 @@ const CLICK_BIN = '{{CLICK_BIN}}';
 // mem_save call forever, while still failing CLOSED (never open) when the timeout fires.
 const SPAWN_TIMEOUT_MS = 10000;
 
-// isEngramMemSaveTool reports whether toolName matches one of ENGRAM_TOOL_NAME_CANDIDATES — the
-// ONLY function that decides whether a call gets scanned at all (threat-matrix row "Tool-name
-// bypass"). A tool that genuinely is NOT the engram mem_save call correctly passes through
-// unscanned; a naming-mismatch bug in this list is the only way the real engram tool could ever slip
-// through, which is exactly why the candidate list carries three variants instead of one guess.
+// isEngramMemSaveTool reports whether toolName matches an explicit candidate or its lowercase form
+// contains both "engram" and "mem_save". This is the ONLY function that decides whether a call gets
+// scanned at all (threat-matrix row "Tool-name bypass"). The fallback fails safe toward scanning
+// novel Engram mem_save naming variants while requiring both markers to avoid scanning unrelated
+// tools.
 function isEngramMemSaveTool(toolName) {
-  return ENGRAM_TOOL_NAME_CANDIDATES.indexOf(toolName) !== -1;
+  if (typeof toolName !== 'string') return false;
+  if (ENGRAM_TOOL_NAME_CANDIDATES.indexOf(toolName) !== -1) return true;
+  const lowerToolName = toolName.toLowerCase();
+  return lowerToolName.indexOf('engram') !== -1 && lowerToolName.indexOf('mem_save') !== -1;
 }
 
 // buildPreToolUsePayload maps an OpenClaw before_tool_call event to the EXACT JSON shape
@@ -150,6 +153,11 @@ function runClickMemoryGuard(clickBin, payloadJSON, spawnFn) {
       });
     }
 
+    if (child.stderr && typeof child.stderr.on === 'function') {
+      child.stderr.on('data', () => {});
+      child.stderr.on('error', () => {});
+    }
+
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0) {
@@ -175,6 +183,13 @@ function runClickMemoryGuard(clickBin, payloadJSON, spawnFn) {
       const reason = (hookOutput && hookOutput.permissionDecisionReason) || 'blocked by click memory-guard';
       finish({ allow: false, reason: reason });
     });
+
+    if (child.stdin && typeof child.stdin.on === 'function') {
+      child.stdin.on('error', (err) => {
+        clearTimeout(timer);
+        finish({ allow: false, reason: 'click memory-guard: stdin error: ' + err.message });
+      });
+    }
 
     try {
       if (child.stdin) {
