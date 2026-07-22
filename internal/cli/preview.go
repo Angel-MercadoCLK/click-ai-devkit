@@ -39,16 +39,20 @@ func installWriteSteps(cfg installer.Config, cloudConfigured bool) []string {
 // updateWriteSteps builds runUpdate's ordered write-step list for cfg, reusing its own r.RunStep
 // labels verbatim — including the Engram pin version (engramVersion), matching the exact label
 // runUpdate itself prints later for that step — so the preview plan can never drift from what
-// update.go actually runs. Same OpenClaw-appending contract as installWriteSteps.
-func updateWriteSteps(engramVersion string, cfg installer.Config) []string {
+// update.go actually runs. Same OpenClaw-appending contract as installWriteSteps. The Engram Cloud
+// step is inserted right after the local Engram pin step only when cloudConfigured is true.
+func updateWriteSteps(engramVersion string, cfg installer.Config, cloudConfigured bool) []string {
 	steps := []string{
 		"Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…",
 		"Guardando modelos por fase de click-sdd…",
 		"Actualizando CLAUDE.md…",
 		"Re-registrando memory-guard…",
 		fmt.Sprintf("Sincronizando Engram (pin %s)…", engramVersion),
-		"Sincronizando Context7 (documentación de librerías)…",
 	}
+	if cloudConfigured {
+		steps = append(steps, "Sincronizando Engram Cloud…")
+	}
+	steps = append(steps, "Sincronizando Context7 (documentación de librerías)…")
 	return append(steps, openClawWriteSteps(cfg)...)
 }
 

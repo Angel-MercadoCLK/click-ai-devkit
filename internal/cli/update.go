@@ -64,12 +64,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	cloudConfigured := installer.EngramCloudConfigured(cfg, m)
 
 	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE MigrateIfStale/step 1 below (the first external `claude` subprocess
 	// invocation). A decline here means zero writes: nothing below this point has run yet.
-	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg))
+	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg, cloudConfigured))
 	if err != nil {
 		return err
 	}
@@ -132,6 +133,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	surfacePathWarning(out, r, engramPathWarning)
+
+	if cloudConfigured {
+		if err := r.RunStep("Sincronizando Engram Cloud…", "Engram Cloud sincronizado", func() error {
+			return syncEngramCloudFunc(cfg, m)
+		}); err != nil {
+			return err
+		}
+	}
+
 	// Same non-fatal binary-provisioning report as `click install` (Slice 3b): SyncEngram already
 	// attempted `go install` internally when needed; this just surfaces the resulting state.
 	if _, resolvable, err := installer.EngramBinaryResolvable(cfg); err != nil {

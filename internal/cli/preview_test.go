@@ -109,7 +109,7 @@ func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 // above for updateWriteSteps, extended by PR4 to 4 OpenClaw steps.
 func TestUpdateWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
-	got := updateWriteSteps("0.1.1", cfg)
+	got := updateWriteSteps("0.1.1", cfg, false)
 	if len(got) != 10 {
 		t.Fatalf("updateWriteSteps() = %#v, want 10 steps (6 Claude + 4 OpenClaw)", got)
 	}
@@ -123,9 +123,43 @@ func TestUpdateWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T)
 // TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps is updateWriteSteps' zero-behavior-
 // change guard, mirroring TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps.
 func TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) {
-	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()})
+	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, false)
 	if len(got) != 6 {
 		t.Fatalf("updateWriteSteps() = %#v, want exactly 6 steps when OpenClaw is absent", got)
+	}
+}
+
+// TestUpdateWriteSteps_CloudConfigured_AddsCloudStep is task 4.5's preview-plan RED test for update:
+// when cloud is fully configured, the plan must list the Engram Cloud re-sync step right after the
+// local Engram pin step.
+func TestUpdateWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
+	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, true)
+	want := []string{
+		"Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…",
+		"Guardando modelos por fase de click-sdd…",
+		"Actualizando CLAUDE.md…",
+		"Re-registrando memory-guard…",
+		"Sincronizando Engram (pin 0.1.1)…",
+		"Sincronizando Engram Cloud…",
+		"Sincronizando Context7 (documentación de librerías)…",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("updateWriteSteps() = %#v, want exactly %d steps", got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("updateWriteSteps()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestUpdateWriteSteps_CloudNotConfigured_NoCloudStep is task 4.5's no-config preview-plan test.
+func TestUpdateWriteSteps_CloudNotConfigured_NoCloudStep(t *testing.T) {
+	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, false)
+	for _, step := range got {
+		if strings.Contains(step, "Cloud") {
+			t.Fatalf("updateWriteSteps() contains cloud step when not configured: %q", step)
+		}
 	}
 }
 
