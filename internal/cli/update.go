@@ -173,6 +173,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}); err != nil {
 			return err
 		}
+		// PR4: re-synchronize the click-owned OpenClaw skill manifests after the plugin re-sync,
+		// matching openClawWriteSteps' position for the skill sync step.
+		if err := r.RunStep("Sincronizando skills clickhola y clickdev en OpenClaw…", "Skills clickhola y clickdev sincronizados en OpenClaw", func() error {
+			return installer.SyncOpenClawSkills(cfg)
+		}); err != nil {
+			return err
+		}
 	}
 
 	fmt.Fprintln(out, r.Info("Update completo."))

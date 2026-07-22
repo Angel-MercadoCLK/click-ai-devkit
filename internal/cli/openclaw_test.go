@@ -182,6 +182,54 @@ func TestInstallCommand_SkipOpenClawFlag_NoMemoryGuardPluginWritten(t *testing.T
 	}
 }
 
+// TestInstallCommand_OpenClawDetected_SyncsClickSkills is PR4's RED test: with openclaw resolvable
+// on PATH, `click install` must synchronize the click-owned skill manifests (clickhola/SKILL.md and
+// clickdev/SKILL.md) under OpenClawSkillsDir().
+func TestInstallCommand_OpenClawDetected_SyncsClickSkills(t *testing.T) {
+	claudeHome := t.TempDir()
+	openClawHome := t.TempDir()
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	out, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "install")
+	if err != nil {
+		t.Fatalf("install command error = %v, output:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Sincronizando skills clickhola y clickdev en OpenClaw") {
+		t.Errorf("install output = %q, want it to mention the OpenClaw skill sync step", out)
+	}
+
+	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+	for _, name := range []string{"clickhola", "clickdev"} {
+		path := filepath.Join(cfg.OpenClawSkillsDir(), name, "SKILL.md")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s) error = %v, want it written when OpenClaw is detected", path, err)
+		}
+		if !strings.Contains(string(data), "name: "+name) {
+			t.Fatalf("%s content = %q, want frontmatter name %q", path, data, name)
+		}
+	}
+}
+
+// TestInstallCommand_OpenClawAbsent_NoSkillWrites is PR4's zero-behavior-change guard: when OpenClaw
+// is not detected, `click install` must not write any skill files.
+func TestInstallCommand_OpenClawAbsent_NoSkillWrites(t *testing.T) {
+	claudeHome := t.TempDir()
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	out, err := execRoot(t, claudeHome, "install")
+	if err != nil {
+		t.Fatalf("install command error = %v, output:\n%s", err, out)
+	}
+	if strings.Contains(out, "Sincronizando skills clickhola y clickdev en OpenClaw") {
+		t.Fatalf("install output = %q, want no OpenClaw skill mention when openclaw is not detected", out)
+	}
+}
+
 // TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoulAndMCPConfig mirrors the install-side
 // detection test for `click update`.
 func TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoulAndMCPConfig(t *testing.T) {
@@ -206,5 +254,44 @@ func TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoulAndMCPConfig(t *test
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
 	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); err != nil {
 		t.Fatalf("Stat(openclaw.json) error = %v, want it present after update re-syncs OpenClaw", err)
+	}
+}
+
+// TestUpdateCommand_OpenClawDetected_ResyncsClickSkills is PR4's RED test: `click update` must re-
+// synchronize the click-owned OpenClaw skill manifests, restoring them if they drifted.
+func TestUpdateCommand_OpenClawDetected_ResyncsClickSkills(t *testing.T) {
+	claudeHome := t.TempDir()
+	openClawHome := t.TempDir()
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "install"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+
+	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+	tampered := filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md")
+	if err := os.WriteFile(tampered, []byte("tampered content"), 0o644); err != nil {
+		t.Fatalf("WriteFile(tamper) error = %v", err)
+	}
+
+	out, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "update")
+	if err != nil {
+		t.Fatalf("update command error = %v, output:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Sincronizando skills clickhola y clickdev en OpenClaw") {
+		t.Errorf("update output = %q, want it to mention the OpenClaw skill sync step", out)
+	}
+
+	got, err := os.ReadFile(tampered)
+	if err != nil {
+		t.Fatalf("ReadFile(clickdev SKILL.md) error = %v", err)
+	}
+	if strings.Contains(string(got), "tampered content") {
+		t.Fatalf("clickdev SKILL.md still contains tampered content = %q, want resynced embedded bytes", got)
+	}
+	if !strings.Contains(string(got), "name: clickdev") {
+		t.Fatalf("clickdev SKILL.md = %q, want resynced embedded bytes with frontmatter name", got)
 	}
 }

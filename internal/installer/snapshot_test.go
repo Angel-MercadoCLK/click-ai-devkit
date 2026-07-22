@@ -470,14 +470,13 @@ func TestSnapshotDrift_MissingCurrentFile_NotReportedAsDrift(t *testing.T) {
 
 // --- Per-target snapshot generalization (openclaw-target-support, tasks 2.9-2.12) ---
 
-// TestSnapshotRun_OpenClawPresent_CapturesSevenFiles is task 2.9's RED test: when cfg.OpenClawHome
-// is populated, SnapshotRun must capture all 7 files (2 Claude + 3 OpenClaw + 2 click-memory-guard
-// plugin files). Count was bumped from 5 to 7 (Safety Net update, PR-C/task 3.9's "add file(s) to
-// PR-B's per-target snapshot list"): the plugin's hooks.js/plugin.json now ride the exact same
-// per-target snapshot list AGENTS.md/SOUL.md/openclaw.json already established — this test's setup
-// deliberately does NOT write the plugin files (SyncOpenClawPlugin is never called here), so their
-// 2 entries are expected as no-prior-state markers, exactly like a first-ever install would produce.
-func TestSnapshotRun_OpenClawPresent_CapturesSevenFiles(t *testing.T) {
+// TestSnapshotRun_OpenClawPresent_CapturesNineFiles is task 2.9's RED test extended by PR4: when
+// cfg.OpenClawHome is populated, SnapshotRun must capture all 9 files (2 Claude + 3 OpenClaw +
+// 2 click-memory-guard plugin files + 2 click-owned OpenClaw skill manifests). Count bumped from
+// 7 to 9. This test's setup deliberately does NOT write the plugin or skill files
+// (SyncOpenClawPlugin/SyncOpenClawSkills are never called here), so their entries are expected as
+// no-prior-state markers, exactly like a first-ever install would produce.
+func TestSnapshotRun_OpenClawPresent_CapturesNineFiles(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "# claude\n")
 	writeTestFile(t, cfg.SettingsPath(), `{}`)
@@ -493,8 +492,8 @@ func TestSnapshotRun_OpenClawPresent_CapturesSevenFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSnapshotManifest() error = %v", err)
 	}
-	if len(manifest.Entries) != 7 {
-		t.Fatalf("manifest.Entries = %#v, want exactly 7 entries (2 Claude + 3 OpenClaw + 2 plugin)", manifest.Entries)
+	if len(manifest.Entries) != 9 {
+		t.Fatalf("manifest.Entries = %#v, want exactly 9 entries (2 Claude + 3 OpenClaw + 2 plugin + 2 skills)", manifest.Entries)
 	}
 
 	wantPaths := map[string]bool{
@@ -503,8 +502,10 @@ func TestSnapshotRun_OpenClawPresent_CapturesSevenFiles(t *testing.T) {
 		cfg.OpenClawAgentsMDPath():  false,
 		cfg.OpenClawSoulMDPath():    false,
 		cfg.OpenClawMCPConfigPath(): false,
-		filepath.Join(cfg.OpenClawPluginDir(), "plugins", "hooks.js"): false,
-		filepath.Join(cfg.OpenClawPluginDir(), "plugin.json"):         false,
+		filepath.Join(cfg.OpenClawPluginDir(), "plugins", "hooks.js"):   false,
+		filepath.Join(cfg.OpenClawPluginDir(), "plugin.json"):           false,
+		filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md"): false,
+		filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md"):  false,
 	}
 	for _, e := range manifest.Entries {
 		if _, ok := wantPaths[e.OriginalPath]; !ok {
@@ -584,10 +585,50 @@ func TestRestoreRun_OpenClawFilesPresent_RestoresAllFiles(t *testing.T) {
 	}
 }
 
+// TestRestoreRun_OpenClawSkillsPresent_RestoresBothFiles is PR4's RED test: after SnapshotRun with
+// the click-owned OpenClaw skill files present, editing both SKILL.md files, then RestoreRun, both
+// must come back byte-for-byte to their snapshotted content — proving RestoreRun needs no
+// cfg.OpenClawHome-aware change of its own, since it replays whatever paths SnapshotRun recorded.
+func TestRestoreRun_OpenClawSkillsPresent_RestoresBothFiles(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	writeTestFile(t, cfg.ClaudeMDPath(), "claude original\n")
+	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
+	writeTestFile(t, cfg.OpenClawAgentsMDPath(), "agents original\n")
+	writeTestFile(t, cfg.OpenClawSoulMDPath(), "soul original\n")
+	writeTestFile(t, cfg.OpenClawMCPConfigPath(), `{"mcpServers":{}}`)
+	writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md"), "clickhola original\n")
+	writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md"), "clickdev original\n")
+
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md"), "clickhola EDITED\n")
+	writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md"), "clickdev EDITED\n")
+
+	if err := RestoreRun(cfg); err != nil {
+		t.Fatalf("RestoreRun() error = %v", err)
+	}
+
+	checks := map[string]string{
+		filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md"): "clickhola original\n",
+		filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md"):  "clickdev original\n",
+	}
+	for path, want := range checks {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s) error = %v", path, err)
+		}
+		if string(got) != want {
+			t.Fatalf("restored %s = %q, want %q", path, got, want)
+		}
+	}
+}
+
 // TestSnapshotRun_OpenClawFirstInstall_RecordsNoPriorStateMarker is task 2.12's RED test: OpenClaw
 // is detected (cfg.OpenClawHome set) but none of its 3 files exist yet — the snapshot must record
 // an explicit no-prior-state marker for each of them, exactly like Claude's own first-ever-install
-// case, never an error and never a fabricated backup.
+// case, never an error and never a fabricated backup file.
 func TestSnapshotRun_OpenClawFirstInstall_RecordsNoPriorStateMarker(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "# claude\n")

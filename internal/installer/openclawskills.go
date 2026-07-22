@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // openClawSkillsAssetsRoot is the embedded asset tree's root for OpenClaw skill manifests,
@@ -22,10 +23,18 @@ var openClawSkillsAssets embed.FS
 
 // openClawSkillRelPaths lists every skill manifest this synchronizer installs, relative to
 // openClawSkillsAssetsRoot, using forward slashes (embed.FS's own path convention, GOOS-independent).
-// It is the single source of truth for SyncOpenClawSkills and RemoveOpenClawSkills.
+// It is the single source of truth for SyncOpenClawSkills, RemoveOpenClawSkills, and
+// snapshotSources (which backs these files up for rollback).
 var openClawSkillRelPaths = []string{
 	"clickhola/SKILL.md",
 	"clickdev/SKILL.md",
+}
+
+// openClawSkillBackupFileName derives snapshotSources' backupFile name for one skill asset's
+// relative path — deterministic, collision-free with the fixed names snapshotSources already uses,
+// and stable across runs since it is a pure function of rel.
+func openClawSkillBackupFileName(rel string) string {
+	return "openclaw-skill-" + strings.ReplaceAll(rel, "/", "-")
 }
 
 // removeAll is the injectable seam behind RemoveOpenClawSkills's directory removal, mirroring

@@ -222,6 +222,100 @@ func TestUninstallCommand_OpenClawNeverInstalled_NoOpNoError(t *testing.T) {
 	}
 }
 
+// TestUninstallCommand_RemovesOpenClawSkillsAndPreservesSiblings is PR4's RED test: `click
+// uninstall` must remove the click-owned OpenClaw skill directories (clickhola, clickdev) while
+// leaving any user-created sibling skill directories untouched.
+func TestUninstallCommand_RemovesOpenClawSkillsAndPreservesSiblings(t *testing.T) {
+	claudeHome := t.TempDir()
+	openClawHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+
+	restoreExec := installer.SetOSExecutableForTests(func() (string, error) { return "/opt/click/bin/click", nil })
+	if err := installer.SyncOpenClawPlugin(cfg); err != nil {
+		restoreExec()
+		t.Fatalf("SyncOpenClawPlugin() error = %v", err)
+	}
+	if err := installer.SyncOpenClawSkills(cfg); err != nil {
+		restoreExec()
+		t.Fatalf("SyncOpenClawSkills() error = %v", err)
+	}
+	restoreExec()
+
+	// Simulate a user-created sibling skill.
+	sibling := filepath.Join(cfg.OpenClawSkillsDir(), "user-skill")
+	if err := os.MkdirAll(sibling, 0o755); err != nil {
+		t.Fatalf("MkdirAll(sibling) error = %v", err)
+	}
+
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	out, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall command error = %v, output:\n%s", err, out)
+	}
+
+	for _, owned := range []string{"clickhola", "clickdev"} {
+		path := filepath.Join(cfg.OpenClawSkillsDir(), owned)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("Stat(%s) after uninstall error = %v, want os.IsNotExist", owned, err)
+		}
+	}
+	if _, err := os.Stat(sibling); err != nil {
+		t.Fatalf("Stat(user-skill) after uninstall error = %v, want sibling preserved", err)
+	}
+}
+
+// TestUninstallCommand_RemoveOpenClawSkillsError_ContinuesTeardown is PR4's resilience RED test: a
+// failure removing the click-owned OpenClaw skill directories must be recorded and reported, but
+// every other teardown step must still run to completion.
+func TestUninstallCommand_RemoveOpenClawSkillsError_ContinuesTeardown(t *testing.T) {
+	claudeHome := t.TempDir()
+	openClawHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+
+	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
+		t.Fatalf("WriteManagedBlock() error = %v", err)
+	}
+	if err := installer.RegisterMemoryGuardHook(cfg); err != nil {
+		t.Fatalf("RegisterMemoryGuardHook() error = %v", err)
+	}
+
+	injectedErr := errors.New("injected remove openclaw skills failure")
+	restoreSkills := SetRemoveOpenClawSkillsFuncForTests(func(c installer.Config) error { return injectedErr })
+	defer restoreSkills()
+
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	out, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "uninstall")
+	if err == nil {
+		t.Fatalf("uninstall command error = nil, want non-nil when RemoveOpenClawSkills fails, output:\n%s", out)
+	}
+
+	md, readErr := os.ReadFile(cfg.ClaudeMDPath())
+	if readErr != nil {
+		t.Fatalf("ReadFile(ClaudeMDPath) error = %v", readErr)
+	}
+	if strings.Contains(string(md), "click-ai-devkit (managed)") {
+		t.Fatalf("CLAUDE.md still contains the managed block after uninstall, want it stripped even though RemoveOpenClawSkills failed:\n%s", md)
+	}
+
+	hasHook, hookErr := installer.HasMemoryGuardHook(cfg)
+	if hookErr != nil {
+		t.Fatalf("HasMemoryGuardHook() error = %v", hookErr)
+	}
+	if hasHook {
+		t.Fatal("memory-guard hook still registered after uninstall, want it removed even though RemoveOpenClawSkills failed")
+	}
+
+	if !strings.Contains(out, "skills") {
+		t.Fatalf("uninstall output = %q, want the final summary to name the failed OpenClaw skills step", out)
+	}
+}
+
 // TestUninstallCommand_CorruptedEngramState_SucceedsWithWarning is Finding 3's CLI-level regression
 // test: a truncated/corrupted engram.json must not abort `click uninstall` — RemoveEngramPlugin now
 // reports it as a warning (installer.RemoveEngramPlugin's own corrupted-state handling), so with
