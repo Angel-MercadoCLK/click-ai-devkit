@@ -59,6 +59,7 @@ func openClawWriteSteps(cfg installer.Config) []string {
 	return []string{
 		"Actualizando AGENTS.md y SOUL.md de OpenClaw…",
 		"Registrando Engram en OpenClaw (mcpServers)…",
+		"Instalando plugin de memory-guard para OpenClaw…",
 	}
 }
 

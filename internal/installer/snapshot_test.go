@@ -471,7 +471,12 @@ func TestSnapshotDrift_MissingCurrentFile_NotReportedAsDrift(t *testing.T) {
 // --- Per-target snapshot generalization (openclaw-target-support, tasks 2.9-2.12) ---
 
 // TestSnapshotRun_OpenClawPresent_CapturesFiveFiles is task 2.9's RED test: when cfg.OpenClawHome
-// is populated, SnapshotRun must capture all 5 files (2 Claude + 3 OpenClaw) before any write.
+// is populated, SnapshotRun must capture all 7 files (2 Claude + 3 OpenClaw + 2 click-memory-guard
+// plugin files). Count was bumped from 5 to 7 (Safety Net update, PR-C/task 3.9's "add file(s) to
+// PR-B's per-target snapshot list"): the plugin's hooks.js/plugin.json now ride the exact same
+// per-target snapshot list AGENTS.md/SOUL.md/openclaw.json already established — this test's setup
+// deliberately does NOT write the plugin files (SyncOpenClawPlugin is never called here), so their
+// 2 entries are expected as no-prior-state markers, exactly like a first-ever install would produce.
 func TestSnapshotRun_OpenClawPresent_CapturesFiveFiles(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "# claude\n")
@@ -488,8 +493,8 @@ func TestSnapshotRun_OpenClawPresent_CapturesFiveFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSnapshotManifest() error = %v", err)
 	}
-	if len(manifest.Entries) != 5 {
-		t.Fatalf("manifest.Entries = %#v, want exactly 5 entries (2 Claude + 3 OpenClaw)", manifest.Entries)
+	if len(manifest.Entries) != 7 {
+		t.Fatalf("manifest.Entries = %#v, want exactly 7 entries (2 Claude + 3 OpenClaw + 2 plugin)", manifest.Entries)
 	}
 
 	wantPaths := map[string]bool{
@@ -498,6 +503,8 @@ func TestSnapshotRun_OpenClawPresent_CapturesFiveFiles(t *testing.T) {
 		cfg.OpenClawAgentsMDPath():  false,
 		cfg.OpenClawSoulMDPath():    false,
 		cfg.OpenClawMCPConfigPath(): false,
+		filepath.Join(cfg.OpenClawPluginDir(), "plugins", "hooks.js"): false,
+		filepath.Join(cfg.OpenClawPluginDir(), "plugin.json"):         false,
 	}
 	for _, e := range manifest.Entries {
 		if _, ok := wantPaths[e.OriginalPath]; !ok {

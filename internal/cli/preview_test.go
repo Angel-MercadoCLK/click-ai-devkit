@@ -34,29 +34,35 @@ func TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T)
 	}
 }
 
-// TestInstallWriteSteps_OpenClawPresent_AppendsTwoOpenClawSteps is task 2.14's RED test: when
-// OpenClaw is detected (cfg.OpenClawHome populated), the write plan must list both targets.
-func TestInstallWriteSteps_OpenClawPresent_AppendsTwoOpenClawSteps(t *testing.T) {
+// TestInstallWriteSteps_OpenClawPresent_AppendsThreeOpenClawSteps is task 2.14's RED test, bumped
+// from 2 to 3 OpenClaw steps (Safety Net update, PR-C/task 3.9: the click-memory-guard plugin
+// install step is appended alongside AGENTS.md/SOUL.md and the MCP registration step) — when
+// OpenClaw is detected (cfg.OpenClawHome populated), the write plan must list all three targets.
+func TestInstallWriteSteps_OpenClawPresent_AppendsThreeOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := installWriteSteps(cfg)
-	if len(got) != 8 {
-		t.Fatalf("installWriteSteps() = %#v, want 8 steps (6 Claude + 2 OpenClaw)", got)
+	if len(got) != 9 {
+		t.Fatalf("installWriteSteps() = %#v, want 9 steps (6 Claude + 3 OpenClaw)", got)
 	}
-	if !strings.Contains(got[6], "OpenClaw") || !strings.Contains(got[7], "OpenClaw") {
-		t.Fatalf("installWriteSteps() trailing steps = %#v, want both to mention OpenClaw", got[6:])
+	for _, step := range got[6:] {
+		if !strings.Contains(step, "OpenClaw") {
+			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[6:])
+		}
 	}
 }
 
-// TestUpdateWriteSteps_OpenClawPresent_AppendsTwoOpenClawSteps mirrors the install-side test above
-// for updateWriteSteps.
-func TestUpdateWriteSteps_OpenClawPresent_AppendsTwoOpenClawSteps(t *testing.T) {
+// TestUpdateWriteSteps_OpenClawPresent_AppendsThreeOpenClawSteps mirrors the install-side test
+// above for updateWriteSteps.
+func TestUpdateWriteSteps_OpenClawPresent_AppendsThreeOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := updateWriteSteps("0.1.1", cfg)
-	if len(got) != 8 {
-		t.Fatalf("updateWriteSteps() = %#v, want 8 steps (6 Claude + 2 OpenClaw)", got)
+	if len(got) != 9 {
+		t.Fatalf("updateWriteSteps() = %#v, want 9 steps (6 Claude + 3 OpenClaw)", got)
 	}
-	if !strings.Contains(got[6], "OpenClaw") || !strings.Contains(got[7], "OpenClaw") {
-		t.Fatalf("updateWriteSteps() trailing steps = %#v, want both to mention OpenClaw", got[6:])
+	for _, step := range got[6:] {
+		if !strings.Contains(step, "OpenClaw") {
+			t.Fatalf("updateWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[6:])
+		}
 	}
 }
 
@@ -73,6 +79,19 @@ func TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) 
 func TestOpenClawWriteSteps_Absent_ReturnsNil(t *testing.T) {
 	if got := openClawWriteSteps(installer.Config{}); got != nil {
 		t.Fatalf("openClawWriteSteps() = %#v, want nil when OpenClawHome is empty", got)
+	}
+}
+
+// TestOpenClawWriteSteps_Present_IncludesPluginStep is PR-C's supporting RED test: the third
+// OpenClaw step must mention the memory-guard plugin install, distinct from the AGENTS.md/SOUL.md
+// and MCP-registration steps PR-B already added.
+func TestOpenClawWriteSteps_Present_IncludesPluginStep(t *testing.T) {
+	got := openClawWriteSteps(installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()})
+	if len(got) != 3 {
+		t.Fatalf("openClawWriteSteps() = %#v, want exactly 3 steps", got)
+	}
+	if !strings.Contains(got[2], "memory-guard") {
+		t.Fatalf("openClawWriteSteps()[2] = %q, want it to mention the memory-guard plugin install", got[2])
 	}
 }
 

@@ -165,6 +165,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}); err != nil {
 			return err
 		}
+		// PR-C (design #1666's memory-guard-parity piece, OCG-1..6): re-syncs the click-memory-guard
+		// OpenClaw plugin last — re-templating CLICK_BIN against whatever os.Executable() resolves to
+		// on THIS run, so a click binary that moved since install gets picked up automatically.
+		if err := r.RunStep("Instalando plugin de memory-guard para OpenClaw…", "Plugin de memory-guard sincronizado en OpenClaw", func() error {
+			return installer.SyncOpenClawPlugin(cfg)
+		}); err != nil {
+			return err
+		}
 	}
 
 	fmt.Fprintln(out, r.Info("Update completo."))

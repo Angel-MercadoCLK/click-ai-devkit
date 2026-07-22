@@ -202,3 +202,11 @@ func (c Config) OpenClawSoulMDPath() string {
 func (c Config) OpenClawMCPConfigPath() string {
 	return filepath.Join(c.OpenClawHome, "openclaw.json")
 }
+
+// OpenClawPluginDir is where the click-memory-guard OpenClaw plugin (design #1666's "ADDED PIECE:
+// OpenClaw memory-guard parity", decisions OCG-1..6) is installed under this Config's OpenClawHome —
+// OpenClaw's plugins/ directory, mirroring ClickSDDPluginDir's shape under ClaudeHome's own
+// plugins/ directory.
+func (c Config) OpenClawPluginDir() string {
+	return filepath.Join(c.OpenClawHome, "plugins", "click-memory-guard")
+}

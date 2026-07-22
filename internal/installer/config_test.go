@@ -40,6 +40,17 @@ func TestResolveClaudeHome_DefaultsUnderUserHome(t *testing.T) {
 // TestResolveOpenClawHome_UsesEnvOverride mirrors TestResolveClaudeHome_UsesEnvOverride for
 // CLICK_OPENCLAW_HOME (RED at write time: ResolveOpenClawHome does not exist until config.go's
 // GREEN change).
+// TestConfig_OpenClawPluginDir is PR-C task 3.9's supporting RED test: OpenClawPluginDir must join
+// OpenClawHome with plugins/click-memory-guard, mirroring ClickSDDPluginDir's derivation shape under
+// ClaudeHome (RED at write time: OpenClawPluginDir does not exist until config.go's GREEN change).
+func TestConfig_OpenClawPluginDir(t *testing.T) {
+	cfg := Config{OpenClawHome: filepath.Join("home", ".openclaw")}
+	want := filepath.Join("home", ".openclaw", "plugins", "click-memory-guard")
+	if got := cfg.OpenClawPluginDir(); got != want {
+		t.Fatalf("OpenClawPluginDir() = %q, want %q", got, want)
+	}
+}
+
 func TestResolveOpenClawHome_UsesEnvOverride(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("CLICK_OPENCLAW_HOME", tmp)

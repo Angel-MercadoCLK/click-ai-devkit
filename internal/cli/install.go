@@ -181,9 +181,9 @@ func runInstall(cmd *cobra.Command) error {
 	}
 
 	// openclaw-target-support: appended LAST, matching openClawWriteSteps' position at the end of
-	// installWriteSteps(cfg) — a no-op pair of RunStep calls whenever cfg.OpenClawHome is empty
-	// would still print two OpenClaw lines, so this is explicitly gated on the same condition
-	// installWriteSteps used to decide whether to list them in the preview at all.
+	// installWriteSteps(cfg) — this whole block (3 RunStep calls: AGENTS.md/SOUL.md, MCP
+	// registration, and the memory-guard plugin) is gated on the same condition openClawWriteSteps
+	// used to decide whether to list them in the preview at all.
 	if cfg.OpenClawHome != "" {
 		if err := r.RunStep("Actualizando AGENTS.md y SOUL.md de OpenClaw…", "AGENTS.md y SOUL.md de OpenClaw actualizados", func() error {
 			return installer.SyncOpenClawWorkspace(cfg)
@@ -192,6 +192,14 @@ func runInstall(cmd *cobra.Command) error {
 		}
 		if err := r.RunStep("Registrando Engram en OpenClaw (mcpServers)…", "Engram registrado en OpenClaw", func() error {
 			return installer.SyncOpenClawMCPConfig(cfg)
+		}); err != nil {
+			return err
+		}
+		// PR-C (design #1666's memory-guard-parity piece, OCG-1..6): installs the click-memory-guard
+		// OpenClaw plugin last, after both OpenClaw writes above, matching openClawWriteSteps'
+		// position for it in the preview plan.
+		if err := r.RunStep("Instalando plugin de memory-guard para OpenClaw…", "Plugin de memory-guard instalado en OpenClaw", func() error {
+			return installer.SyncOpenClawPlugin(cfg)
 		}); err != nil {
 			return err
 		}

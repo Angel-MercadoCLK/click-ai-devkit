@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -127,6 +128,57 @@ func TestInstallCommand_SkipOpenClawFlag_ForcesClaudeOnlyEvenWhenDetected(t *tes
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
 	if _, err := os.Stat(cfg.OpenClawAgentsMDPath()); !os.IsNotExist(err) {
 		t.Fatalf("Stat(AGENTS.md) error = %v, want no OpenClaw files written when --skip-openclaw is set", err)
+	}
+}
+
+// TestInstallCommand_OpenClawDetected_InstallsMemoryGuardPlugin is PR-C's (design #1666's OCG-1..6)
+// end-to-end RED test: with openclaw resolvable on PATH, `click install` must also write the
+// click-memory-guard plugin (hooks.js + plugin.json) under OpenClawPluginDir(), with the
+// {{CLICK_BIN}} placeholder templated away.
+func TestInstallCommand_OpenClawDetected_InstallsMemoryGuardPlugin(t *testing.T) {
+	claudeHome := t.TempDir()
+	openClawHome := t.TempDir()
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	out, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "install")
+	if err != nil {
+		t.Fatalf("install command error = %v, output:\n%s", err, out)
+	}
+	if !strings.Contains(out, "memory-guard") {
+		t.Errorf("install output = %q, want it to mention installing the memory-guard plugin", out)
+	}
+
+	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+	hooksRaw, err := os.ReadFile(filepath.Join(cfg.OpenClawPluginDir(), "plugins", "hooks.js"))
+	if err != nil {
+		t.Fatalf("ReadFile(hooks.js) error = %v, want the plugin installed when OpenClaw is detected", err)
+	}
+	if strings.Contains(string(hooksRaw), "{{CLICK_BIN}}") {
+		t.Fatalf("hooks.js content = %q, want the {{CLICK_BIN}} placeholder templated away", hooksRaw)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.OpenClawPluginDir(), "plugin.json")); err != nil {
+		t.Fatalf("Stat(plugin.json) error = %v, want it written alongside hooks.js", err)
+	}
+}
+
+// TestInstallCommand_SkipOpenClawFlag_NoMemoryGuardPluginWritten guards the plugin write against
+// the same --skip-openclaw escape hatch every other OpenClaw write already respects.
+func TestInstallCommand_SkipOpenClawFlag_NoMemoryGuardPluginWritten(t *testing.T) {
+	claudeHome := t.TempDir()
+	openClawHome := t.TempDir()
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "install", "--skip-openclaw"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+
+	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+	if _, err := os.Stat(cfg.OpenClawPluginDir()); !os.IsNotExist(err) {
+		t.Fatalf("Stat(plugin dir) error = %v, want no plugin dir written when --skip-openclaw is set", err)
 	}
 }
 
