@@ -38,6 +38,9 @@ func Install(cfg Config, models map[modelconfig.Phase]string) error {
 	if _, _, err := SyncEngram(cfg, m); err != nil {
 		return err
 	}
+	if err := SyncEngramCloud(cfg, m); err != nil {
+		return err
+	}
 	if _, err := SyncContext7(cfg); err != nil {
 		return err
 	}
@@ -48,6 +51,15 @@ func Install(cfg Config, models map[modelconfig.Phase]string) error {
 		return err
 	}
 	return nil
+}
+
+// EngramCloudConfigured reports whether the local Engram client should enroll into a shared cloud
+// project on this run: server URL, project name, and ENGRAM_CLOUD_TOKEN must all be present. It is
+// exposed so the CLI preview plan can decide whether to list the cloud step before taking the
+// run-start snapshot.
+func EngramCloudConfigured(cfg Config, m *manifest.Manifest) bool {
+	server, project, tokenPresent := resolveEngramCloudConfig(cfg, m)
+	return server != "" && project != "" && tokenPresent
 }
 
 // Uninstall reverses everything Install (and `click update`'s re-sync) can have written:

@@ -260,6 +260,70 @@ func TestUninstall_NoopWhenAlreadyUninstalled(t *testing.T) {
 	}
 }
 
+// TestInstall_SyncEngramCloud_AfterSyncEngram is task 4.1's RED test: Install() must compose
+// SyncEngramCloud immediately after SyncEngram when cloud config and token are present, preserving
+// local-only behavior otherwise.
+func TestInstall_SyncEngramCloud_AfterSyncEngram(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	seedResolvableEngram(t)
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "cloud-token")
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+
+	if err := Install(cfg, nil); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	var engramPluginIdx, cloudConfigIdx int
+	foundPlugin, foundCloud := false, false
+	for i, cmd := range runner.commandStrings() {
+		if strings.HasPrefix(cmd, "claude plugin install engram@engram") {
+			engramPluginIdx = i
+			foundPlugin = true
+		}
+		if cmd == "engram cloud config --server http://127.0.0.1:18080" {
+			cloudConfigIdx = i
+			foundCloud = true
+			break
+		}
+	}
+	if !foundPlugin {
+		t.Fatal("Install() did not register engram@engram")
+	}
+	if !foundCloud {
+		t.Fatal("Install() did not issue engram cloud config when cloud config+token present")
+	}
+	if cloudConfigIdx <= engramPluginIdx {
+		t.Fatalf("cloud config index %d must be after engram plugin install index %d", cloudConfigIdx, engramPluginIdx)
+	}
+}
+
+// TestInstall_SyncEngramCloud_NoConfig_ZeroCloudCalls is task 4.1's no-config backward-compat test:
+// when no cloud server/project/token are present, Install() must add zero engram cloud commands.
+func TestInstall_SyncEngramCloud_NoConfig_ZeroCloudCalls(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	seedResolvableEngram(t)
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	if err := Install(cfg, nil); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	for _, cmd := range runner.commandStrings() {
+		if strings.HasPrefix(cmd, "engram cloud") || (strings.HasPrefix(cmd, "engram ") && strings.Contains(cmd, "--cloud")) {
+			t.Fatalf("Install() issued cloud command without cloud config: %q", cmd)
+		}
+	}
+}
+
 func TestInstallThenUninstallThenInstallAgain_Succeeds(t *testing.T) {
 	claudeHome := t.TempDir()
 	cfg := Config{ClaudeHome: claudeHome}

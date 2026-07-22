@@ -105,11 +105,17 @@ func runInstall(cmd *cobra.Command) error {
 		return nil
 	}
 
+	m, err := manifest.Load()
+	if err != nil {
+		return err
+	}
+	cloudConfigured := installer.EngramCloudConfigured(cfg, m)
+
 	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE step 1 below (the first external `claude` subprocess invocation). A
 	// decline here means zero writes: nothing below this point has run yet.
-	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, nonInteractive, installWriteSteps(cfg))
+	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, nonInteractive, installWriteSteps(cfg, cloudConfigured))
 	if err != nil {
 		return err
 	}
@@ -124,10 +130,6 @@ func runInstall(cmd *cobra.Command) error {
 		return err
 	}
 
-	m, err := manifest.Load()
-	if err != nil {
-		return err
-	}
 	engramAlreadyInstalled := false
 	engramPathWarning := ""
 	if err := r.RunStep("Instalando Engram (memoria persistente)…", "Engram sincronizado", func() error {
@@ -141,6 +143,14 @@ func runInstall(cmd *cobra.Command) error {
 		fmt.Fprintln(out, r.Info("Engram ya estaba instalado — se dejó como está, sin reinstalar."))
 	}
 	surfacePathWarning(out, r, engramPathWarning)
+
+	if cloudConfigured {
+		if err := r.RunStep("Enrolando Engram Cloud…", "Engram Cloud enrolado", func() error {
+			return syncEngramCloudFunc(cfg, m)
+		}); err != nil {
+			return err
+		}
+	}
 
 	context7AlreadyPresent := false
 	if err := r.RunStep("Registrando Context7 (documentación de librerías)…", "Context7 sincronizado", func() error {

@@ -15,7 +15,7 @@ import (
 // contract: a Config with no OpenClawHome must produce the exact same 6-step list installWriteSteps
 // returned before OpenClaw support existed — no new prompts, no new lines.
 func TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) {
-	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir()})
+	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir()}, false)
 	want := []string{
 		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
 		"Instalando Engram (memoria persistente)…",
@@ -40,13 +40,67 @@ func TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T)
 // write plan must list all four targets.
 func TestInstallWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
-	got := installWriteSteps(cfg)
+	got := installWriteSteps(cfg, false)
 	if len(got) != 10 {
 		t.Fatalf("installWriteSteps() = %#v, want 10 steps (6 Claude + 4 OpenClaw)", got)
 	}
 	for _, step := range got[6:] {
 		if !strings.Contains(step, "OpenClaw") {
 			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[6:])
+		}
+	}
+}
+
+// TestInstallWriteSteps_CloudConfigured_AddsCloudStep is task 4.1's preview-plan RED test: when
+// server+project+token are all present, the plan must list the Engram Cloud enrollment step right
+// after the local Engram step.
+func TestInstallWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
+	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir()}, true)
+	want := []string{
+		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
+		"Instalando Engram (memoria persistente)…",
+		"Enrolando Engram Cloud…",
+		"Registrando Context7 (documentación de librerías)…",
+		"Actualizando CLAUDE.md…",
+		"Registrando memory-guard…",
+		"Guardando modelos por fase de click-sdd…",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("installWriteSteps() = %#v, want exactly %d steps", got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("installWriteSteps()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestInstallWriteSteps_CloudNotConfigured_NoCloudStep is task 4.1's no-config preview-plan test:
+// when cloud config is incomplete, installWriteSteps must not add any cloud-related line.
+func TestInstallWriteSteps_CloudNotConfigured_NoCloudStep(t *testing.T) {
+	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir()}, false)
+	for _, step := range got {
+		if strings.Contains(step, "Cloud") {
+			t.Fatalf("installWriteSteps() contains cloud step when not configured: %q", step)
+		}
+	}
+}
+
+// TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth is task 4.1's combined preview-plan
+// test: when both OpenClaw and Engram Cloud are configured, the cloud step appears right after
+// Engram and before Context7, and the OpenClaw steps remain last.
+func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	got := installWriteSteps(cfg, true)
+	if len(got) != 11 {
+		t.Fatalf("installWriteSteps() = %#v, want 11 steps (6 Claude + 1 Cloud + 4 OpenClaw)", got)
+	}
+	if got[2] != "Enrolando Engram Cloud…" {
+		t.Fatalf("installWriteSteps()[2] = %q, want Engram Cloud step right after local Engram", got[2])
+	}
+	for _, step := range got[7:] {
+		if !strings.Contains(step, "OpenClaw") {
+			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[7:])
 		}
 	}
 }
