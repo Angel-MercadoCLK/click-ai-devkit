@@ -120,6 +120,23 @@ func runEngramCloudStep(runner CommandRunner, stepName string, args ...string) e
 	return nil
 }
 
+// RemoveEngramCloudState reverses the only file SyncEngramCloud can write: click's own
+// engram-cloud.json enrollment record. It is deliberately offline and non-destructive — it never
+// shells out to `engram cloud` to un-enroll the shared project (that would require a token and would
+// mutate the shared hive memory that other machines still depend on). It is idempotent: a missing
+// file (or an installer with no ClaudeHome) is a silent no-op, matching the reversal contract of the
+// other Remove* helpers Uninstall composes.
+func RemoveEngramCloudState(cfg Config) error {
+	path := cfg.EngramCloudStatePath()
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("installer: remove engram cloud state: %w", err)
+	}
+	return nil
+}
+
 // loadEngramCloudState reads click's Engram Cloud enrollment state. It returns a zero state and
 // found=false when the file is absent, matching loadEngramState's contract.
 func loadEngramCloudState(cfg Config) (engramCloudState, bool, error) {

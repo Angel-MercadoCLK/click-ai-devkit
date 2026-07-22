@@ -177,6 +177,32 @@ func TestUninstall_ReversesInstall(t *testing.T) {
 	}
 }
 
+// TestUninstall_RemovesEngramCloudState proves the uninstall round-trip for the Engram Cloud
+// enrollment record: Install() writes engram-cloud.json when a machine is enrolled, so Uninstall()
+// must reverse that write like every other managed artifact (docs promise "uninstall should remove
+// Click-managed configuration cleanly"). Uninstall must NOT attempt to un-enroll the shared cloud
+// project — it only deletes click's own local bookkeeping file, fully offline.
+func TestUninstall_RemovesEngramCloudState(t *testing.T) {
+	claudeHome := t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome}
+	seedResolvableEngram(t)
+	runner := newFakeCommandRunner(cfg)
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	if err := writeJSONFile(cfg.EngramCloudStatePath(), engramCloudState{Enrolled: true, Server: "http://127.0.0.1:18080", Project: "click-ai-devkit"}); err != nil {
+		t.Fatalf("writeJSONFile(engram cloud state) error = %v", err)
+	}
+
+	if err := Uninstall(cfg); err != nil {
+		t.Fatalf("Uninstall() error = %v", err)
+	}
+
+	if _, statErr := os.Stat(cfg.EngramCloudStatePath()); !os.IsNotExist(statErr) {
+		t.Fatal("Uninstall() left the Engram Cloud enrollment state file behind")
+	}
+}
+
 // TestUninstall_ReversesEngramWhenClickInstalledIt covers the normal case: click's own Install()
 // registered Engram (nothing pre-existing), so Uninstall must fully reverse it, including click's
 // own state bookkeeping file.

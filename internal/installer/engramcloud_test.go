@@ -273,3 +273,44 @@ func TestSyncEngramCloud_TokenNotInArgvOrState(t *testing.T) {
 		t.Fatalf("token leaked into state file: %s", string(data))
 	}
 }
+
+// TestRemoveEngramCloudState verifies the uninstall-side reversal for the local enrollment record.
+// It must remove click's own engram-cloud.json bookkeeping file, be idempotent when the file is
+// absent, and never shell out to the engram binary (uninstall must stay fully offline and must never
+// attempt to un-enroll the shared cloud project, which would need a token and be destructive to the
+// shared hive memory).
+func TestRemoveEngramCloudState(t *testing.T) {
+	t.Run("removes existing state file", func(t *testing.T) {
+		cfg := Config{ClaudeHome: t.TempDir()}
+		if err := writeJSONFile(cfg.EngramCloudStatePath(), engramCloudState{Enrolled: true, Server: "http://127.0.0.1:18080", Project: "click-ai-devkit"}); err != nil {
+			t.Fatalf("writeJSONFile(state) error = %v", err)
+		}
+
+		runner := newFakeEngramCloudRunner()
+		restore := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+		defer restore()
+
+		if err := RemoveEngramCloudState(cfg); err != nil {
+			t.Fatalf("RemoveEngramCloudState() error = %v", err)
+		}
+		if _, statErr := os.Stat(cfg.EngramCloudStatePath()); !os.IsNotExist(statErr) {
+			t.Fatalf("RemoveEngramCloudState() left the state file behind")
+		}
+		if len(runner.commands) != 0 {
+			t.Fatalf("RemoveEngramCloudState() shelled out to engram, want offline no-op: %+v", runner.commands)
+		}
+	})
+
+	t.Run("idempotent when state file absent", func(t *testing.T) {
+		cfg := Config{ClaudeHome: t.TempDir()}
+		if err := RemoveEngramCloudState(cfg); err != nil {
+			t.Fatalf("RemoveEngramCloudState() on absent file error = %v, want nil", err)
+		}
+	})
+
+	t.Run("no-op when ClaudeHome empty", func(t *testing.T) {
+		if err := RemoveEngramCloudState(Config{}); err != nil {
+			t.Fatalf("RemoveEngramCloudState() with empty ClaudeHome error = %v, want nil", err)
+		}
+	})
+}
