@@ -37,6 +37,43 @@ func TestResolveClaudeHome_DefaultsUnderUserHome(t *testing.T) {
 	}
 }
 
+// TestResolveOpenClawHome_UsesEnvOverride mirrors TestResolveClaudeHome_UsesEnvOverride for
+// CLICK_OPENCLAW_HOME (RED at write time: ResolveOpenClawHome does not exist until config.go's
+// GREEN change).
+func TestResolveOpenClawHome_UsesEnvOverride(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("CLICK_OPENCLAW_HOME", tmp)
+
+	got, err := ResolveOpenClawHome()
+	if err != nil {
+		t.Fatalf("ResolveOpenClawHome() error = %v", err)
+	}
+	if got != tmp {
+		t.Fatalf("ResolveOpenClawHome() = %q, want the CLICK_OPENCLAW_HOME override %q", got, tmp)
+	}
+}
+
+// TestResolveOpenClawHome_DefaultsUnderUserHome triangulates the override case above with the
+// default (no env override) branch, forcing the real os.UserHomeDir()+".openclaw" join logic
+// rather than a hardcoded return.
+func TestResolveOpenClawHome_DefaultsUnderUserHome(t *testing.T) {
+	t.Setenv("CLICK_OPENCLAW_HOME", "")
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no user home dir available in this environment: %v", err)
+	}
+
+	got, err := ResolveOpenClawHome()
+	if err != nil {
+		t.Fatalf("ResolveOpenClawHome() error = %v", err)
+	}
+	want := filepath.Join(home, ".openclaw")
+	if got != want {
+		t.Fatalf("ResolveOpenClawHome() = %q, want %q", got, want)
+	}
+}
+
 func TestConfig_PluginDirAndClaudeMDPath(t *testing.T) {
 	cfg := Config{ClaudeHome: filepath.Join("some", "home", ".claude")}
 

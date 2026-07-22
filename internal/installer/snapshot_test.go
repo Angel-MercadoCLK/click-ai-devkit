@@ -467,3 +467,148 @@ func TestSnapshotDrift_MissingCurrentFile_NotReportedAsDrift(t *testing.T) {
 		t.Fatalf("SnapshotDrift() = %v, want empty (a missing current file is not drift)", drifted)
 	}
 }
+
+// --- Per-target snapshot generalization (openclaw-target-support, tasks 2.9-2.12) ---
+
+// TestSnapshotRun_OpenClawPresent_CapturesFiveFiles is task 2.9's RED test: when cfg.OpenClawHome
+// is populated, SnapshotRun must capture all 5 files (2 Claude + 3 OpenClaw) before any write.
+func TestSnapshotRun_OpenClawPresent_CapturesFiveFiles(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	writeTestFile(t, cfg.ClaudeMDPath(), "# claude\n")
+	writeTestFile(t, cfg.SettingsPath(), `{}`)
+	writeTestFile(t, cfg.OpenClawAgentsMDPath(), "# agents\n")
+	writeTestFile(t, cfg.OpenClawSoulMDPath(), "# soul\n")
+	writeTestFile(t, cfg.OpenClawMCPConfigPath(), `{}`)
+
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatalf("loadSnapshotManifest() error = %v", err)
+	}
+	if len(manifest.Entries) != 5 {
+		t.Fatalf("manifest.Entries = %#v, want exactly 5 entries (2 Claude + 3 OpenClaw)", manifest.Entries)
+	}
+
+	wantPaths := map[string]bool{
+		cfg.ClaudeMDPath():          false,
+		cfg.SettingsPath():          false,
+		cfg.OpenClawAgentsMDPath():  false,
+		cfg.OpenClawSoulMDPath():    false,
+		cfg.OpenClawMCPConfigPath(): false,
+	}
+	for _, e := range manifest.Entries {
+		if _, ok := wantPaths[e.OriginalPath]; !ok {
+			t.Fatalf("manifest has unexpected entry for %s", e.OriginalPath)
+		}
+		wantPaths[e.OriginalPath] = true
+	}
+	for path, found := range wantPaths {
+		if !found {
+			t.Fatalf("manifest has no entry for %s", path)
+		}
+	}
+}
+
+// TestSnapshotRun_OpenClawAbsent_CapturesOnlyClaudeFiles is task 2.10's RED test, made explicit
+// (rather than relying only on TestSnapshotRun_CopiesBothFilesAndWritesManifest's pre-existing
+// count) so the "unchanged from pre-change behavior" guarantee has its own named regression guard.
+func TestSnapshotRun_OpenClawAbsent_CapturesOnlyClaudeFiles(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	writeTestFile(t, cfg.ClaudeMDPath(), "# claude\n")
+	writeTestFile(t, cfg.SettingsPath(), `{}`)
+
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatalf("loadSnapshotManifest() error = %v", err)
+	}
+	if len(manifest.Entries) != 2 {
+		t.Fatalf("manifest.Entries = %#v, want exactly 2 entries when OpenClawHome is empty", manifest.Entries)
+	}
+}
+
+// TestRestoreRun_OpenClawFilesPresent_RestoresAllFiles is task 2.11's RED test: after SnapshotRun
+// with OpenClaw files present, editing ALL 5 files, then RestoreRun, all 5 must come back
+// byte-for-byte to their snapshotted content — proving RestoreRun needs no cfg.OpenClawHome-aware
+// change of its own, since it replays whatever paths SnapshotRun recorded in the manifest.
+func TestRestoreRun_OpenClawFilesPresent_RestoresAllFiles(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	writeTestFile(t, cfg.ClaudeMDPath(), "claude original\n")
+	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
+	writeTestFile(t, cfg.OpenClawAgentsMDPath(), "agents original\n")
+	writeTestFile(t, cfg.OpenClawSoulMDPath(), "soul original\n")
+	writeTestFile(t, cfg.OpenClawMCPConfigPath(), `{"mcpServers":{}}`)
+
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	writeTestFile(t, cfg.ClaudeMDPath(), "claude EDITED\n")
+	writeTestFile(t, cfg.SettingsPath(), `{"edited":true}`)
+	writeTestFile(t, cfg.OpenClawAgentsMDPath(), "agents EDITED\n")
+	writeTestFile(t, cfg.OpenClawSoulMDPath(), "soul EDITED\n")
+	writeTestFile(t, cfg.OpenClawMCPConfigPath(), `{"edited":true}`)
+
+	if err := RestoreRun(cfg); err != nil {
+		t.Fatalf("RestoreRun() error = %v", err)
+	}
+
+	checks := map[string]string{
+		cfg.ClaudeMDPath():          "claude original\n",
+		cfg.SettingsPath():          `{"original":true}`,
+		cfg.OpenClawAgentsMDPath():  "agents original\n",
+		cfg.OpenClawSoulMDPath():    "soul original\n",
+		cfg.OpenClawMCPConfigPath(): `{"mcpServers":{}}`,
+	}
+	for path, want := range checks {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s) error = %v", path, err)
+		}
+		if string(got) != want {
+			t.Fatalf("restored %s = %q, want %q", path, got, want)
+		}
+	}
+}
+
+// TestSnapshotRun_OpenClawFirstInstall_RecordsNoPriorStateMarker is task 2.12's RED test: OpenClaw
+// is detected (cfg.OpenClawHome set) but none of its 3 files exist yet — the snapshot must record
+// an explicit no-prior-state marker for each of them, exactly like Claude's own first-ever-install
+// case, never an error and never a fabricated backup.
+func TestSnapshotRun_OpenClawFirstInstall_RecordsNoPriorStateMarker(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	writeTestFile(t, cfg.ClaudeMDPath(), "# claude\n")
+	writeTestFile(t, cfg.SettingsPath(), `{}`)
+	// Deliberately do NOT create AGENTS.md/SOUL.md/openclaw.json — first-ever OpenClaw install.
+
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v, want nil even when OpenClaw's files don't exist yet", err)
+	}
+
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatalf("loadSnapshotManifest() error = %v", err)
+	}
+	byOriginal := make(map[string]manifestEntry, len(manifest.Entries))
+	for _, e := range manifest.Entries {
+		byOriginal[e.OriginalPath] = e
+	}
+	for _, path := range []string{cfg.OpenClawAgentsMDPath(), cfg.OpenClawSoulMDPath(), cfg.OpenClawMCPConfigPath()} {
+		entry, ok := byOriginal[path]
+		if !ok {
+			t.Fatalf("manifest has no entry for %s", path)
+		}
+		if entry.Existed {
+			t.Fatalf("manifest entry for %s: Existed = true, want false (no-prior-state marker)", path)
+		}
+		if entry.BackupFile != "" {
+			t.Fatalf("manifest entry for %s: BackupFile = %q, want empty for a no-prior-state marker", path, entry.BackupFile)
+		}
+	}
+}

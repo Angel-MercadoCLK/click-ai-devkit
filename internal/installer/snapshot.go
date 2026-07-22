@@ -37,15 +37,30 @@ type snapshotSource struct {
 	backupFile   string
 }
 
-// snapshotSources returns the fixed set of files a run-start snapshot covers: CLAUDE.md and
-// settings.json (design's Data Flow — the two root-level files `click install`/`click update`
-// write to, ahead of any external `claude` subprocess invocation). Order is fixed so
-// manifest.json's entry order is deterministic across runs.
+// snapshotSources returns the per-target set of files a run-start snapshot covers: CLAUDE.md and
+// settings.json ALWAYS (design's Data Flow — the two root-level files `click install`/`click
+// update` write to, ahead of any external `claude` subprocess invocation), PLUS OpenClaw's
+// AGENTS.md/SOUL.md/openclaw.json when cfg.OpenClawHome is populated (openclaw-target-support
+// spec's install-snapshot-preview capability — generalizing this from a fixed 2-file list to a
+// per-target list, so install-reliability-foundation's backup/preview/rollback protection extends
+// to OpenClaw's files). Order is fixed so manifest.json's entry order is deterministic across runs.
+//
+// ZERO behavior change for a Claude-only host: when cfg.OpenClawHome == "" (the zero value, exactly
+// what every pre-existing caller that never sets it produces), this returns the identical 2-entry
+// slice it always did.
 func snapshotSources(cfg Config) []snapshotSource {
-	return []snapshotSource{
+	sources := []snapshotSource{
 		{originalPath: cfg.ClaudeMDPath(), backupFile: "CLAUDE.md"},
 		{originalPath: cfg.SettingsPath(), backupFile: "settings.json"},
 	}
+	if cfg.OpenClawHome == "" {
+		return sources
+	}
+	return append(sources,
+		snapshotSource{originalPath: cfg.OpenClawAgentsMDPath(), backupFile: "AGENTS.md"},
+		snapshotSource{originalPath: cfg.OpenClawSoulMDPath(), backupFile: "SOUL.md"},
+		snapshotSource{originalPath: cfg.OpenClawMCPConfigPath(), backupFile: "openclaw.json"},
+	)
 }
 
 // snapshotLatestDir is the single-latest-retention snapshot directory (design's "Retention"

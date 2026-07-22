@@ -10,11 +10,13 @@ import (
 )
 
 func newUpdateCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Re-sync plugins and the Engram pin to the currently installed click binary",
 		RunE:  runUpdate,
 	}
+	cmd.Flags().Bool(skipOpenClawFlag, false, "Omitir la integración con OpenClaw aunque se detecte openclaw en este equipo")
+	return cmd
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
@@ -41,6 +43,23 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome}
+
+	// openclaw-target-support: same detect+confirm rule as runInstall — see install.go's cfg
+	// construction for the full rationale. Kept duplicated (not extracted into a shared helper)
+	// because the two commands' surrounding flag/error plumbing differs enough that a shared helper
+	// would need its own indirection for no real gain at this size.
+	skipOpenClaw, err := cmd.Flags().GetBool(skipOpenClawFlag)
+	if err != nil {
+		return err
+	}
+	if !skipOpenClaw && installer.OpenClawAvailable() {
+		openClawHome, err := installer.ResolveOpenClawHome()
+		if err != nil {
+			return err
+		}
+		cfg.OpenClawHome = openClawHome
+	}
+
 	m, err := manifest.Load()
 	if err != nil {
 		return err
@@ -50,7 +69,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE MigrateIfStale/step 1 below (the first external `claude` subprocess
 	// invocation). A decline here means zero writes: nothing below this point has run yet.
-	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version))
+	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg))
 	if err != nil {
 		return err
 	}
@@ -131,6 +150,21 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 	if context7AlreadyPresent {
 		fmt.Fprintln(out, r.Info("Context7 ya estaba configurado — se dejó como está, sin reinstalar."))
+	}
+
+	// openclaw-target-support: appended LAST, matching openClawWriteSteps' position at the end of
+	// updateWriteSteps(..., cfg) — see runInstall's mirrored block for the full rationale.
+	if cfg.OpenClawHome != "" {
+		if err := r.RunStep("Actualizando AGENTS.md y SOUL.md de OpenClaw…", "AGENTS.md y SOUL.md de OpenClaw actualizados", func() error {
+			return installer.SyncOpenClawWorkspace(cfg)
+		}); err != nil {
+			return err
+		}
+		if err := r.RunStep("Registrando Engram en OpenClaw (mcpServers)…", "Engram registrado en OpenClaw", func() error {
+			return installer.SyncOpenClawMCPConfig(cfg)
+		}); err != nil {
+			return err
+		}
 	}
 
 	fmt.Fprintln(out, r.Info("Update completo."))

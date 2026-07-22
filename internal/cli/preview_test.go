@@ -9,6 +9,73 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 )
 
+// --- openclaw-target-support write-step generalization (tasks 2.14-2.18) ---
+
+// TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps guards the "zero behavior change"
+// contract: a Config with no OpenClawHome must produce the exact same 6-step list installWriteSteps
+// returned before OpenClaw support existed — no new prompts, no new lines.
+func TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) {
+	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir()})
+	want := []string{
+		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
+		"Instalando Engram (memoria persistente)…",
+		"Registrando Context7 (documentación de librerías)…",
+		"Actualizando CLAUDE.md…",
+		"Registrando memory-guard…",
+		"Guardando modelos por fase de click-sdd…",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("installWriteSteps() = %#v, want exactly %d steps (pre-change behavior)", got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("installWriteSteps()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestInstallWriteSteps_OpenClawPresent_AppendsTwoOpenClawSteps is task 2.14's RED test: when
+// OpenClaw is detected (cfg.OpenClawHome populated), the write plan must list both targets.
+func TestInstallWriteSteps_OpenClawPresent_AppendsTwoOpenClawSteps(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	got := installWriteSteps(cfg)
+	if len(got) != 8 {
+		t.Fatalf("installWriteSteps() = %#v, want 8 steps (6 Claude + 2 OpenClaw)", got)
+	}
+	if !strings.Contains(got[6], "OpenClaw") || !strings.Contains(got[7], "OpenClaw") {
+		t.Fatalf("installWriteSteps() trailing steps = %#v, want both to mention OpenClaw", got[6:])
+	}
+}
+
+// TestUpdateWriteSteps_OpenClawPresent_AppendsTwoOpenClawSteps mirrors the install-side test above
+// for updateWriteSteps.
+func TestUpdateWriteSteps_OpenClawPresent_AppendsTwoOpenClawSteps(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	got := updateWriteSteps("0.1.1", cfg)
+	if len(got) != 8 {
+		t.Fatalf("updateWriteSteps() = %#v, want 8 steps (6 Claude + 2 OpenClaw)", got)
+	}
+	if !strings.Contains(got[6], "OpenClaw") || !strings.Contains(got[7], "OpenClaw") {
+		t.Fatalf("updateWriteSteps() trailing steps = %#v, want both to mention OpenClaw", got[6:])
+	}
+}
+
+// TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps is updateWriteSteps' zero-behavior-
+// change guard, mirroring TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps.
+func TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) {
+	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()})
+	if len(got) != 6 {
+		t.Fatalf("updateWriteSteps() = %#v, want exactly 6 steps when OpenClaw is absent", got)
+	}
+}
+
+// TestOpenClawWriteSteps_Absent_ReturnsNil guards openClawWriteSteps' own base case directly.
+func TestOpenClawWriteSteps_Absent_ReturnsNil(t *testing.T) {
+	if got := openClawWriteSteps(installer.Config{}); got != nil {
+		t.Fatalf("openClawWriteSteps() = %#v, want nil when OpenClawHome is empty", got)
+	}
+}
+
 // TestRenderWritePlan_ListsStepsInOrder is the RED test for renderWritePlan: it asserts the exact
 // (golden) plain-mode output — backup location line first, then a numbered list of steps in the
 // exact order given — since renderWritePlan/preview.go do not exist yet at RED time.

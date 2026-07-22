@@ -13,6 +13,12 @@ import (
 // home directory (implementation brief's hard safety rule).
 const claudeHomeEnvOverride = "CLICK_CLAUDE_HOME"
 
+// openClawHomeEnvOverride mirrors claudeHomeEnvOverride for OpenClaw: it lets tests (and power
+// users) point click at a directory other than the real ~/.openclaw. Every test that exercises
+// OpenClaw install/update writes MUST use this override with a t.TempDir() — never the real home
+// directory, same hard safety rule as claudeHomeEnvOverride.
+const openClawHomeEnvOverride = "CLICK_OPENCLAW_HOME"
+
 // Config carries every path click's installer needs. It is deliberately just ClaudeHome today —
 // Slice 1 only touches the plugin dir and CLAUDE.md, both derived from it.
 type Config struct {
@@ -20,12 +26,13 @@ type Config struct {
 	ClaudeHome string
 
 	// OpenClawHome is the root of a detected OpenClaw installation, normally ~/.openclaw. It stays
-	// the zero value (empty string) when OpenClaw is not detected on this machine — a valid, silent
-	// state (openclaw-target-support spec's install-config capability, "OpenClaw absent" scenario):
-	// every derived OpenClawXxxPath() below still resolves (as empty-rooted paths), and every
-	// Claude-only path (ClaudeMDPath, SettingsPath, ...) is completely unaffected. Resolution of the
-	// real value (CLICK_OPENCLAW_HOME override / detected ~/.openclaw) is out of scope for this
-	// slice — it belongs to the install/update wiring that actually populates this field.
+	// the zero value (empty string) when OpenClaw is not detected on this machine (or
+	// --skip-openclaw was passed) — a valid, silent state (openclaw-target-support spec's
+	// install-config capability, "OpenClaw absent" scenario): every derived OpenClawXxxPath() below
+	// still resolves (as empty-rooted paths), and every Claude-only path (ClaudeMDPath,
+	// SettingsPath, ...) is completely unaffected. Populated by install.go/update.go via
+	// ResolveOpenClawHome(), gated on OpenClawAvailable() — see runInstall's cfg construction for
+	// the detect+confirm wiring.
 	OpenClawHome string
 }
 
@@ -41,6 +48,23 @@ func ResolveClaudeHome() (string, error) {
 		return "", fmt.Errorf("installer: resolve claude home: %w", err)
 	}
 	return filepath.Join(home, ".claude"), nil
+}
+
+// ResolveOpenClawHome resolves the OpenClaw home directory click should write into when OpenClaw
+// is detected (and not skipped via --skip-openclaw): the CLICK_OPENCLAW_HOME env override if set
+// (used by tests and advanced overrides), otherwise <user home>/.openclaw. Mirrors
+// ResolveClaudeHome's exact pattern. Callers are responsible for deciding WHETHER to call this at
+// all (openclaw-target-support spec's skip-on-absent semantics) — this function only resolves the
+// path, it never probes whether OpenClaw is actually installed.
+func ResolveOpenClawHome() (string, error) {
+	if v := os.Getenv(openClawHomeEnvOverride); v != "" {
+		return v, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("installer: resolve openclaw home: %w", err)
+	}
+	return filepath.Join(home, ".openclaw"), nil
 }
 
 // ClickSDDPluginDir is where the click-sdd plugin is installed under this Config's ClaudeHome.
