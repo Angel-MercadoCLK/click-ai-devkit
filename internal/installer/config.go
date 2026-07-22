@@ -89,6 +89,15 @@ func (c Config) ModelsPath() string {
 	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "models.json")
 }
 
+// BackupDir is where snapshot.go stores the single run-start snapshot of CLAUDE.md + settings.json
+// (install-reliability-foundation change): one run writes BackupDir()/latest/{CLAUDE.md,
+// settings.json,manifest.json}, overwritten on the next successful run (single-latest retention —
+// see design's "Retention" decision). Kept under click-ai-devkit/ rather than as flat siblings next
+// to the snapshotted files themselves, matching where engram.json/models.json already live.
+func (c Config) BackupDir() string {
+	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "backups")
+}
+
 // ProfileArtifactPath is where a named orchestration profile's generic RuntimeProfile JSON
 // artifact lives (design D2, salvaged by PR2b's profile_artifacts.go as substrate for the
 // separate agent-builder-flow change). It is a DIFFERENT file from ModelsPath(): ModelsPath()

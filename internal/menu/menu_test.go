@@ -136,6 +136,25 @@ func TestManageBackupsMenuItemIsActiveAndDispatchable(t *testing.T) {
 	}
 }
 
+// TestRollbackMenuItemIsActiveAndDispatchable guards the menu-side rollback wiring: the item must
+// be active, wired to ActionRollback, and ActionArgs must map it to `click rollback`.
+func TestRollbackMenuItemIsActiveAndDispatchable(t *testing.T) {
+	idx := firstItemIndexWhere(t, func(it Item) bool { return it.Label == "Restaurar último respaldo" })
+	item := Items[idx]
+	if !item.Active {
+		t.Fatal("Restaurar último respaldo Active = false, want true")
+	}
+	if item.Action != ActionRollback {
+		t.Fatalf("Restaurar último respaldo Action = %q, want %q", item.Action, ActionRollback)
+	}
+
+	got := ActionArgs(item.Action)
+	want := []string{"rollback"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("ActionArgs(%q) = %v, want %v", item.Action, got, want)
+	}
+}
+
 // TestItems_NoLongerContainsRemovedInertPlaceholders guards the removal of the two inert
 // "coming soon" rows that were dropped entirely (not merely deactivated) by this change:
 // "Presets de instalación" and "Sincronizar configuración" no longer exist in Items at all.
@@ -252,6 +271,7 @@ func TestActionArgs_MapsEachActiveDispatchableAction(t *testing.T) {
 		ActionDoctor:          {"doctor"},
 		ActionUninstall:       {"uninstall"},
 		ActionManageBackups:   {"manage-backups"},
+		ActionRollback:        {"rollback"},
 	}
 	for action, want := range cases {
 		got := ActionArgs(action)

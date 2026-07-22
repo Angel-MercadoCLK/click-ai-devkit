@@ -23,6 +23,7 @@ package installer
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 )
@@ -84,32 +85,39 @@ func SyncContext7(cfg Config) (alreadyPresent bool, err error) {
 // Context7 in the first place. If a developer already had Context7 configured before running
 // `click install`, click uninstall leaves it running untouched — click only ever removes what it
 // added. It is idempotent: safe to call when Context7 was never touched by click, or has already
-// been removed.
-func RemoveContext7(cfg Config) error {
+// been removed. A malformed state file returns a warning and leaves both the state file and the
+// Context7 registration untouched because ownership is unknown.
+func RemoveContext7(cfg Config) (stateWarning string, err error) {
 	state, found, err := loadContext7State(cfg)
 	if err != nil {
-		return err
+		if errors.Is(err, errContext7StateCorrupted) {
+			return fmt.Sprintf(
+				"no se pudo leer el estado de Context7 (%s): el archivo parece estar dañado, así que por seguridad no se modificó nada relacionado con Context7. Revíselo o elimínelo manualmente; si desea desinstalar Context7 usted mismo, ejecute: claude mcp remove context7",
+				cfg.Context7StatePath(),
+			), nil
+		}
+		return "", err
 	}
 	if !found {
 		// click's SyncContext7 never ran against this home — nothing click-managed to reverse.
-		return nil
+		return "", nil
 	}
 	if !state.InstalledByClick {
 		// click never owned this registration; leave Context7 alone, just drop click's own
 		// bookkeeping.
-		return removeContext7State(cfg)
+		return "", removeContext7State(cfg)
 	}
 	present, err := HasContext7(cfg)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if present {
 		runner := commandRunnerFactory()
 		if err := removeContext7(runner); err != nil {
-			return err
+			return "", err
 		}
 	}
-	return removeContext7State(cfg)
+	return "", removeContext7State(cfg)
 }
 
 // HasContext7 reports whether Context7 is currently registered as a user-scope MCP server, by
@@ -149,6 +157,8 @@ func removeContext7(runner CommandRunner) error {
 	return nil
 }
 
+var errContext7StateCorrupted = errors.New("context7 state file is corrupted")
+
 func loadContext7State(cfg Config) (context7State, bool, error) {
 	data, err := os.ReadFile(cfg.Context7StatePath())
 	if err != nil {
@@ -159,7 +169,7 @@ func loadContext7State(cfg Config) (context7State, bool, error) {
 	}
 	var state context7State
 	if err := json.Unmarshal(data, &state); err != nil {
-		return context7State{}, false, fmt.Errorf("installer: parse context7 state: %w", err)
+		return context7State{}, false, fmt.Errorf("installer: parse context7 state: %w: %w", errContext7StateCorrupted, err)
 	}
 	return state, true, nil
 }

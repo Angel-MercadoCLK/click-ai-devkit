@@ -32,6 +32,7 @@ const (
 	ActionDoctor          = "doctor"
 	ActionUninstall       = "uninstall"
 	ActionManageBackups   = "manage-backups"
+	ActionRollback        = "rollback"
 	ActionQuit            = "quit"
 )
 
@@ -58,6 +59,7 @@ var Items = []Item{
 	{Label: "Desinstalar", Action: ActionUninstall, Active: true},
 	{Label: "Crear agente propio", Action: ActionAgentBuilder, Active: true},
 	{Label: "Gestionar backups", Action: ActionManageBackups, Active: true},
+	{Label: "Restaurar último respaldo", Action: ActionRollback, Active: true},
 	{Label: "Salir", Action: ActionQuit, Active: true},
 }
 
@@ -292,6 +294,8 @@ func ActionArgs(action string) []string {
 		return []string{"uninstall"}
 	case ActionManageBackups:
 		return []string{"manage-backups"}
+	case ActionRollback:
+		return []string{"rollback"}
 	default:
 		return nil
 	}

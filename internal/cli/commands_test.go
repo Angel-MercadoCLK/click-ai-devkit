@@ -1383,3 +1383,149 @@ func TestRendererFor_NoColorFlagForcesPlain(t *testing.T) {
 		t.Fatal("rendererFor() with --no-color parsed produced a color-enabled renderer")
 	}
 }
+
+// manifestCheckingRunner wraps another installer.CommandRunner and records, on its FIRST Run call
+// only, whether cfg's run-start snapshot manifest.json already existed on disk at that moment — the
+// install-reliability-foundation ordering invariant (spec's "Single Run-Start Snapshot Before Any
+// Write" requirement): SnapshotRun must complete before the first external `claude` subprocess
+// invocation, in both install.go's and update.go's actual step 1.
+type manifestCheckingRunner struct {
+	installer.CommandRunner
+	cfg             installer.Config
+	checkedFirstRun bool
+	manifestExisted bool
+}
+
+func (r *manifestCheckingRunner) Run(name string, args ...string) error {
+	if !r.checkedFirstRun {
+		r.checkedFirstRun = true
+		_, statErr := os.Stat(filepath.Join(r.cfg.BackupDir(), "latest", "manifest.json"))
+		r.manifestExisted = statErr == nil
+	}
+	return r.CommandRunner.Run(name, args...)
+}
+
+// TestInstallCommand_SnapshotTakenBeforeFirstClaudeCommand is task 2.5's RED test: it proves
+// SnapshotRun completes before the very first `claude` subprocess invocation SyncMarketplacePlugins
+// issues — covering settings.json's second writer (the external claude CLI), not just the two
+// direct file writes install.go itself performs.
+func TestInstallCommand_SnapshotTakenBeforeFirstClaudeCommand(t *testing.T) {
+	home := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home}
+	base := newTestCommandRunner(home)
+	runner := &manifestCheckingRunner{CommandRunner: base, cfg: cfg}
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "install"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+	if !runner.checkedFirstRun {
+		t.Fatal("no claude command was ever issued during install, want at least one so the ordering invariant is actually exercised")
+	}
+	if !runner.manifestExisted {
+		t.Fatal("manifest.json did not exist before the first claude command fired — SnapshotRun must complete before step 1")
+	}
+}
+
+// TestUpdateCommand_SnapshotTakenBeforeFirstClaudeCommand mirrors the install-side ordering
+// invariant test above for `click update`.
+func TestUpdateCommand_SnapshotTakenBeforeFirstClaudeCommand(t *testing.T) {
+	home := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home}
+	base := newTestCommandRunner(home)
+	runner := &manifestCheckingRunner{CommandRunner: base, cfg: cfg}
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	binaryPath := filepath.Join(t.TempDir(), "engram.exe")
+	if err := os.WriteFile(binaryPath, []byte("binary"), 0o644); err != nil {
+		t.Fatalf("WriteFile(binary) error = %v", err)
+	}
+	t.Setenv("CLICK_ENGRAM_BINARY_PATH", binaryPath)
+
+	if _, err := execRoot(t, home, "update"); err != nil {
+		t.Fatalf("update command error = %v", err)
+	}
+	if !runner.checkedFirstRun {
+		t.Fatal("no claude command was ever issued during update, want at least one so the ordering invariant is actually exercised")
+	}
+	if !runner.manifestExisted {
+		t.Fatal("manifest.json did not exist before the first claude command fired — SnapshotRun must complete before step 1")
+	}
+}
+
+// TestInstallCommand_NonTTY_SkipsPreviewPrompt is task 2.3's RED test for install: execRoot always
+// wires a bytes.Buffer (never a real terminal) as out, so isNonInteractiveInstall must resolve true
+// and the confirm prompt must never appear.
+func TestInstallCommand_NonTTY_SkipsPreviewPrompt(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	out, err := execRoot(t, home, "install")
+	if err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+	if strings.Contains(out, "¿Continuar?") {
+		t.Fatalf("install output = %q, want no confirm prompt on non-TTY output", out)
+	}
+}
+
+// TestUpdateCommand_NonTTY_SkipsPreviewPrompt mirrors the install-side non-TTY test above for
+// `click update`.
+func TestUpdateCommand_NonTTY_SkipsPreviewPrompt(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	out, err := execRoot(t, home, "update")
+	if err != nil {
+		t.Fatalf("update command error = %v", err)
+	}
+	if strings.Contains(out, "¿Continuar?") {
+		t.Fatalf("update output = %q, want no confirm prompt on non-TTY output", out)
+	}
+}
+
+// TestInstallCommand_TakesRunStartSnapshotBeforeWrites guards the install-backup capability
+// end-to-end through the real CLI command: after `click install`, a completed run-start snapshot
+// must exist.
+func TestInstallCommand_TakesRunStartSnapshotBeforeWrites(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "install"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+	has, err := installer.HasRunSnapshot(installer.Config{ClaudeHome: home})
+	if err != nil {
+		t.Fatalf("HasRunSnapshot() error = %v", err)
+	}
+	if !has {
+		t.Fatal("HasRunSnapshot() = false after `click install`, want true")
+	}
+}
+
+// TestUpdateCommand_TakesRunStartSnapshotBeforeWrites mirrors the install-side snapshot test above
+// for `click update`.
+func TestUpdateCommand_TakesRunStartSnapshotBeforeWrites(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "update"); err != nil {
+		t.Fatalf("update command error = %v", err)
+	}
+	has, err := installer.HasRunSnapshot(installer.Config{ClaudeHome: home})
+	if err != nil {
+		t.Fatalf("HasRunSnapshot() error = %v", err)
+	}
+	if !has {
+		t.Fatal("HasRunSnapshot() = false after `click update`, want true")
+	}
+}

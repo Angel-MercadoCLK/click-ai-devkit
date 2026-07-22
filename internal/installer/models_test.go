@@ -246,7 +246,7 @@ func TestMigrateIfStale_CurrentSchema_NoOp(t *testing.T) {
 
 // TestMigrateIfStale_StaleFile_BacksUpThenRegenerates guards the confirmed migration contract: a
 // stale models.json is backed up verbatim to models.json.bak FIRST, then fully regenerated with
-// new-taxonomy defaults — old per-phase overrides are never preserved/merged (D8: never clobber a
+// new-taxonomy defaults — old per-phase overrides are never preserved/merged (never clobber a
 // working setup without a backup, but also never silently trust stale per-phase data).
 func TestMigrateIfStale_StaleFile_BacksUpThenRegenerates(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir()}
