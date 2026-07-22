@@ -6,6 +6,8 @@
 package doctor
 
 import (
+	"encoding/json"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -20,7 +22,7 @@ import (
 // persistence), kept as an exported constant so other packages/tests documenting Run()'s total
 // check count don't have to hardcode a magic number that silently drifts if a check is added or
 // removed here.
-const EngramChecksCount = 3
+const EngramChecksCount = 4
 
 // Context7ChecksCount is the number of doctor checks contributed by Context7, kept as an exported
 // constant for the same reason as EngramChecksCount.
@@ -67,6 +69,7 @@ func Run(cfg installer.Config) Report {
 		checkEngramPlugin(cfg),
 		checkEngramBinary(cfg),
 		checkEngramPath(cfg),
+		checkEngramCloud(cfg),
 		checkContext7(cfg),
 	}}
 }
@@ -360,6 +363,79 @@ func checkEngramPath(cfg installer.Config) CheckResult {
 			Detail: gobin + " no está en el PATH persistido ni en el de esta sesión — el MCP de engram podría no conectar " +
 				"en una sesión nueva. Ejecute `click install` o `click update` para reintentar la persistencia.",
 		}
+	}
+}
+
+// engramCloudState mirrors installer's non-secret state shape so doctor can read it without
+// importing the unexported type.
+type engramCloudState struct {
+	Enrolled bool   `json:"enrolled"`
+	Server   string `json:"server"`
+	Project  string `json:"project"`
+}
+
+// checkEngramCloud reports whether this machine is enrolled into an Engram Cloud project. It is
+// strictly read-only (NFR-012): it reads click's own engram-cloud.json state file and checks for
+// the presence of ENGRAM_CLOUD_TOKEN, but never shells out to the engram binary, never probes
+// the network, and never writes or repairs anything. A missing token means the developer chose
+// local-only mode, which is reported as a distinct non-error healthy status.
+func checkEngramCloud(cfg installer.Config) CheckResult {
+	const name = "engram cloud enrollment"
+
+	tokenPresent := os.Getenv("ENGRAM_CLOUD_TOKEN") != ""
+
+	statePath := cfg.EngramCloudStatePath()
+	if statePath == "" {
+		// Unconfigured installer: no ClaudeHome means there is nowhere for cloud state to live.
+		return CheckResult{
+			Name:    name,
+			Healthy: true,
+			Detail:  "sin configurar de nube (sin directorio de inicio de Claude)",
+		}
+	}
+
+	if !tokenPresent {
+		return CheckResult{
+			Name:    name,
+			Healthy: true,
+			Detail:  "modo local: ENGRAM_CLOUD_TOKEN no está presente",
+		}
+	}
+
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return CheckResult{
+				Name:    name,
+				Healthy: false,
+				Detail: "configuración de nube detectada (ENGRAM_CLOUD_TOKEN presente), pero no se encontró estado de inscripción " +
+					"— ejecute `click install` o `click update` para inscribir este equipo",
+			}
+		}
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo leer el estado de engram cloud: " + err.Error()}
+	}
+
+	var state engramCloudState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return CheckResult{
+			Name:    name,
+			Healthy: false,
+			Detail:  "estado de engram cloud ilegible: " + err.Error() + " — ejecute `click install` o `click update` para regenerarlo",
+		}
+	}
+
+	if !state.Enrolled {
+		return CheckResult{
+			Name:    name,
+			Healthy: false,
+			Detail:  "ENGRAM_CLOUD_TOKEN está presente pero el estado local no marca inscripción — ejecute `click install` o `click update` para inscribir este equipo",
+		}
+	}
+
+	return CheckResult{
+		Name:    name,
+		Healthy: true,
+		Detail:  "inscrito en " + state.Project + " @ " + state.Server,
 	}
 }
 

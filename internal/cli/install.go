@@ -105,11 +105,17 @@ func runInstall(cmd *cobra.Command) error {
 		return nil
 	}
 
+	m, err := manifest.Load()
+	if err != nil {
+		return err
+	}
+	cloudConfigured := installer.EngramCloudConfigured(cfg, m)
+
 	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE step 1 below (the first external `claude` subprocess invocation). A
 	// decline here means zero writes: nothing below this point has run yet.
-	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, nonInteractive, installWriteSteps(cfg))
+	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, nonInteractive, installWriteSteps(cfg, cloudConfigured))
 	if err != nil {
 		return err
 	}
@@ -124,10 +130,6 @@ func runInstall(cmd *cobra.Command) error {
 		return err
 	}
 
-	m, err := manifest.Load()
-	if err != nil {
-		return err
-	}
 	engramAlreadyInstalled := false
 	engramPathWarning := ""
 	if err := r.RunStep("Instalando Engram (memoria persistente)…", "Engram sincronizado", func() error {
@@ -141,6 +143,23 @@ func runInstall(cmd *cobra.Command) error {
 		fmt.Fprintln(out, r.Info("Engram ya estaba instalado — se dejó como está, sin reinstalar."))
 	}
 	surfacePathWarning(out, r, engramPathWarning)
+
+	if installer.EngramCloudPartiallyConfigured(cfg, m) {
+		reportSkippedCloudEnrollment(out, r)
+	} else if cloudConfigured {
+		// resilience W1: Engram Cloud enrollment is opt-in and supplementary — a flaky or unreachable
+		// cloud server must never abort an otherwise-valid local install. On failure we surface a
+		// Spanish warning and CONTINUE with the remaining purely-local steps (CLAUDE.md, memory-guard,
+		// models.json, OpenClaw sync) instead of returning the error. Deliberately NOT r.RunStep: a
+		// non-fatal step must not render a red ✗/[FAIL] line — the outcome is either success or a
+		// warning, never a failure marker on a successful install.
+		fmt.Fprintln(out, r.Step("Enrolando Engram Cloud…"))
+		if cloudErr := syncEngramCloudFunc(cfg, m); cloudErr != nil {
+			fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo sincronizar Engram Cloud: %v. La instalación local continúa; reintenta más tarde con `click update`.", cloudErr)))
+		} else {
+			fmt.Fprintln(out, r.Success("Engram Cloud enrolado"))
+		}
+	}
 
 	context7AlreadyPresent := false
 	if err := r.RunStep("Registrando Context7 (documentación de librerías)…", "Context7 sincronizado", func() error {

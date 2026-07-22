@@ -38,6 +38,9 @@ func Install(cfg Config, models map[modelconfig.Phase]string) error {
 	if _, _, err := SyncEngram(cfg, m); err != nil {
 		return err
 	}
+	if err := SyncEngramCloud(cfg, m); err != nil {
+		return err
+	}
 	if _, err := SyncContext7(cfg); err != nil {
 		return err
 	}
@@ -50,12 +53,29 @@ func Install(cfg Config, models map[modelconfig.Phase]string) error {
 	return nil
 }
 
+// EngramCloudConfigured reports whether the local Engram client should enroll into a shared cloud
+// project on this run: server URL, project name, and ENGRAM_CLOUD_TOKEN must all be present. It is
+// exposed so the CLI preview plan can decide whether to list the cloud step before taking the
+// run-start snapshot.
+func EngramCloudConfigured(cfg Config, m *manifest.Manifest) bool {
+	server, project, tokenPresent := resolveEngramCloudConfig(cfg, m)
+	return server != "" && project != "" && tokenPresent
+}
+
+// EngramCloudPartiallyConfigured reports whether server and project are resolved but the cloud
+// token is missing. This is the UI trigger for the Spanish "skipped because token is absent" report.
+func EngramCloudPartiallyConfigured(cfg Config, m *manifest.Manifest) bool {
+	server, project, tokenPresent := resolveEngramCloudConfig(cfg, m)
+	return server != "" && project != "" && !tokenPresent
+}
+
 // Uninstall reverses everything Install (and `click update`'s re-sync) can have written:
 // uninstalls the managed plugins, removes the click-ai-devkit marketplace, strips the managed
-// CLAUDE.md block, removes the managed memory-guard hook entry, and reverses the Engram plugin —
+// CLAUDE.md block, removes the managed memory-guard hook entry, reverses the Engram plugin —
 // but ONLY when click's own state says click installed Engram itself (RemoveEngramPlugin respects
-// a pre-existing developer setup and leaves it running). It is idempotent — safe to call when
-// already uninstalled, or when Engram was never touched by click in the first place.
+// a pre-existing developer setup and leaves it running) — and deletes the local Engram Cloud
+// enrollment record (offline, without un-enrolling the shared project). It is idempotent — safe to
+// call when already uninstalled, or when Engram was never touched by click in the first place.
 func Uninstall(cfg Config) error {
 	if err := RemoveMarketplacePlugins(); err != nil {
 		return err
@@ -74,6 +94,12 @@ func Uninstall(cfg Config) error {
 		return err
 	}
 	if err := UnregisterMemoryGuardHook(cfg); err != nil {
+		return err
+	}
+	// engram-cloud-wiring: reverse the local enrollment record SyncEngramCloud may have written.
+	// This is offline and non-destructive — it removes only click's own bookkeeping file and never
+	// un-enrolls the shared cloud project (see RemoveEngramCloudState).
+	if err := RemoveEngramCloudState(cfg); err != nil {
 		return err
 	}
 	return nil

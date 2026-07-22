@@ -23,3 +23,10 @@ plugins:
     version: "0.1.0"
     path: "plugins/click-skills"
 min_claude_code_version: "1.x"
+
+# Optional Engram Cloud enrollment config. Server URL and project name are non-secret and may be
+# shipped in the release manifest; the per-developer token is always supplied via ENGRAM_CLOUD_TOKEN
+# at runtime and is never committed (engram-cloud-wiring design).
+engram_cloud:
+  server: ""
+  project: ""

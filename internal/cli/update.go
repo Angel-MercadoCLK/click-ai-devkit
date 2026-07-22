@@ -64,12 +64,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	cloudConfigured := installer.EngramCloudConfigured(cfg, m)
 
 	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE MigrateIfStale/step 1 below (the first external `claude` subprocess
 	// invocation). A decline here means zero writes: nothing below this point has run yet.
-	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg))
+	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg, cloudConfigured))
 	if err != nil {
 		return err
 	}
@@ -132,6 +133,23 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	surfacePathWarning(out, r, engramPathWarning)
+
+	if installer.EngramCloudPartiallyConfigured(cfg, m) {
+		reportSkippedCloudEnrollment(out, r)
+	} else if cloudConfigured {
+		// resilience W1: Engram Cloud re-sync is opt-in and supplementary — a flaky or unreachable
+		// cloud server must never abort an otherwise-valid local update. On failure we surface a
+		// Spanish warning and CONTINUE with the remaining purely-local steps (Context7, OpenClaw sync)
+		// instead of returning the error. Deliberately NOT r.RunStep: a non-fatal step must not render
+		// a red ✗/[FAIL] line — the outcome is either success or a warning, never a failure marker.
+		fmt.Fprintln(out, r.Step("Sincronizando Engram Cloud…"))
+		if cloudErr := syncEngramCloudFunc(cfg, m); cloudErr != nil {
+			fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo sincronizar Engram Cloud: %v. La actualización local continúa; reintenta más tarde con `click update`.", cloudErr)))
+		} else {
+			fmt.Fprintln(out, r.Success("Engram Cloud sincronizado"))
+		}
+	}
+
 	// Same non-fatal binary-provisioning report as `click install` (Slice 3b): SyncEngram already
 	// attempted `go install` internally when needed; this just surfaces the resulting state.
 	if _, resolvable, err := installer.EngramBinaryResolvable(cfg); err != nil {

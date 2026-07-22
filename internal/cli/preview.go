@@ -17,32 +17,42 @@ import (
 // can never drift from what install.go actually runs (spec's install-preview capability: "the plan
 // MUST be shown ... files touched, order"). The trailing OpenClaw steps (openClawWriteSteps) are
 // appended only when cfg.OpenClawHome is populated — a Claude-only host (cfg.OpenClawHome == "")
-// gets the exact same 6-step list this returned before OpenClaw support existed.
-func installWriteSteps(cfg installer.Config) []string {
+// gets the exact same 6-step list this returned before OpenClaw support existed. The Engram Cloud
+// step is inserted right after the local Engram step only when cloudConfigured is true.
+func installWriteSteps(cfg installer.Config, cloudConfigured bool) []string {
 	steps := []string{
 		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
 		"Instalando Engram (memoria persistente)…",
+	}
+	if cloudConfigured {
+		steps = append(steps, "Enrolando Engram Cloud…")
+	}
+	steps = append(steps,
 		"Registrando Context7 (documentación de librerías)…",
 		"Actualizando CLAUDE.md…",
 		"Registrando memory-guard…",
 		"Guardando modelos por fase de click-sdd…",
-	}
+	)
 	return append(steps, openClawWriteSteps(cfg)...)
 }
 
 // updateWriteSteps builds runUpdate's ordered write-step list for cfg, reusing its own r.RunStep
 // labels verbatim — including the Engram pin version (engramVersion), matching the exact label
 // runUpdate itself prints later for that step — so the preview plan can never drift from what
-// update.go actually runs. Same OpenClaw-appending contract as installWriteSteps.
-func updateWriteSteps(engramVersion string, cfg installer.Config) []string {
+// update.go actually runs. Same OpenClaw-appending contract as installWriteSteps. The Engram Cloud
+// step is inserted right after the local Engram pin step only when cloudConfigured is true.
+func updateWriteSteps(engramVersion string, cfg installer.Config, cloudConfigured bool) []string {
 	steps := []string{
 		"Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…",
 		"Guardando modelos por fase de click-sdd…",
 		"Actualizando CLAUDE.md…",
 		"Re-registrando memory-guard…",
 		fmt.Sprintf("Sincronizando Engram (pin %s)…", engramVersion),
-		"Sincronizando Context7 (documentación de librerías)…",
 	}
+	if cloudConfigured {
+		steps = append(steps, "Sincronizando Engram Cloud…")
+	}
+	steps = append(steps, "Sincronizando Context7 (documentación de librerías)…")
 	return append(steps, openClawWriteSteps(cfg)...)
 }
 
