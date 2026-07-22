@@ -11,51 +11,73 @@ import (
 
 // TestClickholaAssets verifies PR1's content-only slice: the canonical Spanish OpenClaw
 // SKILL.md for clickhola and its English thin Claude Code alias. Both documents must parse
-// as YAML and retain the contract markers described in the design/spec.
+// as YAML and retain the concrete contract sections/phrases supplied by the user.
 func TestClickholaAssets(t *testing.T) {
 	tests := []struct {
-		name         string
-		path         string
-		wantName     string
+		name          string
+		path          string
+		wantName      string
 		wantInvokable bool
-		wantMarkers  []string
-		wantMissing  []string
+		wantDesc      string
+		wantMarkers   []string
+		wantMissing   []string
 	}{
 		{
-			name:         "openclaw_clickhola",
-			path:         filepath.Join("..", "..", "internal", "installer", "assets", "openclaw", "skills", "clickhola", "SKILL.md"),
-			wantName:     "clickhola",
+			name:          "openclaw_clickhola",
+			path:          filepath.Join("..", "..", "internal", "installer", "assets", "openclaw", "skills", "clickhola", "SKILL.md"),
+			wantName:      "clickhola",
 			wantInvokable: true,
+			wantDesc:      "non-technical requesters who ambiguously ask to build/imagine an app, screen, or feature",
 			wantMarkers: []string{
-				"interview",
-				"one question at a time",
-				"HTML+CSS",
+				"# clickhola — captura de ideas para Click AI (perfil no técnico)",
+				"habla en español",
+				"sin jerga técnica",
+				"el solicitante no programa",
+				"una pregunta por turno",
+				"espera",
+				"1) **problema/resultado deseado**",
+				"2) **usuarios**",
+				"3) **apariencia/función imaginada y pasos del usuario**",
+				"4) **lo que NO debe hacer o límites importantes**",
+				"límites importantes",
+				"detente cuando sea suficiente",
+				"HTML",
+				"CSS",
+				"inline",
+				"sin dependencias externas",
+				"bosquejo de referencia desechable",
 				"kebab-case",
-				"sdd/",
-				"/elicitation",
+				"confirma",
+				"mem_save",
+				"sdd/{change-name}/elicitation",
+				"Source: clickhola (OpenClaw)",
 				"Problem",
 				"Users",
 				"Goal",
-				"Scope",
-				"Business rules",
+				"Scope (in-out)",
+				"Business rules & edge cases",
 				"Open questions",
+				"no inventes requisitos",
+				"nunca incluyas credenciales",
 			},
 			wantMissing: []string{
 				"{{CLICK_BIN}}",
 			},
 		},
 		{
-			name:         "click_sdd_clickhola_alias",
-			path:         filepath.Join("..", "..", "plugins", "click-sdd", "skills", "clickhola", "SKILL.md"),
-			wantName:     "clickhola",
+			name:     "click_sdd_clickhola_alias",
+			path:     filepath.Join("..", "..", "plugins", "click-sdd", "skills", "clickhola", "SKILL.md"),
+			wantName: "clickhola",
 			wantMarkers: []string{
 				"click-elicitor",
-				"orchestrator",
 				"requirements-elicitation",
-				"Step 1",
+				"Paso 1",
+				"alias",
 			},
 			wantMissing: []string{
-				"Engram Cloud enrollment",
+				"duplicate elicitation logic",
+				"executor",
+				"Engram Cloud",
 			},
 		},
 	}
@@ -74,10 +96,10 @@ func TestClickholaAssets(t *testing.T) {
 			}
 
 			var meta struct {
-				Name         string `yaml:"name"`
-				Description  string `yaml:"description"`
-				UserInvokable bool  `yaml:"user-invocable"`
-				Metadata     struct {
+				Name          string `yaml:"name"`
+				Description   string `yaml:"description"`
+				UserInvokable bool   `yaml:"user-invocable"`
+				Metadata      struct {
 					OpenClaw struct {
 						Requires struct {
 							Bins []string `yaml:"bins"`
@@ -95,9 +117,12 @@ func TestClickholaAssets(t *testing.T) {
 			if meta.Description == "" {
 				t.Errorf("frontmatter description is empty, want non-empty")
 			}
-		if tt.wantInvokable && !meta.UserInvokable {
-			t.Errorf("frontmatter user-invocable = %v, want true", meta.UserInvokable)
-		}
+			if tt.wantDesc != "" && !strings.Contains(meta.Description, tt.wantDesc) {
+				t.Errorf("frontmatter description = %q, want it to contain %q", meta.Description, tt.wantDesc)
+			}
+			if tt.wantInvokable && !meta.UserInvokable {
+				t.Errorf("frontmatter user-invocable = %v, want true", meta.UserInvokable)
+			}
 
 			if tt.name == "openclaw_clickhola" {
 				bins := meta.Metadata.OpenClaw.Requires.Bins
