@@ -9,10 +9,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestClickholaAssets verifies PR1's content-only slice: the canonical Spanish OpenClaw
-// SKILL.md for clickhola and its English thin Claude Code alias. Both documents must parse
-// as YAML and retain the concrete contract sections/phrases supplied by the user.
-func TestClickholaAssets(t *testing.T) {
+// TestSkillAssets verifies PR1 and PR2's content-only slices: the canonical Spanish
+// OpenClaw SKILL.md assets for clickhola and clickdev, plus their thin English Claude Code
+// aliases. Each document must parse as YAML and retain the concrete contract sections and
+// phrases supplied by the user.
+func TestSkillAssets(t *testing.T) {
 	tests := []struct {
 		name          string
 		path          string
@@ -72,6 +73,48 @@ func TestClickholaAssets(t *testing.T) {
 				"click-elicitor",
 				"requirements-elicitation",
 				"Paso 1",
+				"alias",
+			},
+			wantMissing: []string{
+				"duplicate elicitation logic",
+				"executor",
+				"Engram Cloud",
+			},
+		},
+		{
+			name:          "openclaw_clickdev",
+			path:          filepath.Join("..", "..", "internal", "installer", "assets", "openclaw", "skills", "clickdev", "SKILL.md"),
+			wantName:      "clickdev",
+			wantInvokable: true,
+			wantDesc:      "desarrolladores que quieren retomar en Claude Code un pedido capturado por clickhola",
+			wantMarkers: []string{
+				"# clickdev — puente hacia el pipeline SDD (perfil desarrollador)",
+				"habla en español",
+				"solo localiza el brief",
+				"entrega el siguiente paso",
+				"NO ejecutes el pipeline",
+				"no tiene agentes sdd-*",
+				"sdd/{change-name}/elicitation",
+				"mem_search",
+				"Abrí Claude Code en el repositorio",
+				"flujo SDD para {change-name}",
+				"brief ya está en la memoria compartida",
+				"si no existe el brief",
+				"no inicies la entrevista",
+				"no traduzcas el brief",
+			},
+			wantMissing: []string{
+				"{{CLICK_BIN}}",
+			},
+		},
+		{
+			name:     "click_sdd_clickdev_alias",
+			path:     filepath.Join("..", "..", "plugins", "click-sdd", "skills", "clickdev", "SKILL.md"),
+			wantName: "clickdev",
+			wantMarkers: []string{
+				"sdd/{change-name}/elicitation",
+				"explore",
+				"propose",
 				"alias",
 			},
 			wantMissing: []string{
