@@ -37,10 +37,10 @@ func openClawSkillBackupFileName(rel string) string {
 	return "openclaw-skill-" + strings.ReplaceAll(rel, "/", "-")
 }
 
-// removeAll is the injectable seam behind RemoveOpenClawSkills's directory removal, mirroring
+// removeAll is the injectable seam behind RemoveOpenClawSkills's owned-file removal, mirroring
 // openclawplugin.go's osExecutable pattern and allowing tests to inject a deterministic failure
 // without relying on flaky OS-level permission races.
-var removeAll = os.RemoveAll
+var removeAll = os.Remove
 
 // SyncOpenClawSkills writes/refreshes the click-owned OpenClaw skill manifests under
 // cfg.OpenClawSkillsDir(): clickhola/SKILL.md and clickdev/SKILL.md, copied wholesale from the
@@ -80,10 +80,38 @@ func RemoveOpenClawSkills(cfg Config) error {
 	if cfg.OpenClawHome == "" {
 		return nil
 	}
+	for _, rel := range openClawSkillRelPaths {
+		path := filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel))
+		info, err := os.Lstat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				if removeErr := removeAll(path); removeErr != nil && !os.IsNotExist(removeErr) {
+					return fmt.Errorf("installer: remove openclaw skill dir contents %s: %w", path, removeErr)
+				}
+				continue
+			}
+			return fmt.Errorf("installer: inspect openclaw skill dir %s: %w", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		if err := removeAll(path); err != nil {
+			return fmt.Errorf("installer: remove openclaw skill dir contents %s: %w", path, err)
+		}
+	}
 	for _, name := range []string{"clickhola", "clickdev"} {
 		dir := filepath.Join(cfg.OpenClawSkillsDir(), name)
-		if err := removeAll(dir); err != nil {
-			return fmt.Errorf("installer: remove openclaw skill dir %s: %w", dir, err)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("installer: inspect openclaw skill dir %s: %w", dir, err)
+		}
+		if len(entries) == 0 {
+			if err := os.Remove(dir); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("installer: remove openclaw skill dir %s: %w", dir, err)
+			}
 		}
 	}
 	return nil

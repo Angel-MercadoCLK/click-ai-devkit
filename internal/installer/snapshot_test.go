@@ -605,6 +605,9 @@ func TestRestoreRun_OpenClawSkillsPresent_RestoresBothFiles(t *testing.T) {
 
 	writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md"), "clickhola EDITED\n")
 	writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md"), "clickdev EDITED\n")
+	if err := RemoveOpenClawSkills(cfg); err != nil {
+		t.Fatalf("RemoveOpenClawSkills() error = %v", err)
+	}
 
 	if err := RestoreRun(cfg); err != nil {
 		t.Fatalf("RestoreRun() error = %v", err)

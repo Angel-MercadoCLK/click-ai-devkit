@@ -193,7 +193,6 @@ func TestRemoveOpenClawSkills_RemovesOnlyOwnedDirs(t *testing.T) {
 	if err := os.MkdirAll(sibling, 0o755); err != nil {
 		t.Fatalf("MkdirAll(sibling) error = %v", err)
 	}
-
 	if err := RemoveOpenClawSkills(cfg); err != nil {
 		t.Fatalf("RemoveOpenClawSkills() error = %v", err)
 	}
@@ -206,6 +205,32 @@ func TestRemoveOpenClawSkills_RemovesOnlyOwnedDirs(t *testing.T) {
 	}
 	if _, err := os.Stat(sibling); err != nil {
 		t.Fatalf("Stat(user-skill) after removal error = %v, want sibling preserved", err)
+	}
+}
+
+func TestRemoveOpenClawSkills_PreservesUserFilesInsideOwnedDirs(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	if err := SyncOpenClawSkills(cfg); err != nil {
+		t.Fatalf("SyncOpenClawSkills() error = %v", err)
+	}
+	for _, owned := range []string{"clickhola", "clickdev"} {
+		path := filepath.Join(cfg.OpenClawSkillsDir(), owned, "user-notes.txt")
+		if err := os.WriteFile(path, []byte("keep me\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", path, err)
+		}
+	}
+
+	if err := RemoveOpenClawSkills(cfg); err != nil {
+		t.Fatalf("RemoveOpenClawSkills() error = %v", err)
+	}
+	for _, owned := range []string{"clickhola", "clickdev"} {
+		dir := filepath.Join(cfg.OpenClawSkillsDir(), owned)
+		if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); !os.IsNotExist(err) {
+			t.Fatalf("Stat(%s) after removal error = %v, want owned file removed", dir, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "user-notes.txt")); err != nil {
+			t.Fatalf("user file in %s after removal error = %v, want preserved", dir, err)
+		}
 	}
 }
 

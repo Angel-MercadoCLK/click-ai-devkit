@@ -212,6 +212,9 @@ func RestoreRun(cfg Config) error {
 		if readErr != nil {
 			return fmt.Errorf("installer: read snapshot backup %s: %w", backupPath, readErr)
 		}
+		if mkdirErr := os.MkdirAll(filepath.Dir(entry.OriginalPath), 0o755); mkdirErr != nil {
+			return fmt.Errorf("installer: create restore dir for %s: %w", entry.OriginalPath, mkdirErr)
+		}
 		if writeErr := atomicWriteFile(entry.OriginalPath, data, 0o600); writeErr != nil {
 			return fmt.Errorf("installer: restore %s: %w", entry.OriginalPath, writeErr)
 		}
