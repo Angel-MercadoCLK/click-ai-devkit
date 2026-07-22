@@ -119,9 +119,71 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	report := Run(cfg)
 
-	const wantChecks = 11 + EngramChecksCount + Context7ChecksCount
+	// 12 base checks now that checkOpenClaw joins checkGit/checkClaude as a foundational,
+	// standalone PATH-based detection check (openclaw-target-support PR-A).
+	const wantChecks = 12 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (git, claude, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, click binary, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, context7 MCP)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d (git, claude, openclaw, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, click binary, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, context7 MCP)", len(report.Checks), wantChecks)
+	}
+}
+
+// TestCheckOpenClaw_ReportsHealthyWhenResolvable guards the "present" branch: openclaw resolvable
+// on PATH must report healthy, with the resolved path surfaced in Detail (mirroring checkGit's
+// "resuelto en <path>" shape).
+func TestCheckOpenClaw_ReportsHealthyWhenResolvable(t *testing.T) {
+	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return fakeGitLookup{resolved: map[string]string{"openclaw": "/usr/bin/openclaw"}}
+	})
+	defer restore()
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "openclaw" {
+			continue
+		}
+		checked = true
+		if !c.Healthy {
+			t.Fatalf("checkOpenClaw reports unhealthy when openclaw is resolvable: %s", c.Detail)
+		}
+		if !strings.Contains(c.Detail, "/usr/bin/openclaw") {
+			t.Fatalf("checkOpenClaw Detail = %q, want it to contain the resolved path", c.Detail)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include an "openclaw" check`)
+	}
+}
+
+// TestCheckOpenClaw_ReportsHealthyWhenAbsent is the core zero-risk assertion for this slice:
+// unlike checkGit/checkClaude (required dependencies of click itself), OpenClaw is an OPTIONAL
+// second install target — an absent openclaw MUST still report Healthy: true, guaranteeing a
+// machine without OpenClaw installed sees ZERO change in `click doctor`'s overall Healthy()
+// result (openclaw-target-support spec's openclaw-detection capability, "OpenClaw absent"
+// scenario: report absent, without error).
+func TestCheckOpenClaw_ReportsHealthyWhenAbsent(t *testing.T) {
+	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return fakeGitLookup{resolved: map[string]string{}}
+	})
+	defer restore()
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "openclaw" {
+			continue
+		}
+		checked = true
+		if !c.Healthy {
+			t.Fatalf("checkOpenClaw reports unhealthy when openclaw is absent, want healthy (optional target, zero risk to Claude-only hosts): %s", c.Detail)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include an "openclaw" check`)
 	}
 }
 

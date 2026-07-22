@@ -99,3 +99,59 @@ func TestConfig_BackupDir(t *testing.T) {
 		t.Errorf("BackupDir() = %q, want %q", got, want)
 	}
 }
+
+// TestConfig_OpenClawPaths_Populated guards the openclaw-target-support spec's "install-config"
+// capability, "OpenClaw present" scenario: GIVEN OpenClaw detection succeeds, WHEN Config is
+// built, THEN OpenClawHome and every derived path MUST be populated — mirroring how
+// ClaudeMDPath/SettingsPath derive from ClaudeHome. Workspace-scoped files (AGENTS.md, SOUL.md)
+// live under <OpenClawHome>/workspace, while the MCP config lives directly under <OpenClawHome>
+// (matches the confirmed real openclaw.json shape referenced in design #1666).
+func TestConfig_OpenClawPaths_Populated(t *testing.T) {
+	cfg := Config{
+		ClaudeHome:   filepath.Join("some", "home", ".claude"),
+		OpenClawHome: filepath.Join("some", "home", ".openclaw"),
+	}
+
+	wantWorkspaceDir := filepath.Join("some", "home", ".openclaw", "workspace")
+	if got := cfg.OpenClawWorkspaceDir(); got != wantWorkspaceDir {
+		t.Errorf("OpenClawWorkspaceDir() = %q, want %q", got, wantWorkspaceDir)
+	}
+
+	wantAgentsMD := filepath.Join("some", "home", ".openclaw", "workspace", "AGENTS.md")
+	if got := cfg.OpenClawAgentsMDPath(); got != wantAgentsMD {
+		t.Errorf("OpenClawAgentsMDPath() = %q, want %q", got, wantAgentsMD)
+	}
+
+	wantSoulMD := filepath.Join("some", "home", ".openclaw", "workspace", "SOUL.md")
+	if got := cfg.OpenClawSoulMDPath(); got != wantSoulMD {
+		t.Errorf("OpenClawSoulMDPath() = %q, want %q", got, wantSoulMD)
+	}
+
+	wantMCPConfig := filepath.Join("some", "home", ".openclaw", "openclaw.json")
+	if got := cfg.OpenClawMCPConfigPath(); got != wantMCPConfig {
+		t.Errorf("OpenClawMCPConfigPath() = %q, want %q", got, wantMCPConfig)
+	}
+}
+
+// TestConfig_OpenClawAbsent_ZeroValueDoesNotAffectClaudePaths guards the spec's "OpenClaw absent"
+// scenario: GIVEN OpenClaw detection fails (OpenClawHome never set), WHEN Config is built, THEN
+// OpenClaw fields MUST remain zero-value, no error MUST be raised (these are pure string-joining
+// methods — there is no error return to check), and Claude-only paths MUST be completely
+// unaffected. This is the exact "zero risk to Claude-only hosts" guarantee this slice must hold.
+func TestConfig_OpenClawAbsent_ZeroValueDoesNotAffectClaudePaths(t *testing.T) {
+	cfg := Config{ClaudeHome: filepath.Join("some", "home", ".claude")}
+
+	if cfg.OpenClawHome != "" {
+		t.Fatalf("OpenClawHome zero value = %q, want empty string", cfg.OpenClawHome)
+	}
+
+	wantClaudeMD := filepath.Join("some", "home", ".claude", "CLAUDE.md")
+	if got := cfg.ClaudeMDPath(); got != wantClaudeMD {
+		t.Errorf("ClaudeMDPath() = %q, want %q (must be unaffected by an unset OpenClawHome)", got, wantClaudeMD)
+	}
+
+	wantSettings := filepath.Join("some", "home", ".claude", "settings.json")
+	if got := cfg.SettingsPath(); got != wantSettings {
+		t.Errorf("SettingsPath() = %q, want %q (must be unaffected by an unset OpenClawHome)", got, wantSettings)
+	}
+}

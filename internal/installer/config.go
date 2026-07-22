@@ -18,6 +18,15 @@ const claudeHomeEnvOverride = "CLICK_CLAUDE_HOME"
 type Config struct {
 	// ClaudeHome is the root of the target Claude Code installation, normally ~/.claude.
 	ClaudeHome string
+
+	// OpenClawHome is the root of a detected OpenClaw installation, normally ~/.openclaw. It stays
+	// the zero value (empty string) when OpenClaw is not detected on this machine — a valid, silent
+	// state (openclaw-target-support spec's install-config capability, "OpenClaw absent" scenario):
+	// every derived OpenClawXxxPath() below still resolves (as empty-rooted paths), and every
+	// Claude-only path (ClaudeMDPath, SettingsPath, ...) is completely unaffected. Resolution of the
+	// real value (CLICK_OPENCLAW_HOME override / detected ~/.openclaw) is out of scope for this
+	// slice — it belongs to the install/update wiring that actually populates this field.
+	OpenClawHome string
 }
 
 // ResolveClaudeHome resolves the Claude Code home directory click should install into: the
@@ -143,4 +152,29 @@ func (c Config) Context7ConfigPath() string {
 // install ownership — mirroring EngramStatePath's shape and purpose.
 func (c Config) Context7StatePath() string {
 	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "context7.json")
+}
+
+// OpenClawWorkspaceDir is where OpenClaw's per-workspace managed files (AGENTS.md, SOUL.md) live,
+// mirroring how ClaudeMDPath derives from ClaudeHome (openclaw-target-support spec's
+// openclaw-managed-files capability).
+func (c Config) OpenClawWorkspaceDir() string {
+	return filepath.Join(c.OpenClawHome, "workspace")
+}
+
+// OpenClawAgentsMDPath is the managed AGENTS.md file's path under this Config's
+// OpenClawWorkspaceDir — OpenClaw's counterpart to ClaudeMDPath.
+func (c Config) OpenClawAgentsMDPath() string {
+	return filepath.Join(c.OpenClawWorkspaceDir(), "AGENTS.md")
+}
+
+// OpenClawSoulMDPath is the managed SOUL.md file's path under this Config's OpenClawWorkspaceDir.
+func (c Config) OpenClawSoulMDPath() string {
+	return filepath.Join(c.OpenClawWorkspaceDir(), "SOUL.md")
+}
+
+// OpenClawMCPConfigPath is OpenClaw's own MCP server registry file, directly under OpenClawHome
+// (confirmed shape: ~/.openclaw/openclaw.json, top-level mcpServers object — design #1666's
+// resolved risk) — OpenClaw's counterpart to SettingsPath.
+func (c Config) OpenClawMCPConfigPath() string {
+	return filepath.Join(c.OpenClawHome, "openclaw.json")
 }
