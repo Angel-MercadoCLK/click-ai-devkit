@@ -1,7 +1,9 @@
 # click-ai-devkit — contributor guide
 
 `click-ai-devkit` is a Go CLI (`click`) that installs Click Seguros's Claude Code system
-(orchestrator, SDD flow, plugins, memory-guard, pinned Engram) into a developer's `~/.claude`.
+(orchestrator, SDD flow, plugins, memory-guard, pinned Engram) into a developer's `~/.claude`,
+plus the supported OpenClaw-native workflow and Codex `AGENTS.md` guidance when those targets are
+selected. See `documentacion/portability-runbook.md` and `documentacion/codex-target.md`.
 
 ## Build & test
 
@@ -32,15 +34,17 @@ Conventional commits. No AI attribution in commit messages.
 
 ## Decisions
 
-Locked decisions (D1–D22) live in `documentacion/00-decisions-and-open-questions.md`. Read it
-before changing behavior or docs — do not contradict a locked decision.
+The locked decisions live in `documentacion/00-decisions-and-open-questions.md` (see that file for
+the current range). Read it before changing behavior or docs — do not contradict a locked decision.
 
-In particular: ship and maintain `.claude-plugin/marketplace.json` because Claude Code only loads
-the Click plugins through the native `claude plugin` registry flow (D24 supersedes D16).
+In particular: ship and maintain `.claude-plugin/marketplace.json` because Claude Code loads the
+Click plugins through its native `claude plugin` registry flow (D24 supersedes D16). OpenClaw and
+Codex use their own documented target boundaries; do not copy Claude plugin registration into them.
 
 ## Plugins
 
-The three plugins (`plugins/click-sdd/`, `plugins/click-memory/`, `plugins/click-review/`) are
+The four plugins (`plugins/click-sdd/`, `plugins/click-memory/`, `plugins/click-review/`,
+`plugins/click-skills/`) are
 served through the repo marketplace manifest. When adding or changing plugin files, keep
 `.claude-plugin/marketplace.json` and the native `claude plugin` install flow consistent.
 (`internal/installer/plugins.go`), the relevant `internal/doctor` check, and their tests

@@ -1,4 +1,13 @@
-> Status: draft v0.1. Grounded in `00-decisions-and-open-questions.md` (D1–D20).
+> **Status: Historical baseline / superseded for current runtime scope.** These FR/NFR entries
+> preserve the original v0.1 requirements and their decision traceability; they are not a complete
+> description of the current implementation. In particular, the old Claude-Code-only boundary is
+> superseded by the supported target slices documented in [`README.md`](../README.md),
+> [`codex-target.md`](codex-target.md), and [`portability-runbook.md`](portability-runbook.md).
+
+Current target boundaries are intentionally narrow: Claude Code has the native plugin workflow;
+OpenClaw has portable SDD support and native model CLI configuration; Codex receives `AGENTS.md`
+guidance only; other runtimes are not supported; and Plugins is read-only inventory/staging, not
+arbitrary activation.
 
 # click-ai-devkit — Requirements
 

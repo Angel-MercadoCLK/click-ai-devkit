@@ -1,5 +1,16 @@
 # Codex Handoff — click-ai-devkit v0.3 roadmap
 
+> **Status: Historical handoff snapshot.** This document was generated for a previous Codex
+> implementation sequence and is retained as an execution record. It is not the current product
+> roadmap or runtime contract. Use [`README.md`](../README.md),
+> [`codex-target.md`](codex-target.md), and [`portability-runbook.md`](portability-runbook.md) for
+> current behavior.
+>
+> Current boundaries: Claude Code remains the native plugin workflow; OpenClaw uses portable SDD
+> assets and documented native model CLI configuration; Codex receives `AGENTS.md` guidance only;
+> other runtimes are not supported; and Plugins is read-only inventory/staging, not arbitrary
+> activation.
+
 You (Codex) will implement the features below on `click-ai-devkit`, a Go 1.24.2
 cobra/bubbletea CLI that installs and manages a Claude Code ecosystem (plugins,
 Engram, Context7, a managed `CLAUDE.md` block, a memory-guard hook). You have

@@ -1,20 +1,19 @@
 # click-ai-devkit
 
-CLI en Go (`click`) que instala y gestiona un sistema completo de Claude Code para
-desarrolladores de Click Seguros.
+CLI en Go (`click`) que instala y gestiona el kit de desarrollo de Click Seguros para Claude Code,
+con soporte adicional para OpenClaw y Codex en sus límites nativos documentados.
 
 ## Qué es / qué hace
 
 `click-ai-devkit` es un instalador y gestor de línea de comandos, escrito en Go, que deja
-configurado en Claude Code todo lo que un desarrollador de Click Seguros necesita para trabajar
-con el flujo SDD (Spec-Driven Development) interno de la compañía: un orquestador propio
+configurado el flujo SDD (Spec-Driven Development) interno de la compañía: un orquestador propio
 (`ClickOrchestrator`), agentes y skills especializados, una guardia de memoria determinística, y
 una instancia de Engram (memoria persistente) integrada y fijada a una versión concreta.
 
 El CLI en sí es deliberadamente delgado: no es el "cerebro" de la orquestación, sino la
-herramienta que registra, actualiza y desinstala ese sistema dentro de Claude Code, de forma
-repetible y verificable (`click doctor` comprueba en cualquier momento que todo sigue instalado
-correctamente).
+herramienta que registra, actualiza y desinstala el sistema mediante el flujo nativo de Claude Code,
+y escribe la guía/archivos soportados para OpenClaw y Codex sin asumir APIs nativas no verificadas.
+`click doctor` comprueba en cualquier momento que el estado gestionado sigue siendo consistente.
 
 ## Requisitos
 
@@ -70,6 +69,10 @@ mismo punto de entrada (`cmd/click/`) que usa el proceso de release oficial.
 | `click install` | Registra el marketplace de Click con `claude plugin marketplace add`, instala los plugins `click-sdd`, `click-memory`, `click-review` y `click-skills` vía el CLI nativo `claude plugin`, escribe/actualiza el bloque gestionado de `CLAUDE.md`, registra el hook `memory-guard` (PreToolUse) y permite elegir los modelos por fase (o un perfil de orquestación) de forma interactiva. Acepta `--yes`/`--non-interactive` para saltar el TUI y `--profile` para fijar el perfil (`balanced`/`cost-saver`/`quality`) sin interacción. |
 | `click update` | Vuelve a sincronizar los cuatro plugins, reescribe el bloque gestionado de `CLAUDE.md`, re-registra el hook `memory-guard` y sincroniza el pin de Engram a la versión fijada en el manifiesto de release. |
 | `click doctor` | Chequeo de salud de solo lectura: verifica que los cuatro plugins estén realmente registrados en Claude Code, que exista el bloque gestionado de `CLAUDE.md`, y que el hook `memory-guard` esté registrado. Nunca modifica el estado. |
+| `click plugins` | Lista los cuatro plugins gestionados, su estado en los registros de Claude Code y el repositorio/staging local. Es solo lectura: dejar archivos allí no los instala ni los activa. |
+| `click targets` | Detecta Claude Code, OpenClaw y Codex y resume las capacidades soportadas de cada target. |
+| `click configure-targets` | Selector interactivo (TUI) de los runtimes que Click debe instalar/actualizar (Claude Code siempre primario; OpenClaw y Codex opcionales). Persiste la elección en `targets.json`. Fuera de una TTY imprime una guía y no cambia nada. |
+| `click configure-openclaw-model` | Configura el modelo nativo de OpenClaw (`<provider/model>` + fallbacks opcionales) delegando en el CLI oficial de OpenClaw, sin editar su config a mano. Sin argumentos imprime la guía de uso. |
 | `click uninstall` | Revierte todo lo que `install`/`update` escribieron: desinstala los cuatro plugins vía el CLI nativo `claude plugin`, quita el registro del marketplace de Click, elimina el bloque gestionado de `CLAUDE.md`, da de baja el hook `memory-guard`, y quita la configuración/estado de Engram y Context7 si `click` los llegó a instalar. Idempotente. |
 | `click agent-builder` | Asistente interactivo (TUI) para crear un agente propio de Claude Code, personal o compartible, guiando al desarrollador paso a paso hasta generar y colocar el archivo `.md` del agente. |
 | `click manage-backups` | Comando de solo flags (oculto de `--help`, alcanzable desde el menú) para inspeccionar, restaurar (`--restore`) o eliminar (`--delete`) la copia de seguridad de `models.json` que genera una migración de configuración obsoleta. |
@@ -92,6 +95,10 @@ mismo punto de entrada (`cmd/click/`) que usa el proceso de release oficial.
   `uninstall` nunca elimine un Engram que el desarrollador ya tenía instalado por su cuenta.
 - Context7 registrado como MCP HTTP de ámbito de usuario vía `claude mcp add` — también
   idempotente y respetuoso con una configuración previa.
+- OpenClaw recibe los archivos SDD nativos soportados, memory guard y la configuración de modelo
+  solo mediante sus comandos documentados; consulte [`documentacion/portability-runbook.md`](documentacion/portability-runbook.md).
+- Codex recibe la guía gestionada en `AGENTS.md`; Click no modifica `config.toml`, credenciales ni
+  modelos. Consulte [`documentacion/codex-target.md`](documentacion/codex-target.md).
 
 ## El menú interactivo
 
@@ -102,6 +109,8 @@ Ejecutar `click` sin argumentos en una terminal interactiva abre un menú visual
 - Actualizar herramientas
 - Configurar modelos
 - Ejecutar diagnóstico
+- Plugins
+- Detectar runtimes compatibles
 - Desinstalar
 - Crear agente propio
 - Gestionar backups
@@ -165,6 +174,8 @@ La documentación de planeación y diseño vive en [`documentacion/`](documentac
   — registro de decisiones (incluida D13, el mandato de TDD estricto) y preguntas abiertas.
 - [`documentacion/vision.md`](documentacion/vision.md), [`documentacion/architecture.md`](documentacion/architecture.md),
   [`documentacion/prd.md`](documentacion/prd.md) — visión, arquitectura y PRD del proyecto.
+- [`documentacion/codex-target.md`](documentacion/codex-target.md) — límites y flujo del target Codex.
+- [`documentacion/portability-runbook.md`](documentacion/portability-runbook.md) — validación del flujo portable y OpenClaw.
 
 ## Desarrollo
 
@@ -179,4 +190,6 @@ una prueba que falla, luego la implementación mínima para que pase. Ver la dec
 
 ## Versión actual
 
-**v0.4.7**, publicada y disponible hoy vía `scoop install click` (ver [Instalación](#instalación)).
+**v0.4.7** es la última versión publicada vía `scoop install click` (ver [Instalación](#instalación)).
+El árbol de trabajo puede estar adelantado respecto al último tag; la versión de release vive en
+`click_version` dentro del manifiesto (`internal/manifest/manifest.yaml`).

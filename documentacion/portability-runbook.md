@@ -4,7 +4,46 @@
 > `click-sdd-standalone-portability` change. Go cannot drive a live Claude Code session, so this
 > runbook is the manual complement to the static structural/portability Go tests: it proves the
 > *behavioral* claim (every SDD role actually resolves and runs from click assets alone) that no Go
-> test can assert on its own.
+> test can assert on its own. Claude Code remains the native plugin target; OpenClaw and Codex use
+> their separate documented boundaries.
+
+## Target references
+
+- [Codex target](codex-target.md): managed `AGENTS.md` guidance without native model/config changes.
+- `click targets`: read-only detection and capability summary for Claude Code, OpenClaw, and Codex.
+- `click plugins`: read-only inventory of Click-managed plugins and the local staging location.
+
+Adding files to the plugin staging location is not the same as activating a plugin. Click does not
+invent a registration protocol or install arbitrary files; activation must use the target's native
+flow once that flow is explicitly supported.
+
+## OpenClaw native model configuration
+
+Click keeps `model-profile.json` as Click-owned reference/rollback metadata. It is not OpenClaw's
+native configuration. To change OpenClaw's native model settings, provide explicit model references
+through Click; Click delegates the writes to OpenClaw and never rewrites `~/.openclaw/openclaw.json`:
+
+```text
+click configure-openclaw-model openai/gpt-5.6-sol
+click configure-openclaw-model openai/gpt-5.6-sol anthropic/claude-sonnet-4-6
+```
+
+The adapter invokes `openclaw config set agents.defaults.model.primary
+<provider/model>` and, when fallbacks are supplied, `openclaw config set agents.defaults.model.fallbacks
+'[...]' --strict-json`. NOTE: this exact subcommand/key/flag shape is pending confirmation against
+OpenClaw's published CLI — verify it against a real `openclaw` install before relying on it. Model
+references must use the `provider/model` form. Click does not guess a
+provider, model, API key, or credential; credentials remain OpenClaw's responsibility. If OpenClaw
+is absent or rejects a command, Click reports the error and does not claim success.
+
+## Invocation contract
+
+The canonical names are intentionally split by mechanism: `explore`, `propose`, `spec`, `design`,
+`tasks`, `apply`, `verify`, `archive`, `onboard`, and the `jd-*` roles are skill names and resolve
+under `plugins/click-sdd/skills/<phase>/SKILL.md`. The executable delegation targets are agents named
+`click-<role>` (for shared owners, such as `click-prd-writer`), and `click-orchestrator` is an agent
+only. Do not request a phase skill as an `Agent` subagent type, and do not create `click-apply` or
+`click-archive` aliases as skills; those are agent filenames.
 
 ## Purpose
 
@@ -82,5 +121,5 @@ isolate):
 
 Add to the release checklist: **"Portability runbook (`documentacion/portability-runbook.md`)
 passed on a clean/gentle-ai-absent profile for this version."** This is a manual, human-run gate —
-it is not automated by `go test ./...` (which only proves the static/structural claims: the 12
+it is not automated by `go test ./...` (which only proves the static/structural claims: the 18
 agent files exist, the orchestrator names them, and `DefaultManagedContent` stays gentle-ai-free).

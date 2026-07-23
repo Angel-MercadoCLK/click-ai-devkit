@@ -1,6 +1,15 @@
 # click-ai-devkit — Vision
 
-> Status: draft v0.1. Grounded in `00-decisions-and-open-questions.md` (D1–D20).
+> **Status: Historical baseline.** This draft captures the original v0.1 product framing and is
+> retained as a decision record. Its Claude Code-only boundary and other v0.1 scope statements are
+> not the current runtime support contract. For current behavior, see [`README.md`](../README.md),
+> [`codex-target.md`](codex-target.md), and [`portability-runbook.md`](portability-runbook.md).
+
+The conclusions below were valid for the original v0.1 scope. They are not a prohibition on the
+current supported target slices: Claude Code remains the native plugin workflow, OpenClaw has a
+portable SDD workflow plus documented native model CLI configuration, and Codex receives guidance
+through `AGENTS.md` only. Other runtimes are not supported. Plugins are a read-only inventory and
+staging surface, not arbitrary activation.
 
 ## The problem
 

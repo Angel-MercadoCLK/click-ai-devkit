@@ -1,4 +1,13 @@
-> Status: draft v0.1. Grounded in `00-decisions-and-open-questions.md` (D1–D20).
+> **Status: Historical baseline / superseded for current runtime scope.** This PRD records the
+> original v0.1 product requirements and remains useful for historical traceability. Its
+> Claude-Code-only and three-plugin claims must not be read as the current support contract. For
+> current behavior, see [`README.md`](../README.md), [`codex-target.md`](codex-target.md), and
+> [`portability-runbook.md`](portability-runbook.md).
+
+The requirements below preserve the original baseline and its conclusions. The current boundaries
+are: Claude Code uses the native plugin workflow; OpenClaw uses the portable SDD workflow and
+documented native model CLI configuration; Codex receives `AGENTS.md` guidance only; other runtimes
+are not supported; and Plugins is a read-only inventory/staging surface, not arbitrary activation.
 
 # click-ai-devkit — Product Requirements Document (PRD)
 
