@@ -41,8 +41,8 @@ func TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T)
 func TestInstallWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := installWriteSteps(cfg, false)
-	if len(got) != 10 {
-		t.Fatalf("installWriteSteps() = %#v, want 10 steps (6 Claude + 4 OpenClaw)", got)
+	if len(got) != 11 {
+		t.Fatalf("installWriteSteps() = %#v, want 11 steps (6 Claude + 5 OpenClaw)", got)
 	}
 	for _, step := range got[6:] {
 		if !strings.Contains(step, "OpenClaw") {
@@ -92,8 +92,8 @@ func TestInstallWriteSteps_CloudNotConfigured_NoCloudStep(t *testing.T) {
 func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := installWriteSteps(cfg, true)
-	if len(got) != 11 {
-		t.Fatalf("installWriteSteps() = %#v, want 11 steps (6 Claude + 1 Cloud + 4 OpenClaw)", got)
+	if len(got) != 12 {
+		t.Fatalf("installWriteSteps() = %#v, want 12 steps (6 Claude + 1 Cloud + 5 OpenClaw)", got)
 	}
 	if got[2] != "Enrolando Engram Cloud…" {
 		t.Fatalf("installWriteSteps()[2] = %q, want Engram Cloud step right after local Engram", got[2])
@@ -110,8 +110,8 @@ func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 func TestUpdateWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := updateWriteSteps("0.1.1", cfg, false)
-	if len(got) != 10 {
-		t.Fatalf("updateWriteSteps() = %#v, want 10 steps (6 Claude + 4 OpenClaw)", got)
+	if len(got) != 11 {
+		t.Fatalf("updateWriteSteps() = %#v, want 11 steps (6 Claude + 5 OpenClaw)", got)
 	}
 	for _, step := range got[6:] {
 		if !strings.Contains(step, "OpenClaw") {
@@ -170,19 +170,29 @@ func TestOpenClawWriteSteps_Absent_ReturnsNil(t *testing.T) {
 	}
 }
 
+func TestCodexWriteSteps_SelectedIncludesGuidanceOnlyStep(t *testing.T) {
+	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir()}, false)
+	if len(got) != 7 || got[6] != "Actualizando AGENTS.md de Codex…" {
+		t.Fatalf("installWriteSteps() = %#v, want Codex guidance step appended", got)
+	}
+}
+
 // TestOpenClawWriteSteps_Present_IncludesPluginAndSkillSteps is PR-C/PR4's supporting RED test:
 // the third OpenClaw step must mention the memory-guard plugin install, and the fourth must mention
 // the click-owned skill manifests.
 func TestOpenClawWriteSteps_Present_IncludesPluginAndSkillSteps(t *testing.T) {
 	got := openClawWriteSteps(installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()})
-	if len(got) != 4 {
-		t.Fatalf("openClawWriteSteps() = %#v, want exactly 4 steps", got)
+	if len(got) != 5 {
+		t.Fatalf("openClawWriteSteps() = %#v, want exactly 5 steps", got)
 	}
 	if !strings.Contains(got[2], "memory-guard") {
 		t.Fatalf("openClawWriteSteps()[2] = %q, want it to mention the memory-guard plugin install", got[2])
 	}
 	if !strings.Contains(got[3], "skills") {
 		t.Fatalf("openClawWriteSteps()[3] = %q, want it to mention the OpenClaw skill manifests", got[3])
+	}
+	if !strings.Contains(got[4], "modelos") {
+		t.Fatalf("openClawWriteSteps()[4] = %q, want it to mention the model recommendation", got[4])
 	}
 }
 

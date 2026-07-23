@@ -102,6 +102,12 @@ func runUninstall(cmd *cobra.Command) error {
 		return err
 	}
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+	if selection, configured, loadErr := installer.LoadTargetSelection(cfg); loadErr == nil && configured && selection.Codex {
+		cfg.CodexHome, err = installer.ResolveCodexHome()
+		if err != nil {
+			return err
+		}
+	}
 
 	claudeErr := installer.PreflightClaude()
 	if claudeErr != nil {
@@ -160,14 +166,30 @@ func runUninstall(cmd *cobra.Command) error {
 		func() error { return installer.RemoveOpenClawPlugin(cfg) },
 	)
 
-	// PR4: remove the click-owned OpenClaw skill directories (clickhola, clickdev) after plugin
-	// removal, leaving any user-created sibling skill directories untouched.
+	// Remove click-owned OpenClaw skill files after plugin removal, leaving user-created siblings
+	// untouched.
 	runStep(
 		"skills de OpenClaw",
-		"Quitando skills clickhola y clickdev de OpenClaw…",
-		"Skills clickhola y clickdev de OpenClaw eliminados",
+		"Quitando skills de Click de OpenClaw…",
+		"Skills de Click de OpenClaw eliminados",
 		false,
 		func() error { return removeOpenClawSkillsFunc(cfg) },
+	)
+
+	runStep(
+		"selección de runtimes",
+		"Quitando selección persistente de runtimes…",
+		"Selección persistente de runtimes eliminada",
+		false,
+		func() error { return installer.RemoveTargetSelection(cfg) },
+	)
+
+	runStep(
+		"AGENTS.md de Codex",
+		"Limpiando AGENTS.md de Codex…",
+		"Bloque de AGENTS.md de Codex eliminado",
+		false,
+		func() error { return installer.StripCodexGuidance(cfg) },
 	)
 
 	// RemoveEngramPlugin only reverses Engram when click's own state says click installed it —

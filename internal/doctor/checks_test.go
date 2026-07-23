@@ -119,9 +119,9 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	report := Run(cfg)
 
-	// 12 base checks now that checkOpenClaw joins checkGit/checkClaude as a foundational,
+	// 13 base checks now that the Claude plugin registries check joins the foundational checks,
 	// standalone PATH-based detection check (openclaw-target-support PR-A).
-	const wantChecks = 12 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 13 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
 		t.Fatalf("Run() returned %d checks, want %d (git, claude, openclaw, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, click binary, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, engram cloud enrollment, context7 MCP)", len(report.Checks), wantChecks)
 	}
@@ -1017,6 +1017,25 @@ func seedContext7Registered(t *testing.T, cfg installer.Config) {
 
 func seedInstalledState(t *testing.T, cfg installer.Config) {
 	t.Helper()
+	known := map[string]any{
+		installer.ClickMarketplaceName(): map[string]any{
+			"source": map[string]any{
+				"source": "git",
+				"url":    "https://github.com/Angel-MercadoCLK/click-ai-devkit.git",
+			},
+		},
+	}
+	knownData, err := json.Marshal(known)
+	if err != nil {
+		t.Fatalf("json.Marshal(known marketplaces) error = %v", err)
+	}
+	if err := os.MkdirAll(filepathDir(cfg.KnownMarketplacesPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll(known marketplaces dir) error = %v", err)
+	}
+	if err := os.WriteFile(cfg.KnownMarketplacesPath(), knownData, 0o600); err != nil {
+		t.Fatalf("WriteFile(known_marketplaces.json) error = %v", err)
+	}
+
 	type pluginsRegistry struct {
 		Version int                         `json:"version"`
 		Plugins map[string][]map[string]any `json:"plugins"`
@@ -1024,11 +1043,11 @@ func seedInstalledState(t *testing.T, cfg installer.Config) {
 	registry := pluginsRegistry{
 		Version: 2,
 		Plugins: map[string][]map[string]any{
-			"click-sdd@click-ai-devkit":    {{}},
+			"click-sdd@click-ai-devkit":    {{"installPath": filepath.Join(cfg.ClaudeHome, "plugins", "cache", "click-ai-devkit", "click-sdd", "0.1.0")}},
 			"click-memory@click-ai-devkit": {{}},
 			"click-review@click-ai-devkit": {{}},
 			"click-skills@click-ai-devkit": {{}},
-			installer.EngramPluginID:       {{}},
+			installer.EngramPluginID:       {{"installPath": filepath.Join(cfg.ClaudeHome, "plugins", "cache", "engram", "engram", "0.1.1")}},
 		},
 	}
 	data, err := json.Marshal(registry)
@@ -1059,6 +1078,14 @@ func seedInstalledState(t *testing.T, cfg installer.Config) {
 	}
 	if err := os.WriteFile(cfg.SettingsPath(), settingsData, 0o600); err != nil {
 		t.Fatalf("WriteFile(settings.json) error = %v", err)
+	}
+	engramPath := filepath.Join(cfg.ClaudeHome, "plugins", "cache", "engram", "engram", "0.1.1")
+	writeJSON(t, filepath.Join(engramPath, ".mcp.json"), map[string]any{
+		"mcpServers": map[string]any{"engram": map[string]any{"command": "engram", "args": []string{"mcp", "--tools=agent"}}},
+	})
+	clickSDDPath := filepath.Join(cfg.ClaudeHome, "plugins", "cache", "click-ai-devkit", "click-sdd", "0.1.0")
+	for agent, tools := range engramAgentToolRequirements {
+		writeFile(t, filepath.Join(clickSDDPath, "agents", agent+".md"), "---\ntools: "+strings.Join(tools, ", ")+"\n---\n")
 	}
 }
 

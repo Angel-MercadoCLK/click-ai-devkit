@@ -52,12 +52,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if !skipOpenClaw && installer.OpenClawAvailable() {
-		openClawHome, err := installer.ResolveOpenClawHome()
-		if err != nil {
-			return err
-		}
-		cfg.OpenClawHome = openClawHome
+	cfg, err = resolveTargetConfig(cfg, skipOpenClaw, out, r)
+	if err != nil {
+		return err
 	}
 
 	m, err := manifest.Load()
@@ -191,10 +188,21 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}); err != nil {
 			return err
 		}
-		// PR4: re-synchronize the click-owned OpenClaw skill manifests after the plugin re-sync,
-		// matching openClawWriteSteps' position for the skill sync step.
-		if err := r.RunStep("Sincronizando skills clickhola y clickdev en OpenClaw…", "Skills clickhola y clickdev sincronizados en OpenClaw", func() error {
+		// Re-synchronize the click-owned OpenClaw skills after the plugin re-sync.
+		if err := r.RunStep("Sincronizando skills de Click en OpenClaw…", "Skills de Click sincronizados en OpenClaw", func() error {
 			return installer.SyncOpenClawSkills(cfg)
+		}); err != nil {
+			return err
+		}
+		if err := r.RunStep("Guardando recomendación de modelos para OpenClaw…", "Recomendación de modelos para OpenClaw guardada", func() error {
+			return installer.SyncOpenClawModelProfile(cfg, profile, models)
+		}); err != nil {
+			return err
+		}
+	}
+	if cfg.CodexHome != "" {
+		if err := r.RunStep("Actualizando AGENTS.md de Codex…", "AGENTS.md de Codex actualizado", func() error {
+			return installer.SyncCodexGuidance(cfg)
 		}); err != nil {
 			return err
 		}

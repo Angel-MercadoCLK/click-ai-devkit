@@ -45,6 +45,41 @@ func TestSyncOpenClawSkills_WritesBothSkills(t *testing.T) {
 	}
 }
 
+func TestSyncOpenClawSkills_WritesPortableSDDWorkflow(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	if err := SyncOpenClawSkills(cfg); err != nil {
+		t.Fatalf("SyncOpenClawSkills() error = %v", err)
+	}
+
+	for _, rel := range []string{
+		"click-sdd/SKILL.md", "click-sdd-explore/SKILL.md", "click-sdd-propose/SKILL.md",
+		"click-sdd-spec/SKILL.md", "click-sdd-design/SKILL.md", "click-sdd-tasks/SKILL.md",
+		"click-sdd-apply/SKILL.md", "click-sdd-verify/SKILL.md", "click-sdd-archive/SKILL.md",
+		"click-sdd-onboard/SKILL.md",
+	} {
+		data, err := os.ReadFile(filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("ReadFile(%s) error = %v, want embedded asset installed", rel, err)
+		}
+		if !strings.Contains(string(data), "name: ") {
+			t.Errorf("%s has no skill frontmatter", rel)
+		}
+	}
+}
+
+func TestOpenClawSDDEntry_DoesNotExposeClaudeDelegation(t *testing.T) {
+	data, err := openClawSkillsAssets.ReadFile(openClawSkillsAssetsRoot + "/click-sdd/SKILL.md")
+	if err != nil {
+		t.Fatalf("ReadFile(embedded click-sdd entry) error = %v", err)
+	}
+	content := strings.ToLower(string(data))
+	for _, forbidden := range []string{"agent tool", "skill tool", "claude plugin", "plugin registry", "model routing"} {
+		if strings.Contains(content, forbidden) {
+			t.Errorf("entry skill contains Claude-specific invocation text %q", forbidden)
+		}
+	}
+}
+
 // TestSyncOpenClawSkills_Rerun_ByteIdenticalOutput is PR3's idempotency case: re-running with the
 // same cfg must produce byte-identical output (no timestamp or nonce is templated).
 func TestSyncOpenClawSkills_Rerun_ByteIdenticalOutput(t *testing.T) {
@@ -197,7 +232,7 @@ func TestRemoveOpenClawSkills_RemovesOnlyOwnedDirs(t *testing.T) {
 		t.Fatalf("RemoveOpenClawSkills() error = %v", err)
 	}
 
-	for _, owned := range []string{"clickhola", "clickdev"} {
+	for _, owned := range append([]string{"clickhola", "clickdev"}, portableSDDSkillDirs()...) {
 		path := filepath.Join(cfg.OpenClawSkillsDir(), owned)
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("Stat(%s) after removal error = %v, want os.IsNotExist", owned, err)
@@ -213,7 +248,7 @@ func TestRemoveOpenClawSkills_PreservesUserFilesInsideOwnedDirs(t *testing.T) {
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() error = %v", err)
 	}
-	for _, owned := range []string{"clickhola", "clickdev"} {
+	for _, owned := range append([]string{"clickhola", "clickdev"}, portableSDDSkillDirs()...) {
 		path := filepath.Join(cfg.OpenClawSkillsDir(), owned, "user-notes.txt")
 		if err := os.WriteFile(path, []byte("keep me\n"), 0o644); err != nil {
 			t.Fatalf("WriteFile(%s) error = %v", path, err)
@@ -232,6 +267,10 @@ func TestRemoveOpenClawSkills_PreservesUserFilesInsideOwnedDirs(t *testing.T) {
 			t.Fatalf("user file in %s after removal error = %v, want preserved", dir, err)
 		}
 	}
+}
+
+func portableSDDSkillDirs() []string {
+	return []string{"click-sdd", "click-sdd-explore", "click-sdd-propose", "click-sdd-spec", "click-sdd-design", "click-sdd-tasks", "click-sdd-apply", "click-sdd-verify", "click-sdd-archive", "click-sdd-onboard"}
 }
 
 // TestRemoveOpenClawSkills_Failure_WrapsContextualError verifies that an underlying RemoveAll

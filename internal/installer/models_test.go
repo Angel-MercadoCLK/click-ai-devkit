@@ -103,6 +103,33 @@ func TestConfig_ModelsPath(t *testing.T) {
 	}
 }
 
+func TestConfig_OpenClawModelProfilePath(t *testing.T) {
+	home := t.TempDir()
+	cfg := Config{OpenClawHome: home}
+	want := filepath.Join(home, "click-ai-devkit", "model-profile.json")
+	if got := cfg.OpenClawModelProfilePath(); got != want {
+		t.Fatalf("Config.OpenClawModelProfilePath() = %q, want %q", got, want)
+	}
+	if got := (Config{}).OpenClawModelProfilePath(); got != "" {
+		t.Fatalf("Config{}.OpenClawModelProfilePath() = %q, want empty path", got)
+	}
+}
+
+func TestSaveModelProfile_ThenLoadModelProfile_RoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "model-profile.json")
+	wantModels := modelconfig.ResolveProfile(string(modelconfig.ProfileQuality)).Models
+	if err := SaveModelProfile(path, modelconfig.ProfileQuality, wantModels); err != nil {
+		t.Fatalf("SaveModelProfile() error = %v", err)
+	}
+	gotProfile, gotModels, found, err := LoadModelProfile(path)
+	if err != nil {
+		t.Fatalf("LoadModelProfile() error = %v", err)
+	}
+	if !found || gotProfile != modelconfig.ProfileQuality || !reflect.DeepEqual(gotModels, wantModels) {
+		t.Fatalf("LoadModelProfile() = (%q, %#v, %v), want (%q, %#v, true)", gotProfile, gotModels, found, modelconfig.ProfileQuality, wantModels)
+	}
+}
+
 // TestSaveModels_WritesCurrentSchemaVersion guards the versioned-schema requirement: every file
 // SaveModels writes must self-report schema_version so a later stale/current check never has to
 // guess.

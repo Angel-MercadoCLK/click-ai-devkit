@@ -44,6 +44,16 @@ func SaveModels(cfg Config, models map[modelconfig.Phase]string) error {
 // an absent "profile" key (omitempty), matching what a pre-profile SaveModels call already
 // produces.
 func SaveModelsWithProfile(cfg Config, profile modelconfig.ProfileName, models map[modelconfig.Phase]string) error {
+	if err := SaveModelProfile(cfg.ModelsPath(), profile, models); err != nil {
+		return fmt.Errorf("installer: write models.json: %w", err)
+	}
+	return nil
+}
+
+// SaveModelProfile persists the shared versioned profile artifact at path. The format is target
+// neutral and intentionally contains recommendations only; callers decide whether a runtime has a
+// native configuration surface that can consume it.
+func SaveModelProfile(path string, profile modelconfig.ProfileName, models map[modelconfig.Phase]string) error {
 	data := modelsFile{
 		SchemaVersion: CurrentModelsSchemaVersion,
 		Profile:       string(profile),
@@ -52,8 +62,8 @@ func SaveModelsWithProfile(cfg Config, profile modelconfig.ProfileName, models m
 	for phase, model := range models {
 		data.Models[string(phase)] = model
 	}
-	if err := writeJSONFile(cfg.ModelsPath(), data); err != nil {
-		return fmt.Errorf("installer: write models.json: %w", err)
+	if err := writeJSONFile(path, data); err != nil {
+		return err
 	}
 	return nil
 }
@@ -76,16 +86,22 @@ func LoadModels(cfg Config) (map[modelconfig.Phase]string, bool, error) {
 // with an empty ProfileName, which callers resolve to balanced via modelconfig.ResolveProfile("")).
 // It returns (_, nil, false, nil) when models.json doesn't exist yet.
 func LoadModelsWithProfile(cfg Config) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
-	data, err := os.ReadFile(cfg.ModelsPath())
+	return LoadModelProfile(cfg.ModelsPath())
+}
+
+// LoadModelProfile reads the shared versioned profile artifact from path. It returns no profile and
+// no models when the artifact does not exist, allowing runtime-specific callers to no-op cleanly.
+func LoadModelProfile(path string) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil, false, nil
 		}
-		return "", nil, false, fmt.Errorf("installer: read models.json: %w", err)
+		return "", nil, false, fmt.Errorf("installer: read model profile: %w", err)
 	}
 	var wrapper modelsFile
 	if err := json.Unmarshal(data, &wrapper); err != nil {
-		return "", nil, false, fmt.Errorf("installer: parse models.json: %w", err)
+		return "", nil, false, fmt.Errorf("installer: parse model profile: %w", err)
 	}
 	models := make(map[modelconfig.Phase]string, len(wrapper.Models))
 	for k, v := range wrapper.Models {

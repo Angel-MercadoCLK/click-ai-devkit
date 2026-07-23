@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
 // DefaultOpenClawAgentsContent is the managed AGENTS.md body written under
@@ -11,7 +13,8 @@ import (
 // DefaultManagedContent (claudemd.go). Kept deliberately minimal (design's "write minimal
 // idempotent managed AGENTS.md/SOUL.md" decision): it points the OpenClaw agent at click-sdd
 // conventions and the click-memory policy docs, without duplicating CLAUDE.md's full content.
-const DefaultOpenClawAgentsContent = `This workspace is managed by click-ai-devkit for OpenClaw. Follow click-sdd conventions when planning and implementing work.
+const DefaultOpenClawAgentsContent = `This workspace is managed by click-ai-devkit for OpenClaw. For a new change, start with the installed OpenClaw-native click-sdd skill in the skills/click-sdd directory, then follow the phase skills it names.
+The OpenClaw workflow covers the portable SDD lifecycle only. Claude-specific agents, plugin registries, model routing, and delegation metadata are not installed or required here. Click's portable model recommendation is stored at <OpenClawHome>/click-ai-devkit/model-profile.json for reference only; it does not configure OpenClaw's native model/provider settings.
 Before any mem_save, review the click-memory plugin's policy docs (memory-policy.md, allowed-memory.md, forbidden-memory.md) under its installed docs/ directory. The deterministic memory-guard hook enforces this policy even if an agent attempts something unsafe.
 This block is managed by click: edit via "click update" and remove via "click uninstall".`
 
@@ -115,6 +118,19 @@ func SyncOpenClawMCPConfig(cfg Config) error {
 
 	if err := writeJSONFile(path, top); err != nil {
 		return fmt.Errorf("installer: write %s: %w", path, err)
+	}
+	return nil
+}
+
+// SyncOpenClawModelProfile writes Click's resolved profile and per-phase model map as a portable
+// recommendation under OpenClaw's managed home. It does not modify openclaw.json or claim to apply
+// aliases to OpenClaw, whose native model/provider API is not established here.
+func SyncOpenClawModelProfile(cfg Config, profile modelconfig.ProfileName, models map[modelconfig.Phase]string) error {
+	if cfg.OpenClawHome == "" {
+		return nil
+	}
+	if err := SaveModelProfile(cfg.OpenClawModelProfilePath(), profile, models); err != nil {
+		return fmt.Errorf("installer: write OpenClaw model profile: %w", err)
 	}
 	return nil
 }

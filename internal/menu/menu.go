@@ -25,15 +25,19 @@ import (
 // Action keys identify what a selected active item should do once the menu program exits.
 // Inert (coming-soon) items carry no Action — selecting one never sets Model.Chosen.
 const (
-	ActionInstall         = "install"
-	ActionUpdate          = "update"
-	ActionConfigureModels = "configure-models"
-	ActionAgentBuilder    = "agent-builder"
-	ActionDoctor          = "doctor"
-	ActionUninstall       = "uninstall"
-	ActionManageBackups   = "manage-backups"
-	ActionRollback        = "rollback"
-	ActionQuit            = "quit"
+	ActionInstall                = "install"
+	ActionUpdate                 = "update"
+	ActionConfigureModels        = "configure-models"
+	ActionAgentBuilder           = "agent-builder"
+	ActionDoctor                 = "doctor"
+	ActionTargets                = "targets"
+	ActionConfigureTargets       = "configure-targets"
+	ActionConfigureOpenClawModel = "configure-openclaw-model"
+	ActionPlugins                = "plugins"
+	ActionUninstall              = "uninstall"
+	ActionManageBackups          = "manage-backups"
+	ActionRollback               = "rollback"
+	ActionQuit                   = "quit"
 )
 
 // Item is one row of the menu: a label, an optional dispatch Action, and whether it's active
@@ -56,6 +60,10 @@ var Items = []Item{
 	{Label: "Actualizar herramientas", Action: ActionUpdate, Active: true},
 	{Label: "Configurar modelos", Action: ActionConfigureModels, Active: true},
 	{Label: "Ejecutar diagnóstico", Action: ActionDoctor, Active: true},
+	{Label: "Detectar runtimes compatibles", Action: ActionTargets, Active: true},
+	{Label: "Configurar runtimes", Action: ActionConfigureTargets, Active: true},
+	{Label: "Configurar modelo nativo de OpenClaw", Action: ActionConfigureOpenClawModel, Active: true},
+	{Label: "Plugins", Action: ActionPlugins, Active: true},
 	{Label: "Desinstalar", Action: ActionUninstall, Active: true},
 	{Label: "Crear agente propio", Action: ActionAgentBuilder, Active: true},
 	{Label: "Gestionar backups", Action: ActionManageBackups, Active: true},
@@ -290,6 +298,14 @@ func ActionArgs(action string) []string {
 		return []string{"agent-builder"}
 	case ActionDoctor:
 		return []string{"doctor"}
+	case ActionTargets:
+		return []string{"targets"}
+	case ActionConfigureTargets:
+		return []string{"configure-targets"}
+	case ActionConfigureOpenClawModel:
+		return []string{"configure-openclaw-model"}
+	case ActionPlugins:
+		return []string{"plugins"}
 	case ActionUninstall:
 		return []string{"uninstall"}
 	case ActionManageBackups:

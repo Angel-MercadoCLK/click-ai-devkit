@@ -394,6 +394,43 @@ func TestRunMenuLoop_DispatchErrorStopsLoopWithoutRelaunching(t *testing.T) {
 	}
 }
 
+// TestRunMenuLoop_ConfigureOpenClawModelDispatchDoesNotCrashMenu reproduces the exact FIX 1 crash
+// scenario end-to-end: selecting the "Configurar modelo nativo de OpenClaw" menu row dispatches
+// `configure-openclaw-model` with no args. Before the fix this errored out of runMenuLoop and killed
+// the whole menu. Now the loop must survive it: dispatch returns nil, the menu relaunches, and only
+// the following Quit ends the loop (launchMenu called twice, not one).
+func TestRunMenuLoop_ConfigureOpenClawModelDispatchDoesNotCrashMenu(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_OPENCLAW_HOME", t.TempDir())
+	seedResolvableGit(t)
+
+	parent := &cobra.Command{}
+	var buf bytes.Buffer
+	parent.SetOut(&buf)
+	parent.SetErr(&buf)
+	parent.SetIn(&bytes.Buffer{})
+
+	chosen := []string{menu.ActionConfigureOpenClawModel, menu.ActionQuit}
+	launchCalls := 0
+	launchMenu := func() (string, error) {
+		got := chosen[launchCalls]
+		launchCalls++
+		return got, nil
+	}
+	dispatchFn := func(args []string) error { return dispatch(parent, args) }
+
+	if err := runMenuLoop(launchMenu, dispatchFn); err != nil {
+		t.Fatalf("runMenuLoop dispatching ActionConfigureOpenClawModel error = %v, want nil (menu must survive the no-args item)", err)
+	}
+	if launchCalls != 2 {
+		t.Fatalf("launchMenu called %d times, want 2 (menu relaunched after the item, then quit) — a dispatch error would have stopped the loop early", launchCalls)
+	}
+	if !strings.Contains(buf.String(), "Indique el modelo con") {
+		t.Fatalf("dispatched output = %q, want the no-args guidance line", buf.String())
+	}
+}
+
 func TestRunMenuLoop_EmptyChosenReturnsNil(t *testing.T) {
 	launchMenu := func() (string, error) {
 		return "", nil

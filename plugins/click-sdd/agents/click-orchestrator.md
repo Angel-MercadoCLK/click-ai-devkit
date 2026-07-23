@@ -248,7 +248,7 @@ Steps:
    - `exception-ok`: one PR knowingly allowed to exceed the configured line budget; the
      over-budget exception rationale is carried forward. Reached from `single-pr` + high
      budget risk when the overrun is accepted.
-4. Forward the RESOLVED decision to `apply` (`click-apply` / `sdd-apply`): the final
+4. Forward the RESOLVED decision to the `apply` phase through the `click-apply` agent: the final
    `delivery_strategy` value, the PR boundary/boundaries (chained modes), and any
    over-budget exception rationale (`exception-ok`). If `Decision needed before apply: Yes`,
    ensure that decision is settled (developer confirmation in interactive; the Judgment Day
@@ -280,7 +280,8 @@ registro para estas 3 respuestas.
   work when they do not require broad context expansion.
 - Treat broad exploration, multi-file implementation, test or tool execution, review, and any work
   that expands the session context materially as non-trivial work. Non-trivial work must delegate
-  to the relevant phase skill or specialist agent through `Agent`.
+  through `Agent` to the named `click-*` specialist agent. The specialist reads the phase skill
+  named in the Skill hand-off; a phase skill is not an `Agent` subagent type.
 - You do not invent business requirements that the user did not provide.
 - Elicitación de requisitos (opcional) -> `click-elicitor`, ofrecida en el Paso 1 de la "Puerta de
   entrada SDD" cuando el cambio es nuevo.

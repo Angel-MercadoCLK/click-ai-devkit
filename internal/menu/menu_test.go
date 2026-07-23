@@ -136,6 +136,53 @@ func TestManageBackupsMenuItemIsActiveAndDispatchable(t *testing.T) {
 	}
 }
 
+func TestTargetsMenuItemIsActiveAndDispatchable(t *testing.T) {
+	idx := firstItemIndexWhere(t, func(it Item) bool { return it.Label == "Detectar runtimes compatibles" })
+	item := Items[idx]
+	if !item.Active {
+		t.Fatal("Detectar runtimes compatibles Active = false, want true")
+	}
+	if item.Action != ActionTargets {
+		t.Fatalf("Detectar runtimes compatibles Action = %q, want %q", item.Action, ActionTargets)
+	}
+
+	got := ActionArgs(item.Action)
+	want := []string{"targets"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("ActionArgs(%q) = %v, want %v", item.Action, got, want)
+	}
+}
+
+func TestConfigureTargetsMenuItemIsActiveAndDispatchable(t *testing.T) {
+	idx := firstItemIndexWhere(t, func(it Item) bool { return it.Action == ActionConfigureTargets })
+	if !Items[idx].Active || Items[idx].Label != "Configurar runtimes" {
+		t.Fatalf("configure targets item = %+v, want active Spanish menu row", Items[idx])
+	}
+	if got := ActionArgs(ActionConfigureTargets); len(got) != 1 || got[0] != "configure-targets" {
+		t.Fatalf("ActionArgs(configure targets) = %v, want configure-targets", got)
+	}
+}
+
+func TestConfigureOpenClawModelMenuItemRequiresExplicitRefs(t *testing.T) {
+	idx := firstItemIndexWhere(t, func(it Item) bool { return it.Action == ActionConfigureOpenClawModel })
+	if !Items[idx].Active || Items[idx].Label != "Configurar modelo nativo de OpenClaw" {
+		t.Fatalf("configure OpenClaw model item = %+v, want active Spanish menu row", Items[idx])
+	}
+	if got := ActionArgs(ActionConfigureOpenClawModel); len(got) != 1 || got[0] != "configure-openclaw-model" {
+		t.Fatalf("ActionArgs(configure OpenClaw model) = %v, want command without guessed model refs", got)
+	}
+}
+
+func TestPluginsMenuItemIsActiveAndDispatchable(t *testing.T) {
+	idx := firstItemIndexWhere(t, func(it Item) bool { return it.Label == "Plugins" })
+	if !Items[idx].Active || Items[idx].Action != ActionPlugins {
+		t.Fatalf("Plugins menu item = %+v, want active Plugins command", Items[idx])
+	}
+	if got := ActionArgs(ActionPlugins); len(got) != 1 || got[0] != "plugins" {
+		t.Fatalf("ActionArgs(plugins) = %v, want plugins", got)
+	}
+}
+
 // TestRollbackMenuItemIsActiveAndDispatchable guards the menu-side rollback wiring: the item must
 // be active, wired to ActionRollback, and ActionArgs must map it to `click rollback`.
 func TestRollbackMenuItemIsActiveAndDispatchable(t *testing.T) {
@@ -269,9 +316,11 @@ func TestActionArgs_MapsEachActiveDispatchableAction(t *testing.T) {
 		ActionConfigureModels: {"configure-models"},
 		ActionAgentBuilder:    {"agent-builder"},
 		ActionDoctor:          {"doctor"},
+		ActionTargets:         {"targets"},
 		ActionUninstall:       {"uninstall"},
 		ActionManageBackups:   {"manage-backups"},
 		ActionRollback:        {"rollback"},
+		ActionPlugins:         {"plugins"},
 	}
 	for action, want := range cases {
 		got := ActionArgs(action)

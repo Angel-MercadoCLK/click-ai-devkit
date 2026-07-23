@@ -128,6 +128,11 @@ func (r *testCommandRunner) Run(name string, args ...string) error {
 	}
 	switch {
 	case len(args) >= 4 && args[0] == "plugin" && args[1] == "marketplace" && args[2] == "add":
+		if strings.Contains(args[3], "click-ai-devkit") {
+			if err := r.writeKnownMarketplace(args[3]); err != nil {
+				return err
+			}
+		}
 		return r.writeSettings()
 	case len(args) >= 3 && args[0] == "plugin" && args[1] == "install":
 		r.plugins[args[2]] = true
@@ -150,6 +155,22 @@ func (r *testCommandRunner) Run(name string, args ...string) error {
 	default:
 		return nil
 	}
+}
+
+func (r *testCommandRunner) writeKnownMarketplace(source string) error {
+	data, err := json.Marshal(map[string]any{
+		installer.ClickMarketplaceName(): map[string]any{
+			"source": map[string]any{"source": "git", "url": source},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(r.home, "plugins", "known_marketplaces.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }
 
 // upsertMCPServer/removeMCPServer simulate `claude mcp add/remove`'s effect on Claude Code's own
@@ -243,8 +264,19 @@ func (r *testCommandRunner) writeSettings() error {
 	plugins := map[string]any{}
 	enabled := map[string]bool{}
 	for pluginID := range r.plugins {
-		plugins[pluginID] = []map[string]any{{"scope": "user", "version": "0.1.0"}}
+		pluginName, marketplace, _ := strings.Cut(pluginID, "@")
+		installPath := filepath.Join(r.home, "plugins", "cache", marketplace, pluginName, "0.1.0")
+		plugins[pluginID] = []map[string]any{{"scope": "user", "version": "0.1.0", "installPath": installPath}}
 		enabled[pluginID] = true
+		if pluginID == installer.EngramPluginID {
+			writeTestFile(filepath.Join(installPath, ".mcp.json"), `{"mcpServers":{"engram":{"command":"engram","args":["mcp","--tools=agent"]}}}`)
+		}
+		if pluginID == installer.ClickSDDPluginID {
+			tools := "mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_save, mcp__plugin_engram_engram__mem_update"
+			for _, agent := range []string{"click-apply", "click-architect", "click-archive", "click-explore", "click-jd-fix-agent", "click-jd-judge-a", "click-jd-judge-b", "click-memory-curator", "click-onboard", "click-orchestrator", "click-prd-writer", "click-reviewer"} {
+				writeTestFile(filepath.Join(installPath, "agents", agent+".md"), "---\ntools: "+tools+"\n---\n")
+			}
+		}
 	}
 	pluginsData, err := json.Marshal(map[string]any{"version": 2, "plugins": plugins})
 	if err != nil {
@@ -270,6 +302,15 @@ func (r *testCommandRunner) writeSettings() error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(r.home, "settings.json"), settingsData, 0o600)
+}
+
+func writeTestFile(path, content string) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		panic("write test fixture directory: " + err.Error())
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		panic("write test fixture: " + err.Error())
+	}
 }
 
 func TestInstallCommand_Succeeds(t *testing.T) {

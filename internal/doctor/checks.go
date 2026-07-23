@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,11 +19,10 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
-// EngramChecksCount is the number of doctor checks contributed by Engram (plugin + binary + PATH
-// persistence), kept as an exported constant so other packages/tests documenting Run()'s total
-// check count don't have to hardcode a magic number that silently drifts if a check is added or
-// removed here.
-const EngramChecksCount = 4
+// EngramChecksCount is the number of doctor checks contributed by Engram, kept as an exported
+// constant so other packages/tests documenting Run()'s total check count don't have to hardcode a
+// magic number that silently drifts if a check is added or removed here.
+const EngramChecksCount = 5
 
 // Context7ChecksCount is the number of doctor checks contributed by Context7, kept as an exported
 // constant for the same reason as EngramChecksCount.
@@ -57,6 +57,7 @@ func Run(cfg installer.Config) Report {
 		checkGit(cfg),
 		checkClaude(cfg),
 		checkOpenClaw(cfg),
+		checkClickPluginRegistries(cfg),
 		checkPlugin(cfg),
 		checkMemoryPlugin(cfg),
 		checkReviewPlugin(cfg),
@@ -67,11 +68,169 @@ func Run(cfg installer.Config) Report {
 		checkModelsConfig(cfg),
 		checkAppliedPluginConfig(cfg),
 		checkEngramPlugin(cfg),
+		checkEngramSubagentVisibility(cfg),
 		checkEngramBinary(cfg),
 		checkEngramPath(cfg),
 		checkEngramCloud(cfg),
 		checkContext7(cfg),
 	}}
+}
+
+// engramAgentToolRequirements is the repository's static contract for click-sdd agents that claim
+// memory operations. Elicitor and review lenses intentionally do not appear: their documented roles
+// do not require Engram access.
+var engramAgentToolRequirements = map[string][]string{
+	"click-apply":          {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save", "mcp__plugin_engram_engram__mem_update"},
+	"click-architect":      {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save"},
+	"click-archive":        {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save"},
+	"click-explore":        {"mcp__plugin_engram_engram__mem_save"},
+	"click-jd-fix-agent":   {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_update"},
+	"click-jd-judge-a":     {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation"},
+	"click-jd-judge-b":     {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation"},
+	"click-memory-curator": {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation"},
+	"click-onboard":        {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save", "mcp__plugin_engram_engram__mem_update"},
+	"click-orchestrator":   {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save", "mcp__plugin_engram_engram__mem_update"},
+	"click-prd-writer":     {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save"},
+	"click-reviewer":       {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save"},
+}
+
+func checkEngramSubagentVisibility(cfg installer.Config) CheckResult {
+	const name = "Engram subagent visibility"
+	installed, err := installer.HasInstalledPluginID(cfg, installer.EngramPluginID)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo verificar el registro/habilitación de Engram: " + err.Error()}
+	}
+	if !installed {
+		return CheckResult{Name: name, Healthy: false, Detail: "Engram no está registrado y habilitado en Claude Code — ejecute `click install` o `click update`"}
+	}
+
+	engramPath, found, err := installer.InstalledPluginPath(cfg, installer.EngramPluginID)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo leer la ruta de caché de Engram: " + err.Error()}
+	}
+	if !found {
+		return CheckResult{Name: name, Healthy: false, Detail: "Engram está registrado, pero su ruta de caché no se puede resolver de forma segura desde installed_plugins.json; no se adivinan rutas. Actualice/reinstale el plugin y reinicie Claude Code"}
+	}
+
+	mcpData, err := os.ReadFile(filepath.Join(engramPath, ".mcp.json"))
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo verificar el .mcp.json de Engram en la caché registrada: " + err.Error() + " — ejecute `click update` y reinicie Claude Code"}
+	}
+	var mcp struct {
+		MCPServers map[string]struct {
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(mcpData, &mcp); err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "el .mcp.json de Engram es ilegible: " + err.Error()}
+	}
+	server, ok := mcp.MCPServers["engram"]
+	if !ok || server.Command != "engram" || !sameStrings(server.Args, []string{"mcp", "--tools=agent"}) {
+		return CheckResult{Name: name, Healthy: false, Detail: "el .mcp.json de Engram no contiene el servidor engram con command=engram y args=[mcp --tools=agent]"}
+	}
+
+	clickSDDPath, found, err := installer.InstalledPluginPath(cfg, installer.ClickSDDPluginID)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo leer la ruta de caché de click-sdd: " + err.Error()}
+	}
+	if !found {
+		return CheckResult{Name: name, Healthy: false, Detail: "click-sdd está registrado, pero su ruta de caché no se puede resolver de forma segura desde installed_plugins.json; no se adivinan rutas. Ejecute `click update`"}
+	}
+	for agent, requiredTools := range engramAgentToolRequirements {
+		data, err := os.ReadFile(filepath.Join(clickSDDPath, "agents", agent+".md"))
+		if err != nil {
+			return CheckResult{Name: name, Healthy: false, Detail: "no se pudo verificar el agente " + agent + " en la caché de click-sdd: " + err.Error()}
+		}
+		tools := frontmatterTools(string(data))
+		for _, required := range requiredTools {
+			if !containsString(tools, required) {
+				return CheckResult{Name: name, Healthy: false, Detail: "el agente " + agent + " no declara la herramienta Engram requerida " + required}
+			}
+		}
+	}
+
+	return CheckResult{Name: name, Healthy: true, Detail: "prerrequisitos estáticos saludables: plugin Engram habilitado, .mcp.json y herramientas de agentes verificados; la propagación Agent-a-agent anidada no puede probarse estáticamente y requiere una sesión nueva de Claude y un diagnóstico en vivo"}
+}
+
+func frontmatterTools(content string) []string {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "tools:") {
+			parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(line, "tools:")), ",")
+			for i := range parts {
+				parts[i] = strings.TrimSpace(parts[i])
+			}
+			return parts
+		}
+	}
+	return nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func sameStrings(actual, expected []string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	for i := range actual {
+		if actual[i] != expected[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func checkClickPluginRegistries(cfg installer.Config) CheckResult {
+	const name = "Registros de plugins de Claude"
+
+	status, err := installer.CheckClickPluginRegistries(cfg)
+	if err != nil {
+		return CheckResult{
+			Name:    name,
+			Healthy: false,
+			Detail:  "registro de plugins malformado o ilegible: " + err.Error() + " — ejecute `click update`",
+		}
+	}
+	if !status.MarketplaceFound {
+		return CheckResult{
+			Name:    name,
+			Healthy: false,
+			Detail:  "falta la entrada de click-ai-devkit en known_marketplaces.json — ejecute `click update`",
+		}
+	}
+	if !status.MarketplaceSourceMatches {
+		return CheckResult{
+			Name:    name,
+			Healthy: false,
+			Detail:  "la entrada de click-ai-devkit apunta a una fuente inesperada — ejecute `click update`",
+		}
+	}
+	if !status.InstalledRegistryFound {
+		return CheckResult{
+			Name:    name,
+			Healthy: false,
+			Detail:  "falta installed_plugins.json, por lo que no se puede confirmar el conjunto de plugins administrados — ejecute `click update`",
+		}
+	}
+	if len(status.MissingPluginIDs) > 0 {
+		return CheckResult{
+			Name:    name,
+			Healthy: false,
+			Detail:  "faltan plugins administrados en installed_plugins.json: " + strings.Join(status.MissingPluginIDs, ", ") + " — ejecute `click update`",
+		}
+	}
+	return CheckResult{
+		Name:    name,
+		Healthy: true,
+		Detail:  "registro de marketplace correcto y 4 plugins administrados presentes; la frescura de la caché interna de Claude requiere una actualización real del CLI",
+	}
 }
 
 // checkGit reports whether git is resolvable on PATH. It is foundational and read first (NFR-012:

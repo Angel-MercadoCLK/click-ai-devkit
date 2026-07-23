@@ -473,10 +473,10 @@ func TestSnapshotDrift_MissingCurrentFile_NotReportedAsDrift(t *testing.T) {
 // TestSnapshotRun_OpenClawPresent_CapturesNineFiles is task 2.9's RED test extended by PR4: when
 // cfg.OpenClawHome is populated, SnapshotRun must capture all 9 files (2 Claude + 3 OpenClaw +
 // 2 click-memory-guard plugin files + 2 click-owned OpenClaw skill manifests). Count bumped from
-// 7 to 9. This test's setup deliberately does NOT write the plugin or skill files
+// The test's setup deliberately does NOT write the plugin or skill files
 // (SyncOpenClawPlugin/SyncOpenClawSkills are never called here), so their entries are expected as
 // no-prior-state markers, exactly like a first-ever install would produce.
-func TestSnapshotRun_OpenClawPresent_CapturesNineFiles(t *testing.T) {
+func TestSnapshotRun_OpenClawPresent_CapturesPortableFiles(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "# claude\n")
 	writeTestFile(t, cfg.SettingsPath(), `{}`)
@@ -492,20 +492,25 @@ func TestSnapshotRun_OpenClawPresent_CapturesNineFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSnapshotManifest() error = %v", err)
 	}
-	if len(manifest.Entries) != 9 {
-		t.Fatalf("manifest.Entries = %#v, want exactly 9 entries (2 Claude + 3 OpenClaw + 2 plugin + 2 skills)", manifest.Entries)
+	wantEntryCount := 2 + 3 + 1 + len(openClawPluginRelPaths) + len(openClawSkillRelPaths)
+	if len(manifest.Entries) != wantEntryCount {
+		t.Fatalf("manifest.Entries = %#v, want exactly %d entries", manifest.Entries, wantEntryCount)
 	}
 
 	wantPaths := map[string]bool{
-		cfg.ClaudeMDPath():          false,
-		cfg.SettingsPath():          false,
-		cfg.OpenClawAgentsMDPath():  false,
-		cfg.OpenClawSoulMDPath():    false,
-		cfg.OpenClawMCPConfigPath(): false,
+		cfg.ClaudeMDPath():             false,
+		cfg.SettingsPath():             false,
+		cfg.OpenClawAgentsMDPath():     false,
+		cfg.OpenClawSoulMDPath():       false,
+		cfg.OpenClawMCPConfigPath():    false,
+		cfg.OpenClawModelProfilePath(): false,
 		filepath.Join(cfg.OpenClawPluginDir(), "plugins", "hooks.js"):   false,
 		filepath.Join(cfg.OpenClawPluginDir(), "plugin.json"):           false,
 		filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md"): false,
 		filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md"):  false,
+	}
+	for _, rel := range openClawSkillRelPaths[2:] {
+		wantPaths[filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel))] = false
 	}
 	for _, e := range manifest.Entries {
 		if _, ok := wantPaths[e.OriginalPath]; !ok {
@@ -517,6 +522,25 @@ func TestSnapshotRun_OpenClawPresent_CapturesNineFiles(t *testing.T) {
 		if !found {
 			t.Fatalf("manifest has no entry for %s", path)
 		}
+	}
+}
+
+func TestRestoreRun_OpenClawModelProfile_RestoresPortableArtifact(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	writeTestFile(t, cfg.OpenClawModelProfilePath(), `{"schema_version":2,"profile":"balanced","models":{"explore":"sonnet"}}`)
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+	writeTestFile(t, cfg.OpenClawModelProfilePath(), `{"schema_version":2,"profile":"quality","models":{"explore":"opus"}}`)
+	if err := RestoreRun(cfg); err != nil {
+		t.Fatalf("RestoreRun() error = %v", err)
+	}
+	got, err := os.ReadFile(cfg.OpenClawModelProfilePath())
+	if err != nil {
+		t.Fatalf("ReadFile(model-profile.json) error = %v", err)
+	}
+	if string(got) != `{"schema_version":2,"profile":"balanced","models":{"explore":"sonnet"}}` {
+		t.Fatalf("restored model profile = %q, want original artifact", got)
 	}
 }
 
@@ -596,15 +620,17 @@ func TestRestoreRun_OpenClawSkillsPresent_RestoresBothFiles(t *testing.T) {
 	writeTestFile(t, cfg.OpenClawAgentsMDPath(), "agents original\n")
 	writeTestFile(t, cfg.OpenClawSoulMDPath(), "soul original\n")
 	writeTestFile(t, cfg.OpenClawMCPConfigPath(), `{"mcpServers":{}}`)
-	writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md"), "clickhola original\n")
-	writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md"), "clickdev original\n")
+	for _, rel := range openClawSkillRelPaths {
+		writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel)), "original "+rel+"\n")
+	}
 
 	if err := SnapshotRun(cfg); err != nil {
 		t.Fatalf("SnapshotRun() error = %v", err)
 	}
 
-	writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md"), "clickhola EDITED\n")
-	writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md"), "clickdev EDITED\n")
+	for _, rel := range openClawSkillRelPaths {
+		writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel)), "edited "+rel+"\n")
+	}
 	if err := RemoveOpenClawSkills(cfg); err != nil {
 		t.Fatalf("RemoveOpenClawSkills() error = %v", err)
 	}
@@ -613,11 +639,9 @@ func TestRestoreRun_OpenClawSkillsPresent_RestoresBothFiles(t *testing.T) {
 		t.Fatalf("RestoreRun() error = %v", err)
 	}
 
-	checks := map[string]string{
-		filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md"): "clickhola original\n",
-		filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md"):  "clickdev original\n",
-	}
-	for path, want := range checks {
+	for _, rel := range openClawSkillRelPaths {
+		path := filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel))
+		want := "original " + rel + "\n"
 		got, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%s) error = %v", path, err)

@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
 // --- SyncOpenClawWorkspace (tasks 2.1-2.4) ---
@@ -249,5 +251,26 @@ func TestSyncOpenClawMCPConfig_Absent_NoOp(t *testing.T) {
 
 	if err := SyncOpenClawMCPConfig(cfg); err != nil {
 		t.Fatalf("SyncOpenClawMCPConfig() error = %v, want nil when OpenClawHome is empty", err)
+	}
+}
+
+func TestSyncOpenClawModelProfile_WritesPortableRecommendation(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir()}
+	models := modelconfig.ResolveProfile(string(modelconfig.ProfileCostSaver)).Models
+	if err := SyncOpenClawModelProfile(cfg, modelconfig.ProfileCostSaver, models); err != nil {
+		t.Fatalf("SyncOpenClawModelProfile() error = %v", err)
+	}
+	profile, got, found, err := LoadModelProfile(cfg.OpenClawModelProfilePath())
+	if err != nil || !found || profile != modelconfig.ProfileCostSaver {
+		t.Fatalf("LoadModelProfile() = (%q, %#v, %v), err = %v", profile, got, found, err)
+	}
+	if len(got) != len(models) {
+		t.Fatalf("profile model count = %d, want %d", len(got), len(models))
+	}
+}
+
+func TestSyncOpenClawModelProfile_Absent_NoOp(t *testing.T) {
+	if err := SyncOpenClawModelProfile(Config{}, modelconfig.ProfileBalanced, modelconfig.Defaults()); err != nil {
+		t.Fatalf("SyncOpenClawModelProfile() error = %v, want nil", err)
 	}
 }

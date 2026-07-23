@@ -1,6 +1,6 @@
 ---
 name: explore
-description: Investigate the existing codebase and compare candidate approaches before committing to a plan for a Click Seguros change. First phase of the SDD chain, invoked by /sdd-explore or click-orchestrator when a request needs codebase understanding.
+description: Investigate the existing codebase and compare candidate approaches before committing to a plan for a Click Seguros change. First phase of the SDD chain, loaded by the click-explore agent when a request needs codebase understanding.
 ---
 
 ## Workflow

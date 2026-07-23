@@ -85,6 +85,81 @@ func TestClickReviewPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
 	})
 }
 
+func TestInstalledPluginPath_UsesRegistryInstallPath(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	path := filepath.Join(cfg.ClaudeHome, "plugins", "cache", "engram", "engram", "0.1.1")
+	data, err := json.Marshal(map[string]any{
+		"plugins": map[string]any{EngramPluginID: []map[string]any{{"installPath": path}}},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.InstalledPluginsPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(cfg.InstalledPluginsPath(), data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, found, err := InstalledPluginPath(cfg, EngramPluginID)
+	if err != nil {
+		t.Fatalf("InstalledPluginPath() error = %v", err)
+	}
+	if !found || got != path {
+		t.Fatalf("InstalledPluginPath() = (%q, %v), want (%q, true)", got, found, path)
+	}
+}
+
+// TestListClickPlugins_DistinguishesEnabledFromDisabled guards the FIX 4 contract: a managed
+// plugin registered in installed_plugins.json but disabled in settings.json's enabledPlugins must
+// report Installed==true, Enabled==false — so `click plugins` can never claim a plugin is active
+// while `click doctor` (which requires enabledPlugins[id]==true) says it is not.
+func TestListClickPlugins_DistinguishesEnabledFromDisabled(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	if err := os.MkdirAll(filepath.Join(cfg.ClaudeHome, "plugins"), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	sddID := "click-sdd@" + marketplaceName
+	memID := "click-memory@" + marketplaceName
+	writeJSONForTest(t, cfg.InstalledPluginsPath(), map[string]any{"plugins": map[string]any{
+		sddID: []map[string]any{{"installPath": "/cache/click-sdd"}},
+		memID: []map[string]any{{"installPath": "/cache/click-memory"}},
+	}})
+	writeJSONForTest(t, cfg.SettingsPath(), map[string]any{"enabledPlugins": map[string]bool{
+		sddID: true,
+		memID: false,
+	}})
+
+	statuses, err := ListClickPlugins(cfg)
+	if err != nil {
+		t.Fatalf("ListClickPlugins() error = %v", err)
+	}
+	byName := map[string]ClickPluginStatus{}
+	for _, s := range statuses {
+		byName[s.Name] = s
+	}
+	if sdd := byName["click-sdd"]; !sdd.Installed || !sdd.Enabled {
+		t.Fatalf("click-sdd = %+v, want Installed && Enabled", sdd)
+	}
+	if mem := byName["click-memory"]; !mem.Installed || mem.Enabled {
+		t.Fatalf("click-memory = %+v, want Installed but NOT Enabled (registered but disabled)", mem)
+	}
+}
+
+func writeJSONForTest(t *testing.T, path string, data any) {
+	t.Helper()
+	raw, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+}
+
 func assertPluginStructure(t *testing.T, pluginDir, wantName string, expectedFiles []string) {
 	t.Helper()
 	type pluginManifest struct {

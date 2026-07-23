@@ -1,11 +1,126 @@
 package installer
 
 import (
+	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
+
+type failingMarketplaceRunner struct {
+	failAt int
+	calls  int
+	err    error
+}
+
+func (r *failingMarketplaceRunner) Run(name string, args ...string) error {
+	r.calls++
+	if r.calls == r.failAt {
+		return r.err
+	}
+	return nil
+}
+
+func (r *failingMarketplaceRunner) Output(name string, args ...string) ([]byte, error) {
+	return nil, nil
+}
+
+func TestSyncMarketplacePlugins_DiagnosesCommandFailures(t *testing.T) {
+	tests := []struct {
+		name      string
+		failAt    int
+		rawError  error
+		wantKind  PluginSyncFailureKind
+		wantStage string
+		wantText  string
+	}{
+		{
+			name:      "marketplace add clone failure",
+			failAt:    1,
+			rawError:  errors.New("git clone failed: repository not found"),
+			wantKind:  PluginSyncMarketplaceFailure,
+			wantStage: "marketplace add/clone",
+			wantText:  "repository not found",
+		},
+		{
+			name:      "marketplace update failure",
+			failAt:    2,
+			rawError:  errors.New("marketplace update failed: network unavailable"),
+			wantKind:  PluginSyncMarketplaceFailure,
+			wantStage: "marketplace update",
+			wantText:  "network unavailable",
+		},
+		{
+			name:      "plugin install failure",
+			failAt:    3,
+			rawError:  errors.New("plugin install failed: manifest invalid"),
+			wantKind:  PluginSyncPluginInstallFailure,
+			wantStage: "plugin install",
+			wantText:  "manifest invalid",
+		},
+		{
+			name:      "unsafe executable or cwd",
+			failAt:    2,
+			rawError:  errors.New("Command git not found or is in an unsafe location (current directory)"),
+			wantKind:  PluginSyncUnsafeLocation,
+			wantStage: "marketplace update",
+			wantText:  "unsafe location",
+		},
+		{
+			name:      "missing executable",
+			failAt:    1,
+			rawError:  errors.New(`exec: "claude": executable file not found in %PATH%`),
+			wantKind:  PluginSyncMissingExecutable,
+			wantStage: "marketplace add/clone",
+			wantText:  "executable file not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &failingMarketplaceRunner{failAt: tt.failAt, err: tt.rawError}
+			restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+			defer restoreRunner()
+			restoreSource := SetMarketplaceSourceForTests("https://example.invalid/click-ai-devkit")
+			defer restoreSource()
+
+			err := SyncMarketplacePlugins(nil)
+			if err == nil {
+				t.Fatal("SyncMarketplacePlugins() error = nil, want diagnostic failure")
+			}
+			var diagnostic *PluginSyncError
+			if !errors.As(err, &diagnostic) {
+				t.Fatalf("SyncMarketplacePlugins() error = %v, want *PluginSyncError", err)
+			}
+			if diagnostic.Kind != tt.wantKind {
+				t.Fatalf("diagnostic.Kind = %q, want %q", diagnostic.Kind, tt.wantKind)
+			}
+			if diagnostic.Stage != tt.wantStage {
+				t.Fatalf("diagnostic.Stage = %q, want %q", diagnostic.Stage, tt.wantStage)
+			}
+			if !errors.Is(err, tt.rawError) {
+				t.Fatalf("diagnostic error does not preserve wrapped cause: %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantText) {
+				t.Fatalf("diagnostic error = %q, want it to contain %q", err, tt.wantText)
+			}
+		})
+	}
+}
+
+func TestPluginSyncError_PreservesCauseAndOperationContext(t *testing.T) {
+	cause := fmt.Errorf("status 1")
+	err := newPluginSyncError(PluginSyncPluginInstallFailure, "plugin install", cause)
+	if !errors.Is(err, cause) {
+		t.Fatal("newPluginSyncError() did not preserve the original cause")
+	}
+	if !strings.Contains(err.Error(), "plugin install") || !strings.Contains(err.Error(), "status 1") {
+		t.Fatalf("newPluginSyncError() = %q, want operation and cause", err)
+	}
+}
 
 // TestSyncMarketplacePlugins_PassesPerPhaseConfigFlagsForClickSDD guards D25's runtime wiring:
 // installing click-sdd must carry one `--config <phase>_model=<alias>` pair per phase, in

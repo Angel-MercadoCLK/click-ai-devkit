@@ -34,6 +34,9 @@ type Config struct {
 	// ResolveOpenClawHome(), gated on OpenClawAvailable() — see runInstall's cfg construction for
 	// the detect+confirm wiring.
 	OpenClawHome string
+
+	// CodexHome is the Codex user home, normally ~/.codex. This slice manages only AGENTS.md there.
+	CodexHome string
 }
 
 // ResolveClaudeHome resolves the Claude Code home directory click should install into: the
@@ -67,6 +70,18 @@ func ResolveOpenClawHome() (string, error) {
 	return filepath.Join(home, ".openclaw"), nil
 }
 
+// ResolveCodexHome resolves CODEX_HOME when set, otherwise <user home>/.codex.
+func ResolveCodexHome() (string, error) {
+	if v := os.Getenv("CODEX_HOME"); v != "" {
+		return v, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("installer: resolve codex home: %w", err)
+	}
+	return filepath.Join(home, ".codex"), nil
+}
+
 // ClickSDDPluginDir is where the click-sdd plugin is installed under this Config's ClaudeHome.
 func (c Config) ClickSDDPluginDir() string {
 	return filepath.Join(c.ClaudeHome, "plugins", "click-sdd")
@@ -90,6 +105,12 @@ func (c Config) KnownMarketplacesPath() string {
 // InstalledPluginsPath is Claude Code's installed plugins registry.
 func (c Config) InstalledPluginsPath() string {
 	return filepath.Join(c.ClaudeHome, "plugins", "installed_plugins.json")
+}
+
+// ClickPluginStagingDir is a Click-owned, local drop location for future plugin content. Listing it
+// never creates or reads arbitrary files from it; native target registration remains separate.
+func (c Config) ClickPluginStagingDir() string {
+	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "plugins")
 }
 
 // DefaultEngramBinaryPath is where Click-managed Engram binaries are expected to live locally.
@@ -221,12 +242,27 @@ func (c Config) OpenClawPluginDir() string {
 	return filepath.Join(c.OpenClawHome, "plugins", "click-memory-guard")
 }
 
-// OpenClawSkillsDir is where click-owned OpenClaw skill manifests (clickhola, clickdev) are
-// synchronized under this Config's OpenClawHome — OpenClaw's skills/ directory. It returns empty
+// OpenClawSkillsDir is where click-owned OpenClaw skill manifests are synchronized under this
+// Config's OpenClawHome — OpenClaw's native skills/ directory. It returns empty
 // when OpenClawHome is empty, so SyncOpenClawSkills/RemoveOpenClawSkills can no-op safely.
 func (c Config) OpenClawSkillsDir() string {
 	if c.OpenClawHome == "" {
 		return ""
 	}
 	return filepath.Join(c.OpenClawHome, "skills")
+}
+
+// OpenClawModelProfilePath stores Click's portable model/profile recommendation for OpenClaw.
+// It is deliberately outside OpenClaw's native configuration files: OpenClaw model routing is not
+// established by this repository, so this artifact is reference data only, not active configuration.
+func (c Config) OpenClawModelProfilePath() string {
+	if c.OpenClawHome == "" {
+		return ""
+	}
+	return filepath.Join(c.OpenClawHome, "click-ai-devkit", "model-profile.json")
+}
+
+// CodexAgentsMDPath is Codex's user-scope global instruction file.
+func (c Config) CodexAgentsMDPath() string {
+	return filepath.Join(c.CodexHome, "AGENTS.md")
 }

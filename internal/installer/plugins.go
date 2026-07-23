@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +27,173 @@ const (
 
 var managedPlugins = []string{"click-sdd", "click-memory", "click-review", "click-skills"}
 
+// ClickPluginStatus reports registry state for one plugin managed by Click.
+type ClickPluginStatus struct {
+	Name      string
+	Known     bool
+	Installed bool
+	// Enabled reflects settings.json's enabledPlugins[<plugin>@<marketplace>] — the SAME source of
+	// truth HasInstalledPlugin/doctor use to decide a plugin is actually active. A plugin can be
+	// registered in installed_plugins.json (Installed==true) yet disabled here (Enabled==false); the
+	// `click plugins` view must distinguish the two so it can never contradict `click doctor`.
+	Enabled     bool
+	InstallPath string
+}
+
+// readEnabledPlugins reads settings.json's enabledPlugins map — the single source of truth for
+// whether an installed plugin is actually enabled (also consulted by HasInstalledPluginID and
+// doctor). A missing settings.json yields an empty map (every plugin treated as disabled), not an
+// error, so callers can treat "no settings written yet" as "nothing enabled".
+func readEnabledPlugins(cfg Config) (map[string]bool, error) {
+	settingsData, err := os.ReadFile(cfg.SettingsPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]bool{}, nil
+		}
+		return nil, fmt.Errorf("installer: read settings for enabled plugins: %w", err)
+	}
+	var s struct {
+		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	}
+	if err := json.Unmarshal(settingsData, &s); err != nil {
+		return nil, fmt.Errorf("installer: parse settings for enabled plugins: %w", err)
+	}
+	if s.EnabledPlugins == nil {
+		return map[string]bool{}, nil
+	}
+	return s.EnabledPlugins, nil
+}
+
+// ManagedPluginNames returns a copy of the release's Click-managed plugin names.
+func ManagedPluginNames() []string {
+	return append([]string(nil), managedPlugins...)
+}
+
+// ListClickPlugins reads Click's plugin registries without invoking a target CLI or changing any
+// file. Missing registries are represented as empty state so callers can explain a fresh install.
+func ListClickPlugins(cfg Config) ([]ClickPluginStatus, error) {
+	knownData, err := os.ReadFile(cfg.KnownMarketplacesPath())
+	known := false
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("installer: read known marketplaces registry: %w", err)
+	}
+	if err == nil {
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(knownData, &raw); err != nil {
+			return nil, fmt.Errorf("installer: parse known marketplaces registry: %w", err)
+		}
+		_, known = raw[marketplaceName]
+	}
+
+	installed := map[string]string{}
+	installedData, err := os.ReadFile(cfg.InstalledPluginsPath())
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("installer: read installed plugins registry: %w", err)
+	}
+	if err == nil {
+		var registry struct {
+			Plugins map[string][]map[string]any `json:"plugins"`
+		}
+		if err := json.Unmarshal(installedData, &registry); err != nil {
+			return nil, fmt.Errorf("installer: parse installed plugins registry: %w", err)
+		}
+		for _, name := range managedPlugins {
+			entries := registry.Plugins[name+"@"+marketplaceName]
+			if len(entries) == 0 {
+				continue
+			}
+			path, _ := entries[0]["installPath"].(string)
+			installed[name] = path
+		}
+	}
+
+	enabled, err := readEnabledPlugins(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	plugins := make([]ClickPluginStatus, 0, len(managedPlugins))
+	for _, name := range managedPlugins {
+		path, isInstalled := installed[name]
+		plugins = append(plugins, ClickPluginStatus{
+			Name:        name,
+			Known:       known,
+			Installed:   isInstalled,
+			Enabled:     enabled[name+"@"+marketplaceName],
+			InstallPath: path,
+		})
+	}
+	return plugins, nil
+}
+
+// ClickPluginRegistryStatus describes the portions of Claude's plugin registries that click can
+// verify without invoking Claude. It deliberately says nothing about Claude's internal marketplace
+// cache freshness; only the CLI's marketplace update can establish that.
+type ClickPluginRegistryStatus struct {
+	MarketplaceFound         bool
+	MarketplaceSourceMatches bool
+	InstalledRegistryFound   bool
+	MissingPluginIDs         []string
+}
+
+// CheckClickPluginRegistries reads Claude's known marketplace and installed plugin registries. It is
+// intentionally read-only and does not refresh the marketplace or inspect Claude's private cache.
+func CheckClickPluginRegistries(cfg Config) (ClickPluginRegistryStatus, error) {
+	status := ClickPluginRegistryStatus{}
+
+	knownData, err := os.ReadFile(cfg.KnownMarketplacesPath())
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return status, fmt.Errorf("installer: read known marketplaces registry: %w", err)
+		}
+	} else {
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(knownData, &raw); err != nil {
+			return status, fmt.Errorf("installer: parse known marketplaces registry: %w", err)
+		}
+		entryData, ok := raw[marketplaceName]
+		if ok {
+			status.MarketplaceFound = true
+			var entry struct {
+				Source struct {
+					Type string `json:"source"`
+					URL  string `json:"url"`
+				} `json:"source"`
+			}
+			if err := json.Unmarshal(entryData, &entry); err != nil {
+				return status, fmt.Errorf("installer: parse click marketplace registry entry: %w", err)
+			}
+			status.MarketplaceSourceMatches = entry.Source.Type == "git" && sameMarketplaceSource(entry.Source.URL, marketplaceSource)
+		}
+	}
+
+	installedData, err := os.ReadFile(cfg.InstalledPluginsPath())
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return status, fmt.Errorf("installer: read installed plugins registry: %w", err)
+		}
+	} else {
+		status.InstalledRegistryFound = true
+		var registry struct {
+			Plugins map[string][]map[string]any `json:"plugins"`
+		}
+		if err := json.Unmarshal(installedData, &registry); err != nil {
+			return status, fmt.Errorf("installer: parse installed plugins registry: %w", err)
+		}
+		for _, plugin := range managedPlugins {
+			pluginID := plugin + "@" + marketplaceName
+			if len(registry.Plugins[pluginID]) == 0 {
+				status.MissingPluginIDs = append(status.MissingPluginIDs, pluginID)
+			}
+		}
+	}
+	return status, nil
+}
+
+func sameMarketplaceSource(actual, expected string) bool {
+	return strings.TrimSuffix(actual, ".git") == strings.TrimSuffix(expected, ".git")
+}
+
 type pluginManifest struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
@@ -34,6 +202,57 @@ type pluginManifest struct {
 type commandInvocation struct {
 	Name string
 	Args []string
+}
+
+// PluginSyncFailureKind identifies the actionable class of a Claude marketplace synchronization
+// failure without discarding the original subprocess error.
+type PluginSyncFailureKind string
+
+const (
+	PluginSyncMissingExecutable    PluginSyncFailureKind = "missing executable"
+	PluginSyncUnsafeLocation       PluginSyncFailureKind = "unsafe or untrusted location"
+	PluginSyncMarketplaceFailure   PluginSyncFailureKind = "marketplace refresh or clone failure"
+	PluginSyncPluginInstallFailure PluginSyncFailureKind = "plugin install failure"
+)
+
+// PluginSyncError adds the failed synchronization stage and a recovery-oriented category to the
+// original command error. Claude remains the source of truth for cache state; this type only makes
+// failures diagnosable and preserves the cause for callers and tests.
+type PluginSyncError struct {
+	Kind  PluginSyncFailureKind
+	Stage string
+	Cause error
+}
+
+func (e *PluginSyncError) Error() string {
+	return fmt.Sprintf("installer: %s during %s: %v", e.Kind, e.Stage, e.Cause)
+}
+
+func (e *PluginSyncError) Unwrap() error { return e.Cause }
+
+func newPluginSyncError(kind PluginSyncFailureKind, stage string, cause error) *PluginSyncError {
+	return &PluginSyncError{Kind: kind, Stage: stage, Cause: cause}
+}
+
+func classifyPluginSyncFailure(stage string, err error) PluginSyncFailureKind {
+	text := strings.ToLower(err.Error())
+	if strings.Contains(text, "unsafe location") || strings.Contains(text, "untrusted") || strings.Contains(text, "current directory") {
+		return PluginSyncUnsafeLocation
+	}
+	if strings.Contains(text, "executable file not found") || strings.Contains(text, "not found in %path%") {
+		return PluginSyncMissingExecutable
+	}
+	if stage == "plugin install" {
+		return PluginSyncPluginInstallFailure
+	}
+	return PluginSyncMarketplaceFailure
+}
+
+func wrapPluginSyncFailure(stage string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return newPluginSyncError(classifyPluginSyncFailure(stage, err), stage, err)
 }
 
 // CommandRunner abstracts `claude plugin ...` execution so unit tests can assert command order
@@ -110,8 +329,9 @@ func (r execCommandRunner) Run(name string, args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), commandRunTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	var output bytes.Buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
 	cmd.Env = r.commandEnv()
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
@@ -127,6 +347,10 @@ func (r execCommandRunner) Run(name string, args ...string) error {
 			full, commandRunTimeout, full,
 		)
 	}
+	if err != nil && output.Len() > 0 {
+		full := strings.TrimSpace(name + " " + strings.Join(args, " "))
+		return fmt.Errorf("installer: command %q failed: %w: %s", full, err, strings.TrimSpace(output.String()))
+	}
 	return err
 }
 
@@ -141,6 +365,16 @@ var (
 
 func defaultMarketplaceSource() string {
 	return "https://github.com/Angel-MercadoCLK/click-ai-devkit"
+}
+
+// ClickMarketplaceName returns the marketplace identifier used by Claude's plugin registries.
+func ClickMarketplaceName() string {
+	return marketplaceName
+}
+
+// ClickMarketplaceSource returns the repository source used by the native marketplace flow.
+func ClickMarketplaceSource() string {
+	return marketplaceSource
 }
 
 // SetCommandRunnerFactoryForTests overrides the runner factory for tests and returns a restore
@@ -277,21 +511,38 @@ func HasInstalledPluginID(cfg Config, pluginID string) (bool, error) {
 		return false, nil
 	}
 
-	settingsData, err := os.ReadFile(cfg.SettingsPath())
+	enabled, err := readEnabledPlugins(cfg)
+	if err != nil {
+		return false, err
+	}
+	return enabled[pluginID], nil
+}
+
+// InstalledPluginPath returns the absolute cache path recorded by Claude Code for pluginID. It does
+// not infer a path from ClaudeHome: an absent, relative, or empty registry path is not safe to guess.
+func InstalledPluginPath(cfg Config, pluginID string) (string, bool, error) {
+	registryData, err := os.ReadFile(cfg.InstalledPluginsPath())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, nil
+			return "", false, nil
 		}
-		return false, fmt.Errorf("installer: read settings for enabled plugins: %w", err)
+		return "", false, fmt.Errorf("installer: read installed plugins registry: %w", err)
 	}
-	type settings struct {
-		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	var registry struct {
+		Plugins map[string][]map[string]any `json:"plugins"`
 	}
-	var s settings
-	if err := json.Unmarshal(settingsData, &s); err != nil {
-		return false, fmt.Errorf("installer: parse settings for enabled plugins: %w", err)
+	if err := json.Unmarshal(registryData, &registry); err != nil {
+		return "", false, fmt.Errorf("installer: parse installed plugins registry: %w", err)
 	}
-	return s.EnabledPlugins[pluginID], nil
+	entries := registry.Plugins[pluginID]
+	if len(entries) == 0 {
+		return "", false, nil
+	}
+	path, ok := entries[0]["installPath"].(string)
+	if !ok || path == "" || !filepath.IsAbs(path) {
+		return "", false, nil
+	}
+	return filepath.Clean(path), true, nil
 }
 
 // AppliedClickSDDPluginConfig reads the click-sdd plugin's ACTUALLY APPLIED --config options from
@@ -348,19 +599,21 @@ func addMarketplace(runner CommandRunner, source string, sparsePaths []string) e
 		args = append(args, sparsePaths...)
 	}
 	if err := runner.Run(pluginCLIBinary, args...); err != nil {
-		return fmt.Errorf("installer: add plugin marketplace %q: %w", source, err)
+		return wrapPluginSyncFailure("marketplace add/clone", fmt.Errorf("installer: add plugin marketplace %q: %w", source, err))
 	}
 	return nil
 }
 
 // updateMarketplace forces a refresh of Claude Code's cached copy of the named marketplace's
 // plugin.json/schema from its git source (`claude plugin marketplace update <name>`, verified
-// live). Errors are treated the same way addMarketplace's are (hard error, aborts the sync):
-// the whole point of this step is correctness of the --config flags applied right after it, so a
-// failed refresh means the sync can no longer be trusted to configure plugins correctly.
+// live). Claude's CLI is the only source of truth for that cache: click cannot safely inspect or
+// invalidate it locally, and must not fabricate undocumented cache-busting flags. Errors are
+// treated the same way addMarketplace's are (hard error, aborts the sync): the whole point of this
+// step is correctness of the --config flags applied right after it, so a failed refresh means the
+// sync can no longer be trusted to configure plugins correctly.
 func updateMarketplace(runner CommandRunner, name string) error {
 	if err := runner.Run(pluginCLIBinary, "plugin", "marketplace", "update", name); err != nil {
-		return fmt.Errorf("installer: update plugin marketplace %q: %w", name, err)
+		return wrapPluginSyncFailure("marketplace update", fmt.Errorf("installer: update plugin marketplace %q: %w", name, err))
 	}
 	return nil
 }
@@ -378,7 +631,7 @@ func uninstallMarketplacePlugin(runner CommandRunner, plugin string) error {
 func installPluginID(runner CommandRunner, plugin, marketplace string, extraArgs ...string) error {
 	args := append([]string{"plugin", "install", plugin + "@" + marketplace}, extraArgs...)
 	if err := runner.Run(pluginCLIBinary, args...); err != nil {
-		return fmt.Errorf("installer: install plugin %s@%s: %w", plugin, marketplace, err)
+		return wrapPluginSyncFailure("plugin install", fmt.Errorf("installer: install plugin %s@%s: %w", plugin, marketplace, err))
 	}
 	return nil
 }

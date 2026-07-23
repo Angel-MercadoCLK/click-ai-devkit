@@ -26,8 +26,70 @@ var orphanRoleAgentTokens = []string{
 	"review-refuter",
 }
 
+// canonicalSkillPhaseTokens are the skill directory/frontmatter names. They are deliberately bare
+// phase tokens: the click-* prefix identifies the Agent that loads each skill and is not part of the
+// skill name. Review lenses are agent-only roles and therefore are not included here.
+var canonicalSkillPhaseTokens = []string{
+	"explore", "propose", "spec", "design", "tasks", "apply", "verify", "archive", "onboard",
+	"jd-judge-a", "jd-judge-b", "jd-fix-agent",
+}
+
+var canonicalSkillPhaseAgents = map[string]string{
+	"explore":      "click-explore",
+	"propose":      "click-prd-writer",
+	"spec":         "click-prd-writer",
+	"design":       "click-architect",
+	"tasks":        "click-architect",
+	"apply":        "click-apply",
+	"verify":       "click-reviewer",
+	"archive":      "click-archive",
+	"onboard":      "click-onboard",
+	"jd-judge-a":   "click-jd-judge-a",
+	"jd-judge-b":   "click-jd-judge-b",
+	"jd-fix-agent": "click-jd-fix-agent",
+}
+
+// TestClickSDD_CanonicalInvocationContract guards the declared mechanism boundary: bare phase tokens
+// name skills, while click-* names name agents. This is a static contract check; live Claude loading
+// remains covered by the manual portability runbook. It intentionally does not add sdd-* or
+// click-orchestrator aliases, which would make the two registries ambiguous.
+func TestClickSDD_CanonicalInvocationContract(t *testing.T) {
+	orchestrator := string(mustReadRepoFile(t, "plugins", "click-sdd", "agents", "click-orchestrator.md"))
+	if !strings.Contains(orchestrator, "name: click-orchestrator") {
+		t.Fatal("click-orchestrator.md must declare the click-orchestrator agent name")
+	}
+	if strings.Contains(orchestrator, "click-orchestrator/SKILL.md") {
+		t.Fatal("click-orchestrator must not be advertised as a skill")
+	}
+
+	for _, phase := range canonicalSkillPhaseTokens {
+		phase := phase
+		t.Run(phase, func(t *testing.T) {
+			skillPath := []string{"plugins", "click-sdd", "skills", phase, "SKILL.md"}
+			content := string(mustReadRepoFile(t, skillPath...))
+			if !strings.Contains(content, "name: "+phase) {
+				t.Errorf("skill %s must declare canonical frontmatter name %q", strings.Join(skillPath, "/"), phase)
+			}
+
+			agent := canonicalSkillPhaseAgents[phase]
+			agentPath := []string{"plugins", "click-sdd", "agents", agent + ".md"}
+			agentContent := string(mustReadRepoFile(t, agentPath...))
+			if !strings.Contains(agentContent, "name: "+agent) {
+				t.Errorf("phase %q must resolve to agent frontmatter name %q", phase, agent)
+			}
+			if !strings.Contains(orchestrator, "`"+phase+"`") || !strings.Contains(orchestrator, "`"+agent+"`") {
+				t.Errorf("orchestrator must advertise canonical mapping %q -> %q", phase, agent)
+			}
+		})
+	}
+	if !strings.Contains(orchestrator, "plugins/click-sdd/skills/<phase>/SKILL.md") {
+		t.Error("orchestrator must advertise the canonical skill path template")
+	}
+}
+
 // TestClickSDD_AllOrphanRolesHaveDedicatedAgent asserts every one of the 12 previously-orphan SDD
-// roles now resolves to a real, non-empty click-branded agent file under plugins/click-sdd/agents/.
+// roles now has a real, non-empty click-branded agent file under plugins/click-sdd/agents/. This
+// static check does not claim that a live Claude marketplace cache has been refreshed.
 func TestClickSDD_AllOrphanRolesHaveDedicatedAgent(t *testing.T) {
 	for _, token := range orphanRoleAgentTokens {
 		token := token

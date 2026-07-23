@@ -10,6 +10,21 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 )
 
+// TestConfigureOpenClawModelCommand_NoArgs_PrintsGuidanceAndReturnsNil is the FIX 1 contract:
+// running `click configure-openclaw-model` with NO args (exactly what the standing menu dispatches)
+// must NEVER return an error — an error here would propagate through runMenuLoop and terminate the
+// whole interactive menu session. It must instead print the Spanish guidance line and exit cleanly.
+func TestConfigureOpenClawModelCommand_NoArgs_PrintsGuidanceAndReturnsNil(t *testing.T) {
+	home := t.TempDir()
+	out, err := execRoot(t, home, "configure-openclaw-model")
+	if err != nil {
+		t.Fatalf("`click configure-openclaw-model` with no args error = %v, want nil (must never crash the menu)", err)
+	}
+	if !strings.Contains(out, "Indique el modelo con: click configure-openclaw-model <provider/model>") {
+		t.Fatalf("no-args output = %q, want the Spanish guidance line", out)
+	}
+}
+
 // seedResolvableOpenClaw extends seedResolvableGit's fake BinaryLookup (commands_test.go) so
 // "openclaw" also resolves on PATH, letting install/update-driven CLI tests exercise the
 // OpenClaw-detected path deterministically, regardless of whether the real test machine has
@@ -88,6 +103,13 @@ func TestInstallCommand_OpenClawDetected_WritesAgentsAndSoulAndMCPConfig(t *test
 	if !strings.Contains(string(mcpRaw), `"engram"`) {
 		t.Fatalf("openclaw.json content = %q, want it to contain the engram MCP entry", mcpRaw)
 	}
+	profileRaw, err := os.ReadFile(cfg.OpenClawModelProfilePath())
+	if err != nil {
+		t.Fatalf("ReadFile(model-profile.json) error = %v, want portable recommendation written", err)
+	}
+	if !strings.Contains(string(profileRaw), `"schema_version": 2`) || !strings.Contains(string(profileRaw), `"profile": "balanced"`) {
+		t.Fatalf("model-profile.json content = %q, want the shared versioned balanced profile", profileRaw)
+	}
 }
 
 // TestInstallCommand_OpenClawAbsent_NoOpenClawMentionOrWrites is task 2.15's RED test: OpenClaw not
@@ -128,6 +150,9 @@ func TestInstallCommand_SkipOpenClawFlag_ForcesClaudeOnlyEvenWhenDetected(t *tes
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
 	if _, err := os.Stat(cfg.OpenClawAgentsMDPath()); !os.IsNotExist(err) {
 		t.Fatalf("Stat(AGENTS.md) error = %v, want no OpenClaw files written when --skip-openclaw is set", err)
+	}
+	if _, err := os.Stat(cfg.OpenClawModelProfilePath()); !os.IsNotExist(err) {
+		t.Fatalf("Stat(model-profile.json) error = %v, want no OpenClaw artifact when --skip-openclaw is set", err)
 	}
 }
 
@@ -183,8 +208,7 @@ func TestInstallCommand_SkipOpenClawFlag_NoMemoryGuardPluginWritten(t *testing.T
 }
 
 // TestInstallCommand_OpenClawDetected_SyncsClickSkills is PR4's RED test: with openclaw resolvable
-// on PATH, `click install` must synchronize the click-owned skill manifests (clickhola/SKILL.md and
-// clickdev/SKILL.md) under OpenClawSkillsDir().
+// on PATH, `click install` must synchronize the click-owned skill manifests under OpenClawSkillsDir().
 func TestInstallCommand_OpenClawDetected_SyncsClickSkills(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
@@ -196,7 +220,7 @@ func TestInstallCommand_OpenClawDetected_SyncsClickSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install command error = %v, output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Sincronizando skills clickhola y clickdev en OpenClaw") {
+	if !strings.Contains(out, "Sincronizando skills de Click en OpenClaw") {
 		t.Errorf("install output = %q, want it to mention the OpenClaw skill sync step", out)
 	}
 
@@ -225,7 +249,7 @@ func TestInstallCommand_OpenClawAbsent_NoSkillWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install command error = %v, output:\n%s", err, out)
 	}
-	if strings.Contains(out, "Sincronizando skills clickhola y clickdev en OpenClaw") {
+	if strings.Contains(out, "Sincronizando skills de Click en OpenClaw") {
 		t.Fatalf("install output = %q, want no OpenClaw skill mention when openclaw is not detected", out)
 	}
 }
@@ -280,7 +304,7 @@ func TestUpdateCommand_OpenClawDetected_ResyncsClickSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update command error = %v, output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Sincronizando skills clickhola y clickdev en OpenClaw") {
+	if !strings.Contains(out, "Sincronizando skills de Click en OpenClaw") {
 		t.Errorf("update output = %q, want it to mention the OpenClaw skill sync step", out)
 	}
 

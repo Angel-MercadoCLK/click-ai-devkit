@@ -42,7 +42,7 @@ type snapshotSource struct {
 // update` write to, ahead of any external `claude` subprocess invocation), PLUS OpenClaw's
 // AGENTS.md/SOUL.md/openclaw.json AND the click-memory-guard plugin's files (hooks.js, plugin.json —
 // PR-C task 3.9's "add file(s) to PR-B's per-target snapshot list") AND the click-owned OpenClaw
-// skill manifests (clickhola/SKILL.md, clickdev/SKILL.md — PR4's lifecycle wiring) when
+// skill manifests (clickhola, clickdev, and the portable click-sdd phase skills) when
 // cfg.OpenClawHome is populated (openclaw-target-support spec's install-snapshot-preview capability
 // — generalizing this from a fixed 2-file list to a per-target list, so install-reliability-
 // foundation's backup/preview/rollback protection extends to every OpenClaw file). Order is fixed
@@ -61,6 +61,12 @@ func snapshotSources(cfg Config) []snapshotSource {
 		{originalPath: cfg.ClaudeMDPath(), backupFile: "CLAUDE.md"},
 		{originalPath: cfg.SettingsPath(), backupFile: "settings.json"},
 	}
+	if _, err := os.Stat(cfg.TargetSelectionPath()); err == nil {
+		sources = append(sources, snapshotSource{originalPath: cfg.TargetSelectionPath(), backupFile: "targets.json"})
+	}
+	if cfg.CodexHome != "" {
+		sources = append(sources, snapshotSource{originalPath: cfg.CodexAgentsMDPath(), backupFile: "codex-AGENTS.md"})
+	}
 	if cfg.OpenClawHome == "" {
 		return sources
 	}
@@ -68,6 +74,7 @@ func snapshotSources(cfg Config) []snapshotSource {
 		snapshotSource{originalPath: cfg.OpenClawAgentsMDPath(), backupFile: "AGENTS.md"},
 		snapshotSource{originalPath: cfg.OpenClawSoulMDPath(), backupFile: "SOUL.md"},
 		snapshotSource{originalPath: cfg.OpenClawMCPConfigPath(), backupFile: "openclaw.json"},
+		snapshotSource{originalPath: cfg.OpenClawModelProfilePath(), backupFile: "openclaw-model-profile.json"},
 	)
 	for _, rel := range openClawPluginRelPaths {
 		sources = append(sources, snapshotSource{

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -33,7 +34,8 @@ func installWriteSteps(cfg installer.Config, cloudConfigured bool) []string {
 		"Registrando memory-guard…",
 		"Guardando modelos por fase de click-sdd…",
 	)
-	return append(steps, openClawWriteSteps(cfg)...)
+	steps = append(steps, openClawWriteSteps(cfg)...)
+	return append(steps, codexWriteSteps(cfg)...)
 }
 
 // updateWriteSteps builds runUpdate's ordered write-step list for cfg, reusing its own r.RunStep
@@ -53,7 +55,8 @@ func updateWriteSteps(engramVersion string, cfg installer.Config, cloudConfigure
 		steps = append(steps, "Sincronizando Engram Cloud…")
 	}
 	steps = append(steps, "Sincronizando Context7 (documentación de librerías)…")
-	return append(steps, openClawWriteSteps(cfg)...)
+	steps = append(steps, openClawWriteSteps(cfg)...)
+	return append(steps, codexWriteSteps(cfg)...)
 }
 
 // openClawWriteSteps returns the extra OpenClaw write-step labels to append when cfg.OpenClawHome
@@ -70,8 +73,16 @@ func openClawWriteSteps(cfg installer.Config) []string {
 		"Actualizando AGENTS.md y SOUL.md de OpenClaw…",
 		"Registrando Engram en OpenClaw (mcpServers)…",
 		"Instalando plugin de memory-guard para OpenClaw…",
-		"Sincronizando skills clickhola y clickdev en OpenClaw…",
+		"Sincronizando skills de Click en OpenClaw…",
+		"Guardando recomendación de modelos para OpenClaw…",
 	}
+}
+
+func codexWriteSteps(cfg installer.Config) []string {
+	if cfg.CodexHome == "" {
+		return nil
+	}
+	return []string{"Actualizando AGENTS.md de Codex…"}
 }
 
 // renderWritePlan prints steps as a numbered plan to out, plus where the run-start snapshot backing
@@ -82,6 +93,15 @@ func renderWritePlan(out io.Writer, r *ui.Renderer, cfg installer.Config, steps 
 		"Se tomará un respaldo de CLAUDE.md y settings.json en %s antes de continuar.",
 		filepath.Join(cfg.BackupDir(), "latest"),
 	)))
+	if cfg.OpenClawHome != "" {
+		fmt.Fprintln(out, r.Info(fmt.Sprintf("La recomendación portable de modelos para OpenClaw se guardará en %s; no modifica la configuración nativa de OpenClaw.", cfg.OpenClawModelProfilePath())))
+	}
+	if cfg.CodexHome != "" {
+		fmt.Fprintln(out, r.Info(fmt.Sprintf("Codex sólo recibirá orientación gestionada en %s; no se modifica config.toml ni el modelo.", cfg.CodexAgentsMDPath())))
+	}
+	if _, err := os.Stat(cfg.TargetSelectionPath()); err == nil {
+		fmt.Fprintln(out, r.Info(fmt.Sprintf("La selección persistente de runtimes se conserva en %s.", cfg.TargetSelectionPath())))
+	}
 	fmt.Fprintln(out, r.Info("Se aplicarán los siguientes cambios, en este orden:"))
 	for i, step := range steps {
 		fmt.Fprintf(out, "  %d. %s\n", i+1, step)
