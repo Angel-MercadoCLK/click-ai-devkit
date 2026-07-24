@@ -106,7 +106,7 @@ func TestResolveTargetConfig_ExplicitSelectionAndSkipOverride(t *testing.T) {
 
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	withOpenClaw, err := resolveTargetConfig(cfg, false, &out, r)
+	_, withOpenClaw, err := resolveTargetConfig(cfg, false, &out, r)
 	if err != nil {
 		t.Fatalf("resolveTargetConfig() error = %v", err)
 	}
@@ -114,7 +114,7 @@ func TestResolveTargetConfig_ExplicitSelectionAndSkipOverride(t *testing.T) {
 		t.Fatal("explicit OpenClaw selection did not add OpenClawHome")
 	}
 
-	withoutOpenClaw, err := resolveTargetConfig(cfg, true, &out, r)
+	_, withoutOpenClaw, err := resolveTargetConfig(cfg, true, &out, r)
 	if err != nil {
 		t.Fatalf("resolveTargetConfig(skip) error = %v", err)
 	}
@@ -133,7 +133,7 @@ func TestResolveTargetConfig_SelectedButAbsentOpenClawIsNonFatal(t *testing.T) {
 	defer restore()
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	got, err := resolveTargetConfig(cfg, false, &out, r)
+	_, got, err := resolveTargetConfig(cfg, false, &out, r)
 	if err != nil {
 		t.Fatalf("resolveTargetConfig() error = %v, want non-fatal absence", err)
 	}
@@ -156,7 +156,7 @@ func TestResolveTargetConfig_SelectedCodexResolvesHomeWithoutOpenClaw(t *testing
 	defer restore()
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	got, err := resolveTargetConfig(cfg, true, &out, r)
+	_, got, err := resolveTargetConfig(cfg, true, &out, r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func assertResolveTargetConfigDegrades(t *testing.T, targetsContent string) {
 
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	got, err := resolveTargetConfig(cfg, false, &out, r)
+	_, got, err := resolveTargetConfig(cfg, false, &out, r)
 	if err != nil {
 		t.Fatalf("resolveTargetConfig(bad targets.json) error = %v, want nil (must not brick install/update)", err)
 	}

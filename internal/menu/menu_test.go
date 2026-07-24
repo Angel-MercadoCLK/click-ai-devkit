@@ -183,6 +183,42 @@ func TestPluginsMenuItemIsActiveAndDispatchable(t *testing.T) {
 	}
 }
 
+func TestModel_View_RendersGroupedSections(t *testing.T) {
+	view := NewModel().View()
+	for _, heading := range []string{"Instalación y mantenimiento", "Configuración", "Diagnóstico y soporte"} {
+		if !strings.Contains(view, heading) {
+			t.Fatalf("View() missing grouped heading %q:\n%s", heading, view)
+		}
+	}
+}
+
+func TestModel_View_UnavailableNativeActionUsesUnavailableSuffix(t *testing.T) {
+	defer setItemsForTest(t, []Item{{Label: "Configurar modelo nativo de OpenClaw", Action: ActionConfigureOpenClawModel, Group: "Configuración", Hint: "OpenClaw native model action is unavailable.", InactiveLabel: "no disponible", Active: false}})()
+
+	view := NewModel().View()
+	if !strings.Contains(view, "Configurar modelo nativo de OpenClaw (no disponible)") {
+		t.Fatalf("View() missing unavailable suffix for the native OpenClaw action:\n%s", view)
+	}
+}
+
+func TestModel_Update_EnterOnUnavailableItemShowsGuidanceAndDoesNotQuit(t *testing.T) {
+	defer setItemsForTest(t, []Item{{Label: "Configurar modelo nativo de OpenClaw", Action: ActionConfigureOpenClawModel, Group: "Configuración", Hint: "OpenClaw native model action is unavailable until the contract is qualified.", InactiveLabel: "no disponible", Active: false}})()
+
+	m := NewModel()
+	m.Cursor = 0
+
+	m, cmd := updateModel(m, keyMsg("enter"))
+	if m.Chosen != "" {
+		t.Fatalf("Chosen = %q after selecting an unavailable item, want empty", m.Chosen)
+	}
+	if !strings.Contains(m.StatusMsg, "contract is qualified") {
+		t.Fatalf("StatusMsg = %q, want the unavailable guidance", m.StatusMsg)
+	}
+	if cmd != nil {
+		t.Fatal("Update(enter) on an unavailable item returned a non-nil tea.Cmd, want nil")
+	}
+}
+
 // TestRollbackMenuItemIsActiveAndDispatchable guards the menu-side rollback wiring: the item must
 // be active, wired to ActionRollback, and ActionArgs must map it to `click rollback`.
 func TestRollbackMenuItemIsActiveAndDispatchable(t *testing.T) {

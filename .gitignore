@@ -32,3 +32,8 @@ Thumbs.db
 
 # Local CodeGraph index (machine-local, regenerated per checkout — never shared)
 .codegraph/
+
+# Guard against a non-hermetic test leaking click's state dir into the source tree
+# (a cli test resolves an empty ClaudeHome to a relative path). Product is unaffected;
+# this keeps the stray artifact out of commits until the test is made hermetic.
+internal/cli/click-ai-devkit/

@@ -264,6 +264,36 @@ type CommandRunner interface {
 
 type execCommandRunner struct{ claudeConfigDirOverride string }
 
+var (
+	commandWorkingDir = os.Getwd
+	commandTempRoot   = func() string { return filepath.Join(os.TempDir(), "click-ai-devkit-command") }
+	commandMkdirAll   = os.MkdirAll
+	commandGitInit    = func(gitPath, dir string) error {
+		cmd := exec.Command(gitPath, "init", "--quiet", dir)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git init: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	}
+)
+
+func trustedRepositoryRoot(start string) string {
+	for current := filepath.Clean(start); current != filepath.Dir(current); current = filepath.Dir(current) {
+		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
+			return current
+		}
+	}
+	return ""
+}
+
+func (r execCommandRunner) commandDir() (string, error) {
+	ctx, err := resolveGitExecutionContext()
+	if err != nil {
+		return "", err
+	}
+	return ctx.WorkingDir, nil
+}
+
 // commandEnv builds the environment for the spawned `claude` process. We set CLAUDE_CONFIG_DIR ONLY
 // when CLICK_CLAUDE_HOME is explicitly set (tests / power-users) — to redirect the claude subprocess
 // to the same throwaway dir click's own files use. In the real (no-override) case we leave it UNSET
@@ -296,6 +326,12 @@ func (r execCommandRunner) Output(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandOutputTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	gitCtx, err := resolveGitExecutionContext()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = gitCtx.Cleanup(err == nil) }()
+	cmd.Dir = gitCtx.WorkingDir
 	cmd.Env = r.commandEnv()
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
@@ -329,11 +365,17 @@ func (r execCommandRunner) Run(name string, args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), commandRunTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	gitCtx, err := resolveGitExecutionContext()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = gitCtx.Cleanup(err == nil) }()
+	cmd.Dir = gitCtx.WorkingDir
 	var output bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
 	cmd.Env = r.commandEnv()
-	err := cmd.Run()
+	err = cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
 		full := strings.TrimSpace(name + " " + strings.Join(args, " "))
 		// Spanish, actionable (D10): names the exact command that timed out and gives the developer
@@ -781,6 +823,9 @@ func (f *fakeCommandRunner) Output(name string, args ...string) ([]byte, error) 
 	key := name + " " + strings.Join(args, " ")
 	if out, ok := f.lookup[key]; ok {
 		return out, nil
+	}
+	if filepath.Base(name) == "openclaw" && len(args) == 3 && args[0] == "config" && args[1] == "set" && args[2] == "--help" {
+		return []byte("config set agents.defaults.model.primary agents.defaults.model.fallbacks --strict-json"), nil
 	}
 	return []byte{}, nil
 }

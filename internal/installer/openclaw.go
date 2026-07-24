@@ -14,7 +14,7 @@ import (
 // idempotent managed AGENTS.md/SOUL.md" decision): it points the OpenClaw agent at click-sdd
 // conventions and the click-memory policy docs, without duplicating CLAUDE.md's full content.
 const DefaultOpenClawAgentsContent = `This workspace is managed by click-ai-devkit for OpenClaw. For a new change, start with the installed OpenClaw-native click-sdd skill in the skills/click-sdd directory, then follow the phase skills it names.
-The OpenClaw workflow covers the portable SDD lifecycle only. Claude-specific agents, plugin registries, model routing, and delegation metadata are not installed or required here. Click's portable model recommendation is stored at <OpenClawHome>/click-ai-devkit/model-profile.json for reference only; it does not configure OpenClaw's native model/provider settings.
+The OpenClaw workflow uses its native provider/model configuration. Configure it with click configure-openclaw-model provider/model; Click delegates that operation to the documented OpenClaw CLI and keeps model-profile.json as local rollback metadata. Claude-specific agents and plugin registries are not installed or required here.
 Before any mem_save, review the click-memory plugin's policy docs (memory-policy.md, allowed-memory.md, forbidden-memory.md) under its installed docs/ directory. The deterministic memory-guard hook enforces this policy even if an agent attempts something unsafe.
 This block is managed by click: edit via "click update" and remove via "click uninstall".`
 

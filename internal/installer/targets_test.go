@@ -40,10 +40,10 @@ func TestTargetSelection_RoundTripsVersionedArtifact(t *testing.T) {
 	}
 }
 
-func TestTargetSelection_CannotDeselectPrimaryClaudeTarget(t *testing.T) {
-	err := SaveTargetSelection(Config{ClaudeHome: t.TempDir()}, TargetSelection{Configured: true, Claude: false, OpenClaw: true})
-	if err == nil {
-		t.Fatal("SaveTargetSelection() error = nil, want Claude-primary validation error")
+func TestTargetSelection_AllowsClaudeFreeTargetSelection(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	if err := SaveTargetSelection(cfg, TargetSelection{Configured: true, Claude: false, OpenClaw: true, Codex: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v, want Claude-free selection to persist", err)
 	}
 }
 

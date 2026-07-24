@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
 
@@ -35,7 +36,7 @@ func runRootDefault(cmd *cobra.Command, args []string) error {
 	}
 
 	launchMenu := func() (string, error) {
-		program := tea.NewProgram(menu.NewModel(), tea.WithInput(in), tea.WithOutput(out))
+		program := tea.NewProgram(menu.NewModelWithItems(rootMenuItems()), tea.WithInput(in), tea.WithOutput(out))
 		finalModel, err := program.Run()
 		if err != nil {
 			return "", fmt.Errorf("cli: run menu TUI: %w", err)
@@ -53,6 +54,24 @@ func runRootDefault(cmd *cobra.Command, args []string) error {
 	// propagates back up through this RunE (R4-001).
 	silenceIfAlreadyReported(cmd, err)
 	return err
+}
+
+func rootMenuItems() []menu.Item {
+	items := menu.DefaultItems()
+	status := installer.OpenClawNativeModelActionStatus()
+	if status.Available {
+		return items
+	}
+	for i := range items {
+		if items[i].Action != menu.ActionConfigureOpenClawModel {
+			continue
+		}
+		items[i].Active = false
+		items[i].Hint = status.Detail
+		items[i].InactiveLabel = "no disponible"
+		break
+	}
+	return items
 }
 
 // errMenuDispatchFailed wraps an error already surfaced to the user by dispatch()'s inner

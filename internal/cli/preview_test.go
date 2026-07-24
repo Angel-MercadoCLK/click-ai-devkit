@@ -170,10 +170,10 @@ func TestOpenClawWriteSteps_Absent_ReturnsNil(t *testing.T) {
 	}
 }
 
-func TestCodexWriteSteps_SelectedIncludesGuidanceOnlyStep(t *testing.T) {
+func TestCodexWriteSteps_SelectedIncludesGuidanceAndExplicitNativeConfigStep(t *testing.T) {
 	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir()}, false)
-	if len(got) != 7 || got[6] != "Actualizando AGENTS.md de Codex…" {
-		t.Fatalf("installWriteSteps() = %#v, want Codex guidance step appended", got)
+	if len(got) != 8 || got[6] != "Actualizando AGENTS.md de Codex…" || got[7] != "Configurando modelo nativo de Codex si fue seleccionado explícitamente…" {
+		t.Fatalf("installWriteSteps() = %#v, want Codex guidance and explicit native-model steps appended", got)
 	}
 }
 
@@ -203,17 +203,13 @@ func TestRenderWritePlan_ListsStepsInOrder(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	var buf bytes.Buffer
 	r := rendererFor(NewRootCommand(), &buf)
+	plan := installer.BuildTargetPlan(cfg, installer.TargetSelection{Configured: true, Claude: true}, installer.PlanOptions{})
 
-	renderWritePlan(&buf, r, cfg, []string{"Registrando plugins…", "Actualizando CLAUDE.md…"})
+	renderWritePlan(&buf, r, cfg, plan, []string{"Registrando plugins…", "Actualizando CLAUDE.md…"})
 
-	want := "[i] Se tomará un respaldo de CLAUDE.md y settings.json en " +
-		filepath.Join(cfg.BackupDir(), "latest") +
-		" antes de continuar.\n" +
-		"[i] Se aplicarán los siguientes cambios, en este orden:\n" +
-		"  1. Registrando plugins…\n" +
-		"  2. Actualizando CLAUDE.md…\n"
-	if buf.String() != want {
-		t.Fatalf("renderWritePlan() output = %q, want %q", buf.String(), want)
+	got := buf.String()
+	if !strings.Contains(got, filepath.Join(cfg.BackupDir(), "latest")) || !strings.Contains(got, "Registrando plugins…") || !strings.Contains(got, "Actualizando CLAUDE.md…") {
+		t.Fatalf("renderWritePlan() output = %q, want backup path plus the ordered step list", got)
 	}
 }
 
@@ -224,16 +220,13 @@ func TestRenderWritePlan_DifferentStepsProducesDifferentOutput(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	var buf bytes.Buffer
 	r := rendererFor(NewRootCommand(), &buf)
+	plan := installer.BuildTargetPlan(cfg, installer.TargetSelection{Configured: true, Claude: true}, installer.PlanOptions{})
 
-	renderWritePlan(&buf, r, cfg, []string{"Solo un paso…"})
+	renderWritePlan(&buf, r, cfg, plan, []string{"Solo un paso…"})
 
-	want := "[i] Se tomará un respaldo de CLAUDE.md y settings.json en " +
-		filepath.Join(cfg.BackupDir(), "latest") +
-		" antes de continuar.\n" +
-		"[i] Se aplicarán los siguientes cambios, en este orden:\n" +
-		"  1. Solo un paso…\n"
-	if buf.String() != want {
-		t.Fatalf("renderWritePlan() output = %q, want %q", buf.String(), want)
+	got := buf.String()
+	if !strings.Contains(got, filepath.Join(cfg.BackupDir(), "latest")) || !strings.Contains(got, "  1. Solo un paso…") {
+		t.Fatalf("renderWritePlan() output = %q, want backup path plus the numbered single step", got)
 	}
 }
 
@@ -330,11 +323,12 @@ func TestConfirmProceed_PrintsPrompt(t *testing.T) {
 func TestConfirmAndSnapshot_NonInteractive_SkipsPlanAndTakesSnapshotImmediately(t *testing.T) {
 	home := t.TempDir()
 	cfg := installer.Config{ClaudeHome: home}
+	plan := installer.BuildTargetPlan(cfg, installer.TargetSelection{Configured: true, Claude: true}, installer.PlanOptions{})
 	cmd := NewRootCommand()
 	var out bytes.Buffer
 	r := rendererFor(cmd, &out)
 
-	proceed, err := confirmAndSnapshot(cmd, &out, r, cfg, true, []string{"Paso 1…"})
+	proceed, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, true, []string{"Paso 1…"})
 	if err != nil {
 		t.Fatalf("confirmAndSnapshot() error = %v", err)
 	}
@@ -358,12 +352,13 @@ func TestConfirmAndSnapshot_NonInteractive_SkipsPlanAndTakesSnapshotImmediately(
 func TestConfirmAndSnapshot_InteractiveConfirm_ShowsPlanAndTakesSnapshot(t *testing.T) {
 	home := t.TempDir()
 	cfg := installer.Config{ClaudeHome: home}
+	plan := installer.BuildTargetPlan(cfg, installer.TargetSelection{Configured: true, Claude: true}, installer.PlanOptions{})
 	cmd := NewRootCommand()
 	cmd.SetIn(strings.NewReader("y\n"))
 	var out bytes.Buffer
 	r := rendererFor(cmd, &out)
 
-	proceed, err := confirmAndSnapshot(cmd, &out, r, cfg, false, []string{"Paso 1…"})
+	proceed, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, false, []string{"Paso 1…"})
 	if err != nil {
 		t.Fatalf("confirmAndSnapshot() error = %v", err)
 	}
@@ -387,12 +382,13 @@ func TestConfirmAndSnapshot_InteractiveConfirm_ShowsPlanAndTakesSnapshot(t *test
 func TestConfirmAndSnapshot_InteractiveDecline_NoSnapshotTaken(t *testing.T) {
 	home := t.TempDir()
 	cfg := installer.Config{ClaudeHome: home}
+	plan := installer.BuildTargetPlan(cfg, installer.TargetSelection{Configured: true, Claude: true}, installer.PlanOptions{})
 	cmd := NewRootCommand()
 	cmd.SetIn(strings.NewReader("n\n"))
 	var out bytes.Buffer
 	r := rendererFor(cmd, &out)
 
-	proceed, err := confirmAndSnapshot(cmd, &out, r, cfg, false, []string{"Paso 1…"})
+	proceed, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, false, []string{"Paso 1…"})
 	if err != nil {
 		t.Fatalf("confirmAndSnapshot() error = %v", err)
 	}

@@ -5,7 +5,8 @@ project_name: click
 before:
   hooks:
     - go mod tidy
-    - go test ./...
+    - go vet ./...
+    - go test ./... -count=1
 
 builds:
   - id: click

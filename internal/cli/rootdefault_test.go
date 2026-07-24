@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/menu"
 )
 
@@ -446,5 +447,34 @@ func TestRunMenuLoop_EmptyChosenReturnsNil(t *testing.T) {
 	}
 	if dispatchCalls != 0 {
 		t.Fatalf("dispatchFn called %d times, want 0 (empty Chosen means nothing to dispatch)", dispatchCalls)
+	}
+}
+
+func TestRootMenuItems_DisablesUnavailableOpenClawNativeActionWithGuidance(t *testing.T) {
+	restore := installer.SetOpenClawNativeModelMenuStatusForTests(installer.OpenClawNativeModelMenuStatus{
+		Available: false,
+		Detail:    "OpenClaw native model action is unavailable until `config set --help` is qualified.",
+	})
+	defer restore()
+
+	items := rootMenuItems()
+	idx := -1
+	for i, item := range items {
+		if item.Action == menu.ActionConfigureOpenClawModel {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		t.Fatal("rootMenuItems() did not include the OpenClaw native model action")
+	}
+	if items[idx].Active {
+		t.Fatalf("rootMenuItems()[%d] = %+v, want the native action disabled when qualification is unavailable", idx, items[idx])
+	}
+	if items[idx].InactiveLabel != "no disponible" {
+		t.Fatalf("rootMenuItems()[%d].InactiveLabel = %q, want %q", idx, items[idx].InactiveLabel, "no disponible")
+	}
+	if !strings.Contains(items[idx].Hint, "qualified") {
+		t.Fatalf("rootMenuItems()[%d].Hint = %q, want qualification guidance", idx, items[idx].Hint)
 	}
 }

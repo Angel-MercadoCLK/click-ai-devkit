@@ -101,6 +101,31 @@ func TestResolveOpenClawHome_DefaultsUnderUserHome(t *testing.T) {
 	}
 }
 
+func TestResolveClickStateHome_UsesEnvOverride(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("CLICK_STATE_HOME", tmp)
+
+	got, err := ResolveClickStateHome()
+	if err != nil {
+		t.Fatalf("ResolveClickStateHome() error = %v", err)
+	}
+	if got != tmp {
+		t.Fatalf("ResolveClickStateHome() = %q, want the CLICK_STATE_HOME override %q", got, tmp)
+	}
+}
+
+func TestConfig_TargetSelectionPath_UsesNeutralStateHome(t *testing.T) {
+	cfg := Config{ClaudeHome: filepath.Join("some", "home", ".claude"), ClickStateHome: filepath.Join("state", "click-ai-devkit")}
+	want := filepath.Join("state", "click-ai-devkit", "targets.json")
+	if got := cfg.TargetSelectionPath(); got != want {
+		t.Fatalf("TargetSelectionPath() = %q, want neutral state path %q", got, want)
+	}
+	legacy := filepath.Join("some", "home", ".claude", "click-ai-devkit", "targets.json")
+	if got := cfg.LegacyTargetSelectionPath(); got != legacy {
+		t.Fatalf("LegacyTargetSelectionPath() = %q, want %q", got, legacy)
+	}
+}
+
 func TestConfig_PluginDirAndClaudeMDPath(t *testing.T) {
 	cfg := Config{ClaudeHome: filepath.Join("some", "home", ".claude")}
 

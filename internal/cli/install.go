@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
@@ -15,28 +16,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// yesFlag / nonInteractiveFlag both skip click install's interactive model-selection TUI and
-// install click-sdd with D25's default per-phase models. Two names are accepted (--yes is the
-// short everyday form, --non-interactive is explicit for CI/scripts) but they mean the same thing.
+// yesFlag / nonInteractiveFlag both select detected targets and skip every TUI. They use explicit
+// safe defaults and preserve an existing Codex model unless the user supplies --codex-model.
 //
 // profileFlag lets a non-interactive/scripted install pick a built-in orchestration profile
 // (design D4) without going through the interactive profile-select TUI; an empty or unrecognized
 // value falls back to "balanced" (modelconfig.ResolveProfile's own fallback rule).
 //
-// skipOpenClawFlag is openclaw-target-support's escape hatch: even when `openclaw` resolves on
-// PATH, --skip-openclaw forces a Claude-only install/update, matching the spec's "no per-target
-// wizard" decision with a single explicit opt-out instead.
+// skipOpenClawFlag is the explicit escape hatch for omitting a detected OpenClaw target.
 const (
-	yesFlag            = "yes"
-	nonInteractiveFlag = "non-interactive"
-	profileFlag        = "profile"
-	skipOpenClawFlag   = "skip-openclaw"
+	yesFlag              = "yes"
+	nonInteractiveFlag   = "non-interactive"
+	profileFlag          = "profile"
+	skipOpenClawFlag     = "skip-openclaw"
+	codexModelFlag       = "codex-model"
+	openClawModelFlag    = "openclaw-model"
+	openClawFallbackFlag = "openclaw-fallback-model"
 )
 
 func newInstallCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install",
-		Short: "Install click-ai-devkit's plugins, CLAUDE.md block, and memory-guard hook into Claude Code",
+		Short: "Instala Click en los runtimes detectados y seleccionados",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInstall(cmd)
 		},
@@ -45,6 +46,9 @@ func newInstallCommand() *cobra.Command {
 	cmd.Flags().Bool(nonInteractiveFlag, false, "Alias for --yes")
 	cmd.Flags().String(profileFlag, "", "Perfil de orquestación a usar (balanced/cost-saver/quality); default balanced. En instalación no interactiva selecciona el preset directamente; en la interactiva sólo precarga el editor por fase inicial.")
 	cmd.Flags().Bool(skipOpenClawFlag, false, "Omitir la integración con OpenClaw aunque se detecte openclaw en este equipo")
+	cmd.Flags().String(codexModelFlag, "", "Referencia de modelo nativa de Codex, por ejemplo gpt-5.6")
+	cmd.Flags().String(openClawModelFlag, "", "Referencia provider/model nativa de OpenClaw")
+	cmd.Flags().StringSlice(openClawFallbackFlag, nil, "Referencias provider/model alternativas de OpenClaw")
 	return cmd
 }
 
@@ -54,65 +58,85 @@ func runInstall(cmd *cobra.Command) error {
 
 	fmt.Fprintln(out, r.Banner())
 
-	// PreflightClaude must run before PreflightGit and before anything else, including the
-	// interactive model-selection TUI below. claude is the more fundamental dependency here: click
-	// registers every plugin via the claude CLI itself (plugins.go's pluginCLIBinary), so a machine
-	// missing Claude Code entirely should fail on that actionable message first, not on git's.
-	if err := installer.PreflightClaude(); err != nil {
-		return err
-	}
-
-	// PreflightGit must run before anything else — including the interactive model-selection TUI
-	// below. `click install` registers the plugin marketplace via `claude plugin marketplace add`,
-	// which shells out to `git clone` under the hood; on a machine with no git on PATH that clone
-	// used to fail deep inside plugin registration with a cryptic error, well after the developer
-	// had already gone through the TUI (reproduced live on a fresh Windows VM). Failing fast here
-	// means a developer on a fresh machine finds out instantly, not after an interactive detour.
-	if err := installer.PreflightGit(); err != nil {
-		return err
-	}
-
-	claudeHome, err := installer.ResolveClaudeHome()
+	clickStateHome, err := installer.ResolveClickStateHome()
 	if err != nil {
 		return err
 	}
-	cfg := installer.Config{ClaudeHome: claudeHome}
+	cfg := installer.Config{ClickStateHome: clickStateHome}
 
-	// openclaw-target-support: detect+confirm, no per-target wizard. OpenClawHome stays empty
-	// (zero value) whenever --skip-openclaw is set OR openclaw doesn't resolve on PATH — every
-	// OpenClaw-aware helper below (installWriteSteps, SyncOpenClawWorkspace, SyncOpenClawMCPConfig,
-	// snapshotSources) treats an empty OpenClawHome as "absent, skip silently", so this single
-	// assignment is the ONLY place that decides whether OpenClaw is in scope for this run.
 	skipOpenClaw, err := cmd.Flags().GetBool(skipOpenClawFlag)
 	if err != nil {
 		return err
 	}
-	cfg, err = resolveTargetConfig(cfg, skipOpenClaw, out, r)
+	selection, err := resolveInstallTargetSelection(cmd, skipOpenClaw, out, r)
 	if err != nil {
 		return err
 	}
-
+	if !selection.Claude && !selection.Codex && !selection.OpenClaw {
+		fmt.Fprintln(out, r.Warn("No se detectó ningún runtime seleccionable. Claude Code habilita plugins nativos; Codex y OpenClaw ofrecen el flujo portable. Instale o habilite un runtime y vuelva a ejecutar `click install`."))
+		fmt.Fprintln(out, r.Info(installer.ClaudeMissingMessage))
+		return fmt.Errorf("%s", installer.ClaudeMissingMessage)
+	}
+	if selection.Claude {
+		claudeHome, resolveErr := installer.ResolveClaudeHome()
+		if resolveErr != nil {
+			return resolveErr
+		}
+		cfg.ClaudeHome = claudeHome
+		if err := installer.PreflightClaude(); err != nil {
+			return err
+		}
+		if err := installer.PreflightGit(); err != nil {
+			return err
+		}
+	}
+	if selection.OpenClaw {
+		cfg.OpenClawHome, err = installer.ResolveOpenClawHome()
+		if err != nil {
+			return err
+		}
+	}
+	if selection.Codex {
+		cfg.CodexHome, err = installer.ResolveCodexHome()
+		if err != nil {
+			return err
+		}
+	}
 	nonInteractive := isNonInteractiveInstall(cmd, out)
-	profileFlagValue, _ := cmd.Flags().GetString(profileFlag)
-	profile, models, cancelled, err := resolveInstallModels(cmd, out, r, cfg, nonInteractive, profileFlagValue, runInstallSelectTUI)
+	profile := modelconfig.ProfileName("")
+	var models map[modelconfig.Phase]string
+	if selection.Claude {
+		profileFlagValue, _ := cmd.Flags().GetString(profileFlag)
+		var cancelled bool
+		profile, models, cancelled, err = resolveInstallModels(cmd, out, r, cfg, nonInteractive, profileFlagValue, runInstallSelectTUI)
+		if err != nil {
+			return err
+		}
+		if cancelled {
+			return nil
+		}
+	}
+	native, cancelled, err := resolveNativeModels(cmd, selection, nonInteractive, out, r, runNativeModelConfigTUI)
 	if err != nil {
 		return err
 	}
 	if cancelled {
 		return nil
 	}
-
 	m, err := manifest.Load()
 	if err != nil {
 		return err
 	}
 	cloudConfigured := installer.EngramCloudConfigured(cfg, m)
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured || installer.EngramCloudPartiallyConfigured(cfg, m)})
+	fmt.Fprintln(out, r.Info("Capacidades seleccionadas: "+plan.CapabilitiesSummary()))
+	fmt.Fprintln(out, r.Info("Resumen final de instalación: "+strings.Join(plan.StepLabels(), " → ")+nativeSummary(native)))
 
 	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE step 1 below (the first external `claude` subprocess invocation). A
 	// decline here means zero writes: nothing below this point has run yet.
-	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, nonInteractive, installWriteSteps(cfg, cloudConfigured))
+	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, plan, nonInteractive, installWriteStepsForSelection(cfg, cloudConfigured, selection))
 	if err != nil {
 		return err
 	}
@@ -120,122 +144,126 @@ func runInstall(cmd *cobra.Command) error {
 		fmt.Fprintln(out, r.Info("Instalación cancelada."))
 		return nil
 	}
-
-	if err := r.RunStep("Registrando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins registrados en Claude Code", func() error {
-		return installer.SyncMarketplacePlugins(models, profile)
-	}); err != nil {
+	if err := installer.SaveTargetSelection(cfg, selection); err != nil {
+		return err
+	}
+	if _, err := installer.MigrateIfStale(cfg); err != nil {
 		return err
 	}
 
-	engramAlreadyInstalled := false
-	engramPathWarning := ""
-	if err := r.RunStep("Instalando Engram (memoria persistente)…", "Engram sincronizado", func() error {
-		var syncErr error
-		engramAlreadyInstalled, engramPathWarning, syncErr = installer.SyncEngram(cfg, m)
-		return syncErr
-	}); err != nil {
-		return err
-	}
-	if engramAlreadyInstalled {
-		fmt.Fprintln(out, r.Info("Engram ya estaba instalado — se dejó como está, sin reinstalar."))
-	}
-	surfacePathWarning(out, r, engramPathWarning)
-
-	if installer.EngramCloudPartiallyConfigured(cfg, m) {
-		reportSkippedCloudEnrollment(out, r)
-	} else if cloudConfigured {
-		// resilience W1: Engram Cloud enrollment is opt-in and supplementary — a flaky or unreachable
-		// cloud server must never abort an otherwise-valid local install. On failure we surface a
-		// Spanish warning and CONTINUE with the remaining purely-local steps (CLAUDE.md, memory-guard,
-		// models.json, OpenClaw sync) instead of returning the error. Deliberately NOT r.RunStep: a
-		// non-fatal step must not render a red ✗/[FAIL] line — the outcome is either success or a
-		// warning, never a failure marker on a successful install.
-		fmt.Fprintln(out, r.Step("Enrolando Engram Cloud…"))
-		if cloudErr := syncEngramCloudFunc(cfg, m); cloudErr != nil {
-			fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo sincronizar Engram Cloud: %v. La instalación local continúa; reintenta más tarde con `click update`.", cloudErr)))
-		} else {
-			fmt.Fprintln(out, r.Success("Engram Cloud enrolado"))
-		}
-	}
-
-	context7AlreadyPresent := false
-	if err := r.RunStep("Registrando Context7 (documentación de librerías)…", "Context7 sincronizado", func() error {
-		var syncErr error
-		context7AlreadyPresent, syncErr = installer.SyncContext7(cfg)
-		return syncErr
-	}); err != nil {
-		return err
-	}
-	if context7AlreadyPresent {
-		fmt.Fprintln(out, r.Info("Context7 ya estaba configurado — se dejó como está, sin reinstalar."))
-	}
-	// SyncEngram's own EnsureEngramBinary step (Slice 3b) already attempted a `go install` when the
-	// binary was missing and Go was available; this just reports the resulting state to the
-	// developer. It never fails the install — a missing binary/toolchain is surfaced, not fatal.
-	if _, resolvable, err := installer.EngramBinaryResolvable(cfg); err != nil {
-		return err
-	} else if !resolvable {
-		fmt.Fprintln(out, r.Info(installer.EngramBinaryRemediationMessage(m.Engram.Version)))
-	}
-
-	if err := r.RunStep("Actualizando CLAUDE.md…", "CLAUDE.md actualizado", func() error {
-		return installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent)
-	}); err != nil {
-		return err
-	}
-
-	if err := r.RunStep("Registrando memory-guard…", "memory-guard registrado", func() error {
-		return installer.RegisterMemoryGuardHook(cfg)
-	}); err != nil {
-		return err
-	}
-
-	if err := r.RunStep("Guardando modelos por fase de click-sdd…", "Modelos por fase guardados", func() error {
-		return installer.SaveModelsWithProfile(cfg, profile, models)
-	}); err != nil {
-		return err
-	}
-
-	// openclaw-target-support: appended LAST, matching openClawWriteSteps' position at the end of
-	// installWriteSteps(cfg) — this whole block (3 RunStep calls: AGENTS.md/SOUL.md, MCP
-	// registration, and the memory-guard plugin) is gated on the same condition openClawWriteSteps
-	// used to decide whether to list them in the preview at all.
-	if cfg.OpenClawHome != "" {
-		if err := r.RunStep("Actualizando AGENTS.md y SOUL.md de OpenClaw…", "AGENTS.md y SOUL.md de OpenClaw actualizados", func() error {
-			return installer.SyncOpenClawWorkspace(cfg)
-		}); err != nil {
-			return err
-		}
-		if err := r.RunStep("Registrando Engram en OpenClaw (mcpServers)…", "Engram registrado en OpenClaw", func() error {
-			return installer.SyncOpenClawMCPConfig(cfg)
-		}); err != nil {
-			return err
-		}
-		// PR-C (design #1666's memory-guard-parity piece, OCG-1..6): installs the click-memory-guard
-		// OpenClaw plugin last, after both OpenClaw writes above, matching openClawWriteSteps'
-		// position for it in the preview plan.
-		if err := r.RunStep("Instalando plugin de memory-guard para OpenClaw…", "Plugin de memory-guard instalado en OpenClaw", func() error {
-			return installer.SyncOpenClawPlugin(cfg)
-		}); err != nil {
-			return err
-		}
-		// Synchronize the click-owned OpenClaw skills after the plugin install.
-		if err := r.RunStep("Sincronizando skills de Click en OpenClaw…", "Skills de Click sincronizados en OpenClaw", func() error {
-			return installer.SyncOpenClawSkills(cfg)
-		}); err != nil {
-			return err
-		}
-		if err := r.RunStep("Guardando recomendación de modelos para OpenClaw…", "Recomendación de modelos para OpenClaw guardada", func() error {
-			return installer.SyncOpenClawModelProfile(cfg, profile, models)
-		}); err != nil {
-			return err
-		}
-	}
-	if cfg.CodexHome != "" {
-		if err := r.RunStep("Actualizando AGENTS.md de Codex…", "AGENTS.md de Codex actualizado", func() error {
-			return installer.SyncCodexGuidance(cfg)
-		}); err != nil {
-			return err
+	for _, action := range plan.InstallActionKinds() {
+		switch action {
+		case installer.StepActionSyncMarketplacePlugins:
+			if err := r.RunStep("Registrando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins registrados en Claude Code", func() error {
+				return installer.SyncMarketplacePlugins(models, profile)
+			}); err != nil {
+				return err
+			}
+		case installer.StepActionSyncEngram:
+			engramAlreadyInstalled := false
+			engramPathWarning := ""
+			if err := r.RunStep("Instalando Engram (memoria persistente)…", "Engram sincronizado", func() error {
+				var syncErr error
+				engramAlreadyInstalled, engramPathWarning, syncErr = installer.SyncEngram(cfg, m)
+				return syncErr
+			}); err != nil {
+				return err
+			}
+			if engramAlreadyInstalled {
+				fmt.Fprintln(out, r.Info("Engram ya estaba instalado — se dejó como está, sin reinstalar."))
+			}
+			surfacePathWarning(out, r, engramPathWarning)
+			if _, resolvable, err := installer.EngramBinaryResolvable(cfg); err != nil {
+				return err
+			} else if !resolvable {
+				fmt.Fprintln(out, r.Info(installer.EngramBinaryRemediationMessage(m.Engram.Version)))
+			}
+		case installer.StepActionSyncEngramCloud:
+			if installer.EngramCloudPartiallyConfigured(cfg, m) {
+				reportSkippedCloudEnrollment(out, r)
+				continue
+			}
+			fmt.Fprintln(out, r.Step("Enrolando Engram Cloud…"))
+			if cloudErr := syncEngramCloudFunc(cfg, m); cloudErr != nil {
+				fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo sincronizar Engram Cloud: %v. La instalación local continúa; reintenta más tarde con `click update`.", cloudErr)))
+			} else {
+				fmt.Fprintln(out, r.Success("Engram Cloud enrolado"))
+			}
+		case installer.StepActionSyncContext7:
+			context7AlreadyPresent := false
+			if err := r.RunStep("Registrando Context7 (documentación de librerías)…", "Context7 sincronizado", func() error {
+				var syncErr error
+				context7AlreadyPresent, syncErr = installer.SyncContext7(cfg)
+				return syncErr
+			}); err != nil {
+				return err
+			}
+			if context7AlreadyPresent {
+				fmt.Fprintln(out, r.Info("Context7 ya estaba configurado — se dejó como está, sin reinstalar."))
+			}
+		case installer.StepActionWriteClaudeManagedBlock:
+			if err := r.RunStep("Actualizando CLAUDE.md…", "CLAUDE.md actualizado", func() error {
+				return installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent)
+			}); err != nil {
+				return err
+			}
+		case installer.StepActionRegisterMemoryGuard:
+			if err := r.RunStep("Registrando memory-guard…", "memory-guard registrado", func() error {
+				return installer.RegisterMemoryGuardHook(cfg)
+			}); err != nil {
+				return err
+			}
+		case installer.StepActionSaveModels:
+			if err := r.RunStep("Guardando modelos por fase de click-sdd…", "Modelos por fase guardados", func() error {
+				return installer.SaveModelsWithProfile(cfg, profile, models)
+			}); err != nil {
+				return err
+			}
+		case installer.StepActionSyncCodexGuidance:
+			if err := r.RunStep("Actualizando AGENTS.md de Codex…", "AGENTS.md de Codex actualizado", func() error {
+				return syncCodexGuidanceFunc(cfg)
+			}); err != nil {
+				return err
+			}
+		case installer.StepActionConfigureCodexNativeModel:
+			if selection.Codex && native.Codex.Primary != "" {
+				if err := installer.ConfigureCodexModel(cfg.CodexHome, native.Codex.Primary); err != nil {
+					return err
+				}
+			}
+		case installer.StepActionSyncOpenClawWorkspace:
+			if err := r.RunStep("Actualizando AGENTS.md y SOUL.md de OpenClaw…", "AGENTS.md y SOUL.md de OpenClaw actualizados", func() error {
+				return installer.SyncOpenClawWorkspace(cfg)
+			}); err != nil {
+				return err
+			}
+		case installer.StepActionSyncOpenClawMCP:
+			if err := r.RunStep("Registrando Engram en OpenClaw (mcpServers)…", "Engram registrado en OpenClaw", func() error {
+				return installer.SyncOpenClawMCPConfig(cfg)
+			}); err != nil {
+				return err
+			}
+		case installer.StepActionSyncOpenClawPlugin:
+			if err := r.RunStep("Instalando plugin de memory-guard para OpenClaw…", "Plugin de memory-guard instalado en OpenClaw", func() error {
+				return installer.SyncOpenClawPlugin(cfg)
+			}); err != nil {
+				return err
+			}
+		case installer.StepActionSyncOpenClawSkills:
+			if err := r.RunStep("Sincronizando skills de Click en OpenClaw…", "Skills de Click sincronizados en OpenClaw", func() error {
+				return installer.SyncOpenClawSkills(cfg)
+			}); err != nil {
+				return err
+			}
+		case installer.StepActionSyncOpenClawModelProfile:
+			if err := installer.ConfigureOpenClawModels(native.OpenClaw.Primary, native.OpenClaw.Fallbacks); err != nil {
+				return err
+			}
+			if err := r.RunStep("Guardando metadatos de modelos para OpenClaw…", "Metadatos de modelos guardados", func() error {
+				return installer.SyncOpenClawModelProfile(cfg, profile, models)
+			}); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -261,6 +289,120 @@ func isNonInteractiveInstall(cmd *cobra.Command, out io.Writer) bool {
 	return !(isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd()))
 }
 
+var syncCodexGuidanceFunc = installer.SyncCodexGuidance
+
+func SetSyncCodexGuidanceFuncForTests(fn func(installer.Config) error) func() {
+	old := syncCodexGuidanceFunc
+	syncCodexGuidanceFunc = fn
+	return func() { syncCodexGuidanceFunc = old }
+}
+
+func resolveInstallTargetSelection(cmd *cobra.Command, skipOpenClaw bool, out io.Writer, r *ui.Renderer) (installer.TargetSelection, error) {
+	claudeFound := installer.ClaudeAvailable()
+	openClawFound := installer.OpenClawAvailable() && !skipOpenClaw
+	codexFound := installer.CodexAvailable()
+	selection := installer.TargetSelection{Configured: true, Claude: claudeFound, OpenClaw: openClawFound, Codex: codexFound}
+	if isNonInteractiveInstall(cmd, out) {
+		fmt.Fprintln(out, r.Info("Modo no interactivo: se seleccionan únicamente los runtimes detectados; no se inicia ninguna TUI."))
+		return selection, nil
+	}
+	model := ui.NewTargetSelectModel(claudeFound, openClawFound, selection.Claude, selection.OpenClaw, codexFound, selection.Codex)
+	program := tea.NewProgram(model, tea.WithInput(cmd.InOrStdin()), tea.WithOutput(out))
+	final, err := program.Run()
+	if err != nil {
+		return installer.TargetSelection{}, fmt.Errorf("cli: ejecutar selección de runtimes: %w", err)
+	}
+	result := final.(ui.TargetSelectModel)
+	if result.Cancelled {
+		return installer.TargetSelection{}, nil
+	}
+	if !result.Confirmed {
+		return installer.TargetSelection{}, nil
+	}
+	selection = installer.TargetSelection{Configured: true, Claude: result.Claude, OpenClaw: result.OpenClaw, Codex: result.Codex}
+	return selection, nil
+}
+
+type nativeTargetConfig struct {
+	Codex    ui.NativeModelConfig
+	OpenClaw ui.NativeModelConfig
+}
+
+type nativeModelSelector func(cmd *cobra.Command, kind, primary string, fallbacks []string) (ui.NativeModelConfig, bool, error)
+
+func resolveNativeModels(cmd *cobra.Command, selection installer.TargetSelection, nonInteractive bool, out io.Writer, r *ui.Renderer, selector nativeModelSelector) (nativeTargetConfig, bool, error) {
+	var result nativeTargetConfig
+	if selection.Codex {
+		model, _ := cmd.Flags().GetString(codexModelFlag)
+		var cancelled bool
+		if nonInteractive {
+			result.Codex = ui.NativeModelConfig{Primary: model, Confirmed: true}
+		} else {
+			var selectorErr error
+			result.Codex, cancelled, selectorErr = selector(cmd, "Codex", model, nil)
+			if selectorErr != nil {
+				return nativeTargetConfig{}, false, selectorErr
+			}
+		}
+		if cancelled {
+			return nativeTargetConfig{}, true, nil
+		}
+		if result.Codex.Primary == "" {
+			fmt.Fprintln(out, r.Info("Codex: se omite la configuración nativa porque el modelo no fue seleccionado explícitamente (--codex-model <model>)."))
+		} else {
+			fmt.Fprintln(out, r.Info("Codex: modelo nativo seleccionado: "+result.Codex.Primary+"."))
+		}
+	}
+	if selection.OpenClaw {
+		model, _ := cmd.Flags().GetString(openClawModelFlag)
+		fallbacks, _ := cmd.Flags().GetStringSlice(openClawFallbackFlag)
+		if model == "" && nonInteractive {
+			model = "openai/gpt-5.6-sol"
+			fmt.Fprintln(out, r.Info("OpenClaw: modo no interactivo usa el modelo nativo explícito openai/gpt-5.6-sol."))
+		}
+		var cancelled bool
+		if nonInteractive {
+			result.OpenClaw = ui.NativeModelConfig{Primary: model, Fallbacks: fallbacks, Confirmed: true}
+		} else {
+			var selectorErr error
+			result.OpenClaw, cancelled, selectorErr = selector(cmd, "OpenClaw", model, fallbacks)
+			if selectorErr != nil {
+				return nativeTargetConfig{}, false, selectorErr
+			}
+		}
+		if cancelled {
+			return nativeTargetConfig{}, true, nil
+		}
+		if result.OpenClaw.Primary == "" {
+			return nativeTargetConfig{}, false, fmt.Errorf("configuración de OpenClaw cancelada o incompleta")
+		}
+		fmt.Fprintln(out, r.Info("OpenClaw: referencia nativa seleccionada: "+result.OpenClaw.Primary+"; fallbacks: "+strings.Join(result.OpenClaw.Fallbacks, ", ")+"."))
+	}
+	return result, false, nil
+}
+
+func runNativeModelConfigTUI(cmd *cobra.Command, kind, primary string, fallbacks []string) (ui.NativeModelConfig, bool, error) {
+	model := ui.NewNativeModelConfigModel(kind, primary, fallbacks)
+	program := tea.NewProgram(model, tea.WithInput(cmd.InOrStdin()), tea.WithOutput(cmd.OutOrStdout()))
+	final, err := program.Run()
+	if err != nil {
+		return ui.NativeModelConfig{}, false, fmt.Errorf("cli: ejecutar configuración nativa de %s: %w", kind, err)
+	}
+	result := final.(ui.NativeModelConfigModel)
+	return result.Result(), result.Result().Cancelled, nil
+}
+
+func nativeSummary(config nativeTargetConfig) string {
+	var parts []string
+	if config.Codex.Primary != "" {
+		parts = append(parts, fmt.Sprintf("; Codex=%s", config.Codex.Primary))
+	}
+	if config.OpenClaw.Primary != "" {
+		parts = append(parts, fmt.Sprintf("; OpenClaw=%s (fallbacks: %s)", config.OpenClaw.Primary, strings.Join(config.OpenClaw.Fallbacks, ", ")))
+	}
+	return strings.Join(parts, "")
+}
+
 // installSelector drives the two-step interactive flow (profile-select, then the per-phase editor
 // seeded from that profile) and matches runInstallSelectTUI's signature so resolveInstallModels can
 // be driven by a fake selector in tests (a real bubbletea program can't be exercised headlessly).
@@ -269,15 +411,13 @@ func isNonInteractiveInstall(cmd *cobra.Command, out io.Writer) bool {
 // instead of always hardcoding balanced.
 type installSelector func(cmd *cobra.Command, initialProfile modelconfig.ProfileName) (profile modelconfig.ProfileName, models map[modelconfig.Phase]string, cancelled bool, err error)
 
-// resolveInstallModels decides the active orchestration profile AND the per-phase model set for
-// `click install`, and performs the D8 stale-migration safety net at the correct point in the flow.
+// resolveInstallModels decides the active orchestration profile and per-phase model set for
+// `click install`. Filesystem migration is intentionally owned by runInstall after final confirm.
 //
 // Cancel must mean "no changes": if the developer cancels either interactive step, models.json must
 // be left byte-for-byte untouched, so MigrateIfStale only runs once we know the install is actually
 // proceeding — non-interactive installs always proceed, and interactive installs only proceed past
-// the cancel check. Both proceeding paths (interactive-confirmed and non-interactive) still migrate
-// before the fresh models get written, preserving the existing "never clobber without a backup"
-// behavior.
+// the cancel check.
 //
 // CRITICAL non-TTY/CI safety (carried over unchanged from before profiles existed): the
 // non-interactive branch below NEVER calls selector — it resolves synchronously from profileFlagValue
@@ -296,9 +436,6 @@ type installSelector func(cmd *cobra.Command, initialProfile modelconfig.Profile
 // empty or unrecognized value falls back to balanced, same as the non-interactive path.
 func resolveInstallModels(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg installer.Config, nonInteractive bool, profileFlagValue string, selector installSelector) (profile modelconfig.ProfileName, models map[modelconfig.Phase]string, cancelled bool, err error) {
 	if nonInteractive {
-		if _, err := installer.MigrateIfStale(cfg); err != nil {
-			return "", nil, false, err
-		}
 		resolved := modelconfig.ResolveProfile(profileFlagValue)
 		return resolved.Name, resolved.Models, false, nil
 	}
@@ -312,9 +449,6 @@ func resolveInstallModels(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg
 		return "", nil, true, nil
 	}
 
-	if _, err := installer.MigrateIfStale(cfg); err != nil {
-		return "", nil, false, err
-	}
 	return modelconfig.EffectiveProfileName(chosenProfile, selection), selection, false, nil
 }
 

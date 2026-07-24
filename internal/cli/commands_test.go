@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -85,6 +86,7 @@ func seedResolvableGit(t *testing.T) {
 func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	// openclaw-target-support (PR-C safety fix): `click uninstall` now unconditionally resolves
 	// OpenClawHome (installer.ResolveOpenClawHome) to remove the memory-guard plugin dir, regardless
 	// of whether openclaw itself is currently resolvable on PATH. Without this override, every
@@ -239,6 +241,9 @@ func (r *testCommandRunner) Output(name string, args ...string) ([]byte, error) 
 			return []byte(filepath.Join(r.home, "go") + "\n"), nil
 		}
 	}
+	if filepath.Base(name) == "openclaw" && len(args) == 3 && args[0] == "config" && args[1] == "set" && args[2] == "--help" {
+		return []byte("config set agents.defaults.model.primary agents.defaults.model.fallbacks --strict-json"), nil
+	}
 	return []byte{}, nil
 }
 
@@ -339,15 +344,61 @@ func TestInstallCommand_Succeeds(t *testing.T) {
 	}
 }
 
+func TestResolveInstallTargetSelection_NonInteractiveDoesNotPersistBeforeConfirmation(t *testing.T) {
+	stateHome := t.TempDir()
+	restoreLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
+	})
+	defer restoreLookup()
+
+	cmd := NewRootCommand()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetIn(&bytes.Buffer{})
+
+	selection, err := resolveInstallTargetSelection(cmd, false, &buf, rendererFor(cmd, &buf))
+	if err != nil {
+		t.Fatalf("resolveInstallTargetSelection() error = %v", err)
+	}
+	if !selection.Codex || selection.Claude || selection.OpenClaw {
+		t.Fatalf("selection = %+v, want Codex-only detected selection", selection)
+	}
+	if _, err := os.Stat(filepath.Join(stateHome, "targets.json")); !os.IsNotExist(err) {
+		t.Fatalf("Stat(targets.json) error = %v, want no persisted mutation before final confirmation", err)
+	}
+}
+
 // execRootWithGitLookup is execRoot's shape, but wired with an explicit installer.BinaryLookup
 // instead of execRoot's own default seedResolvableGit — used exclusively by the "git missing"
 // preflight tests below, where the whole point is to simulate git being absent from PATH.
 func execRootWithGitLookup(t *testing.T, claudeHome string, lookup installer.BinaryLookup, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	// Same CLICK_OPENCLAW_HOME safety override as execRoot above — see its comment for the full
 	// rationale (runUninstall's unconditional ResolveOpenClawHome call).
 	t.Setenv("CLICK_OPENCLAW_HOME", t.TempDir())
+	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup { return lookup })
+	defer restore()
+
+	root := NewRootCommand()
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs(args)
+
+	err := root.Execute()
+	return buf.String(), err
+}
+
+func execRootWithHomesAndLookup(t *testing.T, claudeHome, stateHome, openClawHome string, lookup installer.BinaryLookup, args ...string) (string, error) {
+	t.Helper()
+	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
+	t.Setenv("CLICK_CODEX_HOME", filepath.Join(stateHome, "codex-home"))
 	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup { return lookup })
 	defer restore()
 
@@ -489,6 +540,191 @@ func TestUpdateCommand_ClaudeMissing_AbortsBeforeMarketplaceRegistration(t *test
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("runner.commands = %#v, want zero commands issued — update must abort before touching the marketplace when claude is missing", runner.commands)
+	}
+}
+
+func TestInstallCommand_CodexOnly_NonInteractiveOmitsNativeModelWithoutFlagAndDoesNotRequireClaude(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	codexHome := filepath.Join(stateHome, "codex-home")
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
+
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), lookup, "install")
+	if err != nil {
+		t.Fatalf("install command error = %v, want nil for Codex-only noninteractive install without Claude, output:\n%s", err, out)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want no Claude marketplace/preflight commands for Codex-only install", runner.commands)
+	}
+	if strings.Contains(out, "gpt-5.6") {
+		t.Fatalf("install output = %q, want no fabricated default Codex native model in noninteractive mode", out)
+	}
+	if !strings.Contains(strings.ToLower(out), "codex") || !strings.Contains(strings.ToLower(out), "explícit") {
+		t.Fatalf("install output = %q, want explicit-model omission guidance for Codex native config", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(codexHome, "config.toml")); !os.IsNotExist(statErr) {
+		t.Fatalf("Stat(config.toml) error = %v, want no Codex config write when --codex-model is omitted", statErr)
+	}
+	selection, found, loadErr := installer.LoadTargetSelection(installer.Config{ClickStateHome: stateHome})
+	if loadErr != nil {
+		t.Fatalf("LoadTargetSelection() error = %v", loadErr)
+	}
+	if !found || !selection.Codex || selection.Claude {
+		t.Fatalf("persisted selection = (%+v, %t), want Codex-only persisted state", selection, found)
+	}
+}
+
+func TestUpdateCommand_CodexOnly_UsesPersistedSelectionWithoutClaudeAndOmitsNativeModelWithoutFlag(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	codexHome := filepath.Join(stateHome, "codex-home")
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
+	if err := installer.SaveTargetSelection(installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}, installer.TargetSelection{Configured: true, Codex: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), lookup, "update")
+	if err != nil {
+		t.Fatalf("update command error = %v, want nil for Codex-only update without Claude, output:\n%s", err, out)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want no Claude marketplace/preflight commands for Codex-only update", runner.commands)
+	}
+	if strings.Contains(out, "gpt-5.6") {
+		t.Fatalf("update output = %q, want no fabricated default Codex native model in noninteractive mode", out)
+	}
+	if !strings.Contains(strings.ToLower(out), "codex") || !strings.Contains(strings.ToLower(out), "explícit") {
+		t.Fatalf("update output = %q, want explicit-model omission guidance for Codex native config", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(codexHome, "config.toml")); !os.IsNotExist(statErr) {
+		t.Fatalf("Stat(config.toml) error = %v, want no Codex config write when --codex-model is omitted", statErr)
+	}
+}
+
+func TestUpdateCommand_CodexNativeMutationFailure_RollsBackConfigToml(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	codexHome := filepath.Join(stateHome, "codex-home")
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
+	if err := installer.SaveTargetSelection(installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}, installer.TargetSelection{Configured: true, Codex: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	before := "model = \"gpt-5.5\"\n"
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatalf("MkdirAll(codexHome) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(before), 0o600); err != nil {
+		t.Fatalf("WriteFile(config.toml) error = %v", err)
+	}
+	restoreGuidance := SetSyncCodexGuidanceFuncForTests(func(installer.Config) error {
+		return errors.New("codex guidance failed after native mutation")
+	})
+	defer restoreGuidance()
+
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), lookup, "update", "--codex-model", "gpt-5.6")
+	if err == nil {
+		t.Fatalf("update command error = nil, want rollback-triggering failure after Codex native mutation, output:\n%s", out)
+	}
+	after, readErr := os.ReadFile(filepath.Join(codexHome, "config.toml"))
+	if readErr != nil {
+		t.Fatalf("ReadFile(config.toml) error = %v", readErr)
+	}
+	if string(after) != before {
+		t.Fatalf("config.toml after failed update = %q, want rollback-restored bytes %q", after, before)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "rollback") {
+		t.Fatalf("update error = %v, want rollback context after restoring the snapshot", err)
+	}
+}
+
+func TestDoctorCommand_StaleCacheThenUpdateThenFreshDoctorReportsHealthy(t *testing.T) {
+	seedResolvableEngram(t)
+	seedResolvableClickBinary(t)
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	if _, err := execRoot(t, home, "install"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+	installedPluginsPath := filepath.Join(home, "plugins", "installed_plugins.json")
+	raw, err := os.ReadFile(installedPluginsPath)
+	if err != nil {
+		t.Fatalf("ReadFile(installed_plugins.json) error = %v", err)
+	}
+	var registry map[string]any
+	if err := json.Unmarshal(raw, &registry); err != nil {
+		t.Fatalf("json.Unmarshal(installed_plugins.json) error = %v", err)
+	}
+	plugins := registry["plugins"].(map[string]any)
+	entries := plugins[installer.ClickSDDPluginID].([]any)
+	entry := entries[0].(map[string]any)
+	entry["installPath"] = filepath.Join(home, "plugins", "cache", "click-ai-devkit", "click-sdd-stale", "0.1.0")
+	updated, err := json.Marshal(registry)
+	if err != nil {
+		t.Fatalf("json.Marshal(installed_plugins.json) error = %v", err)
+	}
+	if err := os.WriteFile(installedPluginsPath, updated, 0o600); err != nil {
+		t.Fatalf("WriteFile(installed_plugins.json) error = %v", err)
+	}
+
+	doctorOut, doctorErr := execRoot(t, home, "doctor")
+	if doctorErr == nil {
+		t.Fatalf("doctor error = nil on a stale click-sdd cache path, want unhealthy report, output:\n%s", doctorOut)
+	}
+	if !strings.Contains(strings.ToLower(doctorOut), "click update") {
+		t.Fatalf("doctor output = %q, want update guidance for stale cache recovery", doctorOut)
+	}
+
+	updateOut, updateErr := execRoot(t, home, "update")
+	if updateErr != nil {
+		t.Fatalf("update command error = %v, output:\n%s", updateErr, updateOut)
+	}
+	freshDoctorOut, freshDoctorErr := execRoot(t, home, "doctor")
+	if freshDoctorErr != nil {
+		t.Fatalf("doctor after update error = %v, want healthy report after the refreshed session, output:\n%s", freshDoctorErr, freshDoctorOut)
+	}
+	if !strings.Contains(freshDoctorOut, "propagación") {
+		t.Fatalf("doctor after update output = %q, want the live propagation limitation note from the refreshed session", freshDoctorOut)
+	}
+}
+
+func TestDoctorCommand_CodexOnlySelection_DoesNotRequireClaudeAndUsesPlanChecks(t *testing.T) {
+	seedResolvableClickBinary(t)
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	selectionCfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(selectionCfg, installer.TargetSelection{Configured: true, Codex: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	if err := installer.WriteManagedBlock(installer.Config{CodexHome: codexHome}.CodexAgentsMDPath(), installer.DefaultCodexAgentsContent); err != nil {
+		t.Fatalf("WriteManagedBlock(CodexAgentsMDPath) error = %v", err)
+	}
+
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git", "codex": "/usr/bin/codex"}}
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), lookup, "doctor")
+	if err != nil {
+		t.Fatalf("doctor command error = %v, want healthy Codex-only report without Claude, output:\n%s", err, out)
+	}
+	if strings.Contains(out, installer.ClaudeMissingMessage) || strings.Contains(out, "[FAIL] claude:") {
+		t.Fatalf("doctor output = %q, want no Claude-only failure requirements in a Codex-only report", out)
+	}
+	if !strings.Contains(strings.ToLower(out), "codex") {
+		t.Fatalf("doctor output = %q, want Codex-specific plan-backed diagnostics", out)
 	}
 }
 
@@ -1304,7 +1540,7 @@ func TestDoctorModelsLine_ResolvesMissingReviewPhasesFromActiveProfile(t *testin
 				t.Fatalf("SaveModelsWithProfile(partial %s) error = %v", tt.profile, err)
 			}
 
-			line, err := formatModelsLine(cfg)
+			line, err := formatModelsLine(cfg, installer.TargetSelection{Configured: true, Claude: true})
 			if err != nil {
 				t.Fatalf("formatModelsLine() error = %v", err)
 			}

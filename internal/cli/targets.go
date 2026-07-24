@@ -29,7 +29,11 @@ func runTargets(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	selection, configured, err := installer.LoadTargetSelection(installer.Config{ClaudeHome: claudeHome})
+	clickStateHome, err := installer.ResolveClickStateHome()
+	if err != nil {
+		return err
+	}
+	selection, configured, err := installer.LoadTargetSelection(installer.Config{ClaudeHome: claudeHome, ClickStateHome: clickStateHome})
 	if err != nil {
 		return err
 	}
@@ -54,17 +58,18 @@ func runTargets(cmd *cobra.Command) error {
 	} else {
 		fmt.Fprintln(out, r.Info("OpenClaw: no detectado"))
 	}
-	fmt.Fprintln(out, r.Info("  Capacidades: SDD portable, Engram, memory guard y recomendación de modelos."))
-	fmt.Fprintln(out, r.Info("  Nota: la recomendación de modelos para OpenClaw es portable; click no aplica modelos nativamente allí."))
+	fmt.Fprintln(out, r.Info("  Capacidades: SDD portable, Engram, memory guard y recomendación de modelos; también configuración nativa de modelos."))
+	fmt.Fprintln(out, r.Info("  Modelo nativo: use `click configure-openclaw-model provider/model`; Click delega la escritura a la CLI oficial de OpenClaw."))
+	fmt.Fprintln(out, r.Info("  La recomendación portable no aplica modelos nativamente allí; la configuración nativa sí está disponible mediante la CLI oficial."))
 	codexPath, codexDetected := installer.CodexPath()
 	if codexDetected {
 		fmt.Fprintln(out, r.Success("Codex: detectado (resuelto en "+codexPath+")"))
-		fmt.Fprintln(out, r.Info("  Capacidades: AGENTS.md gestionado y flujo SDD portable."))
+		fmt.Fprintln(out, r.Info("  Capacidades: AGENTS.md gestionado, flujo SDD portable y modelo nativo de config.toml."))
 	} else {
 		fmt.Fprintln(out, r.Info("Codex: no detectado"))
-		fmt.Fprintln(out, r.Info("  Capacidades: guía AGENTS.md y flujo SDD portable disponibles al habilitar Codex."))
+		fmt.Fprintln(out, r.Info("  Capacidades: guía AGENTS.md, flujo SDD portable y modelo nativo de config.toml al habilitar Codex."))
 	}
-	fmt.Fprintln(out, r.Info("  Nota: no modifica config.toml ni el modelo; tampoco credenciales ni skills/plugins nativos de Codex."))
+	fmt.Fprintln(out, r.Info("  Nota: Click no modifica config.toml ni el modelo sin selección explícita; tampoco modifica credenciales ni proveedores."))
 	if configured {
 		fmt.Fprintln(out, r.Info(fmt.Sprintf("  Selección persistente: Claude Code=%t, OpenClaw=%t, Codex=%t.", selection.Claude, selection.OpenClaw, selection.Codex)))
 	} else {

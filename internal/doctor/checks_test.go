@@ -121,7 +121,7 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 
 	// 13 base checks now that the Claude plugin registries check joins the foundational checks,
 	// standalone PATH-based detection check (openclaw-target-support PR-A).
-	const wantChecks = 13 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 14 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
 		t.Fatalf("Run() returned %d checks, want %d (git, claude, openclaw, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, click binary, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, engram cloud enrollment, context7 MCP)", len(report.Checks), wantChecks)
 	}
@@ -326,6 +326,38 @@ func TestCheckOpenClaw_ReportsHealthyWhenAbsent(t *testing.T) {
 	}
 	if !checked {
 		t.Fatal(`Run() did not include an "openclaw" check`)
+	}
+}
+
+func TestCheckOpenClawNativeModelAction_UnavailableButHealthyWithGuidance(t *testing.T) {
+	restoreLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return fakeGitLookup{resolved: map[string]string{"openclaw": "/usr/bin/openclaw"}}
+	})
+	defer restoreLookup()
+	restoreStatus := installer.SetOpenClawNativeModelMenuStatusForTests(installer.OpenClawNativeModelMenuStatus{
+		Available: false,
+		Detail:    "OpenClaw native model action is unavailable until `click update` refreshes the contract and Claude Code restarts.",
+	})
+	defer restoreStatus()
+
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	report := Run(cfg)
+
+	var checked bool
+	for _, c := range report.Checks {
+		if c.Name != "OpenClaw native model action" {
+			continue
+		}
+		checked = true
+		if !c.Healthy {
+			t.Fatalf("OpenClaw native model action check = %+v, want Healthy=true for an unavailable optional action", c)
+		}
+		if !strings.Contains(c.Detail, "click update") || !strings.Contains(strings.ToLower(c.Detail), "restart") {
+			t.Fatalf("OpenClaw native model action detail = %q, want update and restart guidance", c.Detail)
+		}
+	}
+	if !checked {
+		t.Fatal(`Run() did not include an "OpenClaw native model action" check`)
 	}
 }
 

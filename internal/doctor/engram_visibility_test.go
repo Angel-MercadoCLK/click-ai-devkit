@@ -51,6 +51,22 @@ func TestCheckEngramSubagentVisibility_ReportsUnresolvedCachePath(t *testing.T) 
 	}
 }
 
+func TestCheckEngramSubagentVisibility_DistinguishesStaleCacheFromMissingPackage(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	engramPath := filepath.Join(cfg.ClaudeHome, "plugins", "cache", "engram", "engram", "0.1.1")
+	clickSDDPath := filepath.Join(cfg.ClaudeHome, "plugins", "cache", "click-ai-devkit", "click-sdd", "0.1.0")
+	writeInstalledPluginPaths(t, cfg, map[string]string{installer.EngramPluginID: engramPath, installer.ClickSDDPluginID: clickSDDPath})
+	if err := os.MkdirAll(clickSDDPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeJSON(t, filepath.Join(engramPath, ".mcp.json"), map[string]any{"mcpServers": map[string]any{"engram": map[string]any{"command": "engram", "args": []string{"mcp", "--tools=agent"}}}})
+	writeFile(t, cfg.SettingsPath(), `{"enabledPlugins":{"engram@engram":true}}`)
+	check := checkEngramSubagentVisibility(cfg)
+	if check.Healthy || !strings.Contains(check.Detail, clickSDDPath) || !strings.Contains(check.Detail, "Actualice") {
+		t.Fatalf("check = %#v, want stale cache path and update guidance", check)
+	}
+}
+
 func writeInstalledPluginPaths(t *testing.T, cfg installer.Config, paths map[string]string) {
 	t.Helper()
 	plugins := map[string][]map[string]any{}

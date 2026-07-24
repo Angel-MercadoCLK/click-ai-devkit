@@ -23,5 +23,28 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Test
-        run: go test ./...
+        run: go test ./... -count=1
+
+      - name: Set up GoReleaser
+        if: matrix.os == 'windows-latest'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          install-only: true
+
+      - name: Build Windows package candidate
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: goreleaser build --snapshot --clean --single-target --skip=validate
+
+      - name: Smoke packaged Windows click.exe
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw "bucket/click.json" | ConvertFrom-Json).version
+          ./scripts/windows-package-smoke.ps1 -DistDir dist -ExpectedVersion $version

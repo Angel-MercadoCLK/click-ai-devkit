@@ -28,7 +28,7 @@ func NewTargetSelectModel(claudeFound, openClawFound, claudeSelected, openClawSe
 	if len(codex) > 1 {
 		codexSelected = codex[1]
 	}
-	return TargetSelectModel{ClaudeFound: claudeFound, OpenClawFound: openClawFound, CodexFound: codexFound, Claude: claudeSelected, OpenClaw: openClawSelected, Codex: codexSelected}
+	return TargetSelectModel{ClaudeFound: claudeFound, OpenClawFound: openClawFound, CodexFound: codexFound, Claude: claudeFound && claudeSelected, OpenClaw: openClawFound && openClawSelected, Codex: codexFound && codexSelected}
 }
 
 func (m TargetSelectModel) Init() tea.Cmd { return nil }
@@ -40,9 +40,9 @@ func (m TargetSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch key.Type {
 	case tea.KeyUp:
-		m.Cursor = (m.Cursor - 1 + 3) % 3
+		m.moveCursor(-1)
 	case tea.KeyDown:
-		m.Cursor = (m.Cursor + 1) % 3
+		m.moveCursor(1)
 	case tea.KeySpace:
 		m.toggleCurrent()
 	case tea.KeyEnter:
@@ -54,9 +54,9 @@ func (m TargetSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyRunes:
 		switch string(key.Runes) {
 		case "j":
-			m.Cursor = (m.Cursor + 1) % 3
+			m.moveCursor(1)
 		case "k":
-			m.Cursor = (m.Cursor - 1 + 3) % 3
+			m.moveCursor(-1)
 		case " ":
 			m.toggleCurrent()
 		case "q":
@@ -70,9 +70,26 @@ func (m TargetSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *TargetSelectModel) toggleCurrent() {
 	switch m.Cursor {
 	case 1:
-		m.OpenClaw = !m.OpenClaw
+		if m.OpenClawFound {
+			m.OpenClaw = !m.OpenClaw
+		}
 	case 2:
-		m.Codex = !m.Codex
+		if m.CodexFound {
+			m.Codex = !m.Codex
+		}
+	case 0:
+		if m.ClaudeFound {
+			m.Claude = !m.Claude
+		}
+	}
+}
+
+func (m *TargetSelectModel) moveCursor(delta int) {
+	for i := 0; i < 3; i++ {
+		m.Cursor = (m.Cursor + delta + 3) % 3
+		if (m.Cursor == 0 && m.ClaudeFound) || (m.Cursor == 1 && m.OpenClawFound) || (m.Cursor == 2 && m.CodexFound) {
+			return
+		}
 	}
 }
 
@@ -80,13 +97,19 @@ func (m TargetSelectModel) View() string {
 	var b strings.Builder
 	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Seleccione los runtimes de instalación"))
 	b.WriteString("\n\n")
-	b.WriteString(m.row(0, "Claude Code", m.Claude, m.ClaudeFound, "flujo completo de plugins, SDD y modelos"))
-	b.WriteString("\n")
-	b.WriteString(m.row(1, "OpenClaw", m.OpenClaw, m.OpenClawFound, "SDD portable, Engram, memory guard y recomendación de modelos"))
-	b.WriteString("\n")
-	b.WriteString(m.row(2, "Codex CLI", m.Codex, m.CodexFound, "AGENTS.md gestionado y flujo SDD portable; sin config.toml ni modelo"))
+	rows := []string{}
+	if m.ClaudeFound {
+		rows = append(rows, m.row(0, "Claude Code", m.Claude, true, "plugins nativos, SDD y modelos por fase"))
+	}
+	if m.OpenClawFound {
+		rows = append(rows, m.row(1, "OpenClaw", m.OpenClaw, true, "SDD portable, Engram, memory guard y modelo nativo"))
+	}
+	if m.CodexFound {
+		rows = append(rows, m.row(2, "Codex CLI", m.Codex, true, "AGENTS.md gestionado y modelo nativo de config.toml"))
+	}
+	b.WriteString(strings.Join(rows, "\n"))
 	b.WriteString("\n\nOtros runtimes: no soportados todavía; no se pueden seleccionar.\n")
-	b.WriteString("\nClaude Code es el target primario · ↑/↓ mover · espacio alternar OpenClaw/Codex · enter guardar · q/esc cancelar")
+	b.WriteString("\n↑/↓ mover · espacio alternar · enter continuar · q/esc cancelar")
 	return b.String()
 }
 

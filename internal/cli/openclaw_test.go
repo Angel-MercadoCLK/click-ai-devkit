@@ -46,6 +46,7 @@ func seedResolvableOpenClaw(t *testing.T) {
 func execRootWithOpenClaw(t *testing.T, claudeHome, openClawHome string, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
 	seedResolvableOpenClaw(t)
 

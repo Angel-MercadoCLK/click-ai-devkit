@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,24 @@ import (
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 )
+
+func execRootWithLookupAndState(t *testing.T, claudeHome, stateHome string, lookup installer.BinaryLookup, args ...string) (string, error) {
+	t.Helper()
+	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup { return lookup })
+	defer restore()
+
+	root := NewRootCommand()
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs(args)
+
+	err := root.Execute()
+	return buf.String(), err
+}
 
 // failingClaudeRunner simulates a machine where the `claude` CLI genuinely cannot run: every
 // invocation with name=="claude" fails, mirroring the raw, unwrapped exec error a real machine with
@@ -122,16 +141,16 @@ func TestUninstallCommand_ContinuesEveryStepAfterAnEarlierOneFails(t *testing.T)
 	if readErr != nil {
 		t.Fatalf("ReadFile(ClaudeMDPath) error = %v", readErr)
 	}
-	if strings.Contains(string(md), "click-ai-devkit (managed)") {
-		t.Fatalf("CLAUDE.md still contains the managed block after uninstall, want it stripped even though step 1 failed:\n%s", md)
+	if !strings.Contains(string(md), "click-ai-devkit (managed)") {
+		t.Fatalf("CLAUDE.md = %q, want rollback to restore the managed block after the failed first step", md)
 	}
 
 	hasHook, hookErr := installer.HasMemoryGuardHook(cfg)
 	if hookErr != nil {
 		t.Fatalf("HasMemoryGuardHook() error = %v", hookErr)
 	}
-	if hasHook {
-		t.Fatal("memory-guard hook still registered after uninstall, want it removed even though step 1 failed")
+	if !hasHook {
+		t.Fatal("memory-guard hook missing after uninstall failure, want rollback to restore it")
 	}
 
 	// The failure must be reported, not silently swallowed (Finding 2(b)): the overall summary must
@@ -153,12 +172,18 @@ func TestUninstallCommand_ClaudeMissing_StillRunsEveryStepAndReportsFriendlyMess
 		t.Fatalf("WriteManagedBlock() error = %v", err)
 	}
 
+	stateHome := t.TempDir()
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+	if err := installer.SaveTargetSelection(installer.Config{ClaudeHome: home, ClickStateHome: stateHome}, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+
 	runner := &failingClaudeRunner{}
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 	missingClaude := cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git"}}
 
-	out, err := execRootWithGitLookup(t, home, missingClaude, "uninstall")
+	out, err := execRootWithLookupAndState(t, home, stateHome, missingClaude, "uninstall")
 	if err == nil {
 		t.Fatalf("uninstall command error = nil when claude is missing, want non-nil, output:\n%s", out)
 	}
@@ -172,8 +197,8 @@ func TestUninstallCommand_ClaudeMissing_StillRunsEveryStepAndReportsFriendlyMess
 	if readErr != nil {
 		t.Fatalf("ReadFile(ClaudeMDPath) error = %v", readErr)
 	}
-	if strings.Contains(string(md), "click-ai-devkit (managed)") {
-		t.Fatalf("CLAUDE.md still contains the managed block after uninstall with claude missing, want it stripped:\n%s", md)
+	if !strings.Contains(string(md), "click-ai-devkit (managed)") {
+		t.Fatalf("CLAUDE.md = %q, want rollback to restore the managed block when claude-dependent teardown fails", md)
 	}
 }
 
@@ -299,16 +324,16 @@ func TestUninstallCommand_RemoveOpenClawSkillsError_ContinuesTeardown(t *testing
 	if readErr != nil {
 		t.Fatalf("ReadFile(ClaudeMDPath) error = %v", readErr)
 	}
-	if strings.Contains(string(md), "click-ai-devkit (managed)") {
-		t.Fatalf("CLAUDE.md still contains the managed block after uninstall, want it stripped even though RemoveOpenClawSkills failed:\n%s", md)
+	if !strings.Contains(string(md), "click-ai-devkit (managed)") {
+		t.Fatalf("CLAUDE.md = %q, want rollback to restore the managed block after RemoveOpenClawSkills fails", md)
 	}
 
 	hasHook, hookErr := installer.HasMemoryGuardHook(cfg)
 	if hookErr != nil {
 		t.Fatalf("HasMemoryGuardHook() error = %v", hookErr)
 	}
-	if hasHook {
-		t.Fatal("memory-guard hook still registered after uninstall, want it removed even though RemoveOpenClawSkills failed")
+	if !hasHook {
+		t.Fatal("memory-guard hook missing after RemoveOpenClawSkills failure, want rollback to restore it")
 	}
 
 	if !strings.Contains(out, "skills") {
@@ -342,5 +367,93 @@ func TestUninstallCommand_CorruptedEngramState_SucceedsWithWarning(t *testing.T)
 	}
 	if !strings.Contains(out, "dañado") {
 		t.Fatalf("uninstall output = %q, want it to contain the corrupted-state warning", out)
+	}
+}
+
+func TestUninstallCommand_CodexOnlySelection_DoesNotRequireClaudeAndRemovesNeutralStateLast(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	selectionCfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(selectionCfg, installer.TargetSelection{Configured: true, Codex: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	codexCfg := installer.Config{CodexHome: codexHome}
+	if err := installer.WriteManagedBlock(codexCfg.CodexAgentsMDPath(), installer.DefaultCodexAgentsContent); err != nil {
+		t.Fatalf("WriteManagedBlock(CodexAgentsMDPath) error = %v", err)
+	}
+
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
+	out, err := execRootWithLookupAndState(t, claudeHome, stateHome, lookup, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall command error = %v, want nil for a Codex-only teardown, output:\n%s", err, out)
+	}
+	if _, err := os.Stat(codexCfg.CodexAgentsMDPath()); !os.IsNotExist(err) {
+		t.Fatalf("Stat(CodexAgentsMDPath) error = %v, want Codex guidance removed", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateHome, "targets.json")); !os.IsNotExist(err) {
+		t.Fatalf("Stat(targets.json) error = %v, want neutral state removed after successful teardown", err)
+	}
+	if strings.Contains(out, installer.ClaudeMissingMessage) {
+		t.Fatalf("uninstall output = %q, want no Claude dependency warning in a Codex-only teardown", out)
+	}
+}
+
+func TestUninstallCommand_FailedCodexTeardown_RestoresSnapshotAndKeepsNeutralState(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	selectionCfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(selectionCfg, installer.TargetSelection{Configured: true, Codex: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	codexCfg := installer.Config{CodexHome: codexHome}
+	if err := installer.WriteManagedBlock(codexCfg.CodexAgentsMDPath(), installer.DefaultCodexAgentsContent); err != nil {
+		t.Fatalf("WriteManagedBlock(CodexAgentsMDPath) error = %v", err)
+	}
+	original, readOriginalErr := os.ReadFile(codexCfg.CodexAgentsMDPath())
+	if readOriginalErr != nil {
+		t.Fatalf("ReadFile(CodexAgentsMDPath) error = %v", readOriginalErr)
+	}
+	unrelated := filepath.Join(codexHome, "notes.txt")
+	if err := os.WriteFile(unrelated, []byte("keep me\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(unrelated) error = %v", err)
+	}
+
+	injectedErr := errors.New("injected codex teardown failure")
+	restoreStrip := SetStripCodexGuidanceFuncForTests(func(cfg installer.Config) error {
+		if err := os.Remove(cfg.CodexAgentsMDPath()); err != nil {
+			return err
+		}
+		return injectedErr
+	})
+	defer restoreStrip()
+
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
+	out, err := execRootWithLookupAndState(t, claudeHome, stateHome, lookup, "uninstall")
+	if err == nil {
+		t.Fatalf("uninstall command error = nil, want rollback-triggering failure, output:\n%s", out)
+	}
+	got, readErr := os.ReadFile(codexCfg.CodexAgentsMDPath())
+	if readErr != nil {
+		t.Fatalf("ReadFile(CodexAgentsMDPath) error = %v, want rollback to restore the captured file", readErr)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("Codex guidance after rollback = %q, want %q", got, original)
+	}
+	if _, err := os.Stat(filepath.Join(stateHome, "targets.json")); err != nil {
+		t.Fatalf("Stat(targets.json) error = %v, want neutral state preserved when teardown rolls back", err)
+	}
+	if keep, err := os.ReadFile(unrelated); err != nil || string(keep) != "keep me\n" {
+		t.Fatalf("unrelated file = %q, err = %v, want unrelated content untouched", keep, err)
+	}
+	if !strings.Contains(out, "Codex") {
+		t.Fatalf("uninstall output = %q, want the failed Codex step reported", out)
 	}
 }

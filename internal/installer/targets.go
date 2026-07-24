@@ -21,11 +21,23 @@ type TargetSelection struct {
 }
 
 func (c Config) TargetSelectionPath() string {
+	if c.ClickStateHome != "" {
+		return filepath.Join(c.ClickStateHome, "targets.json")
+	}
+	return filepathJoinClickState(c.ClaudeHome, "targets.json")
+}
+
+func (c Config) LegacyTargetSelectionPath() string {
 	return filepathJoinClickState(c.ClaudeHome, "targets.json")
 }
 
 func LoadTargetSelection(cfg Config) (TargetSelection, bool, error) {
 	data, err := os.ReadFile(cfg.TargetSelectionPath())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && cfg.ClickStateHome != "" && cfg.ClaudeHome != "" {
+			data, err = os.ReadFile(cfg.LegacyTargetSelectionPath())
+		}
+	}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return TargetSelection{Claude: true, OpenClaw: true}, false, nil
@@ -49,9 +61,6 @@ func SaveTargetSelection(cfg Config, selection TargetSelection) error {
 	if !selection.Configured {
 		return fmt.Errorf("installer: target selection must be explicitly configured")
 	}
-	if !selection.Claude {
-		return fmt.Errorf("installer: Claude Code must remain selected as the primary target")
-	}
 	selection.SchemaVersion = targetSelectionSchemaVersion
 	data, err := json.MarshalIndent(selection, "", "  ")
 	if err != nil {
@@ -70,6 +79,11 @@ func SaveTargetSelection(cfg Config, selection TargetSelection) error {
 func RemoveTargetSelection(cfg Config) error {
 	if err := os.Remove(cfg.TargetSelectionPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("installer: remove target selection: %w", err)
+	}
+	if legacy := cfg.LegacyTargetSelectionPath(); legacy != cfg.TargetSelectionPath() {
+		if err := os.Remove(legacy); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("installer: remove legacy target selection: %w", err)
+		}
 	}
 	return nil
 }

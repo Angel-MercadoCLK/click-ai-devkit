@@ -57,9 +57,12 @@ type snapshotSource struct {
 // what every pre-existing caller that never sets it produces), this returns the identical 2-entry
 // slice it always did.
 func snapshotSources(cfg Config) []snapshotSource {
-	sources := []snapshotSource{
-		{originalPath: cfg.ClaudeMDPath(), backupFile: "CLAUDE.md"},
-		{originalPath: cfg.SettingsPath(), backupFile: "settings.json"},
+	sources := []snapshotSource{}
+	if cfg.ClaudeHome != "" {
+		sources = append(sources,
+			snapshotSource{originalPath: cfg.ClaudeMDPath(), backupFile: "CLAUDE.md"},
+			snapshotSource{originalPath: cfg.SettingsPath(), backupFile: "settings.json"},
+		)
 	}
 	if _, err := os.Stat(cfg.TargetSelectionPath()); err == nil {
 		sources = append(sources, snapshotSource{originalPath: cfg.TargetSelectionPath(), backupFile: "targets.json"})
@@ -119,6 +122,18 @@ func snapshotManifestPath(cfg Config) string {
 // snapshot in backups/latest/ completely untouched and unambiguously last-known-good — and never
 // touches the original source files, which SnapshotRun only ever reads.
 func SnapshotRun(cfg Config) error {
+	return snapshotRunWithSources(cfg, snapshotSources(cfg))
+}
+
+func SnapshotTargetPlan(cfg Config, plan TargetPlan) error {
+	sources := make([]snapshotSource, 0, len(plan.SnapshotPaths()))
+	for i, path := range plan.SnapshotPaths() {
+		sources = append(sources, snapshotSource{originalPath: path, backupFile: fmt.Sprintf("plan-%03d%s", i+1, filepath.Ext(path))})
+	}
+	return snapshotRunWithSources(cfg, sources)
+}
+
+func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 	backupDir := cfg.BackupDir()
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
 		return fmt.Errorf("installer: create backup dir %s: %w", backupDir, err)
@@ -139,7 +154,7 @@ func SnapshotRun(cfg Config) error {
 	}()
 
 	manifest := runManifest{}
-	for _, src := range snapshotSources(cfg) {
+	for _, src := range sources {
 		data, readErr := os.ReadFile(src.originalPath)
 		if readErr != nil {
 			if os.IsNotExist(readErr) {

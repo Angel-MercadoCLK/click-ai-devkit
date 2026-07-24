@@ -44,6 +44,14 @@ func SetRemoveOpenClawSkillsFuncForTests(fn func(installer.Config) error) func()
 	return func() { removeOpenClawSkillsFunc = old }
 }
 
+var stripCodexGuidanceFunc = installer.StripCodexGuidance
+
+func SetStripCodexGuidanceFuncForTests(fn func(installer.Config) error) func() {
+	old := stripCodexGuidanceFunc
+	stripCodexGuidanceFunc = fn
+	return func() { stripCodexGuidanceFunc = old }
+}
+
 func newUninstallCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall",
@@ -85,151 +93,134 @@ type uninstallStepOutcome struct {
 func runUninstall(cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
 	r := rendererFor(cmd, out)
-
-	claudeHome, err := installer.ResolveClaudeHome()
+	clickStateHome, err := installer.ResolveClickStateHome()
 	if err != nil {
 		return err
 	}
-	// openclaw-target-support (PR-C, design #1666's OCG-1..6): resolved UNCONDITIONALLY, unlike
-	// install/update's detect+confirm gate — removing the plugin dir is safe and idempotent even on
-	// a machine where openclaw is no longer on PATH (or never was); RemoveOpenClawPlugin's
-	// os.RemoveAll is a no-op when the directory doesn't exist. This mirrors StripManagedBlock's own
-	// unconditional-attempt posture a few lines below, rather than RemoveEngramPlugin/RemoveContext7's
-	// ownership-gated one — there is no per-install "did click own this" state for the plugin dir to
-	// check, so "always attempt removal" is the simplest safe teardown.
-	openClawHome, err := installer.ResolveOpenClawHome()
+	cfg := installer.Config{ClickStateHome: clickStateHome}
+	selection, configured, err := installer.LoadTargetSelection(cfg)
 	if err != nil {
 		return err
 	}
-	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
-	if selection, configured, loadErr := installer.LoadTargetSelection(cfg); loadErr == nil && configured && selection.Codex {
+	if !configured {
+		selection = installer.TargetSelection{Configured: true, Claude: installer.ClaudeAvailable(), OpenClaw: installer.OpenClawAvailable(), Codex: installer.CodexAvailable()}
+	}
+	var claudeErr error
+	if selection.Claude {
+		claudeHome, resolveErr := installer.ResolveClaudeHome()
+		if resolveErr != nil {
+			return resolveErr
+		}
+		cfg.ClaudeHome = claudeHome
+		claudeErr = installer.PreflightClaude()
+		if claudeErr != nil {
+			fmt.Fprintln(out, r.Warn(claudeErr.Error()))
+		}
+		if gitErr := installer.PreflightGit(); gitErr != nil {
+			fmt.Fprintln(out, r.Warn(gitErr.Error()))
+		}
+	}
+	if selection.OpenClaw {
+		cfg.OpenClawHome, err = installer.ResolveOpenClawHome()
+		if err != nil {
+			return err
+		}
+	}
+	if selection.Codex {
 		cfg.CodexHome, err = installer.ResolveCodexHome()
 		if err != nil {
 			return err
 		}
 	}
-
-	claudeErr := installer.PreflightClaude()
-	if claudeErr != nil {
-		fmt.Fprintln(out, r.Warn(claudeErr.Error()))
-	}
-	if gitErr := installer.PreflightGit(); gitErr != nil {
-		fmt.Fprintln(out, r.Warn(gitErr.Error()))
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{})
+	if err := installer.SnapshotTargetPlan(cfg, plan); err != nil {
+		return err
 	}
 
 	var outcomes []uninstallStepOutcome
-	// runStep wraps r.RunStep so a step's failure is RECORDED, never returned early — the core of
-	// Finding 2(b)'s resilience contract. needsClaude marks steps that (transitively) shell out to
-	// `claude`: when claudeErr is non-nil, their raw failure gets ClaudeMissingMessage prepended
-	// (Finding 2(a)) so the developer sees the same actionable text install/update show, not a raw
-	// exec dump, while the original error is still preserved via %w for diagnostics.
-	runStep := func(label, running, done string, needsClaude bool, fn func() error) {
+	runStep := func(label, running, done string, needsClaude bool, fn func() error) error {
 		stepErr := r.RunStep(running, done, fn)
 		if stepErr != nil && needsClaude && claudeErr != nil {
 			stepErr = fmt.Errorf("%s (%w)", installer.ClaudeMissingMessage, stepErr)
 		}
 		outcomes = append(outcomes, uninstallStepOutcome{label: label, err: stepErr})
+		return stepErr
+	}
+	rollbackAndReport := func() error {
+		if restoreErr := installer.RestoreRun(cfg); restoreErr != nil {
+			outcomes = append(outcomes, uninstallStepOutcome{label: "rollback", err: restoreErr})
+		}
+		return reportUninstallOutcome(out, r, outcomes)
 	}
 
-	runStep(
-		"Plugins de Claude Code",
-		"Quitando plugins click-sdd, click-memory, click-review y click-skills…",
-		"Plugins eliminados de Claude Code",
-		true,
-		func() error { return installer.RemoveMarketplacePlugins() },
-	)
-
-	runStep(
-		"CLAUDE.md",
-		"Limpiando CLAUDE.md…",
-		"Bloque de CLAUDE.md eliminado",
-		false,
-		func() error { return installer.StripManagedBlock(cfg.ClaudeMDPath()) },
-	)
-
-	runStep(
-		"memory-guard",
-		"Quitando memory-guard…",
-		"memory-guard eliminado",
-		false,
-		func() error { return installer.UnregisterMemoryGuardHook(cfg) },
-	)
-
-	// openclaw-target-support (PR-C, task 3.13): parity with how the Claude Code memory-guard hook
-	// above gets torn down — removes the click-memory-guard OpenClaw plugin directory. No-op (nil,
-	// no error) when it was never installed.
-	runStep(
-		"plugin de OpenClaw",
-		"Quitando plugin de memory-guard para OpenClaw…",
-		"Plugin de memory-guard para OpenClaw eliminado",
-		false,
-		func() error { return installer.RemoveOpenClawPlugin(cfg) },
-	)
-
-	// Remove click-owned OpenClaw skill files after plugin removal, leaving user-created siblings
-	// untouched.
-	runStep(
-		"skills de OpenClaw",
-		"Quitando skills de Click de OpenClaw…",
-		"Skills de Click de OpenClaw eliminados",
-		false,
-		func() error { return removeOpenClawSkillsFunc(cfg) },
-	)
-
-	runStep(
-		"selección de runtimes",
-		"Quitando selección persistente de runtimes…",
-		"Selección persistente de runtimes eliminada",
-		false,
-		func() error { return installer.RemoveTargetSelection(cfg) },
-	)
-
-	runStep(
-		"AGENTS.md de Codex",
-		"Limpiando AGENTS.md de Codex…",
-		"Bloque de AGENTS.md de Codex eliminado",
-		false,
-		func() error { return installer.StripCodexGuidance(cfg) },
-	)
-
-	// RemoveEngramPlugin only reverses Engram when click's own state says click installed it —
-	// a pre-existing developer setup is left running untouched. It also independently reverses
-	// click's own PATH mutation(s) (D-9, T4-1, T4-1 follow-up) when it recorded owning them; a
-	// failure doing so is surfaced as engramPathWarning below rather than folded into the fatal err.
-	// Finding 3: a corrupted engram.json is ALSO no longer a fatal error here — RemoveEngramPlugin
-	// itself now treats that as an "unknown ownership, touch nothing" case and reports it back
-	// through this same pathWarning channel (see engram.go's RemoveEngramPlugin doc comment) instead
-	// of the hard error that used to abort every step after it.
-	engramPathWarning := ""
-	runStep(
-		"Engram",
-		"Quitando Engram (si click lo instaló)…",
-		"Engram procesado",
-		true,
-		func() error {
-			var pathErr error
-			engramPathWarning, pathErr = removeEngramPluginFunc(cfg)
-			return pathErr
-		},
-	)
-	surfacePathWarning(out, r, engramPathWarning)
-
-	// RemoveContext7 mirrors RemoveEngramPlugin's exact respect-ownership contract: only removes
-	// Context7 when click's own state says click registered it. Malformed state is unknown ownership,
-	// so the installer leaves Context7 and its state file untouched and reports a warning.
-	context7Warning := ""
-	runStep(
-		"Context7",
-		"Quitando Context7 (si click lo instaló)…",
-		"Context7 procesado",
-		true,
-		func() error {
-			var stepErr error
-			context7Warning, stepErr = installer.RemoveContext7(cfg)
-			return stepErr
-		},
-	)
-	surfacePathWarning(out, r, context7Warning)
+	for _, action := range plan.UninstallActionKinds() {
+		switch action {
+		case installer.StepActionRemoveMarketplacePlugins:
+			if err := runStep("Plugins de Claude Code", "Quitando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins eliminados de Claude Code", true, func() error {
+				return installer.RemoveMarketplacePlugins()
+			}); err != nil {
+				return rollbackAndReport()
+			}
+		case installer.StepActionRemoveOpenClawPlugin:
+			if err := runStep("plugin de OpenClaw", "Quitando plugin de memory-guard para OpenClaw…", "Plugin de memory-guard para OpenClaw eliminado", false, func() error {
+				return installer.RemoveOpenClawPlugin(cfg)
+			}); err != nil {
+				return rollbackAndReport()
+			}
+		case installer.StepActionRemoveOpenClawSkills:
+			if err := runStep("skills de OpenClaw", "Quitando skills de Click de OpenClaw…", "Skills de Click de OpenClaw eliminados", false, func() error {
+				return removeOpenClawSkillsFunc(cfg)
+			}); err != nil {
+				return rollbackAndReport()
+			}
+		case installer.StepActionStripCodexGuidance:
+			if err := runStep("AGENTS.md de Codex", "Limpiando AGENTS.md de Codex…", "Bloque de AGENTS.md de Codex eliminado", false, func() error {
+				return stripCodexGuidanceFunc(cfg)
+			}); err != nil {
+				return rollbackAndReport()
+			}
+		case installer.StepActionRemoveEngram:
+			engramPathWarning := ""
+			if err := runStep("Engram", "Quitando Engram (si click lo instaló)…", "Engram procesado", true, func() error {
+				var pathErr error
+				engramPathWarning, pathErr = removeEngramPluginFunc(cfg)
+				return pathErr
+			}); err != nil {
+				surfacePathWarning(out, r, engramPathWarning)
+				return rollbackAndReport()
+			}
+			surfacePathWarning(out, r, engramPathWarning)
+		case installer.StepActionRemoveContext7:
+			context7Warning := ""
+			if err := runStep("Context7", "Quitando Context7 (si click lo instaló)…", "Context7 procesado", true, func() error {
+				var stepErr error
+				context7Warning, stepErr = installer.RemoveContext7(cfg)
+				return stepErr
+			}); err != nil {
+				surfacePathWarning(out, r, context7Warning)
+				return rollbackAndReport()
+			}
+			surfacePathWarning(out, r, context7Warning)
+		case installer.StepActionStripClaudeManagedBlock:
+			if err := runStep("CLAUDE.md", "Limpiando CLAUDE.md…", "Bloque de CLAUDE.md eliminado", false, func() error {
+				return installer.StripManagedBlock(cfg.ClaudeMDPath())
+			}); err != nil {
+				return rollbackAndReport()
+			}
+		case installer.StepActionUnregisterMemoryGuard:
+			if err := runStep("memory-guard", "Quitando memory-guard…", "memory-guard eliminado", false, func() error {
+				return installer.UnregisterMemoryGuardHook(cfg)
+			}); err != nil {
+				return rollbackAndReport()
+			}
+		case installer.StepActionRemoveTargetSelection:
+			if err := runStep("selección de runtimes", "Quitando selección persistente de runtimes…", "Selección persistente de runtimes eliminada", false, func() error {
+				return installer.RemoveTargetSelection(cfg)
+			}); err != nil {
+				return rollbackAndReport()
+			}
+		}
+	}
 
 	return reportUninstallOutcome(out, r, outcomes)
 }

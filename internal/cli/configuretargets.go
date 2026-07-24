@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/ui"
@@ -26,11 +27,11 @@ func runConfigureTargets(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(out, "No hay terminal interactiva disponible; use `click install` o `click update` para aplicar la selección de runtimes.")
 		return nil
 	}
-	claudeHome, err := installer.ResolveClaudeHome()
+	clickStateHome, err := installer.ResolveClickStateHome()
 	if err != nil {
 		return err
 	}
-	cfg := installer.Config{ClaudeHome: claudeHome}
+	cfg := installer.Config{ClickStateHome: clickStateHome}
 	selection, _, err := installer.LoadTargetSelection(cfg)
 	if err != nil {
 		return err
@@ -59,11 +60,15 @@ func runConfigureTargets(cmd *cobra.Command, args []string) error {
 	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Claude: result.Claude, OpenClaw: result.OpenClaw, Codex: result.Codex}); err != nil {
 		return err
 	}
+	plan := installer.BuildTargetPlan(cfg, installer.TargetSelection{Configured: true, Claude: result.Claude, OpenClaw: result.OpenClaw, Codex: result.Codex}, installer.PlanOptions{})
 	fmt.Fprintln(out, "Selección de runtimes guardada.")
+	if summary := strings.TrimSpace(plan.CapabilitiesSummary()); summary != "" {
+		fmt.Fprintf(out, "Plan objetivo: %s\n", summary)
+	}
 	return nil
 }
 
-func resolveTargetConfig(cfg installer.Config, skipOpenClaw bool, out interface{ Write([]byte) (int, error) }, r interface{ Warn(string) string }) (installer.Config, error) {
+func resolveTargetConfig(cfg installer.Config, skipOpenClaw bool, out interface{ Write([]byte) (int, error) }, r interface{ Warn(string) string }) (installer.TargetSelection, installer.Config, error) {
 	selection, _, err := installer.LoadTargetSelection(cfg)
 	if err != nil {
 		// A corrupt/unsupported targets.json must never brick install/update. Unlike the standalone
@@ -78,7 +83,7 @@ func resolveTargetConfig(cfg installer.Config, skipOpenClaw bool, out interface{
 	if installer.ResolveOpenClawTarget(selection, detected) && !skipOpenClaw {
 		cfg.OpenClawHome, err = installer.ResolveOpenClawHome()
 		if err != nil {
-			return installer.Config{}, err
+			return installer.TargetSelection{}, installer.Config{}, err
 		}
 	} else if selection.Configured && selection.OpenClaw && !detected {
 		fmt.Fprintln(out, r.Warn("OpenClaw fue seleccionado, pero no está disponible; se omite esta integración y continúa Claude Code."))
@@ -86,10 +91,10 @@ func resolveTargetConfig(cfg installer.Config, skipOpenClaw bool, out interface{
 	if installer.ResolveCodexTarget(selection, installer.CodexAvailable()) {
 		cfg.CodexHome, err = installer.ResolveCodexHome()
 		if err != nil {
-			return installer.Config{}, err
+			return installer.TargetSelection{}, installer.Config{}, err
 		}
 	} else if selection.Configured && selection.Codex && !installer.CodexAvailable() {
 		fmt.Fprintln(out, r.Warn("Codex fue seleccionado, pero no está disponible; se omite esta integración y continúa Claude Code."))
 	}
-	return cfg, nil
+	return selection, cfg, nil
 }

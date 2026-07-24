@@ -19,6 +19,12 @@ const claudeHomeEnvOverride = "CLICK_CLAUDE_HOME"
 // directory, same hard safety rule as claudeHomeEnvOverride.
 const openClawHomeEnvOverride = "CLICK_OPENCLAW_HOME"
 
+// clickStateHomeEnvOverride lets tests and power users inject a Click-owned neutral state root
+// independent of any specific runtime home.
+const clickStateHomeEnvOverride = "CLICK_STATE_HOME"
+
+var userConfigDir = os.UserConfigDir
+
 // Config carries every path click's installer needs. It is deliberately just ClaudeHome today —
 // Slice 1 only touches the plugin dir and CLAUDE.md, both derived from it.
 type Config struct {
@@ -37,6 +43,23 @@ type Config struct {
 
 	// CodexHome is the Codex user home, normally ~/.codex. This slice manages only AGENTS.md there.
 	CodexHome string
+
+	// ClickStateHome is Click's neutral, Click-owned state root. When populated, target selection and
+	// other runtime-neutral lifecycle artifacts live here instead of under a runtime-specific home.
+	ClickStateHome string
+}
+
+// ResolveClickStateHome resolves Click's neutral state root: the CLICK_STATE_HOME override when set,
+// otherwise the OS user config directory joined with click-ai-devkit.
+func ResolveClickStateHome() (string, error) {
+	if v := os.Getenv(clickStateHomeEnvOverride); v != "" {
+		return v, nil
+	}
+	root, err := userConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("installer: resolve click state home: %w", err)
+	}
+	return filepath.Join(root, "click-ai-devkit"), nil
 }
 
 // ResolveClaudeHome resolves the Claude Code home directory click should install into: the
@@ -265,4 +288,9 @@ func (c Config) OpenClawModelProfilePath() string {
 // CodexAgentsMDPath is Codex's user-scope global instruction file.
 func (c Config) CodexAgentsMDPath() string {
 	return filepath.Join(c.CodexHome, "AGENTS.md")
+}
+
+// CodexConfigPath is Codex's native user-scope config file.
+func (c Config) CodexConfigPath() string {
+	return filepath.Join(c.CodexHome, "config.toml")
 }

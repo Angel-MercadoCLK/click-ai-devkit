@@ -50,30 +50,64 @@ func (r Report) Healthy() bool {
 	return true
 }
 
-// Run executes every current health check against cfg.ClaudeHome. It never mutates the
+// Run executes the plan-derived health checks for the selected targets in cfg. It never mutates the
 // filesystem.
 func Run(cfg installer.Config) Report {
-	return Report{Checks: []CheckResult{
-		checkGit(cfg),
-		checkClaude(cfg),
-		checkOpenClaw(cfg),
-		checkClickPluginRegistries(cfg),
-		checkPlugin(cfg),
-		checkMemoryPlugin(cfg),
-		checkReviewPlugin(cfg),
-		checkSkillsPlugin(cfg),
-		checkClaudeMD(cfg),
-		checkMemoryGuardHook(cfg),
-		checkClickBinary(cfg),
-		checkModelsConfig(cfg),
-		checkAppliedPluginConfig(cfg),
-		checkEngramPlugin(cfg),
-		checkEngramSubagentVisibility(cfg),
-		checkEngramBinary(cfg),
-		checkEngramPath(cfg),
-		checkEngramCloud(cfg),
-		checkContext7(cfg),
-	}}
+	selection := installer.TargetSelection{Configured: true, Claude: cfg.ClaudeHome != "", OpenClaw: cfg.OpenClawHome != "", Codex: cfg.CodexHome != ""}
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{})
+	checks := []CheckResult{checkGit(cfg), checkOpenClaw(cfg), checkOpenClawNativeModelAction(cfg), checkClickBinary(cfg)}
+	for _, kind := range plan.DoctorCheckKinds() {
+		checks = append(checks, doctorCheckResult(cfg, kind))
+	}
+	if selection.Claude {
+		checks = append(checks, checkEngramCloud(cfg))
+	}
+	return Report{Checks: checks}
+}
+
+func doctorCheckResult(cfg installer.Config, kind installer.DoctorCheckKind) CheckResult {
+	switch kind {
+	case installer.DoctorCheckClaude:
+		return checkClaude(cfg)
+	case installer.DoctorCheckOpenClaw:
+		return checkOpenClaw(cfg)
+	case installer.DoctorCheckOpenClawNativeModel:
+		return checkOpenClawNativeModelAction(cfg)
+	case installer.DoctorCheckClickPluginRegistries:
+		return checkClickPluginRegistries(cfg)
+	case installer.DoctorCheckClickSDDPlugin:
+		return checkPlugin(cfg)
+	case installer.DoctorCheckClickMemoryPlugin:
+		return checkMemoryPlugin(cfg)
+	case installer.DoctorCheckClickReviewPlugin:
+		return checkReviewPlugin(cfg)
+	case installer.DoctorCheckClickSkillsPlugin:
+		return checkSkillsPlugin(cfg)
+	case installer.DoctorCheckClaudeManagedBlock:
+		return checkClaudeMD(cfg)
+	case installer.DoctorCheckMemoryGuard:
+		return checkMemoryGuardHook(cfg)
+	case installer.DoctorCheckModelsConfig:
+		return checkModelsConfig(cfg)
+	case installer.DoctorCheckAppliedPluginConfig:
+		return checkAppliedPluginConfig(cfg)
+	case installer.DoctorCheckEngramPlugin:
+		return checkEngramPlugin(cfg)
+	case installer.DoctorCheckEngramSubagentVisibility:
+		return checkEngramSubagentVisibility(cfg)
+	case installer.DoctorCheckEngramBinary:
+		return checkEngramBinary(cfg)
+	case installer.DoctorCheckEngramPath:
+		return checkEngramPath(cfg)
+	case installer.DoctorCheckEngramCloud:
+		return checkEngramCloud(cfg)
+	case installer.DoctorCheckContext7:
+		return checkContext7(cfg)
+	case installer.DoctorCheckCodexGuidance:
+		return checkCodexGuidance(cfg)
+	default:
+		return CheckResult{Name: string(kind), Healthy: false, Detail: "doctor check kind no soportado"}
+	}
 }
 
 // engramAgentToolRequirements is the repository's static contract for click-sdd agents that claim
@@ -138,8 +172,18 @@ func checkEngramSubagentVisibility(cfg installer.Config) CheckResult {
 		return CheckResult{Name: name, Healthy: false, Detail: "click-sdd está registrado, pero su ruta de caché no se puede resolver de forma segura desde installed_plugins.json; no se adivinan rutas. Ejecute `click update`"}
 	}
 	for agent, requiredTools := range engramAgentToolRequirements {
-		data, err := os.ReadFile(filepath.Join(clickSDDPath, "agents", agent+".md"))
+		agentPath := filepath.Join(clickSDDPath, "agents", agent+".md")
+		data, err := os.ReadFile(agentPath)
 		if err != nil {
+			if os.IsNotExist(err) {
+				if _, dirErr := os.Stat(clickSDDPath); os.IsNotExist(dirErr) {
+					if known, present := releaseAgentAssetStatus(agent); known && !present {
+						return CheckResult{Name: name, Healthy: false, Detail: "el paquete de la versión instalada no contiene el agente " + agent + " y tampoco está presente en el asset del paquete fuente. Falta " + agentPath + "; ejecute `click update` o reinstale el plugin"}
+					}
+					return CheckResult{Name: name, Healthy: false, Detail: "la caché registrada de click-sdd está obsoleta o incompleta; falta " + agentPath + ". El registro apunta a una ruta inexistente; Actualice con `click update` y reinicie Claude Code"}
+				}
+				return CheckResult{Name: name, Healthy: false, Detail: "la caché registrada de click-sdd está desactualizada; falta " + agentPath + ". El registro del plugin está presente, pero el paquete instalado no contiene este agente. Actualice con `click update` y reinicie Claude Code para refrescar la caché"}
+			}
 			return CheckResult{Name: name, Healthy: false, Detail: "no se pudo verificar el agente " + agent + " en la caché de click-sdd: " + err.Error()}
 		}
 		tools := frontmatterTools(string(data))
@@ -151,6 +195,27 @@ func checkEngramSubagentVisibility(cfg installer.Config) CheckResult {
 	}
 
 	return CheckResult{Name: name, Healthy: true, Detail: "prerrequisitos estáticos saludables: plugin Engram habilitado, .mcp.json y herramientas de agentes verificados; la propagación Agent-a-agent anidada no puede probarse estáticamente y requiere una sesión nueva de Claude y un diagnóstico en vivo"}
+}
+
+// releaseAgentAssetStatus only treats a repository checkout as authoritative. In an installed
+// binary the source tree is unavailable, so an absent cache entry must be diagnosed as stale or
+// incomplete rather than falsely blaming the release package.
+func releaseAgentAssetStatus(agent string) (known, present bool) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return false, false
+	}
+	for current := filepath.Clean(workingDir); ; current = filepath.Dir(current) {
+		root := filepath.Join(current, "plugins", "click-sdd", "agents")
+		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
+			_, assetErr := os.Stat(filepath.Join(root, agent+".md"))
+			return true, assetErr == nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false, false
+		}
+	}
 }
 
 func frontmatterTools(content string) []string {
@@ -289,6 +354,30 @@ func checkOpenClaw(cfg installer.Config) CheckResult {
 		return CheckResult{Name: name, Healthy: true, Detail: "resuelto en " + path}
 	}
 	return CheckResult{Name: name, Healthy: true, Detail: "no detectado (objetivo opcional, sin instalación de OpenClaw en este equipo)"}
+}
+
+func checkOpenClawNativeModelAction(cfg installer.Config) CheckResult {
+	const name = "OpenClaw native model action"
+	status := installer.OpenClawNativeModelActionStatus()
+	if status.Available {
+		return CheckResult{Name: name, Healthy: true, Detail: status.Detail}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: status.Detail}
+}
+
+func checkCodexGuidance(cfg installer.Config) CheckResult {
+	const name = "Codex AGENTS.md"
+	if cfg.CodexHome == "" {
+		return CheckResult{Name: name, Healthy: true, Detail: "objetivo Codex no seleccionado"}
+	}
+	ok, err := installer.HasManagedBlock(cfg.CodexAgentsMDPath())
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	if !ok {
+		return CheckResult{Name: name, Healthy: false, Detail: "bloque gestionado ausente en " + cfg.CodexAgentsMDPath() + " — ejecute `click update`"}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: "bloque gestionado presente en " + cfg.CodexAgentsMDPath()}
 }
 
 func checkPlugin(cfg installer.Config) CheckResult {

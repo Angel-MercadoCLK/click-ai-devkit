@@ -43,9 +43,12 @@ const (
 // Item is one row of the menu: a label, an optional dispatch Action, and whether it's active
 // (dispatchable) or an inert "coming soon" placeholder.
 type Item struct {
-	Label  string
-	Action string
-	Active bool
+	Label         string
+	Action        string
+	Active        bool
+	Group         string
+	Hint          string
+	InactiveLabel string
 }
 
 // Items is the fixed, ordered menu item list. Every current row is active — the two remaining
@@ -56,19 +59,19 @@ type Item struct {
 // treats every row the same way — including inert ones, if any are ever added back — so cursor
 // math never needs to skip rows.
 var Items = []Item{
-	{Label: "Iniciar instalación", Action: ActionInstall, Active: true},
-	{Label: "Actualizar herramientas", Action: ActionUpdate, Active: true},
-	{Label: "Configurar modelos", Action: ActionConfigureModels, Active: true},
-	{Label: "Ejecutar diagnóstico", Action: ActionDoctor, Active: true},
-	{Label: "Detectar runtimes compatibles", Action: ActionTargets, Active: true},
-	{Label: "Configurar runtimes", Action: ActionConfigureTargets, Active: true},
-	{Label: "Configurar modelo nativo de OpenClaw", Action: ActionConfigureOpenClawModel, Active: true},
-	{Label: "Plugins", Action: ActionPlugins, Active: true},
-	{Label: "Desinstalar", Action: ActionUninstall, Active: true},
-	{Label: "Crear agente propio", Action: ActionAgentBuilder, Active: true},
-	{Label: "Gestionar backups", Action: ActionManageBackups, Active: true},
-	{Label: "Restaurar último respaldo", Action: ActionRollback, Active: true},
-	{Label: "Salir", Action: ActionQuit, Active: true},
+	{Label: "Iniciar instalación", Action: ActionInstall, Active: true, Group: "Instalación y mantenimiento"},
+	{Label: "Actualizar herramientas", Action: ActionUpdate, Active: true, Group: "Instalación y mantenimiento"},
+	{Label: "Desinstalar", Action: ActionUninstall, Active: true, Group: "Instalación y mantenimiento"},
+	{Label: "Gestionar backups", Action: ActionManageBackups, Active: true, Group: "Instalación y mantenimiento"},
+	{Label: "Restaurar último respaldo", Action: ActionRollback, Active: true, Group: "Instalación y mantenimiento"},
+	{Label: "Configurar modelos", Action: ActionConfigureModels, Active: true, Group: "Configuración"},
+	{Label: "Configurar runtimes", Action: ActionConfigureTargets, Active: true, Group: "Configuración"},
+	{Label: "Configurar modelo nativo de OpenClaw", Action: ActionConfigureOpenClawModel, Active: true, Group: "Configuración"},
+	{Label: "Plugins", Action: ActionPlugins, Active: true, Group: "Configuración"},
+	{Label: "Ejecutar diagnóstico", Action: ActionDoctor, Active: true, Group: "Diagnóstico y soporte"},
+	{Label: "Detectar runtimes compatibles", Action: ActionTargets, Active: true, Group: "Diagnóstico y soporte"},
+	{Label: "Crear agente propio", Action: ActionAgentBuilder, Active: true, Group: "Diagnóstico y soporte"},
+	{Label: "Salir", Action: ActionQuit, Active: true, Group: "Diagnóstico y soporte"},
 }
 
 // comingSoonMsg is the transient status line shown when Enter is pressed on an inert item.
@@ -107,6 +110,7 @@ var sparkLogo = struct{ star2, rayTop, rayMidL, star1, rayMidR, rayBot, dust str
 
 // Model is the bubbletea model driving the standing menu.
 type Model struct {
+	Items []Item
 	// Cursor is the index into Items currently highlighted.
 	Cursor int
 	// Chosen is set to the selected active item's Action once Update decides to quit the
@@ -120,7 +124,18 @@ type Model struct {
 
 // NewModel builds a fresh Model with the cursor on the first item and no selection made.
 func NewModel() Model {
-	return Model{}
+	return NewModelWithItems(DefaultItems())
+}
+
+func NewModelWithItems(items []Item) Model {
+	if len(items) == 0 {
+		items = DefaultItems()
+	}
+	return Model{Items: items}
+}
+
+func DefaultItems() []Item {
+	return append([]Item(nil), Items...)
 }
 
 // Init satisfies tea.Model. The menu needs no startup command.
@@ -159,7 +174,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) moveCursor(delta int) {
-	n := len(Items)
+	n := len(m.Items)
 	m.Cursor = ((m.Cursor+delta)%n + n) % n
 	m.StatusMsg = ""
 }
@@ -167,9 +182,13 @@ func (m *Model) moveCursor(delta int) {
 // selectCurrent handles Enter on the highlighted row: active items record their Action and quit
 // the program; inert items show a transient status message and stay in the menu.
 func (m Model) selectCurrent() (tea.Model, tea.Cmd) {
-	item := Items[m.Cursor]
+	item := m.Items[m.Cursor]
 	if !item.Active {
-		m.StatusMsg = comingSoonMsg
+		if item.Hint != "" {
+			m.StatusMsg = item.Hint
+		} else {
+			m.StatusMsg = comingSoonMsg
+		}
 		return m, nil
 	}
 	m.Chosen = item.Action
@@ -228,7 +247,11 @@ func (m Model) renderRow(index int, item Item) string {
 	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(menuLabel))
 	switch {
 	case !item.Active:
-		label += " (próximamente)"
+		suffix := item.InactiveLabel
+		if suffix == "" {
+			suffix = "próximamente"
+		}
+		label += " (" + suffix + ")"
 		labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(menuDim)).Faint(true)
 	case index == m.Cursor:
 		labelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(menuOrange)).Bold(true)
@@ -243,9 +266,18 @@ func (m Model) renderRow(index int, item Item) string {
 
 // renderMenu renders the "MENÚ" caption and the rounded box that frames every item row.
 func (m Model) renderMenu() string {
-	rows := make([]string, len(Items))
-	for i, item := range Items {
-		rows[i] = m.renderRow(i, item)
+	rows := make([]string, 0, len(m.Items)+4)
+	currentGroup := ""
+	groupStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(menuTitle)).Bold(true)
+	for i, item := range m.Items {
+		if item.Group != "" && item.Group != currentGroup {
+			if len(rows) > 0 {
+				rows = append(rows, "")
+			}
+			rows = append(rows, groupStyle.Render(item.Group))
+			currentGroup = item.Group
+		}
+		rows = append(rows, m.renderRow(i, item))
 	}
 	title := lipgloss.NewStyle().Foreground(lipgloss.Color(menuTitle)).Render("MENÚ")
 	box := lipgloss.NewStyle().

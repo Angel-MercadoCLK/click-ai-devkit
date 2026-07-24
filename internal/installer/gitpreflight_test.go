@@ -1,6 +1,8 @@
 package installer
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -87,5 +89,151 @@ func TestPreflightGit_ReturnsActionableErrorWhenGitMissing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), GitMissingMessage) {
 		t.Fatalf("PreflightGit() error = %q, want it to contain the actionable message %q", err.Error(), GitMissingMessage)
+	}
+}
+
+func TestResolveGitExecutionContext_RelativeRepositorySelectorUsesAbsoluteRepositoryRoot(t *testing.T) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	repoRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repoRoot, ".git"), 0o755); err != nil {
+		t.Fatalf("Mkdir(.git) error = %v", err)
+	}
+	nested := filepath.Join(repoRoot, "nested", "deeper")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("MkdirAll(nested) error = %v", err)
+	}
+	rel, err := filepath.Rel(workingDir, nested)
+	if err != nil {
+		t.Fatalf("filepath.Rel() error = %v", err)
+	}
+
+	oldWorking := commandWorkingDir
+	oldRecovery := commandTempRoot
+	t.Cleanup(func() {
+		commandWorkingDir = oldWorking
+		commandTempRoot = oldRecovery
+	})
+	commandWorkingDir = func() (string, error) { return rel, nil }
+	commandTempRoot = func() string { return filepath.Join(t.TempDir(), "recovery-root") }
+
+	ctx, err := resolveGitExecutionContext()
+	if err != nil {
+		t.Fatalf("resolveGitExecutionContext() error = %v", err)
+	}
+	if ctx.Recovered {
+		t.Fatal("resolveGitExecutionContext() marked a relative repository selector as recovered, want the real repository root")
+	}
+	if ctx.WorkingDir != filepath.Clean(repoRoot) {
+		t.Fatalf("resolveGitExecutionContext() WorkingDir = %q, want absolute repository root %q", ctx.WorkingDir, filepath.Clean(repoRoot))
+	}
+	if err := ctx.Cleanup(false); err != nil {
+		t.Fatalf("Cleanup(false) error = %v", err)
+	}
+}
+
+func TestResolveGitExecutionContext_AbsoluteRepositorySelectorUsesRepositoryRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repoRoot, ".git"), 0o755); err != nil {
+		t.Fatalf("Mkdir(.git) error = %v", err)
+	}
+	nested := filepath.Join(repoRoot, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("MkdirAll(nested) error = %v", err)
+	}
+
+	oldWorking := commandWorkingDir
+	t.Cleanup(func() { commandWorkingDir = oldWorking })
+	commandWorkingDir = func() (string, error) { return nested, nil }
+
+	ctx, err := resolveGitExecutionContext()
+	if err != nil {
+		t.Fatalf("resolveGitExecutionContext() error = %v", err)
+	}
+	if ctx.Recovered {
+		t.Fatal("resolveGitExecutionContext() marked an absolute repository selector as recovered, want the repository root")
+	}
+	if ctx.WorkingDir != filepath.Clean(repoRoot) {
+		t.Fatalf("resolveGitExecutionContext() WorkingDir = %q, want %q", ctx.WorkingDir, filepath.Clean(repoRoot))
+	}
+	if err := ctx.Cleanup(true); err != nil {
+		t.Fatalf("Cleanup(true) error = %v", err)
+	}
+}
+
+func TestResolveGitExecutionContext_NonRepositorySelectorCreatesRecoveryRepoAndCleansItOnFailure(t *testing.T) {
+	nonRepo := t.TempDir()
+	recoveryParent := filepath.Join(t.TempDir(), "recovery-root")
+
+	oldWorking := commandWorkingDir
+	oldRecovery := commandTempRoot
+	oldInit := commandGitInit
+	t.Cleanup(func() {
+		commandWorkingDir = oldWorking
+		commandTempRoot = oldRecovery
+		commandGitInit = oldInit
+	})
+	commandWorkingDir = func() (string, error) { return nonRepo, nil }
+	commandTempRoot = func() string { return recoveryParent }
+	commandGitInit = func(_ string, dir string) error {
+		return os.MkdirAll(filepath.Join(dir, ".git"), 0o755)
+	}
+	restoreLookup := SetBinaryLookupFactoryForTests(func() BinaryLookup {
+		return &fakeBinaryLookup{resolved: map[string]string{"git": `C:\git.exe`}}
+	})
+	defer restoreLookup()
+
+	ctx, err := resolveGitExecutionContext()
+	if err != nil {
+		t.Fatalf("resolveGitExecutionContext() error = %v", err)
+	}
+	if !ctx.Recovered {
+		t.Fatal("resolveGitExecutionContext() Recovered = false for a non-repository selector, want true")
+	}
+	if !filepath.IsAbs(ctx.WorkingDir) {
+		t.Fatalf("resolveGitExecutionContext() WorkingDir = %q, want an absolute recovery repository", ctx.WorkingDir)
+	}
+	if _, err := os.Stat(filepath.Join(ctx.WorkingDir, ".git")); err != nil {
+		t.Fatalf("recovery repository missing .git metadata: %v", err)
+	}
+	if err := ctx.Cleanup(false); err != nil {
+		t.Fatalf("Cleanup(false) error = %v", err)
+	}
+	if _, err := os.Stat(ctx.WorkingDir); !os.IsNotExist(err) {
+		t.Fatalf("Cleanup(false) left the recovery repository behind, err = %v", err)
+	}
+}
+
+func TestResolveGitExecutionContext_UnsafeSelectorReturnsActionableErrorWithoutLeavingRecoveryArtifacts(t *testing.T) {
+	unsafePath := filepath.Join(t.TempDir(), "not-a-directory.txt")
+	if err := os.WriteFile(unsafePath, []byte("content"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	recoveryParent := filepath.Join(t.TempDir(), "recovery-root")
+
+	oldWorking := commandWorkingDir
+	oldRecovery := commandTempRoot
+	t.Cleanup(func() {
+		commandWorkingDir = oldWorking
+		commandTempRoot = oldRecovery
+	})
+	commandWorkingDir = func() (string, error) { return unsafePath, nil }
+	commandTempRoot = func() string { return recoveryParent }
+
+	_, err := resolveGitExecutionContext()
+	if err == nil {
+		t.Fatal("resolveGitExecutionContext() error = nil for an unsafe cwd selector, want actionable failure")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "working directory") && !strings.Contains(strings.ToLower(err.Error()), "cwd") {
+		t.Fatalf("resolveGitExecutionContext() error = %q, want actionable cwd guidance", err.Error())
+	}
+	entries, readErr := os.ReadDir(recoveryParent)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatalf("ReadDir(recoveryParent) error = %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("unsafe selector left recovery artifacts behind: %#v", entries)
 	}
 }

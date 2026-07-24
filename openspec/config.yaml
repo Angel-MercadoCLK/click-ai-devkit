@@ -1,0 +1,51 @@
+schema: spec-driven
+
+context: |
+  Project: click-ai-devkit, a Windows-supported Go CLI/TUI named click.
+  Stack: Go 1.25+; Cobra commands; Bubble Tea/Lip Gloss TUI; YAML and JSON configuration.
+  Architecture: cmd entrypoint with internal CLI, installer, doctor, menu, UI, modelconfig, and target packages.
+  Targets: Claude Code primary; Codex and OpenClaw use target-native documented boundaries.
+  Conventions: English technical artifacts; Spanish developer-facing CLI/TUI strings; conventional commits.
+  Safety: tests must isolate CLICK_CLAUDE_HOME; preserve marketplace/Git safety and Windows behavior.
+  Delivery: Gentle AI orchestration; auto-forecast delivery; 800-line review budget; no chained PR unless guard requires it.
+
+strict_tdd: true
+
+testing:
+  runner: go test ./... -count=1
+  framework: Go testing package
+  unit: true
+  integration: true
+  e2e: false
+  coverage: go test ./... -cover
+  linter: go vet ./...
+  type_checker: go build ./...
+  formatter: gofmt -l .
+  windows_ci: true
+
+rules:
+  proposal:
+    - Define scope, non-goals, rollback, and production risks before implementation.
+  specs:
+    - Use RFC 2119 keywords and Given/When/Then scenarios.
+    - Cover Claude, Codex, OpenClaw, Windows, Git/marketplace safety, and stale-cache diagnosis when relevant.
+  design:
+    - Document target-native boundaries and failure/recovery behavior.
+    - Include rationale for security-sensitive filesystem and process changes.
+  tasks:
+    - Group tasks into independently verifiable vertical slices.
+    - Keep each task small enough for strict RED-GREEN-REFACTOR evidence.
+  apply:
+    tdd: true
+    test_command: go test ./... -count=1
+    guidelines:
+      - Do not modify product code during initialization.
+      - Never use the real user Claude home in tests.
+  verify:
+    test_command: go test ./... -count=1
+    build_command: go build ./...
+    lint_command: go vet ./...
+    format_command: gofmt -l .
+    coverage_threshold: 0
+  archive:
+    - Preserve the audit trail and warn before destructive spec merges.

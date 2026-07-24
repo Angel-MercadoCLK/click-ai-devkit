@@ -33,11 +33,36 @@ func runDoctor(cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
 	r := rendererFor(cmd, out)
 
-	claudeHome, err := installer.ResolveClaudeHome()
+	clickStateHome, err := installer.ResolveClickStateHome()
 	if err != nil {
 		return err
 	}
-	cfg := installer.Config{ClaudeHome: claudeHome}
+	cfg := installer.Config{ClickStateHome: clickStateHome}
+	selection, configured, err := installer.LoadTargetSelection(cfg)
+	if err != nil {
+		return err
+	}
+	if !configured {
+		selection = installer.TargetSelection{Configured: true, Claude: true, OpenClaw: installer.OpenClawAvailable(), Codex: installer.CodexAvailable()}
+	}
+	if selection.Claude {
+		cfg.ClaudeHome, err = installer.ResolveClaudeHome()
+		if err != nil {
+			return err
+		}
+	}
+	if selection.OpenClaw {
+		cfg.OpenClawHome, err = installer.ResolveOpenClawHome()
+		if err != nil {
+			return err
+		}
+	}
+	if selection.Codex {
+		cfg.CodexHome, err = installer.ResolveCodexHome()
+		if err != nil {
+			return err
+		}
+	}
 
 	report := doctor.Run(cfg)
 	for _, c := range report.Checks {
@@ -49,13 +74,13 @@ func runDoctor(cmd *cobra.Command) error {
 		}
 	}
 
-	modelsLine, err := formatModelsLine(cfg)
+	modelsLine, err := formatModelsLine(cfg, selection)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintln(out, r.Info(modelsLine))
 
-	profileLine, err := formatProfileLine(cfg)
+	profileLine, err := formatProfileLine(cfg, selection)
 	if err != nil {
 		return err
 	}
@@ -73,7 +98,10 @@ func runDoctor(cmd *cobra.Command) error {
 // formatModelsLine reports the click-sdd per-phase models currently configured (D25): the
 // persisted models.json selection if `click install`/`click update` ever ran, or an explicit
 // "defaults" line otherwise, in modelconfig.Phases order for a stable, readable report.
-func formatModelsLine(cfg installer.Config) (string, error) {
+func formatModelsLine(cfg installer.Config, selection installer.TargetSelection) (string, error) {
+	if !selection.Claude && !selection.OpenClaw {
+		return "Modelos por fase de click-sdd: N/A para la selección actual de runtimes", nil
+	}
 	profile, models, found, err := installer.LoadModelsWithProfile(cfg)
 	if err != nil {
 		return "", err
@@ -95,7 +123,10 @@ func formatModelsLine(cfg installer.Config) (string, error) {
 // install`/`click update` ever ran, or an explicit "balanced (defaults)" line otherwise. This is a
 // pure read via installer.LoadModelsWithProfile — it never writes to models.json, keeping `click
 // doctor` strictly read-only (NFR-012), consistent with formatModelsLine above.
-func formatProfileLine(cfg installer.Config) (string, error) {
+func formatProfileLine(cfg installer.Config, selection installer.TargetSelection) (string, error) {
+	if !selection.Claude && !selection.OpenClaw {
+		return "Perfil de orquestación: N/A para la selección actual de runtimes", nil
+	}
 	profile, _, found, err := installer.LoadModelsWithProfile(cfg)
 	if err != nil {
 		return "", err

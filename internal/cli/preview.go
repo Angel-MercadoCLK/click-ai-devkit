@@ -13,50 +13,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// installWriteSteps builds runInstall's ordered list of write steps for cfg — reused VERBATIM
-// (same Spanish labels) from its own r.RunStep calls, so the preview plan renderWritePlan shows
-// can never drift from what install.go actually runs (spec's install-preview capability: "the plan
-// MUST be shown ... files touched, order"). The trailing OpenClaw steps (openClawWriteSteps) are
-// appended only when cfg.OpenClawHome is populated — a Claude-only host (cfg.OpenClawHome == "")
-// gets the exact same 6-step list this returned before OpenClaw support existed. The Engram Cloud
-// step is inserted right after the local Engram step only when cloudConfigured is true.
 func installWriteSteps(cfg installer.Config, cloudConfigured bool) []string {
-	steps := []string{
-		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
-		"Instalando Engram (memoria persistente)…",
-	}
-	if cloudConfigured {
-		steps = append(steps, "Enrolando Engram Cloud…")
-	}
-	steps = append(steps,
-		"Registrando Context7 (documentación de librerías)…",
-		"Actualizando CLAUDE.md…",
-		"Registrando memory-guard…",
-		"Guardando modelos por fase de click-sdd…",
-	)
-	steps = append(steps, openClawWriteSteps(cfg)...)
-	return append(steps, codexWriteSteps(cfg)...)
+	selection := installer.TargetSelection{Configured: true, Claude: cfg.ClaudeHome != "", OpenClaw: cfg.OpenClawHome != "", Codex: cfg.CodexHome != ""}
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured})
+	return actionLabels(plan.InstallActionKinds(), actionLabelOptions{})
 }
 
-// updateWriteSteps builds runUpdate's ordered write-step list for cfg, reusing its own r.RunStep
-// labels verbatim — including the Engram pin version (engramVersion), matching the exact label
-// runUpdate itself prints later for that step — so the preview plan can never drift from what
-// update.go actually runs. Same OpenClaw-appending contract as installWriteSteps. The Engram Cloud
-// step is inserted right after the local Engram pin step only when cloudConfigured is true.
+func installWriteStepsForSelection(cfg installer.Config, cloudConfigured bool, selection installer.TargetSelection) []string {
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured})
+	return actionLabels(plan.InstallActionKinds(), actionLabelOptions{})
+}
+
 func updateWriteSteps(engramVersion string, cfg installer.Config, cloudConfigured bool) []string {
-	steps := []string{
-		"Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…",
-		"Guardando modelos por fase de click-sdd…",
-		"Actualizando CLAUDE.md…",
-		"Re-registrando memory-guard…",
-		fmt.Sprintf("Sincronizando Engram (pin %s)…", engramVersion),
-	}
-	if cloudConfigured {
-		steps = append(steps, "Sincronizando Engram Cloud…")
-	}
-	steps = append(steps, "Sincronizando Context7 (documentación de librerías)…")
-	steps = append(steps, openClawWriteSteps(cfg)...)
-	return append(steps, codexWriteSteps(cfg)...)
+	selection := installer.TargetSelection{Configured: true, Claude: cfg.ClaudeHome != "", OpenClaw: cfg.OpenClawHome != "", Codex: cfg.CodexHome != ""}
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured})
+	return actionLabels(plan.UpdateActionKinds(), actionLabelOptions{engramVersion: engramVersion, updateMode: true})
 }
 
 // openClawWriteSteps returns the extra OpenClaw write-step labels to append when cfg.OpenClawHome
@@ -78,26 +49,90 @@ func openClawWriteSteps(cfg installer.Config) []string {
 	}
 }
 
-func codexWriteSteps(cfg installer.Config) []string {
-	if cfg.CodexHome == "" {
-		return nil
+type actionLabelOptions struct {
+	engramVersion string
+	updateMode    bool
+}
+
+func actionLabels(kinds []installer.StepActionKind, options actionLabelOptions) []string {
+	labels := make([]string, 0, len(kinds))
+	for _, kind := range kinds {
+		labels = append(labels, actionLabel(kind, options))
 	}
-	return []string{"Actualizando AGENTS.md de Codex…"}
+	return labels
+}
+
+func actionLabel(kind installer.StepActionKind, options actionLabelOptions) string {
+	switch kind {
+	case installer.StepActionSyncMarketplacePlugins:
+		if options.updateMode {
+			return "Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…"
+		}
+		return "Registrando plugins click-sdd, click-memory, click-review y click-skills…"
+	case installer.StepActionSyncEngram:
+		if options.engramVersion != "" {
+			return fmt.Sprintf("Sincronizando Engram (pin %s)…", options.engramVersion)
+		}
+		return "Instalando Engram (memoria persistente)…"
+	case installer.StepActionSyncEngramCloud:
+		if options.engramVersion != "" {
+			return "Sincronizando Engram Cloud…"
+		}
+		return "Enrolando Engram Cloud…"
+	case installer.StepActionSyncContext7:
+		if options.engramVersion != "" {
+			return "Sincronizando Context7 (documentación de librerías)…"
+		}
+		return "Registrando Context7 (documentación de librerías)…"
+	case installer.StepActionWriteClaudeManagedBlock:
+		return "Actualizando CLAUDE.md…"
+	case installer.StepActionRegisterMemoryGuard:
+		if options.engramVersion != "" {
+			return "Re-registrando memory-guard…"
+		}
+		return "Registrando memory-guard…"
+	case installer.StepActionSaveModels:
+		return "Guardando modelos por fase de click-sdd…"
+	case installer.StepActionSyncCodexGuidance:
+		return "Actualizando AGENTS.md de Codex…"
+	case installer.StepActionConfigureCodexNativeModel:
+		return "Configurando modelo nativo de Codex si fue seleccionado explícitamente…"
+	case installer.StepActionSyncOpenClawWorkspace:
+		return "Actualizando AGENTS.md y SOUL.md de OpenClaw…"
+	case installer.StepActionSyncOpenClawMCP:
+		return "Registrando Engram en OpenClaw (mcpServers)…"
+	case installer.StepActionSyncOpenClawPlugin:
+		return "Instalando plugin de memory-guard para OpenClaw…"
+	case installer.StepActionSyncOpenClawSkills:
+		return "Sincronizando skills de Click en OpenClaw…"
+	case installer.StepActionSyncOpenClawModelProfile:
+		if options.engramVersion != "" {
+			return "Guardando recomendación de modelos para OpenClaw…"
+		}
+		return "Configurando modelo nativo de OpenClaw mediante su CLI…"
+	default:
+		return string(kind)
+	}
 }
 
 // renderWritePlan prints steps as a numbered plan to out, plus where the run-start snapshot backing
 // them up will land (cfg.BackupDir()/latest) — the spec's install-preview "files touched, order"
 // requirement — so a developer sees the full plan before confirmProceed asks them to continue.
-func renderWritePlan(out io.Writer, r *ui.Renderer, cfg installer.Config, steps []string) {
+func renderWritePlan(out io.Writer, r *ui.Renderer, cfg installer.Config, plan installer.TargetPlan, steps []string) {
+	backupTargets := plan.SnapshotPaths()
+	if len(backupTargets) == 0 {
+		backupTargets = []string{"sin archivos seleccionados"}
+	}
 	fmt.Fprintln(out, r.Info(fmt.Sprintf(
-		"Se tomará un respaldo de CLAUDE.md y settings.json en %s antes de continuar.",
+		"Se tomará un respaldo de %s en %s antes de continuar.",
+		strings.Join(backupTargets, ", "),
 		filepath.Join(cfg.BackupDir(), "latest"),
 	)))
 	if cfg.OpenClawHome != "" {
-		fmt.Fprintln(out, r.Info(fmt.Sprintf("La recomendación portable de modelos para OpenClaw se guardará en %s; no modifica la configuración nativa de OpenClaw.", cfg.OpenClawModelProfilePath())))
+		fmt.Fprintln(out, r.Info(fmt.Sprintf("OpenClaw recibe configuración nativa mediante su CLI; los metadatos locales se guardan en %s.", cfg.OpenClawModelProfilePath())))
 	}
 	if cfg.CodexHome != "" {
-		fmt.Fprintln(out, r.Info(fmt.Sprintf("Codex sólo recibirá orientación gestionada en %s; no se modifica config.toml ni el modelo.", cfg.CodexAgentsMDPath())))
+		fmt.Fprintln(out, r.Info(fmt.Sprintf("Codex recibe orientación en %s; config.toml sólo cambia con selección explícita.", cfg.CodexAgentsMDPath())))
 	}
 	if _, err := os.Stat(cfg.TargetSelectionPath()); err == nil {
 		fmt.Fprintln(out, r.Info(fmt.Sprintf("La selección persistente de runtimes se conserva en %s.", cfg.TargetSelectionPath())))
@@ -141,9 +176,9 @@ func confirmProceed(in io.Reader, out io.Writer, r *ui.Renderer) (bool, error) {
 // very first write in the whole install/update write chain, so gating it behind proceed is
 // sufficient to guarantee zero writes on decline — the caller only needs to check proceed and
 // return before running any of its own write steps.
-func confirmAndSnapshot(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg installer.Config, nonInteractive bool, steps []string) (bool, error) {
+func confirmAndSnapshot(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg installer.Config, plan installer.TargetPlan, nonInteractive bool, steps []string) (bool, error) {
 	if !nonInteractive {
-		renderWritePlan(out, r, cfg, steps)
+		renderWritePlan(out, r, cfg, plan, steps)
 		proceed, err := confirmProceed(cmd.InOrStdin(), out, r)
 		if err != nil {
 			return false, err
@@ -152,7 +187,7 @@ func confirmAndSnapshot(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg i
 			return false, nil
 		}
 	}
-	if err := installer.SnapshotRun(cfg); err != nil {
+	if err := installer.SnapshotTargetPlan(cfg, plan); err != nil {
 		return false, err
 	}
 	return true, nil
