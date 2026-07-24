@@ -562,8 +562,8 @@ func TestInstallCommand_CodexOnly_NonInteractiveOmitsNativeModelWithoutFlagAndDo
 	if strings.Contains(out, "gpt-5.6") {
 		t.Fatalf("install output = %q, want no fabricated default Codex native model in noninteractive mode", out)
 	}
-	if !strings.Contains(strings.ToLower(out), "codex") || !strings.Contains(strings.ToLower(out), "explícit") {
-		t.Fatalf("install output = %q, want explicit-model omission guidance for Codex native config", out)
+	if !strings.Contains(out, "Codex usa su modelo nativo ya configurado") {
+		t.Fatalf("install output = %q, want the native-default guidance for Codex when --codex-model is omitted", out)
 	}
 	if _, statErr := os.Stat(filepath.Join(codexHome, "config.toml")); !os.IsNotExist(statErr) {
 		t.Fatalf("Stat(config.toml) error = %v, want no Codex config write when --codex-model is omitted", statErr)
@@ -599,8 +599,8 @@ func TestUpdateCommand_CodexOnly_UsesPersistedSelectionWithoutClaudeAndOmitsNati
 	if strings.Contains(out, "gpt-5.6") {
 		t.Fatalf("update output = %q, want no fabricated default Codex native model in noninteractive mode", out)
 	}
-	if !strings.Contains(strings.ToLower(out), "codex") || !strings.Contains(strings.ToLower(out), "explícit") {
-		t.Fatalf("update output = %q, want explicit-model omission guidance for Codex native config", out)
+	if !strings.Contains(out, "Codex usa su modelo nativo ya configurado") {
+		t.Fatalf("update output = %q, want the native-default guidance for Codex when --codex-model is omitted", out)
 	}
 	if _, statErr := os.Stat(filepath.Join(codexHome, "config.toml")); !os.IsNotExist(statErr) {
 		t.Fatalf("Stat(config.toml) error = %v, want no Codex config write when --codex-model is omitted", statErr)

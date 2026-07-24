@@ -30,34 +30,42 @@ type TargetPlan struct {
 
 type PlanOptions struct {
 	CloudConfigured bool
+	// CodexNativeModel / OpenClawNativeModel are set ONLY when the developer explicitly opted into a
+	// native-model mutation via --codex-model / --openclaw-model. When false (the normal case), the
+	// corresponding native-model write action is omitted from the plan entirely, so a plain install
+	// neither lists nor runs any native-model mutation — Codex and OpenClaw keep running the portable
+	// SDD against the model each already has configured in its own installation.
+	CodexNativeModel    bool
+	OpenClawNativeModel bool
 }
 
 type StepActionKind string
 
 const (
-	StepActionSyncMarketplacePlugins    StepActionKind = "sync-marketplace-plugins"
-	StepActionSyncEngram                StepActionKind = "sync-engram"
-	StepActionSyncEngramCloud           StepActionKind = "sync-engram-cloud"
-	StepActionSyncContext7              StepActionKind = "sync-context7"
-	StepActionWriteClaudeManagedBlock   StepActionKind = "write-claude-managed-block"
-	StepActionRegisterMemoryGuard       StepActionKind = "register-memory-guard"
-	StepActionSaveModels                StepActionKind = "save-models"
-	StepActionSyncCodexGuidance         StepActionKind = "sync-codex-guidance"
-	StepActionConfigureCodexNativeModel StepActionKind = "configure-codex-native-model"
-	StepActionSyncOpenClawWorkspace     StepActionKind = "sync-openclaw-workspace"
-	StepActionSyncOpenClawMCP           StepActionKind = "sync-openclaw-mcp"
-	StepActionSyncOpenClawPlugin        StepActionKind = "sync-openclaw-plugin"
-	StepActionSyncOpenClawSkills        StepActionKind = "sync-openclaw-skills"
-	StepActionSyncOpenClawModelProfile  StepActionKind = "sync-openclaw-model-profile"
-	StepActionRemoveMarketplacePlugins  StepActionKind = "remove-marketplace-plugins"
-	StepActionStripClaudeManagedBlock   StepActionKind = "strip-claude-managed-block"
-	StepActionUnregisterMemoryGuard     StepActionKind = "unregister-memory-guard"
-	StepActionRemoveEngram              StepActionKind = "remove-engram"
-	StepActionRemoveContext7            StepActionKind = "remove-context7"
-	StepActionRemoveOpenClawPlugin      StepActionKind = "remove-openclaw-plugin"
-	StepActionRemoveOpenClawSkills      StepActionKind = "remove-openclaw-skills"
-	StepActionStripCodexGuidance        StepActionKind = "strip-codex-guidance"
-	StepActionRemoveTargetSelection     StepActionKind = "remove-target-selection"
+	StepActionSyncMarketplacePlugins       StepActionKind = "sync-marketplace-plugins"
+	StepActionSyncEngram                   StepActionKind = "sync-engram"
+	StepActionSyncEngramCloud              StepActionKind = "sync-engram-cloud"
+	StepActionSyncContext7                 StepActionKind = "sync-context7"
+	StepActionWriteClaudeManagedBlock      StepActionKind = "write-claude-managed-block"
+	StepActionRegisterMemoryGuard          StepActionKind = "register-memory-guard"
+	StepActionSaveModels                   StepActionKind = "save-models"
+	StepActionSyncCodexGuidance            StepActionKind = "sync-codex-guidance"
+	StepActionConfigureCodexNativeModel    StepActionKind = "configure-codex-native-model"
+	StepActionSyncOpenClawWorkspace        StepActionKind = "sync-openclaw-workspace"
+	StepActionSyncOpenClawMCP              StepActionKind = "sync-openclaw-mcp"
+	StepActionSyncOpenClawPlugin           StepActionKind = "sync-openclaw-plugin"
+	StepActionSyncOpenClawSkills           StepActionKind = "sync-openclaw-skills"
+	StepActionSyncOpenClawModelProfile     StepActionKind = "sync-openclaw-model-profile"
+	StepActionConfigureOpenClawNativeModel StepActionKind = "configure-openclaw-native-model"
+	StepActionRemoveMarketplacePlugins     StepActionKind = "remove-marketplace-plugins"
+	StepActionStripClaudeManagedBlock      StepActionKind = "strip-claude-managed-block"
+	StepActionUnregisterMemoryGuard        StepActionKind = "unregister-memory-guard"
+	StepActionRemoveEngram                 StepActionKind = "remove-engram"
+	StepActionRemoveContext7               StepActionKind = "remove-context7"
+	StepActionRemoveOpenClawPlugin         StepActionKind = "remove-openclaw-plugin"
+	StepActionRemoveOpenClawSkills         StepActionKind = "remove-openclaw-skills"
+	StepActionStripCodexGuidance           StepActionKind = "strip-codex-guidance"
+	StepActionRemoveTargetSelection        StepActionKind = "remove-target-selection"
 )
 
 type DoctorCheckKind string
@@ -178,6 +186,7 @@ var installActionOrder = []StepActionKind{
 	StepActionSyncOpenClawPlugin,
 	StepActionSyncOpenClawSkills,
 	StepActionSyncOpenClawModelProfile,
+	StepActionConfigureOpenClawNativeModel,
 	StepActionSyncCodexGuidance,
 	StepActionConfigureCodexNativeModel,
 }
@@ -195,6 +204,7 @@ var updateActionOrder = []StepActionKind{
 	StepActionSyncOpenClawPlugin,
 	StepActionSyncOpenClawSkills,
 	StepActionSyncOpenClawModelProfile,
+	StepActionConfigureOpenClawNativeModel,
 	StepActionSyncCodexGuidance,
 	StepActionConfigureCodexNativeModel,
 }
@@ -210,16 +220,36 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		capabilities = append(capabilities, "Claude Code: plugins nativos, SDD, perfiles y modelos por fase")
 	}
 	if selection.Codex {
+		// The codex-model step keeps its config.toml snapshot unconditionally (so an explicit
+		// --codex-model mutation can always roll back), but only carries the native-model write
+		// ACTION when the developer opted in via PlanOptions.CodexNativeModel. Without the flag, the
+		// step is inert: config.toml is never touched and the write is never listed or run.
+		codexModelStep := Step{ID: "codex-model", Target: PlanTargetCodex, Label: "Codex native model", Snapshot: []string{cfg.CodexConfigPath()}}
+		if options.CodexNativeModel {
+			codexModelStep.InstallActions = []StepActionKind{StepActionConfigureCodexNativeModel}
+			codexModelStep.UpdateActions = []StepActionKind{StepActionConfigureCodexNativeModel}
+		}
 		steps = append(steps,
 			Step{ID: "codex-runtime", Target: PlanTargetCodex, Label: "Codex CLI", Snapshot: []string{cfg.CodexAgentsMDPath()}, InstallActions: []StepActionKind{StepActionSyncCodexGuidance}, UpdateActions: []StepActionKind{StepActionSyncCodexGuidance}, UninstallActions: []StepActionKind{StepActionStripCodexGuidance}, DoctorChecks: []DoctorCheckKind{DoctorCheckCodexGuidance}},
-			Step{ID: "codex-model", Target: PlanTargetCodex, Label: "Codex native model", Snapshot: []string{cfg.CodexConfigPath()}, InstallActions: []StepActionKind{StepActionConfigureCodexNativeModel}, UpdateActions: []StepActionKind{StepActionConfigureCodexNativeModel}},
+			codexModelStep,
 		)
 		capabilities = append(capabilities, "Codex CLI: AGENTS.md gestionado y modelo nativo de config.toml")
 	}
 	if selection.OpenClaw {
+		// The openclaw-model step always keeps its native-model doctor check, but only carries the
+		// native `openclaw config set` write ACTION when the developer opted in via
+		// PlanOptions.OpenClawNativeModel. Without --openclaw-model the step runs no CLI mutation:
+		// OpenClaw keeps the provider/model the developer already connected. The portable model
+		// metadata (StepActionSyncOpenClawModelProfile) still runs regardless as part of the runtime
+		// step below.
+		openClawModelStep := Step{ID: "openclaw-model", Target: PlanTargetOpenClaw, Label: "OpenClaw native model", DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClawNativeModel}}
+		if options.OpenClawNativeModel {
+			openClawModelStep.InstallActions = []StepActionKind{StepActionConfigureOpenClawNativeModel}
+			openClawModelStep.UpdateActions = []StepActionKind{StepActionConfigureOpenClawNativeModel}
+		}
 		steps = append(steps,
 			Step{ID: "openclaw-runtime", Target: PlanTargetOpenClaw, Label: "OpenClaw", Snapshot: []string{cfg.OpenClawAgentsMDPath(), cfg.OpenClawSoulMDPath(), cfg.OpenClawMCPConfigPath(), cfg.OpenClawModelProfilePath()}, InstallActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UpdateActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UninstallActions: []StepActionKind{StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClaw}},
-			Step{ID: "openclaw-model", Target: PlanTargetOpenClaw, Label: "OpenClaw native model", DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClawNativeModel}},
+			openClawModelStep,
 		)
 		capabilities = append(capabilities, "OpenClaw: workspace, MCP, skills y modelo provider/model mediante su CLI")
 	}

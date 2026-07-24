@@ -73,10 +73,12 @@ func TestBuildTargetPlan_CodexOnlyExposesLifecycleActionsForProductionCommands(t
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
 
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
+	// Without an explicit --codex-model opt-in, the native config.toml mutation is NOT part of the
+	// install/update action set: a plain Codex run neither lists nor performs any native mutation.
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncCodexGuidance}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncCodexGuidance}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
 	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripCodexGuidance, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
@@ -84,6 +86,48 @@ func TestBuildTargetPlan_CodexOnlyExposesLifecycleActionsForProductionCommands(t
 	}
 	if got, want := plan.DoctorCheckKinds(), []DoctorCheckKind{DoctorCheckCodexGuidance}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("DoctorCheckKinds() = %#v, want %#v", got, want)
+	}
+}
+
+// TestBuildTargetPlan_CodexNativeModelFlag_AddsNativeMutationAction proves the opt-in path: when the
+// developer passed --codex-model (PlanOptions.CodexNativeModel), the native config.toml mutation is
+// added to the install/update action set so the flag path still writes the Codex model.
+func TestBuildTargetPlan_CodexNativeModelFlag_AddsNativeMutationAction(t *testing.T) {
+	cfg := Config{CodexHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	selection := TargetSelection{Configured: true, Codex: true}
+
+	plan := BuildTargetPlan(cfg, selection, PlanOptions{CodexNativeModel: true})
+
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
+	}
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
+	}
+}
+
+// TestBuildTargetPlan_OpenClawNativeModelFlag_AddsNativeMutationAction is the OpenClaw counterpart:
+// the native `openclaw config set` write action only appears when --openclaw-model was passed.
+func TestBuildTargetPlan_OpenClawNativeModelFlag_GatesNativeMutationAction(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	selection := TargetSelection{Configured: true, OpenClaw: true}
+
+	withoutFlag := BuildTargetPlan(cfg, selection, PlanOptions{})
+	for _, action := range withoutFlag.InstallActionKinds() {
+		if action == StepActionConfigureOpenClawNativeModel {
+			t.Fatalf("InstallActionKinds() = %#v, want no native OpenClaw mutation without the flag", withoutFlag.InstallActionKinds())
+		}
+	}
+
+	withFlag := BuildTargetPlan(cfg, selection, PlanOptions{OpenClawNativeModel: true})
+	found := false
+	for _, action := range withFlag.InstallActionKinds() {
+		if action == StepActionConfigureOpenClawNativeModel {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("InstallActionKinds() = %#v, want the native OpenClaw mutation when the flag is set", withFlag.InstallActionKinds())
 	}
 }
 

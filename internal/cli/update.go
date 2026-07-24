@@ -57,18 +57,37 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Native-model config mirrors `click install`: no prompt, and a native mutation only when the
+	// developer explicitly passes --codex-model. Without it, Codex keeps running the portable SDD
+	// against the model it already has configured, and OpenClaw keeps the provider/model already
+	// connected — so the native-model write is neither listed nor run. Print a Spanish info line for
+	// each detected target making the resulting behavior explicit.
+	codexModelValue, _ := cmd.Flags().GetString(codexModelFlag)
+	codexModel := strings.TrimSpace(codexModelValue)
+	codexNativeModel := selection.Codex && codexModel != ""
+	if selection.Codex {
+		if codexNativeModel {
+			fmt.Fprintln(out, r.Info("Codex: modelo nativo configurado explícitamente: "+codexModel+"."))
+		} else {
+			fmt.Fprintln(out, r.Info("Codex usa su modelo nativo ya configurado; el SDD portable corre con ese default."))
+		}
+	}
+	if selection.OpenClaw {
+		fmt.Fprintln(out, r.Info("OpenClaw usa el proveedor/modelo que ya conectaste; el SDD portable corre con ese default."))
+	}
+
 	m, err := manifest.Load()
 	if err != nil {
 		return err
 	}
 	cloudConfigured := installer.EngramCloudConfigured(cfg, m)
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured || installer.EngramCloudPartiallyConfigured(cfg, m)})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured || installer.EngramCloudPartiallyConfigured(cfg, m), CodexNativeModel: codexNativeModel})
 
 	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE MigrateIfStale/step 1 below (the first external `claude` subprocess
 	// invocation). A decline here means zero writes: nothing below this point has run yet.
-	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, plan, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg, cloudConfigured))
+	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, plan, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg, cloudConfigured, codexNativeModel))
 	if err != nil {
 		return err
 	}
@@ -208,12 +227,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("%w; rollback restored the previous snapshot", err)
 			}
 		case installer.StepActionConfigureCodexNativeModel:
-			model, _ := cmd.Flags().GetString(codexModelFlag)
-			if strings.TrimSpace(model) == "" {
-				fmt.Fprintln(out, r.Info("Codex: se omite la configuración nativa porque el modelo no fue seleccionado explícitamente (--codex-model <model>)."))
-				continue
-			}
-			if err := installer.ConfigureCodexModel(cfg.CodexHome, model); err != nil {
+			// Only present in the plan when --codex-model was passed (see PlanOptions.CodexNativeModel
+			// above); a plain update never reaches this native config.toml mutation.
+			if err := installer.ConfigureCodexModel(cfg.CodexHome, codexModel); err != nil {
 				if restoreErr := installer.RestoreRun(cfg); restoreErr != nil {
 					return fmt.Errorf("%w; rollback failed: %v", err, restoreErr)
 				}

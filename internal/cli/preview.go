@@ -19,14 +19,14 @@ func installWriteSteps(cfg installer.Config, cloudConfigured bool) []string {
 	return actionLabels(plan.InstallActionKinds(), actionLabelOptions{})
 }
 
-func installWriteStepsForSelection(cfg installer.Config, cloudConfigured bool, selection installer.TargetSelection) []string {
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured})
+func installWriteStepsForSelection(cfg installer.Config, cloudConfigured bool, selection installer.TargetSelection, codexNativeModel, openClawNativeModel bool) []string {
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured, CodexNativeModel: codexNativeModel, OpenClawNativeModel: openClawNativeModel})
 	return actionLabels(plan.InstallActionKinds(), actionLabelOptions{})
 }
 
-func updateWriteSteps(engramVersion string, cfg installer.Config, cloudConfigured bool) []string {
+func updateWriteSteps(engramVersion string, cfg installer.Config, cloudConfigured, codexNativeModel bool) []string {
 	selection := installer.TargetSelection{Configured: true, Claude: cfg.ClaudeHome != "", OpenClaw: cfg.OpenClawHome != "", Codex: cfg.CodexHome != ""}
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured, CodexNativeModel: codexNativeModel})
 	return actionLabels(plan.UpdateActionKinds(), actionLabelOptions{engramVersion: engramVersion, updateMode: true})
 }
 
@@ -96,7 +96,7 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 	case installer.StepActionSyncCodexGuidance:
 		return "Actualizando AGENTS.md de Codex…"
 	case installer.StepActionConfigureCodexNativeModel:
-		return "Configurando modelo nativo de Codex si fue seleccionado explícitamente…"
+		return "Configurando modelo nativo de Codex en config.toml (selección explícita)…"
 	case installer.StepActionSyncOpenClawWorkspace:
 		return "Actualizando AGENTS.md y SOUL.md de OpenClaw…"
 	case installer.StepActionSyncOpenClawMCP:
@@ -109,7 +109,9 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 		if options.engramVersion != "" {
 			return "Guardando recomendación de modelos para OpenClaw…"
 		}
-		return "Configurando modelo nativo de OpenClaw mediante su CLI…"
+		return "Guardando metadatos de modelos para OpenClaw…"
+	case installer.StepActionConfigureOpenClawNativeModel:
+		return "Configurando modelo nativo de OpenClaw mediante su CLI (selección explícita)…"
 	default:
 		return string(kind)
 	}

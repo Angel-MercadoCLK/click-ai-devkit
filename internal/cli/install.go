@@ -116,19 +116,15 @@ func runInstall(cmd *cobra.Command) error {
 			return nil
 		}
 	}
-	native, cancelled, err := resolveNativeModels(cmd, selection, nonInteractive, out, r, runNativeModelConfigTUI)
-	if err != nil {
-		return err
-	}
-	if cancelled {
-		return nil
-	}
+	native := resolveNativeModels(cmd, selection, out, r)
+	codexNativeModel := selection.Codex && native.Codex.Primary != ""
+	openClawNativeModel := selection.OpenClaw && native.OpenClaw.Primary != ""
 	m, err := manifest.Load()
 	if err != nil {
 		return err
 	}
 	cloudConfigured := installer.EngramCloudConfigured(cfg, m)
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured || installer.EngramCloudPartiallyConfigured(cfg, m)})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured || installer.EngramCloudPartiallyConfigured(cfg, m), CodexNativeModel: codexNativeModel, OpenClawNativeModel: openClawNativeModel})
 	fmt.Fprintln(out, r.Info("Capacidades seleccionadas: "+plan.CapabilitiesSummary()))
 	fmt.Fprintln(out, r.Info("Resumen final de instalación: "+strings.Join(plan.StepLabels(), " → ")+nativeSummary(native)))
 
@@ -136,7 +132,7 @@ func runInstall(cmd *cobra.Command) error {
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE step 1 below (the first external `claude` subprocess invocation). A
 	// decline here means zero writes: nothing below this point has run yet.
-	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, plan, nonInteractive, installWriteStepsForSelection(cfg, cloudConfigured, selection))
+	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, plan, nonInteractive, installWriteStepsForSelection(cfg, cloudConfigured, selection, codexNativeModel, openClawNativeModel))
 	if err != nil {
 		return err
 	}
@@ -256,12 +252,15 @@ func runInstall(cmd *cobra.Command) error {
 				return err
 			}
 		case installer.StepActionSyncOpenClawModelProfile:
-			if err := installer.ConfigureOpenClawModels(native.OpenClaw.Primary, native.OpenClaw.Fallbacks); err != nil {
-				return err
-			}
 			if err := r.RunStep("Guardando metadatos de modelos para OpenClaw…", "Metadatos de modelos guardados", func() error {
 				return installer.SyncOpenClawModelProfile(cfg, profile, models)
 			}); err != nil {
+				return err
+			}
+		case installer.StepActionConfigureOpenClawNativeModel:
+			// Only present in the plan when --openclaw-model was passed (PlanOptions.OpenClawNativeModel);
+			// a plain install never reaches this native `openclaw config set` write.
+			if err := installer.ConfigureOpenClawModels(native.OpenClaw.Primary, native.OpenClaw.Fallbacks); err != nil {
 				return err
 			}
 		}
@@ -323,73 +322,50 @@ func resolveInstallTargetSelection(cmd *cobra.Command, skipOpenClaw bool, out io
 	return selection, nil
 }
 
-type nativeTargetConfig struct {
-	Codex    ui.NativeModelConfig
-	OpenClaw ui.NativeModelConfig
+// nativeModelSelection captures an explicit native-model choice for a portable target. Both fields
+// stay empty unless the developer passed the corresponding flag (--codex-model / --openclaw-model);
+// absence means "run against the model the target already has configured", so Click performs NO
+// native mutation and never prompts the developer to pick or guess one.
+type nativeModelSelection struct {
+	Primary   string
+	Fallbacks []string
 }
 
-type nativeModelSelector func(cmd *cobra.Command, kind, primary string, fallbacks []string) (ui.NativeModelConfig, bool, error)
+type nativeTargetConfig struct {
+	Codex    nativeModelSelection
+	OpenClaw nativeModelSelection
+}
 
-func resolveNativeModels(cmd *cobra.Command, selection installer.TargetSelection, nonInteractive bool, out io.Writer, r *ui.Renderer, selector nativeModelSelector) (nativeTargetConfig, bool, error) {
+// resolveNativeModels reads native-model configuration STRICTLY from explicit flags — it never
+// launches a prompt. Codex and OpenClaw already carry their own configured provider/model in their
+// own installations, so a plain `click install` runs the portable SDD against that existing default
+// and performs no native mutation. A native write happens only when the developer opts in with
+// --codex-model / --openclaw-model. For every detected target it prints a Spanish info line making
+// the resulting behavior explicit.
+func resolveNativeModels(cmd *cobra.Command, selection installer.TargetSelection, out io.Writer, r *ui.Renderer) nativeTargetConfig {
 	var result nativeTargetConfig
 	if selection.Codex {
 		model, _ := cmd.Flags().GetString(codexModelFlag)
-		var cancelled bool
-		if nonInteractive {
-			result.Codex = ui.NativeModelConfig{Primary: model, Confirmed: true}
+		model = strings.TrimSpace(model)
+		result.Codex = nativeModelSelection{Primary: model}
+		if model == "" {
+			fmt.Fprintln(out, r.Info("Codex usa su modelo nativo ya configurado; el SDD portable corre con ese default."))
 		} else {
-			var selectorErr error
-			result.Codex, cancelled, selectorErr = selector(cmd, "Codex", model, nil)
-			if selectorErr != nil {
-				return nativeTargetConfig{}, false, selectorErr
-			}
-		}
-		if cancelled {
-			return nativeTargetConfig{}, true, nil
-		}
-		if result.Codex.Primary == "" {
-			fmt.Fprintln(out, r.Info("Codex: se omite la configuración nativa porque el modelo no fue seleccionado explícitamente (--codex-model <model>)."))
-		} else {
-			fmt.Fprintln(out, r.Info("Codex: modelo nativo seleccionado: "+result.Codex.Primary+"."))
+			fmt.Fprintln(out, r.Info("Codex: modelo nativo configurado explícitamente: "+model+"."))
 		}
 	}
 	if selection.OpenClaw {
 		model, _ := cmd.Flags().GetString(openClawModelFlag)
+		model = strings.TrimSpace(model)
 		fallbacks, _ := cmd.Flags().GetStringSlice(openClawFallbackFlag)
-		if model == "" && nonInteractive {
-			model = "openai/gpt-5.6-sol"
-			fmt.Fprintln(out, r.Info("OpenClaw: modo no interactivo usa el modelo nativo explícito openai/gpt-5.6-sol."))
-		}
-		var cancelled bool
-		if nonInteractive {
-			result.OpenClaw = ui.NativeModelConfig{Primary: model, Fallbacks: fallbacks, Confirmed: true}
+		result.OpenClaw = nativeModelSelection{Primary: model, Fallbacks: fallbacks}
+		if model == "" {
+			fmt.Fprintln(out, r.Info("OpenClaw usa el proveedor/modelo que ya conectaste; el SDD portable corre con ese default."))
 		} else {
-			var selectorErr error
-			result.OpenClaw, cancelled, selectorErr = selector(cmd, "OpenClaw", model, fallbacks)
-			if selectorErr != nil {
-				return nativeTargetConfig{}, false, selectorErr
-			}
+			fmt.Fprintln(out, r.Info("OpenClaw: referencia nativa configurada explícitamente: "+model+"; fallbacks: "+strings.Join(fallbacks, ", ")+"."))
 		}
-		if cancelled {
-			return nativeTargetConfig{}, true, nil
-		}
-		if result.OpenClaw.Primary == "" {
-			return nativeTargetConfig{}, false, fmt.Errorf("configuración de OpenClaw cancelada o incompleta")
-		}
-		fmt.Fprintln(out, r.Info("OpenClaw: referencia nativa seleccionada: "+result.OpenClaw.Primary+"; fallbacks: "+strings.Join(result.OpenClaw.Fallbacks, ", ")+"."))
 	}
-	return result, false, nil
-}
-
-func runNativeModelConfigTUI(cmd *cobra.Command, kind, primary string, fallbacks []string) (ui.NativeModelConfig, bool, error) {
-	model := ui.NewNativeModelConfigModel(kind, primary, fallbacks)
-	program := tea.NewProgram(model, tea.WithInput(cmd.InOrStdin()), tea.WithOutput(cmd.OutOrStdout()))
-	final, err := program.Run()
-	if err != nil {
-		return ui.NativeModelConfig{}, false, fmt.Errorf("cli: ejecutar configuración nativa de %s: %w", kind, err)
-	}
-	result := final.(ui.NativeModelConfigModel)
-	return result.Result(), result.Result().Cancelled, nil
+	return result
 }
 
 func nativeSummary(config nativeTargetConfig) string {

@@ -109,7 +109,7 @@ func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 // above for updateWriteSteps, extended by PR4 to 4 OpenClaw steps.
 func TestUpdateWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
-	got := updateWriteSteps("0.1.1", cfg, false)
+	got := updateWriteSteps("0.1.1", cfg, false, false)
 	if len(got) != 11 {
 		t.Fatalf("updateWriteSteps() = %#v, want 11 steps (6 Claude + 5 OpenClaw)", got)
 	}
@@ -123,7 +123,7 @@ func TestUpdateWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T)
 // TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps is updateWriteSteps' zero-behavior-
 // change guard, mirroring TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps.
 func TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) {
-	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, false)
+	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, false, false)
 	if len(got) != 6 {
 		t.Fatalf("updateWriteSteps() = %#v, want exactly 6 steps when OpenClaw is absent", got)
 	}
@@ -133,7 +133,7 @@ func TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) 
 // when cloud is fully configured, the plan must list the Engram Cloud re-sync step right after the
 // local Engram pin step.
 func TestUpdateWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
-	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, true)
+	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, true, false)
 	want := []string{
 		"Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…",
 		"Guardando modelos por fase de click-sdd…",
@@ -155,7 +155,7 @@ func TestUpdateWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
 
 // TestUpdateWriteSteps_CloudNotConfigured_NoCloudStep is task 4.5's no-config preview-plan test.
 func TestUpdateWriteSteps_CloudNotConfigured_NoCloudStep(t *testing.T) {
-	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, false)
+	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, false, false)
 	for _, step := range got {
 		if strings.Contains(step, "Cloud") {
 			t.Fatalf("updateWriteSteps() contains cloud step when not configured: %q", step)
@@ -170,10 +170,29 @@ func TestOpenClawWriteSteps_Absent_ReturnsNil(t *testing.T) {
 	}
 }
 
-func TestCodexWriteSteps_SelectedIncludesGuidanceAndExplicitNativeConfigStep(t *testing.T) {
+// TestCodexWriteSteps_NoFlag_ListsGuidanceButNotNativeModelStep is the new-behavior contract: a
+// plain Codex install (no --codex-model) lists the AGENTS.md guidance write, but NOT any native
+// config.toml mutation step — the native write is neither listed nor run without the explicit flag.
+func TestCodexWriteSteps_NoFlag_ListsGuidanceButNotNativeModelStep(t *testing.T) {
 	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir()}, false)
-	if len(got) != 8 || got[6] != "Actualizando AGENTS.md de Codex…" || got[7] != "Configurando modelo nativo de Codex si fue seleccionado explícitamente…" {
-		t.Fatalf("installWriteSteps() = %#v, want Codex guidance and explicit native-model steps appended", got)
+	if len(got) != 7 || got[6] != "Actualizando AGENTS.md de Codex…" {
+		t.Fatalf("installWriteSteps() = %#v, want Codex guidance appended and no native-model step without the flag", got)
+	}
+	for _, step := range got {
+		if strings.Contains(step, "modelo nativo de Codex") {
+			t.Fatalf("installWriteSteps() = %#v, want no Codex native-model write step when --codex-model is omitted", got)
+		}
+	}
+}
+
+// TestCodexWriteSteps_WithFlag_AppendsNativeModelStep proves the opt-in path still lists the native
+// config.toml mutation step when --codex-model was provided (codexNativeModel=true).
+func TestCodexWriteSteps_WithFlag_AppendsNativeModelStep(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir()}
+	selection := installer.TargetSelection{Configured: true, Claude: true, Codex: true}
+	got := installWriteStepsForSelection(cfg, false, selection, true, false)
+	if len(got) != 8 || got[6] != "Actualizando AGENTS.md de Codex…" || got[7] != "Configurando modelo nativo de Codex en config.toml (selección explícita)…" {
+		t.Fatalf("installWriteStepsForSelection() = %#v, want Codex guidance and explicit native-model steps appended", got)
 	}
 }
 
