@@ -25,11 +25,14 @@ const { spawn } = require('node:child_process');
 // UNCONFIRMED (no live OpenClaw runtime was available to this apply session). The primary candidate,
 // `mcp__engram__mem_save`, is a DOCUMENTED BEST GUESS assuming OpenClaw follows the common
 // `mcp__<server>__<tool>` MCP tool-naming convention — NOT Claude Code's plugin-wrapped
-// `mcp__plugin_<plugin>_<server>__<tool>` scheme, because OpenClaw registers Engram as a raw
-// mcpServers entry keyed "engram" (see internal/installer/openclaw.go's SyncOpenClawMCPConfig,
-// which writes servers["engram"] directly — there is no plugin-marketplace wrapping layer on the
-// OpenClaw side the way there is for Claude Code's engram@engram plugin). The other two candidates
-// from the design are also checked, so a small naming variance doesn't silently disable scanning.
+// `mcp__plugin_<plugin>_<server>__<tool>` scheme, because there is no plugin-marketplace wrapping
+// layer on the OpenClaw side the way there is for Claude Code's engram@engram plugin. NOTE: the
+// premise that OpenClaw registers Engram as a raw top-level "mcpServers" entry was WRONG — real
+// `validate config` evidence proved OpenClaw's schema has no such key, and
+// internal/installer/openclaw.go's SyncOpenClawMCPConfig no longer writes it (cleanup-only now,
+// pending OpenClaw's confirmed native MCP registration mechanism). This candidate list is kept as a
+// best guess until that mechanism is confirmed and wired. The other two candidates from the design
+// are also checked, so a small naming variance doesn't silently disable scanning.
 //
 // The explicit list documents known variants; isEngramMemSaveTool also has a conservative fallback
 // for names that still identify both Engram and mem_save.

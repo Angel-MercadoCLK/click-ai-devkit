@@ -50,6 +50,7 @@ const (
 	StepActionRegisterMemoryGuard          StepActionKind = "register-memory-guard"
 	StepActionSaveModels                   StepActionKind = "save-models"
 	StepActionSyncCodexGuidance            StepActionKind = "sync-codex-guidance"
+	StepActionSyncCodexMCP                 StepActionKind = "sync-codex-mcp"
 	StepActionConfigureCodexNativeModel    StepActionKind = "configure-codex-native-model"
 	StepActionSyncOpenClawWorkspace        StepActionKind = "sync-openclaw-workspace"
 	StepActionSyncOpenClawMCP              StepActionKind = "sync-openclaw-mcp"
@@ -188,6 +189,7 @@ var installActionOrder = []StepActionKind{
 	StepActionSyncOpenClawModelProfile,
 	StepActionConfigureOpenClawNativeModel,
 	StepActionSyncCodexGuidance,
+	StepActionSyncCodexMCP,
 	StepActionConfigureCodexNativeModel,
 }
 
@@ -206,6 +208,7 @@ var updateActionOrder = []StepActionKind{
 	StepActionSyncOpenClawModelProfile,
 	StepActionConfigureOpenClawNativeModel,
 	StepActionSyncCodexGuidance,
+	StepActionSyncCodexMCP,
 	StepActionConfigureCodexNativeModel,
 }
 
@@ -229,11 +232,18 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 			codexModelStep.InstallActions = []StepActionKind{StepActionConfigureCodexNativeModel}
 			codexModelStep.UpdateActions = []StepActionKind{StepActionConfigureCodexNativeModel}
 		}
+		// codex-mcp always runs when Codex is a target — independent of the --codex-model native-model
+		// opt-in (unlike codexModelStep above): registering Engram's MCP server is a supplementary,
+		// non-fatal integration (D45 pattern), always attempted, never gated behind a flag. No Snapshot
+		// paths: SyncCodexMCP makes zero file writes, so there is nothing for click's own backup/rollback
+		// to capture — it is pure CLI state delegated to `codex mcp`.
+		codexMCPStep := Step{ID: "codex-mcp", Target: PlanTargetCodex, Label: "Codex Engram MCP", InstallActions: []StepActionKind{StepActionSyncCodexMCP}, UpdateActions: []StepActionKind{StepActionSyncCodexMCP}}
 		steps = append(steps,
 			Step{ID: "codex-runtime", Target: PlanTargetCodex, Label: "Codex CLI", Snapshot: []string{cfg.CodexAgentsMDPath()}, InstallActions: []StepActionKind{StepActionSyncCodexGuidance}, UpdateActions: []StepActionKind{StepActionSyncCodexGuidance}, UninstallActions: []StepActionKind{StepActionStripCodexGuidance}, DoctorChecks: []DoctorCheckKind{DoctorCheckCodexGuidance}},
+			codexMCPStep,
 			codexModelStep,
 		)
-		capabilities = append(capabilities, "Codex CLI: AGENTS.md gestionado y modelo nativo de config.toml")
+		capabilities = append(capabilities, "Codex CLI: AGENTS.md gestionado, Engram MCP registrado y modelo nativo de config.toml")
 	}
 	if selection.OpenClaw {
 		// The openclaw-model step always keeps its native-model doctor check, but only carries the
@@ -251,7 +261,7 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 			Step{ID: "openclaw-runtime", Target: PlanTargetOpenClaw, Label: "OpenClaw", Snapshot: []string{cfg.OpenClawAgentsMDPath(), cfg.OpenClawSoulMDPath(), cfg.OpenClawMCPConfigPath(), cfg.OpenClawModelProfilePath()}, InstallActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UpdateActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UninstallActions: []StepActionKind{StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClaw}},
 			openClawModelStep,
 		)
-		capabilities = append(capabilities, "OpenClaw: workspace, MCP, skills y modelo provider/model mediante su CLI")
+		capabilities = append(capabilities, "OpenClaw: workspace, skills y modelo provider/model mediante su CLI")
 	}
 	if selection.Claude || selection.OpenClaw {
 		steps = append(steps, Step{ID: "engram", Target: PlanTargetShared, Label: "Engram", Snapshot: []string{cfg.EngramStatePath()}, InstallActions: []StepActionKind{StepActionSyncEngram}, UpdateActions: []StepActionKind{StepActionSyncEngram}, UninstallActions: []StepActionKind{StepActionRemoveEngram}, DoctorChecks: []DoctorCheckKind{DoctorCheckEngramPlugin, DoctorCheckEngramSubagentVisibility, DoctorCheckEngramBinary, DoctorCheckEngramPath}})

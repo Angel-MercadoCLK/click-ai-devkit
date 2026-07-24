@@ -556,8 +556,18 @@ func TestInstallCommand_CodexOnly_NonInteractiveOmitsNativeModelWithoutFlagAndDo
 	if err != nil {
 		t.Fatalf("install command error = %v, want nil for Codex-only noninteractive install without Claude, output:\n%s", err, out)
 	}
-	if len(runner.commands) != 0 {
-		t.Fatalf("runner.commands = %#v, want no Claude marketplace/preflight commands for Codex-only install", runner.commands)
+	// SyncCodexMCP always runs for a Codex target (independent of --codex-model), issuing exactly
+	// one `codex mcp get engram` idempotency check via the fake runner — the fake's default Output
+	// stub answers success, so no `mcp add` follows. No Claude marketplace/preflight command is
+	// ever issued for a Codex-only install. SyncCodexMCP resolves the binary to an absolute path
+	// (filepath.Abs), so the fake lookup's "/usr/bin/codex" is qualified the same way here.
+	qualifiedCodexBinary, absErr := filepath.Abs("/usr/bin/codex")
+	if absErr != nil {
+		t.Fatal(absErr)
+	}
+	wantCommands := []string{qualifiedCodexBinary + " mcp get engram"}
+	if !reflect.DeepEqual(runner.commands, wantCommands) {
+		t.Fatalf("runner.commands = %#v, want exactly %#v (only the Codex Engram MCP check, no Claude commands)", runner.commands, wantCommands)
 	}
 	if strings.Contains(out, "gpt-5.6") {
 		t.Fatalf("install output = %q, want no fabricated default Codex native model in noninteractive mode", out)
@@ -593,8 +603,18 @@ func TestUpdateCommand_CodexOnly_UsesPersistedSelectionWithoutClaudeAndOmitsNati
 	if err != nil {
 		t.Fatalf("update command error = %v, want nil for Codex-only update without Claude, output:\n%s", err, out)
 	}
-	if len(runner.commands) != 0 {
-		t.Fatalf("runner.commands = %#v, want no Claude marketplace/preflight commands for Codex-only update", runner.commands)
+	// SyncCodexMCP always runs for a Codex target (independent of --codex-model), issuing exactly
+	// one `codex mcp get engram` idempotency check via the fake runner. No Claude marketplace/
+	// preflight command is ever issued for a Codex-only update. SyncCodexMCP resolves the binary to
+	// an absolute path (filepath.Abs), so the fake lookup's "/usr/bin/codex" is qualified the same
+	// way here.
+	qualifiedCodexBinary, absErr := filepath.Abs("/usr/bin/codex")
+	if absErr != nil {
+		t.Fatal(absErr)
+	}
+	wantCommands := []string{qualifiedCodexBinary + " mcp get engram"}
+	if !reflect.DeepEqual(runner.commands, wantCommands) {
+		t.Fatalf("runner.commands = %#v, want exactly %#v (only the Codex Engram MCP check, no Claude commands)", runner.commands, wantCommands)
 	}
 	if strings.Contains(out, "gpt-5.6") {
 		t.Fatalf("update output = %q, want no fabricated default Codex native model in noninteractive mode", out)

@@ -20,6 +20,7 @@ func TestBuildTargetPlan_TargetFirstOrderAndSharedProjections(t *testing.T) {
 		"Claude Code",
 		"Claude model/profile",
 		"Codex CLI",
+		"Codex Engram MCP",
 		"Codex native model",
 		"OpenClaw",
 		"OpenClaw native model",
@@ -44,7 +45,7 @@ func TestBuildTargetPlan_CodexOnlySkipsClaudeOwnedSteps(t *testing.T) {
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
 	got := plan.StepLabels()
-	want := []string{"Codex CLI", "Codex native model", "SDD assets"}
+	want := []string{"Codex CLI", "Codex Engram MCP", "Codex native model", "SDD assets"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("StepLabels() = %#v, want %#v", got, want)
 	}
@@ -75,10 +76,12 @@ func TestBuildTargetPlan_CodexOnlyExposesLifecycleActionsForProductionCommands(t
 
 	// Without an explicit --codex-model opt-in, the native config.toml mutation is NOT part of the
 	// install/update action set: a plain Codex run neither lists nor performs any native mutation.
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncCodexGuidance}; !reflect.DeepEqual(got, want) {
+	// StepActionSyncCodexMCP, unlike the native-model mutation, is ALWAYS present — registering
+	// Engram's MCP server is independent of --codex-model.
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionSyncCodexMCP}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncCodexGuidance}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionSyncCodexMCP}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
 	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripCodexGuidance, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
@@ -98,10 +101,10 @@ func TestBuildTargetPlan_CodexNativeModelFlag_AddsNativeMutationAction(t *testin
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{CodexNativeModel: true})
 
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
 }

@@ -175,8 +175,8 @@ func TestOpenClawWriteSteps_Absent_ReturnsNil(t *testing.T) {
 // config.toml mutation step — the native write is neither listed nor run without the explicit flag.
 func TestCodexWriteSteps_NoFlag_ListsGuidanceButNotNativeModelStep(t *testing.T) {
 	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir()}, false)
-	if len(got) != 7 || got[6] != "Actualizando AGENTS.md de Codex…" {
-		t.Fatalf("installWriteSteps() = %#v, want Codex guidance appended and no native-model step without the flag", got)
+	if len(got) != 8 || got[6] != "Actualizando AGENTS.md de Codex…" || got[7] != "Registrando Engram en Codex (MCP)…" {
+		t.Fatalf("installWriteSteps() = %#v, want Codex guidance and Engram MCP steps appended and no native-model step without the flag", got)
 	}
 	for _, step := range got {
 		if strings.Contains(step, "modelo nativo de Codex") {
@@ -186,13 +186,14 @@ func TestCodexWriteSteps_NoFlag_ListsGuidanceButNotNativeModelStep(t *testing.T)
 }
 
 // TestCodexWriteSteps_WithFlag_AppendsNativeModelStep proves the opt-in path still lists the native
-// config.toml mutation step when --codex-model was provided (codexNativeModel=true).
+// config.toml mutation step when --codex-model was provided (codexNativeModel=true), AFTER the
+// always-on Engram MCP registration step (independent of the native-model flag).
 func TestCodexWriteSteps_WithFlag_AppendsNativeModelStep(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir()}
 	selection := installer.TargetSelection{Configured: true, Claude: true, Codex: true}
 	got := installWriteStepsForSelection(cfg, false, selection, true, false)
-	if len(got) != 8 || got[6] != "Actualizando AGENTS.md de Codex…" || got[7] != "Configurando modelo nativo de Codex en config.toml (selección explícita)…" {
-		t.Fatalf("installWriteStepsForSelection() = %#v, want Codex guidance and explicit native-model steps appended", got)
+	if len(got) != 9 || got[6] != "Actualizando AGENTS.md de Codex…" || got[7] != "Registrando Engram en Codex (MCP)…" || got[8] != "Configurando modelo nativo de Codex en config.toml (selección explícita)…" {
+		t.Fatalf("installWriteStepsForSelection() = %#v, want Codex guidance, Engram MCP, and explicit native-model steps appended", got)
 	}
 }
 

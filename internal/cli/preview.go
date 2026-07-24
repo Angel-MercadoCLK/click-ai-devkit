@@ -42,7 +42,7 @@ func openClawWriteSteps(cfg installer.Config) []string {
 	}
 	return []string{
 		"Actualizando AGENTS.md y SOUL.md de OpenClaw…",
-		"Registrando Engram en OpenClaw (mcpServers)…",
+		"Limpiando configuración inválida heredada de OpenClaw…",
 		"Instalando plugin de memory-guard para OpenClaw…",
 		"Sincronizando skills de Click en OpenClaw…",
 		"Guardando recomendación de modelos para OpenClaw…",
@@ -95,12 +95,14 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 		return "Guardando modelos por fase de click-sdd…"
 	case installer.StepActionSyncCodexGuidance:
 		return "Actualizando AGENTS.md de Codex…"
+	case installer.StepActionSyncCodexMCP:
+		return "Registrando Engram en Codex (MCP)…"
 	case installer.StepActionConfigureCodexNativeModel:
 		return "Configurando modelo nativo de Codex en config.toml (selección explícita)…"
 	case installer.StepActionSyncOpenClawWorkspace:
 		return "Actualizando AGENTS.md y SOUL.md de OpenClaw…"
 	case installer.StepActionSyncOpenClawMCP:
-		return "Registrando Engram en OpenClaw (mcpServers)…"
+		return "Limpiando configuración inválida heredada de OpenClaw…"
 	case installer.StepActionSyncOpenClawPlugin:
 		return "Instalando plugin de memory-guard para OpenClaw…"
 	case installer.StepActionSyncOpenClawSkills:

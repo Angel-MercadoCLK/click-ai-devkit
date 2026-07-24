@@ -221,6 +221,16 @@ func runInstall(cmd *cobra.Command) error {
 			}); err != nil {
 				return err
 			}
+		case installer.StepActionSyncCodexMCP:
+			// D45 "supplementary integrations are non-fatal" pattern (same as Engram Cloud above):
+			// registering Engram's MCP server with Codex must never abort an otherwise-good local
+			// install. Always attempted when Codex is a target, independent of --codex-model.
+			fmt.Fprintln(out, r.Step("Registrando Engram en Codex (MCP)…"))
+			if mcpErr := syncCodexMCPFunc(cfg); mcpErr != nil {
+				fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo registrar Engram en Codex: %v. La instalación local continúa; reintenta más tarde con `click update`.", mcpErr)))
+			} else {
+				fmt.Fprintln(out, r.Success("Engram registrado en Codex"))
+			}
 		case installer.StepActionConfigureCodexNativeModel:
 			if selection.Codex && native.Codex.Primary != "" {
 				if err := installer.ConfigureCodexModel(cfg.CodexHome, native.Codex.Primary); err != nil {
@@ -234,7 +244,11 @@ func runInstall(cmd *cobra.Command) error {
 				return err
 			}
 		case installer.StepActionSyncOpenClawMCP:
-			if err := r.RunStep("Registrando Engram en OpenClaw (mcpServers)…", "Engram registrado en OpenClaw", func() error {
+			// Cleanup-only (see SyncOpenClawMCPConfig's doc comment): this removes the invalid legacy
+			// "mcpServers" key click used to incorrectly write into openclaw.json, pending OpenClaw's
+			// confirmed native MCP registration mechanism. It never creates openclaw.json and never
+			// writes that key again.
+			if err := r.RunStep("Limpiando configuración inválida heredada de OpenClaw…", "Configuración heredada de OpenClaw revisada", func() error {
 				return installer.SyncOpenClawMCPConfig(cfg)
 			}); err != nil {
 				return err
@@ -294,6 +308,18 @@ func SetSyncCodexGuidanceFuncForTests(fn func(installer.Config) error) func() {
 	old := syncCodexGuidanceFunc
 	syncCodexGuidanceFunc = fn
 	return func() { syncCodexGuidanceFunc = old }
+}
+
+// syncCodexMCPFunc is the injectable seam behind runInstall/runUpdate's installer.SyncCodexMCP call
+// — mirrors syncCodexGuidanceFunc/syncEngramCloudFunc, letting CLI-level tests assert the non-fatal
+// warning behavior without shelling out to a real codex binary.
+var syncCodexMCPFunc = installer.SyncCodexMCP
+
+// SetSyncCodexMCPFuncForTests overrides syncCodexMCPFunc for tests and returns a restore function.
+func SetSyncCodexMCPFuncForTests(fn func(installer.Config) error) func() {
+	old := syncCodexMCPFunc
+	syncCodexMCPFunc = fn
+	return func() { syncCodexMCPFunc = old }
 }
 
 func resolveInstallTargetSelection(cmd *cobra.Command, skipOpenClaw bool, out io.Writer, r *ui.Renderer) (installer.TargetSelection, error) {

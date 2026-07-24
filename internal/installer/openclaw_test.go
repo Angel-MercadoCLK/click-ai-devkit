@@ -113,51 +113,74 @@ func TestSyncOpenClawWorkspace_Absent_NoOp(t *testing.T) {
 	}
 }
 
-// --- SyncOpenClawMCPConfig (tasks 2.5-2.8) ---
+// --- SyncOpenClawMCPConfig (cleanup-only rewrite, urgent fix) ---
+//
+// SyncOpenClawMCPConfig used to WRITE a top-level "mcpServers" key into openclaw.json to register
+// Engram. Real evidence from a live OpenClaw instance's `validate config` proved that key does not
+// exist in OpenClaw's real schema ("Unrecognized key: \"mcpServers\""), and every write corrupted
+// the user's real config. The function is now cleanup-only: it NEVER writes that key, and only
+// removes it when a previous (broken) click run already wrote it.
 
-// TestSyncOpenClawMCPConfig_FirstRegistration_AddsEngramEntry is task 2.5's RED test: no existing
-// entry -> the engram entry is added.
-func TestSyncOpenClawMCPConfig_FirstRegistration_AddsEngramEntry(t *testing.T) {
+// TestSyncOpenClawMCPConfig_MissingFile_NoOp proves the cleanup-only contract's most important
+// guardrail: when openclaw.json does not exist yet, SyncOpenClawMCPConfig must never create it —
+// there is nothing to clean, and this step is cleanup-only, never creation.
+func TestSyncOpenClawMCPConfig_MissingFile_NoOp(t *testing.T) {
 	cfg := Config{OpenClawHome: t.TempDir()}
+	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("Stat(openclaw.json) error = %v, want the file to not exist yet", err)
+	}
 
 	if err := SyncOpenClawMCPConfig(cfg); err != nil {
 		t.Fatalf("SyncOpenClawMCPConfig() error = %v", err)
 	}
 
-	data, err := os.ReadFile(cfg.OpenClawMCPConfigPath())
-	if err != nil {
-		t.Fatalf("ReadFile(openclaw.json) error = %v", err)
-	}
-	var parsed struct {
-		MCPServers map[string]struct {
-			Command   string   `json:"command"`
-			Args      []string `json:"args"`
-			Transport string   `json:"transport"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("json.Unmarshal(openclaw.json) error = %v", err)
-	}
-	entry, ok := parsed.MCPServers["engram"]
-	if !ok {
-		t.Fatalf("openclaw.json mcpServers = %#v, want an \"engram\" entry", parsed.MCPServers)
-	}
-	if entry.Command != "engram" {
-		t.Fatalf("engram entry command = %q, want %q", entry.Command, "engram")
-	}
-	if entry.Transport != "stdio" {
-		t.Fatalf("engram entry transport = %q, want %q", entry.Transport, "stdio")
+	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("Stat(openclaw.json) error = %v, want the file to remain absent — cleanup-only must never create it", err)
 	}
 }
 
-// TestSyncOpenClawMCPConfig_PreservesOtherMCPServersAndTopLevelKeys triangulates 2.5's happy path
-// with an existing file that has UNRELATED mcpServers entries AND an unrelated top-level key —
-// both must survive untouched (RawMessage passthrough, the design's core decision).
-func TestSyncOpenClawMCPConfig_PreservesOtherMCPServersAndTopLevelKeys(t *testing.T) {
+// TestSyncOpenClawMCPConfig_NoMCPServersKey_NoWriteAtAll proves the already-clean case is a true
+// no-op: an openclaw.json with no top-level "mcpServers" key is left completely untouched (verified
+// by mtime, not just content) — there is nothing to clean.
+func TestSyncOpenClawMCPConfig_NoMCPServersKey_NoWriteAtAll(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir()}
+	original := `{"someOtherKey": {"nested": true}}`
+	writeTestFile(t, cfg.OpenClawMCPConfigPath(), original)
+	before, err := os.Stat(cfg.OpenClawMCPConfigPath())
+	if err != nil {
+		t.Fatalf("Stat(openclaw.json) before error = %v", err)
+	}
+
+	if err := SyncOpenClawMCPConfig(cfg); err != nil {
+		t.Fatalf("SyncOpenClawMCPConfig() error = %v", err)
+	}
+
+	after, err := os.Stat(cfg.OpenClawMCPConfigPath())
+	if err != nil {
+		t.Fatalf("Stat(openclaw.json) after error = %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("openclaw.json mtime changed from %v to %v, want untouched (no \"mcpServers\" key to clean, so no write at all)", before.ModTime(), after.ModTime())
+	}
+	got, err := os.ReadFile(cfg.OpenClawMCPConfigPath())
+	if err != nil {
+		t.Fatalf("ReadFile(openclaw.json) error = %v", err)
+	}
+	if string(got) != original {
+		t.Fatalf("openclaw.json content = %q, want unchanged %q", got, original)
+	}
+}
+
+// TestSyncOpenClawMCPConfig_RemovesLegacyMCPServersKey is the core healing contract: a pre-existing
+// top-level "mcpServers" key — matching what click used to write, complete with an "engram" entry —
+// is removed entirely, and every other top-level key survives with its value semantically
+// unchanged. Compared via unmarshal-and-compare, not raw bytes: key ORDER changing is fine
+// (encoding/json sorts map keys), only VALUES must be identical.
+func TestSyncOpenClawMCPConfig_RemovesLegacyMCPServersKey(t *testing.T) {
 	cfg := Config{OpenClawHome: t.TempDir()}
 	writeTestFile(t, cfg.OpenClawMCPConfigPath(), `{
 		"someOtherKey": {"nested": true},
-		"mcpServers": {"otherTool": {"command": "othertool", "args": ["serve"], "transport": "stdio"}}
+		"mcpServers": {"engram": {"command": "engram", "args": ["mcp", "--tools=agent"], "transport": "stdio"}, "otherTool": {"command": "othertool"}}
 	}`)
 
 	if err := SyncOpenClawMCPConfig(cfg); err != nil {
@@ -172,26 +195,53 @@ func TestSyncOpenClawMCPConfig_PreservesOtherMCPServersAndTopLevelKeys(t *testin
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		t.Fatalf("json.Unmarshal(openclaw.json) error = %v", err)
 	}
-	if _, ok := parsed["someOtherKey"]; !ok {
-		t.Fatalf("openclaw.json top level = %#v, want unrelated key \"someOtherKey\" preserved", parsed)
+	if _, ok := parsed["mcpServers"]; ok {
+		t.Fatalf("openclaw.json top level = %#v, want \"mcpServers\" removed entirely", parsed)
 	}
-	var servers map[string]json.RawMessage
-	if err := json.Unmarshal(parsed["mcpServers"], &servers); err != nil {
-		t.Fatalf("json.Unmarshal(mcpServers) error = %v", err)
+	var otherKey map[string]any
+	if err := json.Unmarshal(parsed["someOtherKey"], &otherKey); err != nil {
+		t.Fatalf("json.Unmarshal(someOtherKey) error = %v", err)
 	}
-	if _, ok := servers["otherTool"]; !ok {
-		t.Fatalf("mcpServers = %#v, want unrelated entry \"otherTool\" preserved", servers)
-	}
-	if _, ok := servers["engram"]; !ok {
-		t.Fatalf("mcpServers = %#v, want \"engram\" entry added", servers)
+	if nested, ok := otherKey["nested"].(bool); !ok || !nested {
+		t.Fatalf("someOtherKey = %#v, want {\"nested\": true} preserved semantically", otherKey)
 	}
 }
 
-// TestSyncOpenClawMCPConfig_Rerun_Idempotent is task 2.6's RED test: running twice must produce
-// byte-identical output and never duplicate the engram entry.
+// TestSyncOpenClawMCPConfig_ArbitraryMCPServersValue_StillRemoved proves the healing does not
+// depend on the key matching what click specifically used to write: real `validate config` evidence
+// proves OpenClaw recognizes no legitimate top-level "mcpServers" key at all, so ANY value under
+// that key is click's own past mistake and safe to remove unconditionally.
+func TestSyncOpenClawMCPConfig_ArbitraryMCPServersValue_StillRemoved(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir()}
+	writeTestFile(t, cfg.OpenClawMCPConfigPath(), `{"mcpServers": "not even an object", "keep": 42}`)
+
+	if err := SyncOpenClawMCPConfig(cfg); err != nil {
+		t.Fatalf("SyncOpenClawMCPConfig() error = %v", err)
+	}
+
+	data, err := os.ReadFile(cfg.OpenClawMCPConfigPath())
+	if err != nil {
+		t.Fatalf("ReadFile(openclaw.json) error = %v", err)
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("json.Unmarshal(openclaw.json) error = %v", err)
+	}
+	if _, ok := parsed["mcpServers"]; ok {
+		t.Fatal("openclaw.json still has a \"mcpServers\" key, want it removed regardless of its value shape")
+	}
+	var keep float64
+	if err := json.Unmarshal(parsed["keep"], &keep); err != nil || keep != 42 {
+		t.Fatalf("keep = %v, err = %v, want 42 preserved", keep, err)
+	}
+}
+
+// TestSyncOpenClawMCPConfig_Rerun_Idempotent is the idempotency contract: a second run against an
+// already-clean file (no "mcpServers" key, because the first run just removed it) is a true no-op —
+// byte-identical output, never re-adds anything.
 func TestSyncOpenClawMCPConfig_Rerun_Idempotent(t *testing.T) {
 	cfg := Config{OpenClawHome: t.TempDir()}
-	writeTestFile(t, cfg.OpenClawMCPConfigPath(), `{"mcpServers": {"otherTool": {"command": "othertool"}}}`)
+	writeTestFile(t, cfg.OpenClawMCPConfigPath(), `{"mcpServers": {"otherTool": {"command": "othertool"}}, "keep": true}`)
 
 	if err := SyncOpenClawMCPConfig(cfg); err != nil {
 		t.Fatalf("SyncOpenClawMCPConfig() (first run) error = %v", err)
@@ -199,6 +249,9 @@ func TestSyncOpenClawMCPConfig_Rerun_Idempotent(t *testing.T) {
 	first, err := os.ReadFile(cfg.OpenClawMCPConfigPath())
 	if err != nil {
 		t.Fatalf("ReadFile() after first run error = %v", err)
+	}
+	if strings.Contains(string(first), "mcpServers") {
+		t.Fatalf("openclaw.json after first run = %s, want \"mcpServers\" removed", first)
 	}
 
 	if err := SyncOpenClawMCPConfig(cfg); err != nil {
@@ -214,38 +267,8 @@ func TestSyncOpenClawMCPConfig_Rerun_Idempotent(t *testing.T) {
 	}
 }
 
-// TestSyncOpenClawMCPConfig_MissingFile_CreatesNewFileWithOnlyEngramEntry is task 2.7's RED test:
-// no openclaw.json exists yet -> a new file is created containing only the engram entry.
-func TestSyncOpenClawMCPConfig_MissingFile_CreatesNewFileWithOnlyEngramEntry(t *testing.T) {
-	cfg := Config{OpenClawHome: t.TempDir()}
-	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); !os.IsNotExist(err) {
-		t.Fatalf("Stat(openclaw.json) error = %v, want the file to not exist yet", err)
-	}
-
-	if err := SyncOpenClawMCPConfig(cfg); err != nil {
-		t.Fatalf("SyncOpenClawMCPConfig() error = %v", err)
-	}
-
-	data, err := os.ReadFile(cfg.OpenClawMCPConfigPath())
-	if err != nil {
-		t.Fatalf("ReadFile(openclaw.json) error = %v, want the file created", err)
-	}
-	var parsed struct {
-		MCPServers map[string]json.RawMessage `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("json.Unmarshal(openclaw.json) error = %v", err)
-	}
-	if len(parsed.MCPServers) != 1 {
-		t.Fatalf("mcpServers = %#v, want exactly 1 entry (engram only)", parsed.MCPServers)
-	}
-	if _, ok := parsed.MCPServers["engram"]; !ok {
-		t.Fatal("mcpServers has no \"engram\" entry")
-	}
-}
-
 // TestSyncOpenClawMCPConfig_Absent_NoOp mirrors TestSyncOpenClawWorkspace_Absent_NoOp for the MCP
-// config sync — defense in depth alongside the CLI-level skip.
+// config cleanup — defense in depth alongside the CLI-level skip.
 func TestSyncOpenClawMCPConfig_Absent_NoOp(t *testing.T) {
 	cfg := Config{}
 

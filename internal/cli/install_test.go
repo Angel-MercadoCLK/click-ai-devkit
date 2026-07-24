@@ -159,3 +159,54 @@ var errTestEngramCloud = &cloudError{msg: "engram cloud enrollment failed"}
 type cloudError struct{ msg string }
 
 func (e *cloudError) Error() string { return e.msg }
+
+// TestInstallCommand_CodexMCPFailureIsNonFatal is FIX 2's non-fatal contract, mirroring
+// TestInstallCommand_CloudConfigured_EnrollmentFailureIsNonFatal for Codex's Engram MCP
+// registration (D45 "supplementary integrations are non-fatal" pattern): a failure registering
+// Engram's MCP server with Codex must never abort an otherwise-good local install. The command must
+// (a) return nil, (b) surface a Spanish warning containing the underlying error, and (c) still
+// complete the remaining steps (the Codex AGENTS.md guidance write already ran before this step,
+// and the install still reaches its completion line).
+func TestInstallCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
+
+	guidanceCalls := 0
+	restoreGuidance := SetSyncCodexGuidanceFuncForTests(func(cfg installer.Config) error {
+		guidanceCalls++
+		return nil
+	})
+	defer restoreGuidance()
+
+	restoreMCP := SetSyncCodexMCPFuncForTests(func(cfg installer.Config) error {
+		return errTestCodexMCP
+	})
+	defer restoreMCP()
+
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), lookup, "install")
+	if err != nil {
+		t.Fatalf("install command error = %v, want nil (Codex MCP failure must be non-fatal), output:\n%s", err, out)
+	}
+	if !strings.Contains(out, "No se pudo registrar Engram en Codex") {
+		t.Fatalf("install output = %q, want it to contain the Spanish Codex MCP failure warning", out)
+	}
+	if !strings.Contains(out, errTestCodexMCP.Error()) {
+		t.Fatalf("install output = %q, want the warning to include the underlying error %q", out, errTestCodexMCP.Error())
+	}
+	if !strings.Contains(out, "Instalación completa.") {
+		t.Fatalf("install output = %q, want the command to continue to completion after the Codex MCP failure", out)
+	}
+	if guidanceCalls != 1 {
+		t.Fatalf("SyncCodexGuidance called %d times, want 1 — the AGENTS.md write step must still have run before the failed MCP step", guidanceCalls)
+	}
+}
+
+var errTestCodexMCP = &codexMCPError{msg: "codex mcp add failed"}
+
+type codexMCPError struct{ msg string }
+
+func (e *codexMCPError) Error() string { return e.msg }

@@ -153,3 +153,50 @@ func TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal(t *testing.T) {
 		t.Fatalf("CLAUDE.md managed block missing after cloud failure — local steps did not run")
 	}
 }
+
+// TestUpdateCommand_CodexMCPFailureIsNonFatal is FIX 2's non-fatal contract for `click update`,
+// mirroring TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal for Codex's Engram MCP
+// registration (D45 "supplementary integrations are non-fatal" pattern): a failure re-registering
+// Engram's MCP server with Codex must never abort an otherwise-good update. The command must (a)
+// return nil, (b) surface a Spanish warning containing the underlying error, and (c) still reach
+// completion.
+func TestUpdateCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
+	if err := installer.SaveTargetSelection(installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}, installer.TargetSelection{Configured: true, Codex: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+
+	guidanceCalls := 0
+	restoreGuidance := SetSyncCodexGuidanceFuncForTests(func(cfg installer.Config) error {
+		guidanceCalls++
+		return nil
+	})
+	defer restoreGuidance()
+
+	restoreMCP := SetSyncCodexMCPFuncForTests(func(cfg installer.Config) error {
+		return errTestCodexMCP
+	})
+	defer restoreMCP()
+
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), lookup, "update")
+	if err != nil {
+		t.Fatalf("update command error = %v, want nil (Codex MCP failure must be non-fatal), output:\n%s", err, out)
+	}
+	if !strings.Contains(out, "No se pudo registrar Engram en Codex") {
+		t.Fatalf("update output = %q, want it to contain the Spanish Codex MCP failure warning", out)
+	}
+	if !strings.Contains(out, errTestCodexMCP.Error()) {
+		t.Fatalf("update output = %q, want the warning to include the underlying error %q", out, errTestCodexMCP.Error())
+	}
+	if !strings.Contains(out, "Update completo.") {
+		t.Fatalf("update output = %q, want the command to continue to completion after the Codex MCP failure", out)
+	}
+	if guidanceCalls != 1 {
+		t.Fatalf("SyncCodexGuidance called %d times, want 1 — the AGENTS.md write step must still have run before the failed MCP step", guidanceCalls)
+	}
+}

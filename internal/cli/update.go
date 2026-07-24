@@ -194,7 +194,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		case installer.StepActionSyncOpenClawMCP:
-			if err := r.RunStep("Registrando Engram en OpenClaw (mcpServers)…", "Engram registrado en OpenClaw", func() error {
+			// Cleanup-only (see SyncOpenClawMCPConfig's doc comment): this removes the invalid legacy
+			// "mcpServers" key click used to incorrectly write into openclaw.json, pending OpenClaw's
+			// confirmed native MCP registration mechanism. It never creates openclaw.json and never
+			// writes that key again.
+			if err := r.RunStep("Limpiando configuración inválida heredada de OpenClaw…", "Configuración heredada de OpenClaw revisada", func() error {
 				return installer.SyncOpenClawMCPConfig(cfg)
 			}); err != nil {
 				return err
@@ -225,6 +229,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 					return fmt.Errorf("%w; rollback failed: %v", err, restoreErr)
 				}
 				return fmt.Errorf("%w; rollback restored the previous snapshot", err)
+			}
+		case installer.StepActionSyncCodexMCP:
+			// D45 "supplementary integrations are non-fatal" pattern (same as Engram Cloud above):
+			// registering Engram's MCP server with Codex must never abort an otherwise-good update.
+			// Always attempted when Codex is a target, independent of --codex-model.
+			fmt.Fprintln(out, r.Step("Registrando Engram en Codex (MCP)…"))
+			if mcpErr := syncCodexMCPFunc(cfg); mcpErr != nil {
+				fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo registrar Engram en Codex: %v. La actualización local continúa; reintenta más tarde con `click update`.", mcpErr)))
+			} else {
+				fmt.Fprintln(out, r.Success("Engram registrado en Codex"))
 			}
 		case installer.StepActionConfigureCodexNativeModel:
 			// Only present in the plan when --codex-model was passed (see PlanOptions.CodexNativeModel

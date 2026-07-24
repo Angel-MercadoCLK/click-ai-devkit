@@ -46,75 +46,53 @@ func SyncOpenClawWorkspace(cfg Config) error {
 	return nil
 }
 
-// openClawEngramMCPArgs is the "args" value written for the engram mcpServers entry.
+// SyncOpenClawMCPConfig is a CLEANUP-ONLY step, pending OpenClaw's confirmed native MCP
+// registration mechanism (a separate future fast-follow — see SyncCodexMCP in codexmcp.go for the
+// equivalent capability already wired for Codex using ITS confirmed CLI syntax).
 //
-// VERIFY-AT-APPLY (design #1666's resolved-risk note, item 4): this mirrors the Engram Claude Code
-// plugin's OWN bundled `.mcp.json` — `{"mcpServers":{"engram":{"command":"engram","args":["mcp","--tools=agent"]}}}`
-// — confirmed via a raw fetch of plugin/claude-code/.mcp.json in the upstream Engram repo
-// (documentacion/spikes/spike-a-engram-packaging.md, Q1/Q3). It has NOT been independently
-// re-confirmed against `engram --help` in THIS apply session (no Bash tool was available). If
-// `engram --help` or OpenClaw's actual MCP handshake disagrees, only this one variable needs to
-// change — SyncOpenClawMCPConfig's read-merge-write logic is unaffected either way.
-var openClawEngramMCPArgs = []string{"mcp", "--tools=agent"}
-
-// openClawEngramMCPEntry is the JSON shape of the "engram" entry inside openclaw.json's
-// mcpServers object — confirmed real format (design #1666's resolved risk):
-// {"command":"engram","args":[...],"transport":"stdio"}. Local-only by default (spec's Engram MCP
-// default decision); cloud enrollment is out of scope (sibling proposal engram-cloud-wiring).
-type openClawEngramMCPEntry struct {
-	Command   string   `json:"command"`
-	Args      []string `json:"args"`
-	Transport string   `json:"transport"`
-}
-
-// SyncOpenClawMCPConfig registers Engram as a local MCP server inside OpenClaw's own
-// ~/.openclaw/openclaw.json (cfg.OpenClawMCPConfigPath), preserving every unrelated top-level key
-// and every unrelated mcpServers entry via json.RawMessage passthrough (design's "MCP wiring"
-// decision: read-merge-write, never regenerate the file wholesale). Idempotent by construction:
-// re-running with the same inputs produces byte-identical output, because encoding/json marshals
-// map keys in sorted order on every call — there is no read-mutate-append step that could grow the
-// file across re-runs. It is a no-op when cfg.OpenClawHome is empty, mirroring
-// SyncOpenClawWorkspace's guard.
+// This used to write a top-level "mcpServers" key into OpenClaw's own ~/.openclaw/openclaw.json to
+// register Engram. That assumption was WRONG: real evidence from a live OpenClaw instance's own
+// `validate config` proves OpenClaw's schema does not recognize a top-level "mcpServers" key at all
+// ("Unrecognized key: \"mcpServers\""), and writing it there corrupted every affected install,
+// producing repeated "mcp loopback: request handling failed: Invalid config" errors in OpenClaw's
+// own session. This function now NEVER writes that key under any circumstances.
+//
+// Instead it HEALS already-broken installs: if openclaw.json currently has a top-level "mcpServers"
+// key, that key is removed and the file is written back — real `validate config` evidence proves
+// OpenClaw recognizes no legitimate use of that key, so its presence can only be click's own past
+// mistake, and removing it is always safe. Every other top-level key is preserved byte-for-byte via
+// the same json.RawMessage passthrough this file already used for read-merge-write.
+//
+// It is a no-op — no read past the initial stat, and definitely no write — when: cfg.OpenClawHome is
+// empty (mirrors SyncOpenClawWorkspace's guard); openclaw.json does not exist yet (this step is
+// cleanup-only, never creation — there is nothing to clean); or the file exists but already has no
+// top-level "mcpServers" key (already clean, re-running is a true no-op).
 func SyncOpenClawMCPConfig(cfg Config) error {
 	if cfg.OpenClawHome == "" {
 		return nil
 	}
 	path := cfg.OpenClawMCPConfigPath()
 
-	top := map[string]json.RawMessage{}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("installer: read %s: %w", path, err)
+		if os.IsNotExist(err) {
+			return nil
 		}
-	} else if len(data) > 0 {
-		if err := json.Unmarshal(data, &top); err != nil {
-			return fmt.Errorf("installer: parse %s: %w", path, err)
-		}
+		return fmt.Errorf("installer: read %s: %w", path, err)
+	}
+	if len(data) == 0 {
+		return nil
 	}
 
-	servers := map[string]json.RawMessage{}
-	if raw, ok := top["mcpServers"]; ok && len(raw) > 0 {
-		if err := json.Unmarshal(raw, &servers); err != nil {
-			return fmt.Errorf("installer: parse %s mcpServers: %w", path, err)
-		}
+	top := map[string]json.RawMessage{}
+	if err := json.Unmarshal(data, &top); err != nil {
+		return fmt.Errorf("installer: parse %s: %w", path, err)
 	}
 
-	entry, err := json.Marshal(openClawEngramMCPEntry{
-		Command:   "engram",
-		Args:      openClawEngramMCPArgs,
-		Transport: "stdio",
-	})
-	if err != nil {
-		return fmt.Errorf("installer: marshal engram mcp entry: %w", err)
+	if _, ok := top["mcpServers"]; !ok {
+		return nil
 	}
-	servers["engram"] = entry
-
-	serversRaw, err := json.Marshal(servers)
-	if err != nil {
-		return fmt.Errorf("installer: marshal mcpServers: %w", err)
-	}
-	top["mcpServers"] = serversRaw
+	delete(top, "mcpServers")
 
 	if err := writeJSONFile(path, top); err != nil {
 		return fmt.Errorf("installer: write %s: %w", path, err)

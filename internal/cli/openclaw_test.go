@@ -61,13 +61,16 @@ func execRootWithOpenClaw(t *testing.T, claudeHome, openClawHome string, args ..
 	return buf.String(), err
 }
 
-// TestInstallCommand_OpenClawDetected_WritesAgentsAndSoulAndMCPConfig is task 2.14/2.17's
-// end-to-end RED test: with openclaw resolvable on PATH, `click install` must write AGENTS.md,
-// SOUL.md, and register the engram MCP entry in openclaw.json — under the SAME single confirm as
-// Claude Code's own writes (execRootWithOpenClaw's non-TTY buffer takes the non-interactive path,
-// exactly like every other CLI test in this package, so this proves the writes actually run, not
-// just that the plan lists them).
-func TestInstallCommand_OpenClawDetected_WritesAgentsAndSoulAndMCPConfig(t *testing.T) {
+// TestInstallCommand_OpenClawDetected_WritesAgentsAndSoul is task 2.14/2.17's end-to-end test,
+// adapted for the urgent cleanup-only fix: with openclaw resolvable on PATH, `click install` must
+// write AGENTS.md and SOUL.md, under the SAME single confirm as Claude Code's own writes
+// (execRootWithOpenClaw's non-TTY buffer takes the non-interactive path, exactly like every other
+// CLI test in this package, so this proves the writes actually run, not just that the plan lists
+// them). It must NOT create openclaw.json — SyncOpenClawMCPConfig is cleanup-only now (real
+// `validate config` evidence proved OpenClaw's schema has no top-level "mcpServers" key, so click
+// must never write one, not even to register Engram), and there is nothing to clean on a fresh
+// install where openclaw.json never existed.
+func TestInstallCommand_OpenClawDetected_WritesAgentsAndSoul(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
 	runner := newTestCommandRunner(claudeHome)
@@ -97,12 +100,8 @@ func TestInstallCommand_OpenClawDetected_WritesAgentsAndSoulAndMCPConfig(t *test
 	if !strings.Contains(string(soulRaw), "click-ai-devkit (managed)") {
 		t.Fatalf("SOUL.md content = %q, want it to contain the managed block markers", soulRaw)
 	}
-	mcpRaw, err := os.ReadFile(cfg.OpenClawMCPConfigPath())
-	if err != nil {
-		t.Fatalf("ReadFile(openclaw.json) error = %v, want it written when OpenClaw is detected", err)
-	}
-	if !strings.Contains(string(mcpRaw), `"engram"`) {
-		t.Fatalf("openclaw.json content = %q, want it to contain the engram MCP entry", mcpRaw)
+	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("Stat(openclaw.json) error = %v, want it left absent — SyncOpenClawMCPConfig is cleanup-only and must never create the file", err)
 	}
 	profileRaw, err := os.ReadFile(cfg.OpenClawModelProfilePath())
 	if err != nil {
@@ -255,9 +254,10 @@ func TestInstallCommand_OpenClawAbsent_NoSkillWrites(t *testing.T) {
 	}
 }
 
-// TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoulAndMCPConfig mirrors the install-side
-// detection test for `click update`.
-func TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoulAndMCPConfig(t *testing.T) {
+// TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoul mirrors the install-side detection test
+// for `click update`, adapted for the cleanup-only fix: no pre-existing openclaw.json means update
+// leaves it absent too (nothing to clean).
+func TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoul(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
 	runner := newTestCommandRunner(claudeHome)
@@ -277,8 +277,45 @@ func TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoulAndMCPConfig(t *test
 	}
 
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
-	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); err != nil {
-		t.Fatalf("Stat(openclaw.json) error = %v, want it present after update re-syncs OpenClaw", err)
+	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("Stat(openclaw.json) error = %v, want it left absent — nothing to clean when it never existed", err)
+	}
+}
+
+// TestInstallCommand_OpenClawDetected_HealsLegacyMCPServersKey is the urgent-fix end-to-end
+// regression guard: a real machine's openclaw.json already corrupted by a PAST click run (a
+// top-level "mcpServers" key OpenClaw's own `validate config` rejects) must be healed — the key
+// removed, every other top-level key preserved — the next time `click install` runs against that
+// same OpenClaw target.
+func TestInstallCommand_OpenClawDetected_HealsLegacyMCPServersKey(t *testing.T) {
+	claudeHome := t.TempDir()
+	openClawHome := t.TempDir()
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+	if err := os.MkdirAll(openClawHome, 0o755); err != nil {
+		t.Fatalf("MkdirAll(openClawHome) error = %v", err)
+	}
+	corrupted := `{"someUserKey": {"kept": true}, "mcpServers": {"engram": {"command": "engram", "args": ["mcp", "--tools=agent"], "transport": "stdio"}}}`
+	if err := os.WriteFile(cfg.OpenClawMCPConfigPath(), []byte(corrupted), 0o644); err != nil {
+		t.Fatalf("WriteFile(openclaw.json) error = %v", err)
+	}
+
+	if _, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "install"); err != nil {
+		t.Fatalf("install command error = %v", err)
+	}
+
+	got, err := os.ReadFile(cfg.OpenClawMCPConfigPath())
+	if err != nil {
+		t.Fatalf("ReadFile(openclaw.json) error = %v", err)
+	}
+	if strings.Contains(string(got), "mcpServers") {
+		t.Fatalf("openclaw.json = %s, want the invalid legacy \"mcpServers\" key healed away", got)
+	}
+	if !strings.Contains(string(got), "someUserKey") {
+		t.Fatalf("openclaw.json = %s, want unrelated top-level key preserved", got)
 	}
 }
 
