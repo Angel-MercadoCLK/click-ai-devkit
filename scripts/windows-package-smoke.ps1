@@ -94,6 +94,10 @@ if (`$args.Count -ge 3 -and `$args[0] -eq 'mcp' -and `$args[1] -eq 'add' -and `$
   New-Item -ItemType File -Path '$codexEngramRegisteredMarker' -Force | Out-Null
   exit 0
 }
+if (`$args.Count -ge 3 -and `$args[0] -eq 'mcp' -and `$args[1] -eq 'remove' -and `$args[2] -eq 'engram') {
+  Remove-Item -LiteralPath '$codexEngramRegisteredMarker' -Force -ErrorAction SilentlyContinue
+  exit 0
+}
 exit 0
 "@ | Set-Content -LiteralPath $codexHelper -Encoding ASCII
 [System.IO.File]::WriteAllText((Join-Path $binRoot 'codex.cmd'), '@powershell -NoProfile -ExecutionPolicy Bypass -File "' + $codexHelper + '" %*' + "`r`n")
@@ -142,7 +146,11 @@ Assert-Contains -Actual $openClawCalls -Expected 'config set agents.defaults.mod
 $codexAgents = Get-Content -LiteralPath (Join-Path $codexHome 'AGENTS.md') -Raw
 $codexConfig = Get-Content -LiteralPath (Join-Path $codexHome 'config.toml') -Raw
 Assert-Contains -Actual $codexAgents -Expected 'This block is managed by click' -Context 'Codex AGENTS.md'
-Assert-Contains -Actual $codexConfig -Expected 'model = "gpt-5.6"' -Context 'Codex config.toml'
+# ConfigureCodexModel now uses github.com/pelletier/go-toml/v2, which serializes simple strings as
+# TOML literal (single-quoted) strings, e.g. model = 'gpt-5.6'. Assert quote-agnostically: the root
+# `model =` assignment and the gpt-5.6 value must both be present, regardless of the quote char.
+Assert-Contains -Actual $codexConfig -Expected 'model =' -Context 'Codex config.toml'
+Assert-Contains -Actual $codexConfig -Expected 'gpt-5.6' -Context 'Codex config.toml'
 
 # First-time Engram registration with Codex: get (not-yet-registered) then add, exact real syntax.
 $codexCallsAfterInstall = Get-Content -LiteralPath $codexLog -Raw
@@ -173,6 +181,34 @@ if ($null -ne $healedConfig.mcpServers) {
 }
 if ($healedConfig.agents.defaults.model.primary -ne 'openai/gpt-5.6-sol') {
   throw "click update did not preserve unrelated openclaw.json content during cleanup. Actual: $(Get-Content -LiteralPath $openClawConfigPath -Raw)"
+}
+
+# --- v0.5.8 uninstall lifecycle: prove `click uninstall` REVERSES the OpenClaw managed blocks and
+# de-registers the Codex Engram MCP (previously left behind forever). ---
+$openClawAgentsMD = Join-Path $openClawHome 'workspace\AGENTS.md'
+$openClawSoulMD = Join-Path $openClawHome 'workspace\SOUL.md'
+# Precondition: install/update above (OpenClaw a target, not skipped) wrote the managed blocks.
+if (-not (Test-Path -LiteralPath $openClawAgentsMD) -or -not ((Get-Content -Raw -LiteralPath $openClawAgentsMD).Contains('managed by click'))) {
+  throw "precondition failed: OpenClaw AGENTS.md managed block missing before uninstall"
+}
+# Precondition: Codex Engram MCP is registered (marker present) after the idempotent update.
+if (-not (Test-Path -LiteralPath $codexEngramRegisteredMarker)) {
+  throw "precondition failed: Codex Engram MCP not registered before uninstall"
+}
+
+& $clickExe uninstall | Out-Null
+
+# OpenClaw AGENTS.md and SOUL.md must no longer carry click's managed block (stripped, or file removed).
+foreach ($f in @($openClawAgentsMD, $openClawSoulMD)) {
+  if ((Test-Path -LiteralPath $f) -and (Get-Content -Raw -LiteralPath $f).Contains('managed by click')) {
+    throw "click uninstall left the click-managed block in $f"
+  }
+}
+# Codex Engram MCP must be de-registered: `codex mcp remove engram` issued and the marker cleared.
+$codexCallsAll = Get-Content -LiteralPath $codexLog -Raw
+Assert-Contains -Actual $codexCallsAll -Expected 'mcp remove engram' -Context 'codex command log (uninstall)'
+if (Test-Path -LiteralPath $codexEngramRegisteredMarker) {
+  throw "click uninstall did not de-register Engram MCP from Codex (marker still present)"
 }
 
 Remove-Item -LiteralPath $smokeRoot -Recurse -Force

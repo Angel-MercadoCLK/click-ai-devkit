@@ -146,79 +146,74 @@ func runUninstall(cmd *cobra.Command) error {
 		outcomes = append(outcomes, uninstallStepOutcome{label: label, err: stepErr})
 		return stepErr
 	}
-	rollbackAndReport := func() error {
-		if restoreErr := installer.RestoreRun(cfg); restoreErr != nil {
-			outcomes = append(outcomes, uninstallStepOutcome{label: "rollback", err: restoreErr})
-		}
-		return reportUninstallOutcome(out, r, outcomes)
-	}
-
+	// Resilient-continue teardown (Finding 2): every step below is attempted regardless of whether an
+	// earlier one failed. runStep records each step's outcome; the loop NEVER returns early and NEVER
+	// rolls back. A prior `click install`'s run-start snapshot is still taken above via
+	// SnapshotTargetPlan for the separate `click rollback` command, but uninstall itself is best-effort
+	// FORWARD — it never auto-restores a partially-torn-down setup back to fully-installed (which would
+	// make it impossible to ever cleanly uninstall once, say, Claude Code was already removed). The
+	// final reportUninstallOutcome summarizes which steps failed and returns the aggregate error.
 	for _, action := range plan.UninstallActionKinds() {
 		switch action {
 		case installer.StepActionRemoveMarketplacePlugins:
-			if err := runStep("Plugins de Claude Code", "Quitando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins eliminados de Claude Code", true, func() error {
+			runStep("Plugins de Claude Code", "Quitando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins eliminados de Claude Code", true, func() error {
 				return installer.RemoveMarketplacePlugins()
-			}); err != nil {
-				return rollbackAndReport()
-			}
+			})
+		case installer.StepActionStripOpenClawWorkspace:
+			runStep("AGENTS.md y SOUL.md de OpenClaw", "Limpiando AGENTS.md y SOUL.md de OpenClaw…", "Bloques gestionados de AGENTS.md y SOUL.md de OpenClaw eliminados", false, func() error {
+				return installer.StripOpenClawWorkspace(cfg)
+			})
 		case installer.StepActionRemoveOpenClawPlugin:
-			if err := runStep("plugin de OpenClaw", "Quitando plugin de memory-guard para OpenClaw…", "Plugin de memory-guard para OpenClaw eliminado", false, func() error {
+			runStep("plugin de OpenClaw", "Quitando plugin de memory-guard para OpenClaw…", "Plugin de memory-guard para OpenClaw eliminado", false, func() error {
 				return installer.RemoveOpenClawPlugin(cfg)
-			}); err != nil {
-				return rollbackAndReport()
-			}
+			})
 		case installer.StepActionRemoveOpenClawSkills:
-			if err := runStep("skills de OpenClaw", "Quitando skills de Click de OpenClaw…", "Skills de Click de OpenClaw eliminados", false, func() error {
+			runStep("skills de OpenClaw", "Quitando skills de Click de OpenClaw…", "Skills de Click de OpenClaw eliminados", false, func() error {
 				return removeOpenClawSkillsFunc(cfg)
-			}); err != nil {
-				return rollbackAndReport()
-			}
+			})
+		case installer.StepActionRemoveOpenClawModelProfile:
+			runStep("metadatos de modelos de OpenClaw", "Quitando metadatos de modelos de OpenClaw…", "Metadatos de modelos de OpenClaw eliminados", false, func() error {
+				return installer.RemoveOpenClawModelProfile(cfg)
+			})
 		case installer.StepActionStripCodexGuidance:
-			if err := runStep("AGENTS.md de Codex", "Limpiando AGENTS.md de Codex…", "Bloque de AGENTS.md de Codex eliminado", false, func() error {
+			runStep("AGENTS.md de Codex", "Limpiando AGENTS.md de Codex…", "Bloque de AGENTS.md de Codex eliminado", false, func() error {
 				return stripCodexGuidanceFunc(cfg)
-			}); err != nil {
-				return rollbackAndReport()
-			}
+			})
+		case installer.StepActionRemoveCodexMCP:
+			// Best-effort, like SyncCodexMCP on install (D45 "supplementary integrations are non-fatal"):
+			// the resilient-continue loop records any failure in the summary and never aborts the rest of
+			// the teardown.
+			runStep("Engram MCP de Codex", "Quitando registro de Engram en Codex (MCP)…", "Registro de Engram en Codex procesado", false, func() error {
+				return installer.RemoveCodexMCP(cfg)
+			})
 		case installer.StepActionRemoveEngram:
 			engramPathWarning := ""
-			if err := runStep("Engram", "Quitando Engram (si click lo instaló)…", "Engram procesado", true, func() error {
+			runStep("Engram", "Quitando Engram (si click lo instaló)…", "Engram procesado", true, func() error {
 				var pathErr error
 				engramPathWarning, pathErr = removeEngramPluginFunc(cfg)
 				return pathErr
-			}); err != nil {
-				surfacePathWarning(out, r, engramPathWarning)
-				return rollbackAndReport()
-			}
+			})
 			surfacePathWarning(out, r, engramPathWarning)
 		case installer.StepActionRemoveContext7:
 			context7Warning := ""
-			if err := runStep("Context7", "Quitando Context7 (si click lo instaló)…", "Context7 procesado", true, func() error {
+			runStep("Context7", "Quitando Context7 (si click lo instaló)…", "Context7 procesado", true, func() error {
 				var stepErr error
 				context7Warning, stepErr = installer.RemoveContext7(cfg)
 				return stepErr
-			}); err != nil {
-				surfacePathWarning(out, r, context7Warning)
-				return rollbackAndReport()
-			}
+			})
 			surfacePathWarning(out, r, context7Warning)
 		case installer.StepActionStripClaudeManagedBlock:
-			if err := runStep("CLAUDE.md", "Limpiando CLAUDE.md…", "Bloque de CLAUDE.md eliminado", false, func() error {
+			runStep("CLAUDE.md", "Limpiando CLAUDE.md…", "Bloque de CLAUDE.md eliminado", false, func() error {
 				return installer.StripManagedBlock(cfg.ClaudeMDPath())
-			}); err != nil {
-				return rollbackAndReport()
-			}
+			})
 		case installer.StepActionUnregisterMemoryGuard:
-			if err := runStep("memory-guard", "Quitando memory-guard…", "memory-guard eliminado", false, func() error {
+			runStep("memory-guard", "Quitando memory-guard…", "memory-guard eliminado", false, func() error {
 				return installer.UnregisterMemoryGuardHook(cfg)
-			}); err != nil {
-				return rollbackAndReport()
-			}
+			})
 		case installer.StepActionRemoveTargetSelection:
-			if err := runStep("selección de runtimes", "Quitando selección persistente de runtimes…", "Selección persistente de runtimes eliminada", false, func() error {
+			runStep("selección de runtimes", "Quitando selección persistente de runtimes…", "Selección persistente de runtimes eliminada", false, func() error {
 				return installer.RemoveTargetSelection(cfg)
-			}); err != nil {
-				return rollbackAndReport()
-			}
+			})
 		}
 	}
 

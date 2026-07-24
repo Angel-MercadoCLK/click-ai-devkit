@@ -154,8 +154,10 @@ func interactive(noInteractive bool, out io.Writer, in io.Reader) bool {
 }
 
 // isTerminalWriter reports whether out is a real terminal: the same *os.File + isatty pattern
-// used by ui.shouldUseColor and cli.isNonInteractiveInstall (install.go).
-func isTerminalWriter(out io.Writer) bool {
+// used by ui.shouldUseColor and cli.isNonInteractiveInstall (install.go). It is a package-level var
+// (not a plain func) purely so tests can override the terminal detection deterministically — a real
+// TTY cannot be faked with a bytes.Buffer.
+var isTerminalWriter = func(out io.Writer) bool {
 	f, ok := out.(*os.File)
 	if !ok {
 		return false
@@ -164,8 +166,9 @@ func isTerminalWriter(out io.Writer) bool {
 }
 
 // isTerminalReader mirrors isTerminalWriter for stdin: bubbletea needs a real terminal on both
-// ends, and piped/redirected stdin (even with a TTY stdout) must never launch the menu.
-func isTerminalReader(in io.Reader) bool {
+// ends, and piped/redirected stdin (even with a TTY stdout) must never launch the menu / wizard or
+// block on a confirmation read. Also a var for the same test-override reason as isTerminalWriter.
+var isTerminalReader = func(in io.Reader) bool {
 	f, ok := in.(*os.File)
 	if !ok {
 		return false

@@ -65,7 +65,10 @@ const (
 	StepActionRemoveContext7               StepActionKind = "remove-context7"
 	StepActionRemoveOpenClawPlugin         StepActionKind = "remove-openclaw-plugin"
 	StepActionRemoveOpenClawSkills         StepActionKind = "remove-openclaw-skills"
+	StepActionStripOpenClawWorkspace       StepActionKind = "strip-openclaw-workspace"
+	StepActionRemoveOpenClawModelProfile   StepActionKind = "remove-openclaw-model-profile"
 	StepActionStripCodexGuidance           StepActionKind = "strip-codex-guidance"
+	StepActionRemoveCodexMCP               StepActionKind = "remove-codex-mcp"
 	StepActionRemoveTargetSelection        StepActionKind = "remove-target-selection"
 )
 
@@ -227,6 +230,11 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		// --codex-model mutation can always roll back), but only carries the native-model write
 		// ACTION when the developer opted in via PlanOptions.CodexNativeModel. Without the flag, the
 		// step is inert: config.toml is never touched and the write is never listed or run.
+		//
+		// DECISION: it has NO UninstallActions. `click uninstall` deliberately does NOT revert the
+		// config.toml `model =` value: it is a user-owned setting, and reverting it is ambiguous (there
+		// is no unambiguous "previous" value to restore to). Uninstall only reverses click-owned
+		// managed blocks, click-owned state files, and MCP registrations — never native model values.
 		codexModelStep := Step{ID: "codex-model", Target: PlanTargetCodex, Label: "Codex native model", Snapshot: []string{cfg.CodexConfigPath()}}
 		if options.CodexNativeModel {
 			codexModelStep.InstallActions = []StepActionKind{StepActionConfigureCodexNativeModel}
@@ -237,7 +245,7 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		// non-fatal integration (D45 pattern), always attempted, never gated behind a flag. No Snapshot
 		// paths: SyncCodexMCP makes zero file writes, so there is nothing for click's own backup/rollback
 		// to capture — it is pure CLI state delegated to `codex mcp`.
-		codexMCPStep := Step{ID: "codex-mcp", Target: PlanTargetCodex, Label: "Codex Engram MCP", InstallActions: []StepActionKind{StepActionSyncCodexMCP}, UpdateActions: []StepActionKind{StepActionSyncCodexMCP}}
+		codexMCPStep := Step{ID: "codex-mcp", Target: PlanTargetCodex, Label: "Codex Engram MCP", InstallActions: []StepActionKind{StepActionSyncCodexMCP}, UpdateActions: []StepActionKind{StepActionSyncCodexMCP}, UninstallActions: []StepActionKind{StepActionRemoveCodexMCP}}
 		steps = append(steps,
 			Step{ID: "codex-runtime", Target: PlanTargetCodex, Label: "Codex CLI", Snapshot: []string{cfg.CodexAgentsMDPath()}, InstallActions: []StepActionKind{StepActionSyncCodexGuidance}, UpdateActions: []StepActionKind{StepActionSyncCodexGuidance}, UninstallActions: []StepActionKind{StepActionStripCodexGuidance}, DoctorChecks: []DoctorCheckKind{DoctorCheckCodexGuidance}},
 			codexMCPStep,
@@ -252,13 +260,18 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		// OpenClaw keeps the provider/model the developer already connected. The portable model
 		// metadata (StepActionSyncOpenClawModelProfile) still runs regardless as part of the runtime
 		// step below.
-		openClawModelStep := Step{ID: "openclaw-model", Target: PlanTargetOpenClaw, Label: "OpenClaw native model", DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClawNativeModel}}
+		//
+		// DECISION: its UninstallAction removes ONLY click's own model-profile.json
+		// (StepActionRemoveOpenClawModelProfile). `click uninstall` deliberately does NOT revert the
+		// native provider/model set via `openclaw config set`: like Codex's config.toml model above,
+		// that is a user-owned setting and reverting it is ambiguous.
+		openClawModelStep := Step{ID: "openclaw-model", Target: PlanTargetOpenClaw, Label: "OpenClaw native model", UninstallActions: []StepActionKind{StepActionRemoveOpenClawModelProfile}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClawNativeModel}}
 		if options.OpenClawNativeModel {
 			openClawModelStep.InstallActions = []StepActionKind{StepActionConfigureOpenClawNativeModel}
 			openClawModelStep.UpdateActions = []StepActionKind{StepActionConfigureOpenClawNativeModel}
 		}
 		steps = append(steps,
-			Step{ID: "openclaw-runtime", Target: PlanTargetOpenClaw, Label: "OpenClaw", Snapshot: []string{cfg.OpenClawAgentsMDPath(), cfg.OpenClawSoulMDPath(), cfg.OpenClawMCPConfigPath(), cfg.OpenClawModelProfilePath()}, InstallActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UpdateActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UninstallActions: []StepActionKind{StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClaw}},
+			Step{ID: "openclaw-runtime", Target: PlanTargetOpenClaw, Label: "OpenClaw", Snapshot: []string{cfg.OpenClawAgentsMDPath(), cfg.OpenClawSoulMDPath(), cfg.OpenClawMCPConfigPath(), cfg.OpenClawModelProfilePath()}, InstallActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UpdateActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UninstallActions: []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClaw}},
 			openClawModelStep,
 		)
 		capabilities = append(capabilities, "OpenClaw: workspace, skills y modelo provider/model mediante su CLI")

@@ -107,14 +107,15 @@ func TestUninstallCommand_SurfacesEngramPathWarning_EvenOnFatalError(t *testing.
 	}
 }
 
-// TestUninstallCommand_ContinuesEveryStepAfterAnEarlierOneFails is Finding 2(b)'s core regression
-// test: `click uninstall` must be RESILIENT, not fail-fast. Before this fix, runUninstall returned
-// immediately on step 1's error (`return err`) — since step 1 (RemoveMarketplacePlugins) shells out
-// to `claude`, a realistic uninstall scenario (claude already removed as part of tearing the setup
-// down) meant CLAUDE.md and the memory-guard hook NEVER got cleaned up, contradicting installer's own
-// doc comment that Uninstall "reverses everything Install can have written". This proves every LATER
-// step still runs to completion — and its own state change lands on disk — even though the FIRST
-// step was forced to fail.
+// TestUninstallCommand_ContinuesEveryStepAfterAnEarlierOneFails is Finding 2's core regression test,
+// now asserting the CORRECTED resilient-continue contract: `click uninstall` must be RESILIENT and
+// FORWARD-ONLY, never fail-fast and never rollback. Before the fix, runUninstall returned
+// immediately on step 1's error and RestoreRun-rolled everything back to fully-installed — so in the
+// realistic scenario where claude is already gone (step 1, RemoveMarketplacePlugins, shells out to
+// `claude` and fails), CLAUDE.md and the memory-guard hook were rolled BACK, and the setup could
+// never be cleanly uninstalled. This proves every LATER step still runs to completion and its own
+// state change LANDS on disk — the managed block is stripped and the hook removed — even though the
+// FIRST step was forced to fail, with NO rollback, and the failure is reported in the summary.
 func TestUninstallCommand_ContinuesEveryStepAfterAnEarlierOneFails(t *testing.T) {
 	home := t.TempDir()
 	cfg := installer.Config{ClaudeHome: home}
@@ -141,16 +142,16 @@ func TestUninstallCommand_ContinuesEveryStepAfterAnEarlierOneFails(t *testing.T)
 	if readErr != nil {
 		t.Fatalf("ReadFile(ClaudeMDPath) error = %v", readErr)
 	}
-	if !strings.Contains(string(md), "click-ai-devkit (managed)") {
-		t.Fatalf("CLAUDE.md = %q, want rollback to restore the managed block after the failed first step", md)
+	if strings.Contains(string(md), "click-ai-devkit (managed)") {
+		t.Fatalf("CLAUDE.md = %q, want the managed block STRIPPED (forward-only, no rollback) even though an earlier step failed", md)
 	}
 
 	hasHook, hookErr := installer.HasMemoryGuardHook(cfg)
 	if hookErr != nil {
 		t.Fatalf("HasMemoryGuardHook() error = %v", hookErr)
 	}
-	if !hasHook {
-		t.Fatal("memory-guard hook missing after uninstall failure, want rollback to restore it")
+	if hasHook {
+		t.Fatal("memory-guard hook still present after uninstall, want it removed (forward-only, no rollback)")
 	}
 
 	// The failure must be reported, not silently swallowed (Finding 2(b)): the overall summary must
@@ -191,14 +192,16 @@ func TestUninstallCommand_ClaudeMissing_StillRunsEveryStepAndReportsFriendlyMess
 		t.Fatalf("uninstall output/error did not contain the actionable ClaudeMissingMessage; output:\n%s\nerror: %v", out, err)
 	}
 
-	// Resilience: CLAUDE.md must still have been stripped even though claude is missing and every
-	// claude-dependent step failed.
+	// Resilience (forward-only, no rollback): CLAUDE.md must have been stripped by the non-claude
+	// StripClaudeManagedBlock step even though claude is missing and every claude-dependent step
+	// failed. Before the fix, the first claude-dependent failure rolled everything back and the block
+	// was restored instead.
 	md, readErr := os.ReadFile(cfg.ClaudeMDPath())
 	if readErr != nil {
 		t.Fatalf("ReadFile(ClaudeMDPath) error = %v", readErr)
 	}
-	if !strings.Contains(string(md), "click-ai-devkit (managed)") {
-		t.Fatalf("CLAUDE.md = %q, want rollback to restore the managed block when claude-dependent teardown fails", md)
+	if strings.Contains(string(md), "click-ai-devkit (managed)") {
+		t.Fatalf("CLAUDE.md = %q, want the managed block STRIPPED (forward-only, no rollback) when claude-dependent teardown fails", md)
 	}
 }
 
@@ -292,9 +295,11 @@ func TestUninstallCommand_RemovesOpenClawSkillsAndPreservesSiblings(t *testing.T
 	}
 }
 
-// TestUninstallCommand_RemoveOpenClawSkillsError_ContinuesTeardown is PR4's resilience RED test: a
-// failure removing the click-owned OpenClaw skill directories must be recorded and reported, but
-// every other teardown step must still run to completion.
+// TestUninstallCommand_RemoveOpenClawSkillsError_ContinuesTeardown is PR4's resilience test, now
+// asserting the corrected forward-only contract: a failure removing the click-owned OpenClaw skill
+// directories must be recorded and reported, but every other teardown step must still run to
+// completion and TAKE EFFECT — with no rollback. The managed CLAUDE.md block is stripped and the
+// memory-guard hook removed even though the OpenClaw-skills step failed.
 func TestUninstallCommand_RemoveOpenClawSkillsError_ContinuesTeardown(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
@@ -324,16 +329,16 @@ func TestUninstallCommand_RemoveOpenClawSkillsError_ContinuesTeardown(t *testing
 	if readErr != nil {
 		t.Fatalf("ReadFile(ClaudeMDPath) error = %v", readErr)
 	}
-	if !strings.Contains(string(md), "click-ai-devkit (managed)") {
-		t.Fatalf("CLAUDE.md = %q, want rollback to restore the managed block after RemoveOpenClawSkills fails", md)
+	if strings.Contains(string(md), "click-ai-devkit (managed)") {
+		t.Fatalf("CLAUDE.md = %q, want the managed block STRIPPED (forward-only, no rollback) after RemoveOpenClawSkills fails", md)
 	}
 
 	hasHook, hookErr := installer.HasMemoryGuardHook(cfg)
 	if hookErr != nil {
 		t.Fatalf("HasMemoryGuardHook() error = %v", hookErr)
 	}
-	if !hasHook {
-		t.Fatal("memory-guard hook missing after RemoveOpenClawSkills failure, want rollback to restore it")
+	if hasHook {
+		t.Fatal("memory-guard hook still present after RemoveOpenClawSkills failure, want it removed (forward-only, no rollback)")
 	}
 
 	if !strings.Contains(out, "skills") {
@@ -402,7 +407,13 @@ func TestUninstallCommand_CodexOnlySelection_DoesNotRequireClaudeAndRemovesNeutr
 	}
 }
 
-func TestUninstallCommand_FailedCodexTeardown_RestoresSnapshotAndKeepsNeutralState(t *testing.T) {
+// TestUninstallCommand_FailedCodexTeardown_ContinuesForwardNoRollback is the inverted Codex-teardown
+// test: a failed Codex step (StripCodexGuidance) must NOT roll back. Its partial effect stays on
+// disk (the AGENTS.md it removed stays removed), later steps still run to completion (the neutral
+// targets.json IS removed), unrelated files are never touched, and the failure is reported in the
+// summary. Before the fix this rolled back — restoring AGENTS.md and KEEPING targets.json — which is
+// exactly the forward-progress-defeating behavior this change removes.
+func TestUninstallCommand_FailedCodexTeardown_ContinuesForwardNoRollback(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 	codexHome := t.TempDir()
@@ -417,14 +428,16 @@ func TestUninstallCommand_FailedCodexTeardown_RestoresSnapshotAndKeepsNeutralSta
 	if err := installer.WriteManagedBlock(codexCfg.CodexAgentsMDPath(), installer.DefaultCodexAgentsContent); err != nil {
 		t.Fatalf("WriteManagedBlock(CodexAgentsMDPath) error = %v", err)
 	}
-	original, readOriginalErr := os.ReadFile(codexCfg.CodexAgentsMDPath())
-	if readOriginalErr != nil {
-		t.Fatalf("ReadFile(CodexAgentsMDPath) error = %v", readOriginalErr)
-	}
 	unrelated := filepath.Join(codexHome, "notes.txt")
 	if err := os.WriteFile(unrelated, []byte("keep me\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(unrelated) error = %v", err)
 	}
+
+	// Deterministic runner so the codex-mcp step (RemoveCodexMCP) never shells out to a real binary:
+	// testCommandRunner's Output makes `codex mcp get` "succeed" and its Run no-ops the remove.
+	runner := newTestCommandRunner(codexHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
 
 	injectedErr := errors.New("injected codex teardown failure")
 	restoreStrip := SetStripCodexGuidanceFuncForTests(func(cfg installer.Config) error {
@@ -438,22 +451,89 @@ func TestUninstallCommand_FailedCodexTeardown_RestoresSnapshotAndKeepsNeutralSta
 	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
 	out, err := execRootWithLookupAndState(t, claudeHome, stateHome, lookup, "uninstall")
 	if err == nil {
-		t.Fatalf("uninstall command error = nil, want rollback-triggering failure, output:\n%s", out)
+		t.Fatalf("uninstall command error = nil, want a non-nil aggregate error when a step fails, output:\n%s", out)
 	}
-	got, readErr := os.ReadFile(codexCfg.CodexAgentsMDPath())
-	if readErr != nil {
-		t.Fatalf("ReadFile(CodexAgentsMDPath) error = %v, want rollback to restore the captured file", readErr)
+	// Forward-only: the file StripCodexGuidance removed stays removed (no rollback restore).
+	if _, statErr := os.Stat(codexCfg.CodexAgentsMDPath()); !os.IsNotExist(statErr) {
+		t.Fatalf("Stat(CodexAgentsMDPath) error = %v, want it to stay REMOVED (no rollback)", statErr)
 	}
-	if string(got) != string(original) {
-		t.Fatalf("Codex guidance after rollback = %q, want %q", got, original)
-	}
-	if _, err := os.Stat(filepath.Join(stateHome, "targets.json")); err != nil {
-		t.Fatalf("Stat(targets.json) error = %v, want neutral state preserved when teardown rolls back", err)
+	// Later steps still ran: the neutral targets.json is removed even though an earlier step failed.
+	if _, statErr := os.Stat(filepath.Join(stateHome, "targets.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("Stat(targets.json) error = %v, want neutral state removed — teardown continues forward", statErr)
 	}
 	if keep, err := os.ReadFile(unrelated); err != nil || string(keep) != "keep me\n" {
 		t.Fatalf("unrelated file = %q, err = %v, want unrelated content untouched", keep, err)
 	}
 	if !strings.Contains(out, "Codex") {
 		t.Fatalf("uninstall output = %q, want the failed Codex step reported", out)
+	}
+}
+
+// TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregistersCodexMCP is FIX 1's
+// end-to-end proof of the completed uninstall lifecycle: a full Claude + OpenClaw + Codex teardown
+// must strip OpenClaw's managed AGENTS.md/SOUL.md blocks (which nothing removed before) AND issue the
+// exact real `codex mcp remove engram` to deregister Engram's Codex MCP server.
+func TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregistersCodexMCP(t *testing.T) {
+	claudeHome := t.TempDir()
+	openClawHome := t.TempDir()
+	codexHome := t.TempDir()
+	stateHome := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	restoreLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return cliFakeBinaryLookup{resolved: map[string]string{
+			"git": "/usr/bin/git", "claude": "/usr/bin/claude", "openclaw": "/usr/bin/openclaw", "codex": "/usr/bin/codex",
+		}}
+	})
+	defer restoreLookup()
+
+	// testCommandRunner makes `codex mcp get engram` succeed (Output returns nil), so RemoveCodexMCP
+	// treats Engram as registered and issues `mcp remove engram`; its Run records but no-ops it.
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	// A prior full install: persisted selection + OpenClaw managed workspace + Codex managed guidance.
+	stateCfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(stateCfg, installer.TargetSelection{Configured: true, Claude: true, OpenClaw: true, Codex: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	openClawCfg := installer.Config{OpenClawHome: openClawHome}
+	if err := installer.SyncOpenClawWorkspace(openClawCfg); err != nil {
+		t.Fatalf("SyncOpenClawWorkspace() error = %v", err)
+	}
+	codexCfg := installer.Config{CodexHome: codexHome}
+	if err := installer.WriteManagedBlock(codexCfg.CodexAgentsMDPath(), installer.DefaultCodexAgentsContent); err != nil {
+		t.Fatalf("WriteManagedBlock(CodexAgentsMDPath) error = %v", err)
+	}
+
+	root := NewRootCommand()
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"uninstall"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("uninstall command error = %v, want nil for a clean full teardown, output:\n%s", err, buf.String())
+	}
+
+	// OpenClaw AGENTS.md and SOUL.md managed blocks are gone (nothing removed these before FIX 1).
+	for _, path := range []string{openClawCfg.OpenClawAgentsMDPath(), openClawCfg.OpenClawSoulMDPath()} {
+		has, err := installer.HasManagedBlock(path)
+		if err != nil {
+			t.Fatalf("HasManagedBlock(%s) error = %v", path, err)
+		}
+		if has {
+			t.Fatalf("HasManagedBlock(%s) = true after uninstall, want the OpenClaw managed block removed", path)
+		}
+	}
+
+	// Codex Engram MCP registration was deregistered with the exact confirmed real syntax.
+	joined := strings.Join(runner.commands, "\n")
+	if !strings.Contains(joined, "mcp remove engram") {
+		t.Fatalf("codex command log =\n%s\nwant `codex mcp remove engram` issued", joined)
 	}
 }

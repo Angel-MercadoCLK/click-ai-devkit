@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
@@ -109,6 +110,46 @@ func SyncOpenClawModelProfile(cfg Config, profile modelconfig.ProfileName, model
 	}
 	if err := SaveModelProfile(cfg.OpenClawModelProfilePath(), profile, models); err != nil {
 		return fmt.Errorf("installer: write OpenClaw model profile: %w", err)
+	}
+	return nil
+}
+
+// StripOpenClawWorkspace removes ONLY Click's managed block from OpenClaw's AGENTS.md and SOUL.md,
+// preserving any hand-written content outside the markers — SyncOpenClawWorkspace's reversal, and
+// the OpenClaw counterpart to StripCodexGuidance (codex.go), which it mirrors EXACTLY: each file's
+// managed block is stripped via StripManagedBlock, then the file is removed if it is empty after
+// stripping (a file click created from scratch, with no user content, leaves nothing worth keeping).
+//
+// It is a no-op (nil, nothing touched) when cfg.OpenClawHome is empty — the same skip-on-absent
+// guard SyncOpenClawWorkspace uses.
+func StripOpenClawWorkspace(cfg Config) error {
+	if cfg.OpenClawHome == "" {
+		return nil
+	}
+	for _, path := range []string{cfg.OpenClawAgentsMDPath(), cfg.OpenClawSoulMDPath()} {
+		if err := StripManagedBlock(path); err != nil {
+			return fmt.Errorf("installer: remove OpenClaw managed block from %s: %w", path, err)
+		}
+		if data, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(data)) == "" {
+			if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+				return fmt.Errorf("installer: remove empty OpenClaw managed file %s: %w", path, removeErr)
+			}
+		}
+	}
+	return nil
+}
+
+// RemoveOpenClawModelProfile removes Click's own portable model-profile.json for OpenClaw — the only
+// file SyncOpenClawModelProfile writes. It is deliberately offline and idempotent: a missing file
+// (or an installer with no OpenClawHome) is a silent no-op, mirroring RemoveEngramCloudState's
+// reversal contract. It never touches OpenClaw's OWN native configuration (openclaw.json / the
+// provider/model set via `openclaw config set`): those are user-owned and out of scope for uninstall.
+func RemoveOpenClawModelProfile(cfg Config) error {
+	if cfg.OpenClawHome == "" {
+		return nil
+	}
+	if err := os.Remove(cfg.OpenClawModelProfilePath()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("installer: remove OpenClaw model profile: %w", err)
 	}
 	return nil
 }

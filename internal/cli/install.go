@@ -3,11 +3,9 @@ package cli
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/mattn/go-isatty"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
@@ -285,9 +283,14 @@ func runInstall(cmd *cobra.Command) error {
 }
 
 // isNonInteractiveInstall decides whether click install should skip the TUI and go straight to
-// defaults: true when --yes/--non-interactive was passed, OR when out isn't a real terminal.
-// The TTY check mirrors ui.shouldUseColor's own pattern (type-assert *os.File, then isatty) so
-// piped output, CI runs, and `go test`'s bytes.Buffer all fall back automatically without a flag.
+// defaults: true when --yes/--non-interactive was passed, OR when EITHER stdout or stdin isn't a
+// real terminal. Both streams are required (via rootdefault.go's shared isTerminalWriter/
+// isTerminalReader helpers — the same both-streams rule bare `click`'s interactive() uses): the
+// alt-screen wizard (runInstallSelectTUI) starves on piped stdin and confirmProceed's ReadString
+// blocks forever on a non-terminal stdin, even when stdout is a real TTY. So a non-terminal stdin is
+// treated as non-interactive here — the defaults/guidance path — never launched into the TUI or a
+// blocking read. Piped output, CI runs, and `go test`'s bytes.Buffer all fall back automatically
+// without a flag.
 func isNonInteractiveInstall(cmd *cobra.Command, out io.Writer) bool {
 	if yes, _ := cmd.Flags().GetBool(yesFlag); yes {
 		return true
@@ -295,11 +298,10 @@ func isNonInteractiveInstall(cmd *cobra.Command, out io.Writer) bool {
 	if nonInteractive, _ := cmd.Flags().GetBool(nonInteractiveFlag); nonInteractive {
 		return true
 	}
-	f, ok := out.(*os.File)
-	if !ok {
+	if !isTerminalWriter(out) {
 		return true
 	}
-	return !(isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd()))
+	return !isTerminalReader(cmd.InOrStdin())
 }
 
 var syncCodexGuidanceFunc = installer.SyncCodexGuidance

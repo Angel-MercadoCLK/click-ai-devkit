@@ -84,7 +84,10 @@ func TestBuildTargetPlan_CodexOnlyExposesLifecycleActionsForProductionCommands(t
 	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionSyncCodexMCP}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripCodexGuidance, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
+	// Uninstall reverses the managed AGENTS.md block (StripCodexGuidance) AND deregisters Engram's
+	// Codex MCP server (StepActionRemoveCodexMCP — SyncCodexMCP's reversal), then removes the neutral
+	// target selection. The native config.toml model is deliberately NOT reverted (user-owned).
+	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripCodexGuidance, StepActionRemoveCodexMCP, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UninstallActionKinds() = %#v, want %#v", got, want)
 	}
 	if got, want := plan.DoctorCheckKinds(), []DoctorCheckKind{DoctorCheckCodexGuidance}; !reflect.DeepEqual(got, want) {

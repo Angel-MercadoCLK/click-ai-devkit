@@ -297,3 +297,101 @@ func TestSyncOpenClawModelProfile_Absent_NoOp(t *testing.T) {
 		t.Fatalf("SyncOpenClawModelProfile() error = %v, want nil", err)
 	}
 }
+
+// --- StripOpenClawWorkspace (FIX 1: complete uninstall lifecycle) ---
+
+// TestStripOpenClawWorkspace_StripsBothBlocksPreservesUserContentRemovesEmptyFiles proves the core
+// reversal contract, mirroring StripCodexGuidance exactly: after SyncOpenClawWorkspace wrote managed
+// blocks to both AGENTS.md (which ALSO has hand-written user content) and SOUL.md (which is only the
+// managed block), StripOpenClawWorkspace removes only the managed block from each — preserving the
+// user's own AGENTS.md content byte-region — and DELETES SOUL.md entirely because it is empty after
+// stripping.
+func TestStripOpenClawWorkspace_StripsBothBlocksPreservesUserContentRemovesEmptyFiles(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir()}
+	userAgents := "# My own AGENTS.md notes\nKeep this line.\n"
+	writeTestFile(t, cfg.OpenClawAgentsMDPath(), userAgents)
+
+	if err := SyncOpenClawWorkspace(cfg); err != nil {
+		t.Fatalf("SyncOpenClawWorkspace() error = %v", err)
+	}
+	// Sanity: both files carry a managed block before stripping.
+	for _, path := range []string{cfg.OpenClawAgentsMDPath(), cfg.OpenClawSoulMDPath()} {
+		has, err := HasManagedBlock(path)
+		if err != nil || !has {
+			t.Fatalf("HasManagedBlock(%s) = %v, err = %v, want true before strip", path, has, err)
+		}
+	}
+
+	if err := StripOpenClawWorkspace(cfg); err != nil {
+		t.Fatalf("StripOpenClawWorkspace() error = %v", err)
+	}
+
+	// AGENTS.md: file survives (had user content), managed block gone, user content intact.
+	got, err := os.ReadFile(cfg.OpenClawAgentsMDPath())
+	if err != nil {
+		t.Fatalf("ReadFile(AGENTS.md) error = %v, want the file preserved (it had user content)", err)
+	}
+	if strings.Contains(string(got), managedBeginMarker) {
+		t.Fatalf("AGENTS.md = %q, want the managed block removed", got)
+	}
+	if !strings.Contains(string(got), "Keep this line.") {
+		t.Fatalf("AGENTS.md = %q, want the hand-written user content preserved", got)
+	}
+
+	// SOUL.md: was ONLY the managed block, so it is empty after stripping and must be removed.
+	if _, err := os.Stat(cfg.OpenClawSoulMDPath()); !os.IsNotExist(err) {
+		t.Fatalf("Stat(SOUL.md) error = %v, want the empty-after-strip file removed (os.IsNotExist)", err)
+	}
+}
+
+// TestStripOpenClawWorkspace_Absent_NoOp guards the skip-on-absent contract: an empty
+// cfg.OpenClawHome must touch nothing and return nil.
+func TestStripOpenClawWorkspace_Absent_NoOp(t *testing.T) {
+	if err := StripOpenClawWorkspace(Config{}); err != nil {
+		t.Fatalf("StripOpenClawWorkspace() error = %v, want nil when OpenClawHome is empty", err)
+	}
+}
+
+// TestStripOpenClawWorkspace_NeverSynced_NoOp proves stripping when neither file exists yet is a
+// clean no-op (nothing to strip, nothing to remove) — matching StripManagedBlock's own missing-file
+// contract.
+func TestStripOpenClawWorkspace_NeverSynced_NoOp(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir()}
+	if err := StripOpenClawWorkspace(cfg); err != nil {
+		t.Fatalf("StripOpenClawWorkspace() error = %v, want nil when files were never synced", err)
+	}
+	if _, err := os.Stat(cfg.OpenClawAgentsMDPath()); !os.IsNotExist(err) {
+		t.Fatalf("Stat(AGENTS.md) = %v, want it to remain absent — strip must never create files", err)
+	}
+}
+
+// TestRemoveOpenClawModelProfile_RemovesFileAndIsIdempotent proves RemoveOpenClawModelProfile deletes
+// the model-profile.json SyncOpenClawModelProfile wrote, and that a second run (file already gone) is
+// a silent no-op.
+func TestRemoveOpenClawModelProfile_RemovesFileAndIsIdempotent(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir()}
+	if err := SyncOpenClawModelProfile(cfg, modelconfig.ProfileBalanced, modelconfig.Defaults()); err != nil {
+		t.Fatalf("SyncOpenClawModelProfile() error = %v", err)
+	}
+	if _, err := os.Stat(cfg.OpenClawModelProfilePath()); err != nil {
+		t.Fatalf("Stat(model-profile.json) before remove error = %v, want it to exist first", err)
+	}
+
+	if err := RemoveOpenClawModelProfile(cfg); err != nil {
+		t.Fatalf("RemoveOpenClawModelProfile() error = %v", err)
+	}
+	if _, err := os.Stat(cfg.OpenClawModelProfilePath()); !os.IsNotExist(err) {
+		t.Fatalf("Stat(model-profile.json) after remove error = %v, want os.IsNotExist", err)
+	}
+
+	if err := RemoveOpenClawModelProfile(cfg); err != nil {
+		t.Fatalf("RemoveOpenClawModelProfile() second run error = %v, want a missing file to be a no-op", err)
+	}
+}
+
+// TestRemoveOpenClawModelProfile_Absent_NoOp guards the empty-OpenClawHome no-op.
+func TestRemoveOpenClawModelProfile_Absent_NoOp(t *testing.T) {
+	if err := RemoveOpenClawModelProfile(Config{}); err != nil {
+		t.Fatalf("RemoveOpenClawModelProfile() error = %v, want nil when OpenClawHome is empty", err)
+	}
+}

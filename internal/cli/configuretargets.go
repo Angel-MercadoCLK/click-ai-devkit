@@ -22,8 +22,10 @@ func newConfigureTargetsCommand() *cobra.Command {
 
 func runConfigureTargets(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
-	// This command is reachable directly, so do not start Bubble Tea with redirected output.
-	if !isTerminalWriter(out) {
+	// This command is reachable directly and launches Bubble Tea, which needs a real terminal on BOTH
+	// ends: piped/redirected stdin starves the program even when stdout is a real TTY. Require both,
+	// exactly like bare `click`'s interactive() gate.
+	if !isTerminalWriter(out) || !isTerminalReader(cmd.InOrStdin()) {
 		fmt.Fprintln(out, "No hay terminal interactiva disponible; use `click install` o `click update` para aplicar la selección de runtimes.")
 		return nil
 	}
@@ -80,13 +82,21 @@ func resolveTargetConfig(cfg installer.Config, skipOpenClaw bool, out interface{
 		selection = installer.TargetSelection{Claude: true, OpenClaw: true}
 	}
 	detected := installer.OpenClawAvailable()
-	if installer.ResolveOpenClawTarget(selection, detected) && !skipOpenClaw {
+	switch {
+	case installer.ResolveOpenClawTarget(selection, detected) && !skipOpenClaw:
 		cfg.OpenClawHome, err = installer.ResolveOpenClawHome()
 		if err != nil {
 			return installer.TargetSelection{}, installer.Config{}, err
 		}
-	} else if selection.Configured && selection.OpenClaw && !detected {
+	case selection.Configured && selection.OpenClaw && !detected:
 		fmt.Fprintln(out, r.Warn("OpenClaw fue seleccionado, pero no está disponible; se omite esta integración y continúa Claude Code."))
+	case selection.Configured && !selection.OpenClaw && detected && !skipOpenClaw:
+		// OpenClaw is installed and detected now, but a PRIOR explicit selection (e.g. a previous
+		// `click install --skip-openclaw`) persisted OpenClaw=false to targets.json, so this
+		// install/update silently leaves it excluded. Surface that non-fatal, informational signal so
+		// the developer knows the integration is available and how to re-enable it — without changing
+		// the persisted selection here.
+		fmt.Fprintln(out, r.Warn("OpenClaw está disponible en este equipo, pero quedó excluido por una selección previa; vuelva a habilitarlo con `click configure-targets`."))
 	}
 	if installer.ResolveCodexTarget(selection, installer.CodexAvailable()) {
 		cfg.CodexHome, err = installer.ResolveCodexHome()

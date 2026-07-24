@@ -58,3 +58,48 @@ func SyncCodexMCP(cfg Config) error {
 	}
 	return nil
 }
+
+// RemoveCodexMCP deregisters Engram's MCP server from Codex's own CLI state — SyncCodexMCP's
+// reversal — using the confirmed real syntax `codex mcp remove <NAME>` (`codex mcp` exposes
+// list/get/add/remove subcommands). Like SyncCodexMCP it makes ZERO file writes: it is 100% CLI
+// delegation via the injected CommandRunner and never reads or rewrites config.toml.
+//
+// Idempotency reuses SyncCodexMCP's exact membership probe: `codex mcp get engram` ERRORS when the
+// server is not registered (real Codex evidence: "Error: No MCP server named '<NAME>' found.") and
+// SUCCEEDS when it is. When get errors, there is nothing to remove and this returns nil without
+// issuing `mcp remove`. When get succeeds, it runs `codex mcp remove engram`.
+//
+// Fail-stop: a `remove` error is wrapped and returned, never swallowed — the caller (uninstall.go)
+// decides whether it is fatal; for click's own D45 "supplementary integrations are non-fatal"
+// pattern, uninstall is resilient-continue and simply records the failure in its summary.
+//
+// It is a no-op (nil) when cfg.CodexHome is empty, mirroring SyncCodexMCP's own guard.
+func RemoveCodexMCP(cfg Config) error {
+	if cfg.CodexHome == "" {
+		return nil
+	}
+
+	path, ok := CodexPath()
+	if !ok {
+		return fmt.Errorf("installer: Codex CLI is not available; install Codex and re-run `click uninstall` to deregister Engram's MCP server")
+	}
+	if !filepath.IsAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("installer: resolve absolute Codex binary path: %w", err)
+		}
+		path = abs
+	}
+
+	runner := commandRunnerFactory()
+	if _, err := runner.Output(path, "mcp", "get", engramCodexMCPName); err != nil {
+		// Not registered — real Codex evidence: `codex mcp get <NAME>` errors when absent, so there is
+		// nothing to remove.
+		return nil
+	}
+
+	if err := runner.Run(path, "mcp", "remove", engramCodexMCPName); err != nil {
+		return fmt.Errorf("installer: deregister Engram MCP server from Codex: %w", err)
+	}
+	return nil
+}

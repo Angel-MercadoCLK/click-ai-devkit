@@ -149,3 +149,91 @@ func TestSyncCodexMCP_CodexUnavailable_ReturnsClearError(t *testing.T) {
 		t.Fatalf("SyncCodexMCP() issued commands with Codex unavailable, want zero: commands=%#v outputs=%#v", runner.commands, runner.outputs)
 	}
 }
+
+// TestRemoveCodexMCP_NoOpWhenCodexHomeEmpty is RemoveCodexMCP's shared no-op guard: an empty
+// cfg.CodexHome must issue zero commands (mirrors TestSyncCodexMCP_NoOpWhenCodexHomeEmpty).
+func TestRemoveCodexMCP_NoOpWhenCodexHomeEmpty(t *testing.T) {
+	runner := &codexMCPTestRunner{}
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreLookup := SetBinaryLookupFactoryForTests(func() BinaryLookup { return codexMCPTestLookup{available: true} })
+	defer restoreLookup()
+
+	if err := RemoveCodexMCP(Config{}); err != nil {
+		t.Fatalf("RemoveCodexMCP() error = %v, want nil", err)
+	}
+	if len(runner.commands) != 0 || len(runner.outputs) != 0 {
+		t.Fatalf("RemoveCodexMCP() issued commands with empty CodexHome, want zero: commands=%#v outputs=%#v", runner.commands, runner.outputs)
+	}
+}
+
+// TestRemoveCodexMCP_NotRegistered_NoRemoveCall is the idempotency contract: when `codex mcp get
+// engram` ERRORS (real Codex evidence: it errors only when absent), there is nothing to remove — so
+// RemoveCodexMCP probes with `get` but must NOT attempt `mcp remove` at all.
+func TestRemoveCodexMCP_NotRegistered_NoRemoveCall(t *testing.T) {
+	qualifiedBinary, err := filepath.Abs("/fake/codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &codexMCPTestRunner{getErr: errors.New("Error: No MCP server named 'engram' found.")}
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreLookup := SetBinaryLookupFactoryForTests(func() BinaryLookup { return codexMCPTestLookup{available: true} })
+	defer restoreLookup()
+
+	if err := RemoveCodexMCP(Config{CodexHome: t.TempDir()}); err != nil {
+		t.Fatalf("RemoveCodexMCP() error = %v", err)
+	}
+
+	wantOutputs := [][]string{{qualifiedBinary, "mcp", "get", "engram"}}
+	if !reflect.DeepEqual(runner.outputs, wantOutputs) {
+		t.Fatalf("outputs = %#v, want %#v", runner.outputs, wantOutputs)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("commands = %#v, want zero remove attempts when not registered", runner.commands)
+	}
+}
+
+// TestRemoveCodexMCP_Registered_IssuesExactRemove is the core real-syntax contract: when `codex mcp
+// get engram` SUCCEEDS (registered), RemoveCodexMCP must issue exactly `codex mcp remove engram`
+// after the get probe, in order, with no invented flags.
+func TestRemoveCodexMCP_Registered_IssuesExactRemove(t *testing.T) {
+	qualifiedBinary, err := filepath.Abs("/fake/codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &codexMCPTestRunner{} // getErr is nil -> `codex mcp get` "succeeds" -> registered
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreLookup := SetBinaryLookupFactoryForTests(func() BinaryLookup { return codexMCPTestLookup{available: true} })
+	defer restoreLookup()
+
+	if err := RemoveCodexMCP(Config{CodexHome: t.TempDir()}); err != nil {
+		t.Fatalf("RemoveCodexMCP() error = %v", err)
+	}
+
+	wantOutputs := [][]string{{qualifiedBinary, "mcp", "get", "engram"}}
+	if !reflect.DeepEqual(runner.outputs, wantOutputs) {
+		t.Fatalf("outputs = %#v, want %#v", runner.outputs, wantOutputs)
+	}
+	wantCommands := [][]string{{qualifiedBinary, "mcp", "remove", "engram"}}
+	if !reflect.DeepEqual(runner.commands, wantCommands) {
+		t.Fatalf("commands = %#v, want exactly %#v", runner.commands, wantCommands)
+	}
+}
+
+// TestRemoveCodexMCP_RemoveFailure_ReturnsWrappedError is the fail-stop contract: `codex mcp remove`
+// errors are wrapped and returned, never swallowed.
+func TestRemoveCodexMCP_RemoveFailure_ReturnsWrappedError(t *testing.T) {
+	wantErr := errors.New("codex rejected the mcp remove call")
+	runner := &codexMCPTestRunner{runErr: wantErr} // getErr nil -> registered -> remove attempted
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreLookup := SetBinaryLookupFactoryForTests(func() BinaryLookup { return codexMCPTestLookup{available: true} })
+	defer restoreLookup()
+
+	err := RemoveCodexMCP(Config{CodexHome: t.TempDir()})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("RemoveCodexMCP() error = %v, want wrapped %v", err, wantErr)
+	}
+}
