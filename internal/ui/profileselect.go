@@ -121,7 +121,15 @@ func (m ProfileSelectModel) View() string {
 		}
 		line := fmt.Sprintf("%s%-12s %s", marker, name, profileDescriptions[name])
 		if i == m.Cursor {
-			line = styleRenderer.NewStyle().Foreground(lipgloss.Color("6")).Render(line)
+			// Real visual weight for the cursor row: the existing cyan (6) foreground stays, plus
+			// a complementing blue (4) background — both already this package's own established
+			// colors (see renderer.go's Step/Info roles), no new hex/color invented.
+			line = styleRenderer.NewStyle().Foreground(lipgloss.Color("6")).Background(lipgloss.Color("4")).Bold(true).Render(line)
+		} else {
+			// Dim every non-selected row so the cursor row reads with real contrast instead of
+			// flat, same-weight text — reuses the Faint(true) convention already used for the
+			// help line below.
+			line = styleRenderer.NewStyle().Faint(true).Render(line)
 		}
 		b.WriteString(line)
 		b.WriteString("\n")

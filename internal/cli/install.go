@@ -474,40 +474,36 @@ func runModelSelectTUI(cmd *cobra.Command) (map[modelconfig.Phase]string, bool, 
 	return result.Selection, false, nil
 }
 
-// runInstallSelectTUI drives ui.ProfileSelectModel (seeded on initialProfile — C2 fix) then
-// ui.ModelSelectModel (seeded from the chosen profile, or from Defaults() when "custom" was picked)
-// through real bubbletea programs attached to cmd's in/out, and returns the developer's final
-// profile + per-phase selection. Only reached when isNonInteractiveInstall has already confirmed
-// out is a real terminal.
+// runInstallSelectTUI drives ui.InstallWizardModel — one alt-screen bubbletea program composing
+// ui.ProfileSelectModel (seeded on initialProfile — C2 fix) then ui.ModelSelectModel (seeded from
+// the chosen profile, or from Defaults() when "custom" was picked) — through a single program
+// attached to cmd's in/out, and returns the developer's final profile + per-phase selection. Only
+// reached when isNonInteractiveInstall has already confirmed out is a real terminal.
+//
+// Before this wizard existed, this function ran the profile-select and model-select screens as TWO
+// separate non-alt-screen tea.Programs back to back, each leaving its final frame permanently in
+// the terminal scrollback with no way to back up from model-select to profile-select except
+// cancelling the whole install. tea.WithAltScreen() here means the terminal's normal scrollback is
+// untouched while the wizard runs and is restored cleanly on exit, and esc/q on the model page now
+// goes BACK to the profile page (preserving the profile already chosen) instead of aborting
+// everything — see ui.InstallWizardModel's own doc comment for the exact navigation contract.
+//
+// This function's signature and external contract (installSelector) are unchanged: only what runs
+// INSIDE it changed, so resolveInstallModels' cancel-means-zero-changes and profile-label logic
+// above keeps working exactly as before.
 func runInstallSelectTUI(cmd *cobra.Command, initialProfile modelconfig.ProfileName) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
-	profileProgram := tea.NewProgram(ui.NewProfileSelectModelForProfile(initialProfile),
+	program := tea.NewProgram(ui.NewInstallWizardModel(initialProfile),
+		tea.WithAltScreen(),
 		tea.WithInput(cmd.InOrStdin()),
 		tea.WithOutput(cmd.OutOrStdout()),
 	)
-	finalProfile, err := profileProgram.Run()
+	final, err := program.Run()
 	if err != nil {
-		return "", nil, false, fmt.Errorf("cli: run profile selection TUI: %w", err)
+		return "", nil, false, fmt.Errorf("cli: run install wizard TUI: %w", err)
 	}
-	profileResult := finalProfile.(ui.ProfileSelectModel)
-	if profileResult.Cancelled {
+	result := final.(ui.InstallWizardModel)
+	if result.Cancelled {
 		return "", nil, true, nil
 	}
-
-	seed := ui.NewModelSelectModel()
-	if profileResult.Selected != modelconfig.ProfileCustom {
-		seed = ui.NewModelSelectModelForProfile(profileResult.Selected)
-	}
-	modelProgram := tea.NewProgram(seed,
-		tea.WithInput(cmd.InOrStdin()),
-		tea.WithOutput(cmd.OutOrStdout()),
-	)
-	finalModel, err := modelProgram.Run()
-	if err != nil {
-		return "", nil, false, fmt.Errorf("cli: run model selection TUI: %w", err)
-	}
-	modelResult := finalModel.(ui.ModelSelectModel)
-	if modelResult.Cancelled {
-		return "", nil, true, nil
-	}
-	return profileResult.Selected, modelResult.Selection, false, nil
+	return result.Profile.Selected, result.Model.Selection, false, nil
 }

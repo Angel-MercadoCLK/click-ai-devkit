@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // TargetSelectModel is the small multi-select screen for Click-managed runtimes.
@@ -115,14 +116,26 @@ func (m TargetSelectModel) View() string {
 
 func (m TargetSelectModel) row(index int, name string, selected, detected bool, capabilities string) string {
 	marker := "  "
-	if index == m.Cursor {
+	cursor := index == m.Cursor
+	if cursor {
 		marker = "> "
 	}
 	state := "no detectado"
 	if detected {
 		state = "detectado"
 	}
-	return fmt.Sprintf("%s[%s] %s (%s)\n   Capacidades: %s", marker, boolMarker(selected), name, state, capabilities)
+	content := fmt.Sprintf("%s[%s] %s (%s)\n   Capacidades: %s", marker, boolMarker(selected), name, state, capabilities)
+	if cursor {
+		// Real visual weight for the cursor row: the existing cyan (6) foreground role, plus a
+		// complementing blue (4) background — both already this package's own established colors
+		// (see renderer.go's Step/Info roles), no new hex/color invented. Kept consistent with
+		// ProfileSelectModel/ModelSelectModel's own cursor-row styling (design consistency across
+		// the screens composed together in InstallWizardModel).
+		return styleRenderer.NewStyle().Foreground(lipgloss.Color("6")).Background(lipgloss.Color("4")).Bold(true).Render(content)
+	}
+	// Dim every non-selected row so the cursor row reads with real contrast instead of flat,
+	// same-weight text — reuses the Faint(true) convention already used for help text.
+	return styleRenderer.NewStyle().Faint(true).Render(content)
 }
 
 func boolMarker(value bool) string {
