@@ -93,21 +93,22 @@ func TestPreflightGit_ReturnsActionableErrorWhenGitMissing(t *testing.T) {
 }
 
 func TestResolveGitExecutionContext_RelativeRepositorySelectorUsesAbsoluteRepositoryRoot(t *testing.T) {
-	workingDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd() error = %v", err)
-	}
 	repoRoot := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repoRoot, ".git"), 0o755); err != nil {
 		t.Fatalf("Mkdir(.git) error = %v", err)
 	}
-	nested := filepath.Join(repoRoot, "nested", "deeper")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repoRoot, "nested", "deeper"), 0o755); err != nil {
 		t.Fatalf("MkdirAll(nested) error = %v", err)
 	}
-	rel, err := filepath.Rel(workingDir, nested)
+	// Run from inside the repo so a repository-relative selector resolves (via filepath.Abs) against
+	// it. The previous version derived the selector from filepath.Rel(os.Getwd(), tempDir), which
+	// FAILS on Windows CI where the temp dir (C:) and the checkout (D:) live on different drives and
+	// filepath.Rel cannot relate them. Resolve the root through Getwd after chdir so a symlinked temp
+	// dir (macOS) still compares equal.
+	t.Chdir(repoRoot)
+	resolvedRoot, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("filepath.Rel() error = %v", err)
+		t.Fatalf("Getwd() error = %v", err)
 	}
 
 	oldWorking := commandWorkingDir
@@ -116,7 +117,7 @@ func TestResolveGitExecutionContext_RelativeRepositorySelectorUsesAbsoluteReposi
 		commandWorkingDir = oldWorking
 		commandTempRoot = oldRecovery
 	})
-	commandWorkingDir = func() (string, error) { return rel, nil }
+	commandWorkingDir = func() (string, error) { return filepath.Join("nested", "deeper"), nil }
 	commandTempRoot = func() string { return filepath.Join(t.TempDir(), "recovery-root") }
 
 	ctx, err := resolveGitExecutionContext()
@@ -126,8 +127,8 @@ func TestResolveGitExecutionContext_RelativeRepositorySelectorUsesAbsoluteReposi
 	if ctx.Recovered {
 		t.Fatal("resolveGitExecutionContext() marked a relative repository selector as recovered, want the real repository root")
 	}
-	if ctx.WorkingDir != filepath.Clean(repoRoot) {
-		t.Fatalf("resolveGitExecutionContext() WorkingDir = %q, want absolute repository root %q", ctx.WorkingDir, filepath.Clean(repoRoot))
+	if ctx.WorkingDir != filepath.Clean(resolvedRoot) {
+		t.Fatalf("resolveGitExecutionContext() WorkingDir = %q, want absolute repository root %q", ctx.WorkingDir, filepath.Clean(resolvedRoot))
 	}
 	if err := ctx.Cleanup(false); err != nil {
 		t.Fatalf("Cleanup(false) error = %v", err)
