@@ -95,10 +95,10 @@ mismo punto de entrada (`cmd/click/`) que usa el proceso de release oficial.
   `uninstall` nunca elimine un Engram que el desarrollador ya tenía instalado por su cuenta.
 - Context7 registrado como MCP HTTP de ámbito de usuario vía `claude mcp add` — también
   idempotente y respetuoso con una configuración previa.
-- OpenClaw recibe los archivos SDD nativos soportados, memory guard y la configuración de modelo
-  solo mediante sus comandos documentados; consulte [`documentacion/portability-runbook.md`](documentacion/portability-runbook.md).
-- Codex recibe la guía gestionada en `AGENTS.md`; Click no modifica `config.toml`, credenciales ni
-  modelos. Consulte [`documentacion/codex-target.md`](documentacion/codex-target.md).
+- OpenClaw receives the portable SDD assets, memory guard, and native model writes only through the
+  qualified `click configure-openclaw-model` CLI flow documented in
+  [`documentacion/portability-runbook.md`](documentacion/portability-runbook.md).
+- Codex updates `AGENTS.md` and changes the root `model` key in `config.toml` only when an explicit native model was selected. Click never changes credentials, providers, or table-scoped `model` keys. See [`documentacion/codex-target.md`](documentacion/codex-target.md).
 
 ## El menú interactivo
 
@@ -188,8 +188,10 @@ TDD estricto es obligatorio para cualquier cambio en Go en este repositorio: pri
 una prueba que falla, luego la implementación mínima para que pase. Ver la decisión D13 en
 `documentacion/00-decisions-and-open-questions.md` y `CLAUDE.md`.
 
-## Versión actual
+## Release metadata and current contracts
 
-**v0.4.7** es la última versión publicada vía `scoop install click` (ver [Instalación](#instalación)).
-El árbol de trabajo puede estar adelantado respecto al último tag; la versión de release vive en
-`click_version` dentro del manifiesto (`internal/manifest/manifest.yaml`).
+Current release metadata lives in `bucket/click.json`, `internal/manifest/manifest.yaml`, and `click --version`. Use those three sources together when validating Scoop metadata, packaged binary version output, and release notes.
+
+`click update` depends on Scoop's bucket refresh plus Git availability. If Scoop reports that the
+installed version is already current while a newer tag exists, run `scoop update`, confirm Git is
+installed, and retry `scoop update click` before assuming the release is unavailable.

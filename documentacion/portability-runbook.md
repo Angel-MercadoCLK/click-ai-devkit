@@ -30,11 +30,9 @@ click configure-openclaw-model openai/gpt-5.6-sol anthropic/claude-sonnet-4-6
 
 The adapter invokes `openclaw config set agents.defaults.model.primary
 <provider/model>` and, when fallbacks are supplied, `openclaw config set agents.defaults.model.fallbacks
-'[...]' --strict-json`. NOTE: this exact subcommand/key/flag shape is pending confirmation against
-OpenClaw's published CLI — verify it against a real `openclaw` install before relying on it. Model
-references must use the `provider/model` form. Click does not guess a
-provider, model, API key, or credential; credentials remain OpenClaw's responsibility. If OpenClaw
-is absent or rejects a command, Click reports the error and does not claim success.
+'[...]' --strict-json`. Click's automated OpenClaw mutation is qualified by the `openclaw config set --help` probe. That probe must expose the expected command, keys, and JSON flag before Click writes anything. Model references must use the `provider/model` form. Click does not guess a provider, model, API key, or credential; credentials remain OpenClaw's responsibility. If OpenClaw is absent or rejects a command, Click reports the error and does not claim success.
+
+Release evidence still requires a recorded run against a real installed OpenClaw CLI before publication. The automated help probe is the safety gate for repository code and CI; the real installed-CLI receipt is the release gate for shipping the claim.
 
 ## Invocation contract
 
@@ -119,7 +117,4 @@ isolate):
 
 ## Pre-release checklist item
 
-Add to the release checklist: **"Portability runbook (`documentacion/portability-runbook.md`)
-passed on a clean/gentle-ai-absent profile for this version."** This is a manual, human-run gate —
-it is not automated by `go test ./...` (which only proves the static/structural claims: the 18
-agent files exist, the orchestrator names them, and `DefaultManagedContent` stays gentle-ai-free).
+Add to the release checklist: **"Portability runbook (`documentacion/portability-runbook.md`) passed on a clean/gentle-ai-absent profile for this version."** This is a manual, human-run gate — it is not automated by `go test ./...` (which only proves the static/structural claims: the 18 agent files exist, the orchestrator names them, and `DefaultManagedContent` stays gentle-ai-free).
