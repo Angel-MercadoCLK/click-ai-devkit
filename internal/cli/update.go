@@ -203,6 +203,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			}); err != nil {
 				return err
 			}
+		case installer.StepActionRegisterOpenClawMCP:
+			// D45 "supplementary integrations are non-fatal" pattern (same as Codex MCP above):
+			// registering Engram's MCP server with OpenClaw must never abort an otherwise-good update.
+			// Always attempted when OpenClaw is a target, independent of --openclaw-model.
+			fmt.Fprintln(out, r.Step("Registrando Engram en OpenClaw (MCP)…"))
+			if mcpErr := syncOpenClawMCPFunc(cfg); mcpErr != nil {
+				fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo registrar Engram en OpenClaw: %v. La actualización local continúa; reintenta más tarde con `click update`.", mcpErr)))
+			} else {
+				fmt.Fprintln(out, r.Success("Engram registrado en OpenClaw"))
+			}
 		case installer.StepActionSyncOpenClawPlugin:
 			if err := r.RunStep("Instalando plugin de memory-guard para OpenClaw…", "Plugin de memory-guard sincronizado en OpenClaw", func() error {
 				return installer.SyncOpenClawPlugin(cfg)

@@ -44,6 +44,20 @@ func SetRemoveOpenClawSkillsFuncForTests(fn func(installer.Config) error) func()
 	return func() { removeOpenClawSkillsFunc = old }
 }
 
+// removeOpenClawMCPFunc is the injectable seam behind runUninstall's installer.RemoveOpenClawMCP
+// call, mirroring removeOpenClawSkillsFunc above. It lets CLI-level tests prove the OpenClaw MCP
+// unregistration step is resilient: a failure is recorded and reported without aborting the rest of
+// the teardown.
+var removeOpenClawMCPFunc = installer.RemoveOpenClawMCP
+
+// SetRemoveOpenClawMCPFuncForTests overrides removeOpenClawMCPFunc for tests and returns a restore
+// function.
+func SetRemoveOpenClawMCPFuncForTests(fn func(installer.Config) error) func() {
+	old := removeOpenClawMCPFunc
+	removeOpenClawMCPFunc = fn
+	return func() { removeOpenClawMCPFunc = old }
+}
+
 var stripCodexGuidanceFunc = installer.StripCodexGuidance
 
 func SetStripCodexGuidanceFuncForTests(fn func(installer.Config) error) func() {
@@ -185,6 +199,13 @@ func runUninstall(cmd *cobra.Command) error {
 			// the teardown.
 			runStep("Engram MCP de Codex", "Quitando registro de Engram en Codex (MCP)…", "Registro de Engram en Codex procesado", false, func() error {
 				return installer.RemoveCodexMCP(cfg)
+			})
+		case installer.StepActionUnregisterOpenClawMCP:
+			// Best-effort, like SyncOpenClawMCP on install (D45 "supplementary integrations are non-fatal"):
+			// the resilient-continue loop records any failure in the summary and never aborts the rest of
+			// the teardown.
+			runStep("Engram MCP de OpenClaw", "Quitando registro de Engram en OpenClaw (MCP)…", "Registro de Engram en OpenClaw procesado", false, func() error {
+				return removeOpenClawMCPFunc(cfg)
 			})
 		case installer.StepActionRemoveEngram:
 			engramPathWarning := ""

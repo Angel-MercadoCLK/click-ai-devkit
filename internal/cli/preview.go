@@ -103,6 +103,8 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 		return "Actualizando AGENTS.md y SOUL.md de OpenClaw…"
 	case installer.StepActionSyncOpenClawMCP:
 		return "Limpiando configuración inválida heredada de OpenClaw…"
+	case installer.StepActionRegisterOpenClawMCP:
+		return "Registrando Engram en OpenClaw (MCP)…"
 	case installer.StepActionSyncOpenClawPlugin:
 		return "Instalando plugin de memory-guard para OpenClaw…"
 	case installer.StepActionSyncOpenClawSkills:

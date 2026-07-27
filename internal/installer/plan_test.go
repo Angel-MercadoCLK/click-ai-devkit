@@ -23,6 +23,7 @@ func TestBuildTargetPlan_TargetFirstOrderAndSharedProjections(t *testing.T) {
 		"Codex Engram MCP",
 		"Codex native model",
 		"OpenClaw",
+		"OpenClaw Engram MCP",
 		"OpenClaw native model",
 		"Engram",
 		"Engram Cloud",
@@ -109,6 +110,25 @@ func TestBuildTargetPlan_CodexNativeModelFlag_AddsNativeMutationAction(t *testin
 	}
 	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
+	}
+}
+
+// TestBuildTargetPlan_OpenClawExposesMCPRegistrationActions proves that OpenClaw's dedicated MCP
+// step contributes register-openclaw-mcp to install/update and unregister-openclaw-mcp to uninstall.
+func TestBuildTargetPlan_OpenClawExposesMCPRegistrationActions(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	selection := TargetSelection{Configured: true, OpenClaw: true}
+
+	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
+
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncEngram, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionRegisterOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
+	}
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncEngram, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionRegisterOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
+	}
+	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills, StepActionUnregisterOpenClawMCP, StepActionRemoveOpenClawModelProfile, StepActionRemoveEngram, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("UninstallActionKinds() = %#v, want %#v", got, want)
 	}
 }
 

@@ -41,8 +41,8 @@ func TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T)
 func TestInstallWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := installWriteSteps(cfg, false)
-	if len(got) != 11 {
-		t.Fatalf("installWriteSteps() = %#v, want 11 steps (6 Claude + 5 OpenClaw)", got)
+	if len(got) != 12 {
+		t.Fatalf("installWriteSteps() = %#v, want 12 steps (6 Claude + 6 OpenClaw)", got)
 	}
 	for _, step := range got[6:] {
 		if !strings.Contains(step, "OpenClaw") {
@@ -92,8 +92,8 @@ func TestInstallWriteSteps_CloudNotConfigured_NoCloudStep(t *testing.T) {
 func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := installWriteSteps(cfg, true)
-	if len(got) != 12 {
-		t.Fatalf("installWriteSteps() = %#v, want 12 steps (6 Claude + 1 Cloud + 5 OpenClaw)", got)
+	if len(got) != 13 {
+		t.Fatalf("installWriteSteps() = %#v, want 13 steps (6 Claude + 1 Cloud + 6 OpenClaw)", got)
 	}
 	if got[2] != "Enrolando Engram Cloud…" {
 		t.Fatalf("installWriteSteps()[2] = %q, want Engram Cloud step right after local Engram", got[2])
@@ -110,8 +110,8 @@ func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 func TestUpdateWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := updateWriteSteps("0.1.1", cfg, false, false)
-	if len(got) != 11 {
-		t.Fatalf("updateWriteSteps() = %#v, want 11 steps (6 Claude + 5 OpenClaw)", got)
+	if len(got) != 12 {
+		t.Fatalf("updateWriteSteps() = %#v, want 12 steps (6 Claude + 6 OpenClaw)", got)
 	}
 	for _, step := range got[6:] {
 		if !strings.Contains(step, "OpenClaw") {

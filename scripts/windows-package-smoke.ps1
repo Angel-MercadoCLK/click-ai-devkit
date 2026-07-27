@@ -49,6 +49,7 @@ $openClawHelper = Join-Path $binRoot 'openclaw-helper.ps1'
 $codexLog = Join-Path $smokeRoot 'codex.log'
 $codexHelper = Join-Path $binRoot 'codex-helper.ps1'
 $codexEngramRegisteredMarker = Join-Path $smokeRoot 'codex-engram-registered.marker'
+$openClawEngramMCPMarker = Join-Path $smokeRoot 'openclaw-engram-mcp.marker'
 
 New-Item -ItemType Directory -Path $packageRoot, $extractRoot, $binRoot, $claudeHome, $openClawHome, $codexHome | Out-Null
 
@@ -110,12 +111,31 @@ New-CmdStub -Path (Join-Path $binRoot 'claude.cmd') -Lines @(
   'exit /b 0'
 )
 @"
-param([Parameter(ValueFromRemainingArguments = `$true)][string[]]`$Args)
-`$joined = [string]::Join(' ', `$Args)
+# No param() block (same reason as the codex stub): reading the automatic `$args avoids PowerShell
+# positional-binding surprises on flag-shaped tokens like '--command'/'--arg=--tools=agent'.
+`$joined = [string]::Join(' ', `$args)
 Add-Content -LiteralPath '$openClawLog' -Value `$joined
 if (`$joined -eq 'config set --help') {
   'config set agents.defaults.model.primary agents.defaults.model.fallbacks --strict-json'
+  exit 0
 }
+if (`$joined -eq 'mcp add --help') {
+  # Qualification probe: real OpenClaw help contains these tokens (add, --command, --arg).
+  'openclaw mcp add <name> --command <exe> --arg <arg> --env <KEY=VALUE>'
+  exit 0
+}
+if (`$args.Count -ge 3 -and `$args[0] -eq 'mcp' -and `$args[1] -eq 'show' -and `$args[2] -eq 'engram') {
+  if (Test-Path -LiteralPath '$openClawEngramMCPMarker') { exit 0 } else { exit 1 }
+}
+if (`$args.Count -ge 3 -and `$args[0] -eq 'mcp' -and `$args[1] -eq 'add' -and `$args[2] -eq 'engram') {
+  New-Item -ItemType File -Path '$openClawEngramMCPMarker' -Force | Out-Null
+  exit 0
+}
+if (`$args.Count -ge 3 -and `$args[0] -eq 'mcp' -and `$args[1] -eq 'unset' -and `$args[2] -eq 'engram') {
+  Remove-Item -LiteralPath '$openClawEngramMCPMarker' -Force -ErrorAction SilentlyContinue
+  exit 0
+}
+exit 0
 "@ | Set-Content -LiteralPath $openClawHelper -Encoding ASCII
 [System.IO.File]::WriteAllText((Join-Path $binRoot 'openclaw.cmd'), '@powershell -NoProfile -ExecutionPolicy Bypass -File "' + $openClawHelper + '" %*' + "`r`n")
 
@@ -160,6 +180,15 @@ if (-not (Test-Path -LiteralPath $codexEngramRegisteredMarker)) {
   throw 'SyncCodexMCP did not register Engram with Codex during install'
 }
 
+# First-time Engram MCP registration with OpenClaw: fail-closed probe, show (not registered), then the
+# exact `openclaw mcp add engram --command engram --arg mcp --arg=--tools=agent`; marker created.
+$openClawCallsAfterInstall = Get-Content -LiteralPath $openClawLog -Raw
+Assert-Contains -Actual $openClawCallsAfterInstall -Expected 'mcp add --help' -Context 'openclaw command log (install probe)'
+Assert-Contains -Actual $openClawCallsAfterInstall -Expected 'mcp add engram --command engram --arg mcp --arg=--tools=agent' -Context 'openclaw command log (install)'
+if (-not (Test-Path -LiteralPath $openClawEngramMCPMarker)) {
+  throw 'SyncOpenClawMCP did not register Engram with OpenClaw during install'
+}
+
 & $clickExe update | Out-Null
 $claudeCalls = Get-Content -LiteralPath $claudeLog -Raw
 Assert-Contains -Actual $claudeCalls -Expected 'plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins' -Context 'claude command log'
@@ -181,6 +210,15 @@ if ($null -ne $healedConfig.mcpServers) {
 }
 if ($healedConfig.agents.defaults.model.primary -ne 'openai/gpt-5.6-sol') {
   throw "click update did not preserve unrelated openclaw.json content during cleanup. Actual: $(Get-Content -LiteralPath $openClawConfigPath -Raw)"
+}
+
+# Idempotent OpenClaw MCP on update: still registered, `mcp add engram` issued exactly once (install).
+if (-not (Test-Path -LiteralPath $openClawEngramMCPMarker)) {
+  throw 'OpenClaw Engram MCP marker missing after update (should stay registered)'
+}
+$openClawAddCount = ([regex]::Matches((Get-Content -LiteralPath $openClawLog -Raw), 'mcp add engram --command')).Count
+if ($openClawAddCount -ne 1) {
+  throw "SyncOpenClawMCP re-registered on update (expected idempotent). 'mcp add engram' count = $openClawAddCount"
 }
 
 # --- v0.5.8 uninstall lifecycle: prove `click uninstall` REVERSES the OpenClaw managed blocks and
@@ -209,6 +247,12 @@ $codexCallsAll = Get-Content -LiteralPath $codexLog -Raw
 Assert-Contains -Actual $codexCallsAll -Expected 'mcp remove engram' -Context 'codex command log (uninstall)'
 if (Test-Path -LiteralPath $codexEngramRegisteredMarker) {
   throw "click uninstall did not de-register Engram MCP from Codex (marker still present)"
+}
+# OpenClaw Engram MCP must be de-registered too: `openclaw mcp unset engram` issued, marker cleared.
+$openClawCallsAll = Get-Content -LiteralPath $openClawLog -Raw
+Assert-Contains -Actual $openClawCallsAll -Expected 'mcp unset engram' -Context 'openclaw command log (uninstall)'
+if (Test-Path -LiteralPath $openClawEngramMCPMarker) {
+  throw "click uninstall did not de-register Engram MCP from OpenClaw (marker still present)"
 }
 
 Remove-Item -LiteralPath $smokeRoot -Recurse -Force

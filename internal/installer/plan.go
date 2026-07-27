@@ -54,6 +54,8 @@ const (
 	StepActionConfigureCodexNativeModel    StepActionKind = "configure-codex-native-model"
 	StepActionSyncOpenClawWorkspace        StepActionKind = "sync-openclaw-workspace"
 	StepActionSyncOpenClawMCP              StepActionKind = "sync-openclaw-mcp"
+	StepActionRegisterOpenClawMCP          StepActionKind = "register-openclaw-mcp"
+	StepActionUnregisterOpenClawMCP        StepActionKind = "unregister-openclaw-mcp"
 	StepActionSyncOpenClawPlugin           StepActionKind = "sync-openclaw-plugin"
 	StepActionSyncOpenClawSkills           StepActionKind = "sync-openclaw-skills"
 	StepActionSyncOpenClawModelProfile     StepActionKind = "sync-openclaw-model-profile"
@@ -187,6 +189,7 @@ var installActionOrder = []StepActionKind{
 	StepActionSaveModels,
 	StepActionSyncOpenClawWorkspace,
 	StepActionSyncOpenClawMCP,
+	StepActionRegisterOpenClawMCP,
 	StepActionSyncOpenClawPlugin,
 	StepActionSyncOpenClawSkills,
 	StepActionSyncOpenClawModelProfile,
@@ -206,6 +209,7 @@ var updateActionOrder = []StepActionKind{
 	StepActionSyncContext7,
 	StepActionSyncOpenClawWorkspace,
 	StepActionSyncOpenClawMCP,
+	StepActionRegisterOpenClawMCP,
 	StepActionSyncOpenClawPlugin,
 	StepActionSyncOpenClawSkills,
 	StepActionSyncOpenClawModelProfile,
@@ -270,8 +274,10 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 			openClawModelStep.InstallActions = []StepActionKind{StepActionConfigureOpenClawNativeModel}
 			openClawModelStep.UpdateActions = []StepActionKind{StepActionConfigureOpenClawNativeModel}
 		}
+		openClawMCPStep := Step{ID: "openclaw-mcp", Target: PlanTargetOpenClaw, Label: "OpenClaw Engram MCP", InstallActions: []StepActionKind{StepActionRegisterOpenClawMCP}, UpdateActions: []StepActionKind{StepActionRegisterOpenClawMCP}, UninstallActions: []StepActionKind{StepActionUnregisterOpenClawMCP}}
 		steps = append(steps,
 			Step{ID: "openclaw-runtime", Target: PlanTargetOpenClaw, Label: "OpenClaw", Snapshot: []string{cfg.OpenClawAgentsMDPath(), cfg.OpenClawSoulMDPath(), cfg.OpenClawMCPConfigPath(), cfg.OpenClawModelProfilePath()}, InstallActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UpdateActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UninstallActions: []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClaw}},
+			openClawMCPStep,
 			openClawModelStep,
 		)
 		capabilities = append(capabilities, "OpenClaw: workspace, skills y modelo provider/model mediante su CLI")

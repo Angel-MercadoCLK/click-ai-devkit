@@ -251,6 +251,16 @@ func runInstall(cmd *cobra.Command) error {
 			}); err != nil {
 				return err
 			}
+		case installer.StepActionRegisterOpenClawMCP:
+			// D45 "supplementary integrations are non-fatal" pattern (same as Codex MCP above):
+			// registering Engram's MCP server with OpenClaw must never abort an otherwise-good local
+			// install. Always attempted when OpenClaw is a target, independent of --openclaw-model.
+			fmt.Fprintln(out, r.Step("Registrando Engram en OpenClaw (MCP)…"))
+			if mcpErr := syncOpenClawMCPFunc(cfg); mcpErr != nil {
+				fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo registrar Engram en OpenClaw: %v. La instalación local continúa; reintenta más tarde con `click update`.", mcpErr)))
+			} else {
+				fmt.Fprintln(out, r.Success("Engram registrado en OpenClaw"))
+			}
 		case installer.StepActionSyncOpenClawPlugin:
 			if err := r.RunStep("Instalando plugin de memory-guard para OpenClaw…", "Plugin de memory-guard instalado en OpenClaw", func() error {
 				return installer.SyncOpenClawPlugin(cfg)
@@ -322,6 +332,18 @@ func SetSyncCodexMCPFuncForTests(fn func(installer.Config) error) func() {
 	old := syncCodexMCPFunc
 	syncCodexMCPFunc = fn
 	return func() { syncCodexMCPFunc = old }
+}
+
+// syncOpenClawMCPFunc is the injectable seam behind runInstall/runUpdate's installer.SyncOpenClawMCP
+// call — mirrors syncCodexMCPFunc, letting CLI-level tests assert the non-fatal warning behavior
+// without shelling out to a real openclaw binary.
+var syncOpenClawMCPFunc = installer.SyncOpenClawMCP
+
+// SetSyncOpenClawMCPFuncForTests overrides syncOpenClawMCPFunc for tests and returns a restore function.
+func SetSyncOpenClawMCPFuncForTests(fn func(installer.Config) error) func() {
+	old := syncOpenClawMCPFunc
+	syncOpenClawMCPFunc = fn
+	return func() { syncOpenClawMCPFunc = old }
 }
 
 func resolveInstallTargetSelection(cmd *cobra.Command, skipOpenClaw bool, out io.Writer, r *ui.Renderer) (installer.TargetSelection, error) {
