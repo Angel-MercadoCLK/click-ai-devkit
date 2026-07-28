@@ -69,6 +69,8 @@ const (
 	StepActionRemoveOpenClawSkills         StepActionKind = "remove-openclaw-skills"
 	StepActionStripOpenClawWorkspace       StepActionKind = "strip-openclaw-workspace"
 	StepActionRemoveOpenClawModelProfile   StepActionKind = "remove-openclaw-model-profile"
+	StepActionSaveCodexModelProfile        StepActionKind = "save-codex-model-profile"
+	StepActionRemoveCodexModelProfile      StepActionKind = "remove-codex-model-profile"
 	StepActionStripCodexGuidance           StepActionKind = "strip-codex-guidance"
 	StepActionRemoveCodexMCP               StepActionKind = "remove-codex-mcp"
 	StepActionRemoveTargetSelection        StepActionKind = "remove-target-selection"
@@ -196,6 +198,7 @@ var installActionOrder = []StepActionKind{
 	StepActionConfigureOpenClawNativeModel,
 	StepActionSyncCodexGuidance,
 	StepActionSyncCodexMCP,
+	StepActionSaveCodexModelProfile,
 	StepActionConfigureCodexNativeModel,
 }
 
@@ -216,6 +219,7 @@ var updateActionOrder = []StepActionKind{
 	StepActionConfigureOpenClawNativeModel,
 	StepActionSyncCodexGuidance,
 	StepActionSyncCodexMCP,
+	StepActionSaveCodexModelProfile,
 	StepActionConfigureCodexNativeModel,
 }
 
@@ -250,9 +254,13 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		// paths: SyncCodexMCP makes zero file writes, so there is nothing for click's own backup/rollback
 		// to capture — it is pure CLI state delegated to `codex mcp`.
 		codexMCPStep := Step{ID: "codex-mcp", Target: PlanTargetCodex, Label: "Codex Engram MCP", InstallActions: []StepActionKind{StepActionSyncCodexMCP}, UpdateActions: []StepActionKind{StepActionSyncCodexMCP}, UninstallActions: []StepActionKind{StepActionRemoveCodexMCP}}
+		// codex-model-profile persists Click's own portable tier recommendation. It is reference data
+		// only — it never writes Codex's native config.toml or any ~/.codex/sdd-*.config.toml profile.
+		codexModelProfileStep := Step{ID: "codex-model-profile", Target: PlanTargetCodex, Label: "Codex model profile", Snapshot: []string{cfg.CodexModelProfilePath()}, InstallActions: []StepActionKind{StepActionSaveCodexModelProfile}, UpdateActions: []StepActionKind{StepActionSaveCodexModelProfile}, UninstallActions: []StepActionKind{StepActionRemoveCodexModelProfile}}
 		steps = append(steps,
 			Step{ID: "codex-runtime", Target: PlanTargetCodex, Label: "Codex CLI", Snapshot: []string{cfg.CodexAgentsMDPath()}, InstallActions: []StepActionKind{StepActionSyncCodexGuidance}, UpdateActions: []StepActionKind{StepActionSyncCodexGuidance}, UninstallActions: []StepActionKind{StepActionStripCodexGuidance}, DoctorChecks: []DoctorCheckKind{DoctorCheckCodexGuidance}},
 			codexMCPStep,
+			codexModelProfileStep,
 			codexModelStep,
 		)
 		capabilities = append(capabilities, "Codex CLI: AGENTS.md gestionado, Engram MCP registrado y modelo nativo de config.toml")

@@ -100,6 +100,7 @@ func runInstall(cmd *cobra.Command) error {
 			return err
 		}
 	}
+	codexTier := resolveInstallCodexTier(cmd, selection, out, r)
 	nonInteractive := isNonInteractiveInstall(cmd, out)
 	profile := modelconfig.ProfileName("")
 	var models map[modelconfig.Phase]string
@@ -229,6 +230,12 @@ func runInstall(cmd *cobra.Command) error {
 			} else {
 				fmt.Fprintln(out, r.Success("Engram registrado en Codex"))
 			}
+		case installer.StepActionSaveCodexModelProfile:
+			if err := r.RunStep("Guardando perfil de modelos de Codex (referencia)…", "Perfil de modelos de Codex guardado", func() error {
+				return installer.SaveCodexModelProfile(cfg, codexTier)
+			}); err != nil {
+				return err
+			}
 		case installer.StepActionConfigureCodexNativeModel:
 			if selection.Codex && native.Codex.Primary != "" {
 				if err := installer.ConfigureCodexModel(cfg.CodexHome, native.Codex.Primary); err != nil {
@@ -344,6 +351,26 @@ func SetSyncOpenClawMCPFuncForTests(fn func(installer.Config) error) func() {
 	old := syncOpenClawMCPFunc
 	syncOpenClawMCPFunc = fn
 	return func() { syncOpenClawMCPFunc = old }
+}
+
+// resolveInstallCodexTier runs the interactive Codex tier picker when Codex is selected and the
+// session is interactive (real terminal on both stdin and stdout). In non-interactive mode, or when
+// the user cancels the picker, it returns "recommended" — the confirmed default tier.
+func resolveInstallCodexTier(cmd *cobra.Command, selection installer.TargetSelection, out io.Writer, r *ui.Renderer) string {
+	if !selection.Codex || isNonInteractiveInstall(cmd, out) {
+		return "recommended"
+	}
+	model := ui.NewCodexTierSelectModel()
+	program := tea.NewProgram(model, tea.WithInput(cmd.InOrStdin()), tea.WithOutput(out))
+	final, err := program.Run()
+	if err != nil {
+		return "recommended"
+	}
+	result := final.(ui.CodexTierSelectModel)
+	if result.Cancelled {
+		return "recommended"
+	}
+	return result.Selected
 }
 
 func resolveInstallTargetSelection(cmd *cobra.Command, skipOpenClaw bool, out io.Writer, r *ui.Renderer) (installer.TargetSelection, error) {

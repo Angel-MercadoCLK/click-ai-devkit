@@ -123,6 +123,16 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		models = modelconfig.ResolveForProfile(string(profile), models)
 	}
 
+	// Re-apply the previously chosen Codex tier, or default to "recommended" if none was saved yet.
+	codexTier := "recommended"
+	if selection.Codex {
+		if savedTier, found, loadErr := installer.LoadCodexModelProfile(cfg); loadErr != nil {
+			return loadErr
+		} else if found {
+			codexTier = savedTier
+		}
+	}
+
 	for _, action := range plan.UpdateActionKinds() {
 		switch action {
 		case installer.StepActionSyncMarketplacePlugins:
@@ -249,6 +259,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo registrar Engram en Codex: %v. La actualización local continúa; reintenta más tarde con `click update`.", mcpErr)))
 			} else {
 				fmt.Fprintln(out, r.Success("Engram registrado en Codex"))
+			}
+		case installer.StepActionSaveCodexModelProfile:
+			if err := r.RunStep("Guardando perfil de modelos de Codex (referencia)…", "Perfil de modelos de Codex guardado", func() error {
+				return installer.SaveCodexModelProfile(cfg, codexTier)
+			}); err != nil {
+				if restoreErr := installer.RestoreRun(cfg); restoreErr != nil {
+					return fmt.Errorf("%w; rollback failed: %v", err, restoreErr)
+				}
+				return fmt.Errorf("%w; rollback restored the previous snapshot", err)
 			}
 		case installer.StepActionConfigureCodexNativeModel:
 			// Only present in the plan when --codex-model was passed (see PlanOptions.CodexNativeModel

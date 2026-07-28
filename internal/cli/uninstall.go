@@ -200,6 +200,10 @@ func runUninstall(cmd *cobra.Command) error {
 			runStep("Engram MCP de Codex", "Quitando registro de Engram en Codex (MCP)…", "Registro de Engram en Codex procesado", false, func() error {
 				return installer.RemoveCodexMCP(cfg)
 			})
+		case installer.StepActionRemoveCodexModelProfile:
+			runStep("perfil de modelos de Codex", "Quitando perfil de modelos de Codex…", "Perfil de modelos de Codex eliminado", false, func() error {
+				return installer.RemoveCodexModelProfile(cfg)
+			})
 		case installer.StepActionUnregisterOpenClawMCP:
 			// Best-effort, like SyncOpenClawMCP on install (D45 "supplementary integrations are non-fatal"):
 			// the resilient-continue loop records any failure in the summary and never aborts the rest of

@@ -68,7 +68,10 @@ func snapshotSources(cfg Config) []snapshotSource {
 		sources = append(sources, snapshotSource{originalPath: cfg.TargetSelectionPath(), backupFile: "targets.json"})
 	}
 	if cfg.CodexHome != "" {
-		sources = append(sources, snapshotSource{originalPath: cfg.CodexAgentsMDPath(), backupFile: "codex-AGENTS.md"})
+		sources = append(sources,
+			snapshotSource{originalPath: cfg.CodexAgentsMDPath(), backupFile: "codex-AGENTS.md"},
+			snapshotSource{originalPath: cfg.CodexModelProfilePath(), backupFile: "codex-model-profile.json"},
+		)
 	}
 	if cfg.OpenClawHome == "" {
 		return sources

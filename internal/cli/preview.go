@@ -97,6 +97,8 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 		return "Actualizando AGENTS.md de Codex…"
 	case installer.StepActionSyncCodexMCP:
 		return "Registrando Engram en Codex (MCP)…"
+	case installer.StepActionSaveCodexModelProfile:
+		return "Guardando perfil de modelos de Codex (referencia)…"
 	case installer.StepActionConfigureCodexNativeModel:
 		return "Configurando modelo nativo de Codex en config.toml (selección explícita)…"
 	case installer.StepActionSyncOpenClawWorkspace:

@@ -172,6 +172,17 @@ Assert-Contains -Actual $codexAgents -Expected 'This block is managed by click' 
 Assert-Contains -Actual $codexConfig -Expected 'model =' -Context 'Codex config.toml'
 Assert-Contains -Actual $codexConfig -Expected 'gpt-5.6' -Context 'Codex config.toml'
 
+# Codex model-profile (click-owned REFERENCE file, never Codex's own config) written on install with
+# the non-interactive default tier `recommended`.
+$codexProfilePath = Join-Path $codexHome 'click-ai-devkit\model-profile.json'
+if (-not (Test-Path -LiteralPath $codexProfilePath)) {
+  throw 'SaveCodexModelProfile did not write the Codex model-profile.json during install'
+}
+$codexProfile = Get-Content -Raw -LiteralPath $codexProfilePath | ConvertFrom-Json
+if ($codexProfile.tier -ne 'recommended') {
+  throw "Codex model-profile tier = '$($codexProfile.tier)', want 'recommended' (non-interactive default)"
+}
+
 # First-time Engram registration with Codex: get (not-yet-registered) then add, exact real syntax.
 $codexCallsAfterInstall = Get-Content -LiteralPath $codexLog -Raw
 Assert-Contains -Actual $codexCallsAfterInstall -Expected 'mcp get engram' -Context 'codex command log (install)'
@@ -253,6 +264,10 @@ $openClawCallsAll = Get-Content -LiteralPath $openClawLog -Raw
 Assert-Contains -Actual $openClawCallsAll -Expected 'mcp unset engram' -Context 'openclaw command log (uninstall)'
 if (Test-Path -LiteralPath $openClawEngramMCPMarker) {
   throw "click uninstall did not de-register Engram MCP from OpenClaw (marker still present)"
+}
+# Codex model-profile (click-owned reference file) removed on uninstall.
+if (Test-Path -LiteralPath $codexProfilePath) {
+  throw "click uninstall left the Codex model-profile.json behind"
 }
 
 Remove-Item -LiteralPath $smokeRoot -Recurse -Force

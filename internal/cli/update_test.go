@@ -183,7 +183,7 @@ func TestUpdateCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
 	})
 	defer restoreMCP()
 
-	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), lookup, "update")
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), t.TempDir(), lookup, "update")
 	if err != nil {
 		t.Fatalf("update command error = %v, want nil (Codex MCP failure must be non-fatal), output:\n%s", err, out)
 	}

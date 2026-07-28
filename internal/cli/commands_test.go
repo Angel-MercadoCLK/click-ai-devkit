@@ -393,12 +393,12 @@ func execRootWithGitLookup(t *testing.T, claudeHome string, lookup installer.Bin
 	return buf.String(), err
 }
 
-func execRootWithHomesAndLookup(t *testing.T, claudeHome, stateHome, openClawHome string, lookup installer.BinaryLookup, args ...string) (string, error) {
+func execRootWithHomesAndLookup(t *testing.T, claudeHome, stateHome, openClawHome, codexHome string, lookup installer.BinaryLookup, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
 	t.Setenv("CLICK_STATE_HOME", stateHome)
 	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
-	t.Setenv("CLICK_CODEX_HOME", filepath.Join(stateHome, "codex-home"))
+	t.Setenv("CODEX_HOME", codexHome)
 	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup { return lookup })
 	defer restore()
 
@@ -552,7 +552,7 @@ func TestInstallCommand_CodexOnly_NonInteractiveOmitsNativeModelWithoutFlagAndDo
 	defer restoreRunner()
 	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
 
-	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), lookup, "install")
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "install")
 	if err != nil {
 		t.Fatalf("install command error = %v, want nil for Codex-only noninteractive install without Claude, output:\n%s", err, out)
 	}
@@ -587,6 +587,45 @@ func TestInstallCommand_CodexOnly_NonInteractiveOmitsNativeModelWithoutFlagAndDo
 	}
 }
 
+// TestInstallCommand_CodexOnly_SavesRecommendedModelProfileAndUninstallRemovesIt is the v1 Codex
+// tier picker end-to-end contract: a non-interactive Codex-only install writes the "recommended"
+// tier to Click's own reference file under CodexHome, and `click uninstall` removes that file without
+// touching Codex's native config.toml.
+func TestInstallCommand_CodexOnly_SavesRecommendedModelProfileAndUninstallRemovesIt(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	codexHome := filepath.Join(stateHome, "codex-home")
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
+
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "install")
+	if err != nil {
+		t.Fatalf("install command error = %v, want nil for Codex-only noninteractive install, output:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Guardando perfil de modelos de Codex") {
+		t.Fatalf("install output = %q, want it to mention the Codex model profile step", out)
+	}
+
+	cfg := installer.Config{CodexHome: codexHome}
+	profilePath := cfg.CodexModelProfilePath()
+	raw, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatalf("ReadFile(model-profile.json) error = %v, want the recommended profile written", err)
+	}
+	if !strings.Contains(string(raw), `"tier": "recommended"`) {
+		t.Fatalf("model-profile.json content = %q, want tier=recommended", raw)
+	}
+
+	if _, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "uninstall"); err != nil {
+		t.Fatalf("uninstall command error = %v", err)
+	}
+	if _, err := os.Stat(profilePath); !os.IsNotExist(err) {
+		t.Fatalf("Stat(model-profile.json) error = %v, want the profile removed after uninstall", err)
+	}
+}
+
 func TestUpdateCommand_CodexOnly_UsesPersistedSelectionWithoutClaudeAndOmitsNativeModelWithoutFlag(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
@@ -599,7 +638,7 @@ func TestUpdateCommand_CodexOnly_UsesPersistedSelectionWithoutClaudeAndOmitsNati
 		t.Fatalf("SaveTargetSelection() error = %v", err)
 	}
 
-	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), lookup, "update")
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "update")
 	if err != nil {
 		t.Fatalf("update command error = %v, want nil for Codex-only update without Claude, output:\n%s", err, out)
 	}
@@ -650,7 +689,7 @@ func TestUpdateCommand_CodexNativeMutationFailure_RollsBackConfigToml(t *testing
 	})
 	defer restoreGuidance()
 
-	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), lookup, "update", "--codex-model", "gpt-5.6")
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "update", "--codex-model", "gpt-5.6")
 	if err == nil {
 		t.Fatalf("update command error = nil, want rollback-triggering failure after Codex native mutation, output:\n%s", out)
 	}
@@ -736,7 +775,7 @@ func TestDoctorCommand_CodexOnlySelection_DoesNotRequireClaudeAndUsesPlanChecks(
 	}
 
 	lookup := cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git", "codex": "/usr/bin/codex"}}
-	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), lookup, "doctor")
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "doctor")
 	if err != nil {
 		t.Fatalf("doctor command error = %v, want healthy Codex-only report without Claude, output:\n%s", err, out)
 	}

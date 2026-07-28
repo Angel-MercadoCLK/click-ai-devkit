@@ -187,7 +187,7 @@ func TestInstallCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
 	})
 	defer restoreMCP()
 
-	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), lookup, "install")
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), t.TempDir(), lookup, "install")
 	if err != nil {
 		t.Fatalf("install command error = %v, want nil (Codex MCP failure must be non-fatal), output:\n%s", err, out)
 	}
