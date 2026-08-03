@@ -183,6 +183,12 @@ if ($codexProfile.tier -ne 'recommended') {
   throw "Codex model-profile tier = '$($codexProfile.tier)', want 'recommended' (non-interactive default)"
 }
 
+# Claude models.json (click-owned per-phase model + profile selection) written on install.
+$modelsPath = Join-Path $claudeHome 'click-ai-devkit\models.json'
+if (-not (Test-Path -LiteralPath $modelsPath)) {
+  throw 'SaveModelsWithProfile did not write models.json during install'
+}
+
 # First-time Engram registration with Codex: get (not-yet-registered) then add, exact real syntax.
 $codexCallsAfterInstall = Get-Content -LiteralPath $codexLog -Raw
 Assert-Contains -Actual $codexCallsAfterInstall -Expected 'mcp get engram' -Context 'codex command log (install)'
@@ -268,6 +274,10 @@ if (Test-Path -LiteralPath $openClawEngramMCPMarker) {
 # Codex model-profile (click-owned reference file) removed on uninstall.
 if (Test-Path -LiteralPath $codexProfilePath) {
   throw "click uninstall left the Codex model-profile.json behind"
+}
+# Claude models.json (click-owned per-phase model + profile selection) removed on uninstall.
+if (Test-Path -LiteralPath $modelsPath) {
+  throw "click uninstall left the Claude models.json behind"
 }
 
 Remove-Item -LiteralPath $smokeRoot -Recurse -Force

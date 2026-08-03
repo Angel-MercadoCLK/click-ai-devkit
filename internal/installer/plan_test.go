@@ -158,6 +158,61 @@ func TestBuildTargetPlan_OpenClawNativeModelFlag_GatesNativeMutationAction(t *te
 	}
 }
 
+// TestBuildTargetPlan_ClaudeExposesModelsAndCloudTeardown closes the two orphaned-file gaps: the
+// claude-models step wrote models.json with no reversal at all, and the engram-cloud step re-synced
+// engram-cloud.json with no reversal either (RemoveEngramCloudState existed but was reachable only
+// from the zero-caller legacy installer.Uninstall). Both files survived `click uninstall` forever.
+// Order follows step order, which is what UninstallActionKinds concatenates — there is no separate
+// uninstall ordering slice, unlike installActionOrder/updateActionOrder.
+func TestBuildTargetPlan_ClaudeExposesModelsAndCloudTeardown(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	selection := TargetSelection{Configured: true, Claude: true}
+
+	plan := BuildTargetPlan(cfg, selection, PlanOptions{CloudConfigured: true})
+
+	want := []StepActionKind{
+		StepActionRemoveMarketplacePlugins,
+		StepActionRemoveModels,
+		StepActionRemoveEngram,
+		StepActionRemoveEngramCloudState,
+		StepActionRemoveContext7,
+		StepActionStripClaudeManagedBlock,
+		StepActionUnregisterMemoryGuard,
+		StepActionRemoveTargetSelection,
+	}
+	if got := plan.UninstallActionKinds(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("UninstallActionKinds() = %#v, want %#v", got, want)
+	}
+
+	// The new teardown actions must NOT leak into the forward directions: install/update still write
+	// models.json and re-sync the cloud record, they never remove them.
+	for _, action := range append(plan.InstallActionKinds(), plan.UpdateActionKinds()...) {
+		if action == StepActionRemoveModels || action == StepActionRemoveEngramCloudState {
+			t.Fatalf("teardown action %q leaked into the install/update action set", action)
+		}
+	}
+}
+
+// TestEngramCloudStatePresent is `click uninstall`'s teardown trigger for the Engram Cloud step.
+// EngramCloudConfigured cannot be used there: it requires ENGRAM_CLOUD_TOKEN in the environment,
+// which a developer tearing down their setup has almost never still exported — the enrollment record
+// on disk is the accurate signal that there is something to remove.
+func TestEngramCloudStatePresent(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	if EngramCloudStatePresent(cfg) {
+		t.Fatal("EngramCloudStatePresent() = true with no state file, want false")
+	}
+	if err := writeJSONFile(cfg.EngramCloudStatePath(), engramCloudState{Enrolled: true}); err != nil {
+		t.Fatalf("writeJSONFile(state) error = %v", err)
+	}
+	if !EngramCloudStatePresent(cfg) {
+		t.Fatal("EngramCloudStatePresent() = false with the state file present, want true")
+	}
+	if EngramCloudStatePresent(Config{}) {
+		t.Fatal("EngramCloudStatePresent() = true with no ClaudeHome, want false")
+	}
+}
+
 func sliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

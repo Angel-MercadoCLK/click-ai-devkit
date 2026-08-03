@@ -1,12 +1,67 @@
 package cli
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
+
+// TestUpdateCommand_YesAndNonInteractiveFlags_Parse is the regression for the "unknown flag" bug:
+// runUpdate has always routed its confirm gate through isNonInteractiveInstall (install.go), which
+// reads --yes/--non-interactive, but `click update` never DECLARED those flags — so the documented
+// scripted escape hatch (`click update --yes`) died at flag-parse time with "unknown flag: --yes",
+// before RunE ever ran. Both spellings must now parse and run to completion.
+func TestUpdateCommand_YesAndNonInteractiveFlags_Parse(t *testing.T) {
+	for _, flag := range []string{"--" + yesFlag, "--" + nonInteractiveFlag} {
+		t.Run(flag, func(t *testing.T) {
+			home := t.TempDir()
+			runner := newTestCommandRunner(home)
+			restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+			defer restoreRunner()
+			seedResolvableEngram(t)
+
+			out, err := execRoot(t, home, "update", flag)
+			if err != nil {
+				t.Fatalf("update %s error = %v, want nil (the flag must be declared on the command), output:\n%s", flag, err, out)
+			}
+			if strings.Contains(out, "unknown flag") {
+				t.Fatalf("update %s output = %q, want no unknown-flag error", flag, out)
+			}
+			if !strings.Contains(out, "Update completo.") {
+				t.Fatalf("update %s output = %q, want the command to run to completion", flag, out)
+			}
+		})
+	}
+}
+
+// TestIsNonInteractiveUpdate_FlagsForceNonInteractiveOnFullTTY proves the flags are wired to the
+// SAME gate `click install` uses, with the same false defaults: on a machine where BOTH streams are
+// real terminals, a bare `click update` stays interactive (write plan + confirm prompt), and either
+// flag flips it to the non-interactive path — no plan, no prompt, no TUI. Without the declaration
+// the Set() call below fails outright, which is exactly the bug.
+func TestIsNonInteractiveUpdate_FlagsForceNonInteractiveOnFullTTY(t *testing.T) {
+	for _, flag := range []string{yesFlag, nonInteractiveFlag} {
+		t.Run(flag, func(t *testing.T) {
+			forceTerminalDetection(t, true /* stdout is a TTY */, true /* stdin is a TTY */)
+
+			cmd := newUpdateCommand()
+			cmd.SetIn(&bytes.Buffer{})
+
+			if isNonInteractiveInstall(cmd, &bytes.Buffer{}) {
+				t.Fatalf("isNonInteractiveInstall = true for a bare `click update` on a full TTY, want false (interactive confirm)")
+			}
+			if err := cmd.Flags().Set(flag, "true"); err != nil {
+				t.Fatalf("cmd.Flags().Set(%q) error = %v, want the flag declared on `click update`", flag, err)
+			}
+			if !isNonInteractiveInstall(cmd, &bytes.Buffer{}) {
+				t.Fatalf("isNonInteractiveInstall = false with --%s on a full TTY, want true (skip the confirm prompt)", flag)
+			}
+		})
+	}
+}
 
 // TestUpdateCommand_CloudConfigured_RunsCloudStepAfterEngram is task 4.5's RED test: when cloud
 // server/project/token are all present, `click update` must re-sync Engram Cloud right after the

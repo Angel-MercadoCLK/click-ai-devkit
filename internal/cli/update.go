@@ -16,6 +16,15 @@ func newUpdateCommand() *cobra.Command {
 		Short: "Re-sync plugins and the Engram pin to the currently installed click binary",
 		RunE:  runUpdate,
 	}
+	// runUpdate's confirm gate below routes through isNonInteractiveInstall (install.go), which reads
+	// --yes/--non-interactive. They are declared HERE, per command, rather than promoted to root
+	// persistent flags: `install` already owns its own copies (install.go), and moving those to
+	// persistent would silently widen them to every other subcommand too. Same names, same false
+	// defaults, same meaning as install's — the two commands' escape hatch must not drift. The help
+	// text is worded for THIS command (and in Spanish, like update's other flags): install's copy
+	// says "instalar", which would be wrong on an update.
+	cmd.Flags().Bool(yesFlag, false, "Omitir toda pantalla interactiva y confirmar la actualización automáticamente")
+	cmd.Flags().Bool(nonInteractiveFlag, false, "Alias de --yes")
 	cmd.Flags().Bool(skipOpenClawFlag, false, "Omitir la integración con OpenClaw aunque se detecte openclaw en este equipo")
 	cmd.Flags().String(codexModelFlag, "", "Referencia de modelo nativa de Codex, por ejemplo gpt-5.6")
 	return cmd

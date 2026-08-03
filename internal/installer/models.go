@@ -68,6 +68,27 @@ func SaveModelProfile(path string, profile modelconfig.ProfileName, models map[m
 	return nil
 }
 
+// RemoveModels reverses the only file SaveModels/SaveModelsWithProfile write: click's own
+// models.json record of the active orchestration profile and per-phase model selection. It is
+// deliberately offline and non-destructive — it never touches Claude Code's own settings.json or the
+// plugin configuration already applied from it, only click's own bookkeeping copy. It is idempotent:
+// a missing file (or an installer with no ClaudeHome) is a silent no-op, matching the reversal
+// contract of the other Remove* helpers uninstall composes (RemoveEngramCloudState,
+// RemoveCodexModelProfile, RemoveOpenClawModelProfile).
+//
+// The ClaudeHome guard is load-bearing, not defensive noise: unlike EngramCloudStatePath, ModelsPath
+// does NOT return "" for an empty ClaudeHome — it returns the RELATIVE "click-ai-devkit/models.json",
+// which without this guard would resolve against the process working directory.
+func RemoveModels(cfg Config) error {
+	if cfg.ClaudeHome == "" {
+		return nil
+	}
+	if err := os.Remove(cfg.ModelsPath()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("installer: remove models.json: %w", err)
+	}
+	return nil
+}
+
 // LoadModels reads the per-phase model selection written by SaveModels/SaveModelsWithProfile. It
 // returns (nil, false, nil) when models.json doesn't exist yet (e.g. before the first
 // `click install`), so callers can distinguish "never configured" from a real read/parse error.

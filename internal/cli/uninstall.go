@@ -146,7 +146,12 @@ func runUninstall(cmd *cobra.Command) error {
 			return err
 		}
 	}
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{})
+	// CloudConfigured is resolved from the enrollment record ON DISK, not from
+	// installer.EngramCloudConfigured like install/update do. That helper requires ENGRAM_CLOUD_TOKEN
+	// to still be exported, which a developer tearing down their setup has almost never kept — keying
+	// the teardown off it would drop the engram-cloud step from the plan and orphan engram-cloud.json
+	// on exactly the machines that have one. Presence of the record is the accurate teardown signal.
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: installer.EngramCloudStatePresent(cfg)})
 	if err := installer.SnapshotTargetPlan(cfg, plan); err != nil {
 		return err
 	}
@@ -234,6 +239,16 @@ func runUninstall(cmd *cobra.Command) error {
 		case installer.StepActionUnregisterMemoryGuard:
 			runStep("memory-guard", "Quitando memory-guard…", "memory-guard eliminado", false, func() error {
 				return installer.UnregisterMemoryGuardHook(cfg)
+			})
+		case installer.StepActionRemoveModels:
+			runStep("modelos por fase", "Quitando modelos por fase de click-sdd…", "Modelos por fase eliminados", false, func() error {
+				return installer.RemoveModels(cfg)
+			})
+		case installer.StepActionRemoveEngramCloudState:
+			// Offline by design (see RemoveEngramCloudState): this deletes click's own local enrollment
+			// record only — it never un-enrolls the shared cloud project other machines still depend on.
+			runStep("registro local de Engram Cloud", "Quitando registro local de Engram Cloud…", "Registro local de Engram Cloud eliminado", false, func() error {
+				return installer.RemoveEngramCloudState(cfg)
 			})
 		case installer.StepActionRemoveTargetSelection:
 			runStep("selección de runtimes", "Quitando selección persistente de runtimes…", "Selección persistente de runtimes eliminada", false, func() error {

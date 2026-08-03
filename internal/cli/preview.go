@@ -93,6 +93,10 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 		return "Registrando memory-guard…"
 	case installer.StepActionSaveModels:
 		return "Guardando modelos por fase de click-sdd…"
+	case installer.StepActionRemoveModels:
+		return "Quitando modelos por fase de click-sdd…"
+	case installer.StepActionRemoveEngramCloudState:
+		return "Quitando registro local de Engram Cloud…"
 	case installer.StepActionSyncCodexGuidance:
 		return "Actualizando AGENTS.md de Codex…"
 	case installer.StepActionSyncCodexMCP:

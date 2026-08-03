@@ -145,6 +145,20 @@ func RemoveEngramCloudState(cfg Config) error {
 	return nil
 }
 
+// EngramCloudStatePresent reports whether click's own engram-cloud.json enrollment record exists on
+// disk. `click uninstall` gates the Engram Cloud teardown step on THIS rather than on
+// EngramCloudConfigured: the latter requires ENGRAM_CLOUD_TOKEN to still be exported, which a
+// developer tearing down their setup has almost never kept, so it would report "no cloud" and leave
+// the enrollment record orphaned. The record's own presence is the accurate teardown signal.
+func EngramCloudStatePresent(cfg Config) bool {
+	path := cfg.EngramCloudStatePath()
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // loadEngramCloudState reads click's Engram Cloud enrollment state. It returns a zero state and
 // found=false when the file is absent, matching loadEngramState's contract.
 func loadEngramCloudState(cfg Config) (engramCloudState, bool, error) {

@@ -14,17 +14,22 @@ import (
 type codexMCPTestRunner struct {
 	commands [][]string
 	outputs  [][]string
+	calls    [][]string // unified, global-order log of every Run AND Output (proves cross-call ordering)
 	getErr   error
 	runErr   error
 }
 
 func (r *codexMCPTestRunner) Run(name string, args ...string) error {
-	r.commands = append(r.commands, append([]string{name}, args...))
+	call := append([]string{name}, args...)
+	r.commands = append(r.commands, call)
+	r.calls = append(r.calls, call)
 	return r.runErr
 }
 
 func (r *codexMCPTestRunner) Output(name string, args ...string) ([]byte, error) {
-	r.outputs = append(r.outputs, append([]string{name}, args...))
+	call := append([]string{name}, args...)
+	r.outputs = append(r.outputs, call)
+	r.calls = append(r.calls, call)
 	return nil, r.getErr
 }
 
@@ -113,11 +118,25 @@ func TestSyncCodexMCP_NotRegistered_IssuesExactGetThenAdd(t *testing.T) {
 	if !reflect.DeepEqual(runner.commands, wantCommands) {
 		t.Fatalf("commands = %#v, want exactly %#v", runner.commands, wantCommands)
 	}
+	// Global cross-call order: the `mcp get` probe MUST precede the `mcp add` mutation. The separate
+	// outputs/commands slices above cannot prove this — a mutation that added before probing would
+	// leave both of them looking exactly right, which is the regression this unified log closes.
+	wantCalls := [][]string{
+		{qualifiedBinary, "mcp", "get", "engram"},
+		{qualifiedBinary, "mcp", "add", "engram", "--", "engram", "mcp", "--tools=agent"},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("calls (global order) = %#v, want %#v", runner.calls, wantCalls)
+	}
 }
 
 // TestSyncCodexMCP_AddFailure_ReturnsWrappedError is the fail-stop contract: `codex mcp add` errors
 // are wrapped and returned, never swallowed.
 func TestSyncCodexMCP_AddFailure_ReturnsWrappedError(t *testing.T) {
+	qualifiedBinary, absErr := filepath.Abs("/fake/codex")
+	if absErr != nil {
+		t.Fatal(absErr)
+	}
 	wantErr := errors.New("codex rejected the mcp add call")
 	runner := &codexMCPTestRunner{getErr: errors.New("not found"), runErr: wantErr}
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
@@ -128,6 +147,15 @@ func TestSyncCodexMCP_AddFailure_ReturnsWrappedError(t *testing.T) {
 	err := SyncCodexMCP(Config{CodexHome: t.TempDir()})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("SyncCodexMCP() error = %v, want wrapped %v", err, wantErr)
+	}
+	// The failing mutation must be exactly the add command, issued after the get probe — the error
+	// alone never proved WHICH command failed.
+	wantCalls := [][]string{
+		{qualifiedBinary, "mcp", "get", "engram"},
+		{qualifiedBinary, "mcp", "add", "engram", "--", "engram", "mcp", "--tools=agent"},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v (add must be the exact attempted mutation)", runner.calls, wantCalls)
 	}
 }
 
@@ -220,11 +248,23 @@ func TestRemoveCodexMCP_Registered_IssuesExactRemove(t *testing.T) {
 	if !reflect.DeepEqual(runner.commands, wantCommands) {
 		t.Fatalf("commands = %#v, want exactly %#v", runner.commands, wantCommands)
 	}
+	// Global cross-call order: the `mcp get` probe MUST precede the `mcp remove` mutation.
+	wantCalls := [][]string{
+		{qualifiedBinary, "mcp", "get", "engram"},
+		{qualifiedBinary, "mcp", "remove", "engram"},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("calls (global order) = %#v, want %#v", runner.calls, wantCalls)
+	}
 }
 
 // TestRemoveCodexMCP_RemoveFailure_ReturnsWrappedError is the fail-stop contract: `codex mcp remove`
 // errors are wrapped and returned, never swallowed.
 func TestRemoveCodexMCP_RemoveFailure_ReturnsWrappedError(t *testing.T) {
+	qualifiedBinary, absErr := filepath.Abs("/fake/codex")
+	if absErr != nil {
+		t.Fatal(absErr)
+	}
 	wantErr := errors.New("codex rejected the mcp remove call")
 	runner := &codexMCPTestRunner{runErr: wantErr} // getErr nil -> registered -> remove attempted
 	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
@@ -235,5 +275,13 @@ func TestRemoveCodexMCP_RemoveFailure_ReturnsWrappedError(t *testing.T) {
 	err := RemoveCodexMCP(Config{CodexHome: t.TempDir()})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("RemoveCodexMCP() error = %v, want wrapped %v", err, wantErr)
+	}
+	// The failing mutation must be exactly the remove command, issued after the get probe.
+	wantCalls := [][]string{
+		{qualifiedBinary, "mcp", "get", "engram"},
+		{qualifiedBinary, "mcp", "remove", "engram"},
+	}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v (remove must be the exact attempted mutation)", runner.calls, wantCalls)
 	}
 }

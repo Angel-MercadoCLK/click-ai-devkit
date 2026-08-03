@@ -524,3 +524,58 @@ func writeLegacyModelsFile(t *testing.T, cfg Config, legacy map[string]string) {
 		t.Fatalf("WriteFile(legacy models.json) error = %v", err)
 	}
 }
+
+// TestRemoveModels verifies the uninstall-side reversal for the per-phase model selection.
+// It must remove click's own models.json bookkeeping file, be idempotent when the file is absent,
+// and stay a silent no-op (touching no filesystem path at all) when there is no ClaudeHome to
+// resolve it against. Mirrors TestRemoveEngramCloudState (engramcloud_test.go), the reversal helper
+// this one is modeled on.
+func TestRemoveModels(t *testing.T) {
+	t.Run("removes existing models file", func(t *testing.T) {
+		cfg := Config{ClaudeHome: t.TempDir()}
+		if err := SaveModelsWithProfile(cfg, modelconfig.ProfileBalanced, modelconfig.Defaults()); err != nil {
+			t.Fatalf("SaveModelsWithProfile() error = %v", err)
+		}
+		if _, statErr := os.Stat(cfg.ModelsPath()); statErr != nil {
+			t.Fatalf("precondition failed: models.json not written: %v", statErr)
+		}
+
+		if err := RemoveModels(cfg); err != nil {
+			t.Fatalf("RemoveModels() error = %v", err)
+		}
+		if _, statErr := os.Stat(cfg.ModelsPath()); !os.IsNotExist(statErr) {
+			t.Fatalf("RemoveModels() left the models file behind")
+		}
+	})
+
+	t.Run("idempotent when models file absent", func(t *testing.T) {
+		cfg := Config{ClaudeHome: t.TempDir()}
+		if err := RemoveModels(cfg); err != nil {
+			t.Fatalf("RemoveModels() on absent file error = %v, want nil", err)
+		}
+	})
+
+	// An empty ClaudeHome makes ModelsPath() resolve to the RELATIVE path
+	// "click-ai-devkit/models.json" (unlike EngramCloudStatePath, which returns ""), so without an
+	// explicit guard RemoveModels would reach outside its own home and try to delete a path under the
+	// process working directory. This asserts the guard: no error AND no filesystem touch.
+	t.Run("no-op when ClaudeHome empty", func(t *testing.T) {
+		dir := t.TempDir()
+		stray := Config{}.ModelsPath()
+		if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(stray)), 0o755); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+		strayPath := filepath.Join(dir, stray)
+		if err := os.WriteFile(strayPath, []byte("{}"), 0o644); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		t.Chdir(dir)
+
+		if err := RemoveModels(Config{}); err != nil {
+			t.Fatalf("RemoveModels() with empty ClaudeHome error = %v, want nil", err)
+		}
+		if _, statErr := os.Stat(strayPath); statErr != nil {
+			t.Fatalf("RemoveModels() with empty ClaudeHome touched the working directory: %v", statErr)
+		}
+	})
+}

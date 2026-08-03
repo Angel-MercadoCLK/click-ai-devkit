@@ -375,6 +375,84 @@ func TestUninstallCommand_CorruptedEngramState_SucceedsWithWarning(t *testing.T)
 	}
 }
 
+// TestUninstallCommand_RemovesModelsAndEngramCloudState is the orphaned-files regression: click's own
+// models.json (written by StepActionSaveModels) and engram-cloud.json (written by
+// StepActionSyncEngramCloud) both survived `click uninstall` forever — the claude-models step had no
+// UninstallActions and no reverser existed at all, and the engram-cloud step had no UninstallActions
+// either even though RemoveEngramCloudState already existed (its only caller was the zero-caller
+// legacy installer.Uninstall). This drives both teardowns through the real run loop and proves the
+// files are actually gone, with the Spanish step labels surfaced.
+func TestUninstallCommand_RemovesModelsAndEngramCloudState(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+
+	cfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	if err := installer.SaveModelsWithProfile(cfg, "", nil); err != nil {
+		t.Fatalf("SaveModelsWithProfile() error = %v", err)
+	}
+	if err := os.WriteFile(cfg.EngramCloudStatePath(), []byte(`{"enrolled":true,"project":"click-ai-devkit"}`), 0o644); err != nil {
+		t.Fatalf("WriteFile(engram-cloud.json) error = %v", err)
+	}
+
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"claude": "/usr/bin/claude", "git": "/usr/bin/git"}}
+	out, err := execRootWithLookupAndState(t, claudeHome, stateHome, lookup, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall command error = %v, want nil, output:\n%s", err, out)
+	}
+	if _, statErr := os.Stat(cfg.ModelsPath()); !os.IsNotExist(statErr) {
+		t.Fatalf("Stat(models.json) error = %v, want click uninstall to remove its own models.json", statErr)
+	}
+	if _, statErr := os.Stat(cfg.EngramCloudStatePath()); !os.IsNotExist(statErr) {
+		t.Fatalf("Stat(engram-cloud.json) error = %v, want click uninstall to remove its own Engram Cloud record", statErr)
+	}
+	if !strings.Contains(out, "Modelos por fase eliminados") {
+		t.Fatalf("uninstall output = %q, want the models teardown success label", out)
+	}
+	if !strings.Contains(out, "Registro local de Engram Cloud eliminado") {
+		t.Fatalf("uninstall output = %q, want the Engram Cloud teardown success label", out)
+	}
+}
+
+// TestUninstallCommand_NoEngramCloudEnrollment_SkipsCloudTeardown is the complement: a machine that
+// never enrolled in Engram Cloud has no engram-cloud.json, so the cloud teardown step must not even
+// be listed — while models.json is still removed. This pins the presence-based gate: uninstall must
+// NOT key the cloud step off EngramCloudConfigured, which needs ENGRAM_CLOUD_TOKEN still exported.
+func TestUninstallCommand_NoEngramCloudEnrollment_SkipsCloudTeardown(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+
+	cfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	if err := installer.SaveModelsWithProfile(cfg, "", nil); err != nil {
+		t.Fatalf("SaveModelsWithProfile() error = %v", err)
+	}
+
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"claude": "/usr/bin/claude", "git": "/usr/bin/git"}}
+	out, err := execRootWithLookupAndState(t, claudeHome, stateHome, lookup, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall command error = %v, want nil, output:\n%s", err, out)
+	}
+	if _, statErr := os.Stat(cfg.ModelsPath()); !os.IsNotExist(statErr) {
+		t.Fatalf("Stat(models.json) error = %v, want models.json removed even with no cloud enrollment", statErr)
+	}
+	if strings.Contains(out, "Engram Cloud") {
+		t.Fatalf("uninstall output = %q, want no Engram Cloud teardown step when no enrollment record exists", out)
+	}
+}
+
 func TestUninstallCommand_CodexOnlySelection_DoesNotRequireClaudeAndRemovesNeutralStateLast(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
