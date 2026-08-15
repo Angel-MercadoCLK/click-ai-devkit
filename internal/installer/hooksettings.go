@@ -14,6 +14,11 @@ const (
 	MemoryGuardCommand     = "click memory-guard"
 )
 
+// clickSettingsAllowlist are the top-level keys that click manages and may prune when empty after
+// uninstall. The external `claude` CLI subprocess removes click's entries from these objects but
+// leaves them as empty maps; click cannot prevent that, but it can prune them afterward.
+var clickSettingsAllowlist = []string{"enabledPlugins", "extraKnownMarketplaces", "pluginConfigs"}
+
 // RegisterMemoryGuardHook ensures Claude Code's PreToolUse settings invoke click memory-guard for
 // Engram mem_save calls.
 func RegisterMemoryGuardHook(cfg Config) error {
@@ -93,6 +98,43 @@ func HasMemoryGuardHook(cfg Config) (bool, error) {
 		return false, err
 	}
 	return hasHookEntry(getPreToolUseEntries(settings), MemoryGuardToolMatcher, MemoryGuardCommand), nil
+}
+
+// PruneEmptyClickSettingsKeys removes the three Click-managed top-level keys (enabledPlugins,
+// extraKnownMarketplaces, pluginConfigs) from settings.json ONLY when each is an empty map, which
+// is the state the external `claude` CLI subprocess leaves after removing click's entries. This
+// runs as the final step of uninstall to clean up this orphaned residue. Keys that are null,
+// arrays, strings, numbers, booleans, or non-empty objects are preserved untouched; any key not
+// in the allowlist is never touched. If all keys are removed leaving an empty document, writes
+// {} instead of deleting the file. Performs no write at all when nothing changed.
+func PruneEmptyClickSettingsKeys(cfg Config) error {
+	settings, err := readSettingsFile(cfg.SettingsPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	changed := false
+	for _, key := range clickSettingsAllowlist {
+		value, ok := settings[key]
+		if !ok {
+			continue
+		}
+		// Delete ONLY when the value is an empty map
+		if valueMap, ok := value.(map[string]any); ok && len(valueMap) == 0 {
+			delete(settings, key)
+			changed = true
+		}
+	}
+
+	// Early return: no write when nothing changed
+	if !changed {
+		return nil
+	}
+
+	return writeSettingsFile(cfg.SettingsPath(), settings)
 }
 
 // writeJSONFile is a small shared helper for the handful of Click-managed JSON files this package

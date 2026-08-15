@@ -257,6 +257,13 @@ func runUninstall(cmd *cobra.Command) error {
 		}
 	}
 
+	// Pruning step (PR C): removes empty Click-specific keys that the external
+	// `claude` CLI subprocess leaves as orphaned empty maps. Runs after all
+	// uninstall actions to ensure we clean up what the `claude` process did.
+	runStep("configuración vacía de Click", "Limpiando configuración vacía de Click…", "Configuración vacía de Click limpiada", false, func() error {
+		return installer.PruneEmptyClickSettingsKeys(cfg)
+	})
+
 	return reportUninstallOutcome(out, r, outcomes)
 }
 

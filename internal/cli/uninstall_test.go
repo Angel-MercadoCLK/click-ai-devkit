@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -625,4 +626,339 @@ func TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregist
 	if !strings.Contains(joined, "mcp remove engram") {
 		t.Fatalf("codex command log =\n%s\nwant `codex mcp remove engram` issued", joined)
 	}
+}
+
+// --- PR C: PruneEmptyClickSettingsKeys integration tests ---
+
+// TestUninstallCommand_FullClaude_PrunesEmptyClickKeys proves C.4(a): after a full uninstall
+// that leaves the three Click keys as empty maps, settings.json no longer contains them while
+// foreign keys survive untouched.
+func TestUninstallCommand_FullClaude_PrunesEmptyClickKeys(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+
+	// Seed a prior full install: target selection + settings with Click keys + foreign content
+	selectionCfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(selectionCfg, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+
+	// Simulate what the external `claude` CLI leaves after removing click's entries:
+	// the three Click keys are empty maps, foreign keys remain intact.
+	settings := map[string]any{
+		"enabledPlugins":         map[string]any{},               // Click-managed, now empty
+		"extraKnownMarketplaces": map[string]any{},               // Click-managed, now empty
+		"pluginConfigs":          map[string]any{},               // Click-managed, now empty
+		"foreignKey":             "keep me",                      // Foreign - must survive
+		"anotherForeignKey":      map[string]any{"keep": "true"}, // Foreign - must survive
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				map[string]any{
+					"matcher": installer.MemoryGuardToolMatcher,
+					"hooks":   []any{map[string]any{"type": "command", "command": installer.MemoryGuardCommand}},
+				},
+			},
+		},
+	}
+	if err := writeSettingsFileDirect(selectionCfg.SettingsPath(), settings); err != nil {
+		t.Fatalf("writeSettingsFileDirect() error = %v", err)
+	}
+
+	// Deterministic runner so the claude-dependent steps no-op in this test
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	root := NewRootCommand()
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"uninstall"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("uninstall command error = %v, want nil for a clean teardown, output:\n%s", err, buf.String())
+	}
+
+	// Click keys should be gone (pruned), foreign keys should survive
+	after, err := readSettingsFileDirect(selectionCfg.SettingsPath())
+	if err != nil {
+		t.Fatalf("readSettingsFileDirect() after uninstall error = %v", err)
+	}
+
+	// Click keys must not exist
+	for _, key := range []string{"enabledPlugins", "extraKnownMarketplaces", "pluginConfigs"} {
+		if _, exists := after[key]; exists {
+			t.Fatalf("Click key %q still exists after uninstall, want it pruned (was empty map)", key)
+		}
+	}
+
+	// Foreign keys must survive
+	if after["foreignKey"] != "keep me" {
+		t.Fatalf("foreignKey = %v after uninstall, want \"keep me\" (foreign keys must survive)", after["foreignKey"])
+	}
+	if foreignMap, ok := after["anotherForeignKey"].(map[string]any); !ok || foreignMap["keep"] != "true" {
+		t.Fatalf("anotherForeignKey = %v after uninstall, want map{\"keep\": \"true\"} (foreign keys must survive)", after["anotherForeignKey"])
+	}
+}
+
+// TestUninstallCommand_PruningRunsAfterAllActions proves C.4(b): pruning runs after the
+// whole action loop. This is proven by verifying that empty Click keys are gone after
+// uninstall, which only happens if pruning runs after all other actions complete.
+func TestUninstallCommand_PruningRunsAfterAllActions(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+
+	// Seed target selection and settings with empty Click keys
+	selectionCfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(selectionCfg, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+
+	settings := map[string]any{
+		"enabledPlugins": map[string]any{}, // Will be pruned
+		"foreignKey":     "keep me",
+	}
+	if err := writeSettingsFileDirect(selectionCfg.SettingsPath(), settings); err != nil {
+		t.Fatalf("writeSettingsFileDirect() error = %v", err)
+	}
+
+	// Deterministic runner so the claude-dependent steps no-op in this test
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	root := NewRootCommand()
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"uninstall"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("uninstall command error = %v, want nil for clean teardown, output:\n%s", err, buf.String())
+	}
+
+	// Pruning should have run AFTER the action loop
+	after, err := readSettingsFileDirect(selectionCfg.SettingsPath())
+	if err != nil {
+		t.Fatalf("readSettingsFileDirect() after uninstall error = %v", err)
+	}
+
+	// enabledPlugins must be gone (pruned), proving pruning ran after actions
+	if _, exists := after["enabledPlugins"]; exists {
+		t.Fatal("enabledPlugins still exists after uninstall, want it pruned (proves pruning ran after action loop)")
+	}
+
+	// Foreign key must survive
+	if after["foreignKey"] != "keep me" {
+		t.Fatalf("foreignKey = %v after uninstall, want \"keep me\"", after["foreignKey"])
+	}
+}
+
+// TestUninstallCommand_ForeignHooksSurvive proves C.4(d): foreign hooks planted before uninstall —
+// including a foreign PreToolUse entry using click's exact matcher but different type or command —
+// still survive. This was verified empirically in a real sandbox run and must stay covered.
+func TestUninstallCommand_ForeignHooksSurvive(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+
+	// Seed target selection
+	selectionCfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(selectionCfg, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+
+	// Plant Click's memory guard hook AND foreign hooks that share the matcher
+	settings := map[string]any{
+		"enabledPlugins": map[string]any{}, // Will be pruned
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				// Click's memory guard hook (will be removed)
+				map[string]any{
+					"matcher": installer.MemoryGuardToolMatcher,
+					"hooks": []any{
+						map[string]any{"type": "command", "command": installer.MemoryGuardCommand},
+					},
+				},
+				// Foreign hook 1: same matcher, different type (should survive)
+				map[string]any{
+					"matcher": installer.MemoryGuardToolMatcher,
+					"hooks": []any{
+						map[string]any{"type": "javascript", "code": "console.log('foreign hook')"},
+					},
+				},
+				// Foreign hook 2: same matcher, different command (should survive)
+				map[string]any{
+					"matcher": installer.MemoryGuardToolMatcher,
+					"hooks": []any{
+						map[string]any{"type": "command", "command": "foreign-command"},
+					},
+				},
+				// Foreign hook 3: different matcher entirely (should survive)
+				map[string]any{
+					"matcher": "different__matcher",
+					"hooks": []any{
+						map[string]any{"type": "command", "command": "different-command"},
+					},
+				},
+			},
+		},
+	}
+	if err := writeSettingsFileDirect(selectionCfg.SettingsPath(), settings); err != nil {
+		t.Fatalf("writeSettingsFileDirect() error = %v", err)
+	}
+
+	// Deterministic runner for claude steps
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	root := NewRootCommand()
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"uninstall"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("uninstall command error = %v, want nil for clean teardown, output:\n%s", err, buf.String())
+	}
+
+	// After uninstall, foreign hooks must survive
+	after, err := readSettingsFileDirect(selectionCfg.SettingsPath())
+	if err != nil {
+		t.Fatalf("readSettingsFileDirect() after uninstall error = %v", err)
+	}
+
+	// Check hooks presence before asserting shape
+	hooks, ok := after["hooks"]
+	if !ok || hooks == nil {
+		t.Fatal("hooks missing or nil after uninstall, want foreign hooks to survive")
+	}
+	hooksMap, ok := hooks.(map[string]any)
+	if !ok {
+		t.Fatalf("hooks is not a map[string]any after uninstall, got %T", hooks)
+	}
+	preToolUseRaw, ok := hooksMap["PreToolUse"]
+	if !ok || preToolUseRaw == nil {
+		t.Fatal("PreToolUse entries missing after uninstall, want foreign hooks to survive")
+	}
+	preToolUseEntries, ok := preToolUseRaw.([]any)
+	if !ok {
+		t.Fatalf("PreToolUse is not []any after uninstall, got %T", preToolUseRaw)
+	}
+
+	// Should have exactly 3 foreign hooks (click's removed)
+	if len(preToolUseEntries) != 3 {
+		t.Fatalf("PreToolUse entries count = %d after uninstall, want 3 (foreign hooks survive, click's removed)", len(preToolUseEntries))
+	}
+
+	// Verify foreign hook 1 (different type) survives
+	foundForeign1 := false
+	for _, entry := range preToolUseEntries {
+		entryMap, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if entryMap["matcher"] != installer.MemoryGuardToolMatcher {
+			continue
+		}
+		hooks, _ := entryMap["hooks"].([]any)
+		for _, hook := range hooks {
+			hookMap, ok := hook.(map[string]any)
+			if !ok {
+				continue
+			}
+			if hookMap["type"] == "javascript" {
+				foundForeign1 = true
+				break
+			}
+		}
+	}
+	if !foundForeign1 {
+		t.Fatal("foreign hook with same matcher but different type (javascript) was removed, want it to survive")
+	}
+
+	// Verify foreign hook 2 (different command) survives
+	foundForeign2 := false
+	for _, entry := range preToolUseEntries {
+		entryMap, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if entryMap["matcher"] != installer.MemoryGuardToolMatcher {
+			continue
+		}
+		hooks, _ := entryMap["hooks"].([]any)
+		for _, hook := range hooks {
+			hookMap, ok := hook.(map[string]any)
+			if !ok {
+				continue
+			}
+			if hookMap["type"] == "command" && hookMap["command"] == "foreign-command" {
+				foundForeign2 = true
+				break
+			}
+		}
+	}
+	if !foundForeign2 {
+		t.Fatal("foreign hook with same matcher but different command was removed, want it to survive")
+	}
+
+	// Verify foreign hook 3 (different matcher) survives
+	foundForeign3 := false
+	for _, entry := range preToolUseEntries {
+		entryMap, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if entryMap["matcher"] != "different__matcher" {
+			continue
+		}
+		foundForeign3 = true
+		break
+	}
+	if !foundForeign3 {
+		t.Fatal("foreign hook with different matcher was removed, want it to survive")
+	}
+}
+
+// writeSettingsFileDirect is a test helper that writes settings.json directly, bypassing
+// the installer package's atomic write for test setup purposes.
+func writeSettingsFileDirect(path string, settings map[string]any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o600)
+}
+
+// readSettingsFileDirect is a test helper that reads settings.json directly.
+func readSettingsFileDirect(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]any{}, nil
+		}
+		return nil, fmt.Errorf("read: %w", err)
+	}
+	if len(data) == 0 {
+		return map[string]any{}, nil
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
+	if settings == nil {
+		settings = map[string]any{}
+	}
+	return settings, nil
 }
