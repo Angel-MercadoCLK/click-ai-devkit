@@ -2,8 +2,6 @@ package installer
 
 import (
 	"fmt"
-	"os"
-	"strings"
 )
 
 // DefaultCodexAgentsContent is guidance only. It deliberately excludes Claude Agent/Skill/plugin
@@ -30,11 +28,6 @@ func StripCodexGuidance(cfg Config) error {
 	}
 	if err := StripManagedBlock(cfg.CodexAgentsMDPath()); err != nil {
 		return fmt.Errorf("installer: remove Codex AGENTS.md block: %w", err)
-	}
-	if data, err := os.ReadFile(cfg.CodexAgentsMDPath()); err == nil && strings.TrimSpace(string(data)) == "" {
-		if removeErr := os.Remove(cfg.CodexAgentsMDPath()); removeErr != nil && !os.IsNotExist(removeErr) {
-			return fmt.Errorf("installer: remove empty Codex AGENTS.md: %w", removeErr)
-		}
 	}
 	return nil
 }

@@ -474,8 +474,13 @@ func TestUninstallCommand_CodexOnlySelection_DoesNotRequireClaudeAndRemovesNeutr
 	if err != nil {
 		t.Fatalf("uninstall command error = %v, want nil for a Codex-only teardown, output:\n%s", err, out)
 	}
-	if _, err := os.Stat(codexCfg.CodexAgentsMDPath()); !os.IsNotExist(err) {
-		t.Fatalf("Stat(CodexAgentsMDPath) error = %v, want Codex guidance removed", err)
+	// NEW CONTRACT: after stripping, file should exist and be empty (0 bytes), NOT deleted
+	info, err := os.Stat(codexCfg.CodexAgentsMDPath())
+	if err != nil {
+		t.Fatalf("Stat(CodexAgentsMDPath) error = %v, want file to exist as empty (NEW contract: leave empty file)", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("Stat(CodexAgentsMDPath).Size = %d, want 0 (NEW contract: empty file, not deleted)", info.Size())
 	}
 	if _, err := os.Stat(filepath.Join(stateHome, "targets.json")); !os.IsNotExist(err) {
 		t.Fatalf("Stat(targets.json) error = %v, want neutral state removed after successful teardown", err)
@@ -487,7 +492,7 @@ func TestUninstallCommand_CodexOnlySelection_DoesNotRequireClaudeAndRemovesNeutr
 
 // TestUninstallCommand_FailedCodexTeardown_ContinuesForwardNoRollback is the inverted Codex-teardown
 // test: a failed Codex step (StripCodexGuidance) must NOT roll back. Its partial effect stays on
-// disk (the AGENTS.md it removed stays removed), later steps still run to completion (the neutral
+// disk (the AGENTS.md it stripped stays stripped as an empty file), later steps still run to completion (the neutral
 // targets.json IS removed), unrelated files are never touched, and the failure is reported in the
 // summary. Before the fix this rolled back — restoring AGENTS.md and KEEPING targets.json — which is
 // exactly the forward-progress-defeating behavior this change removes.
@@ -519,7 +524,8 @@ func TestUninstallCommand_FailedCodexTeardown_ContinuesForwardNoRollback(t *test
 
 	injectedErr := errors.New("injected codex teardown failure")
 	restoreStrip := SetStripCodexGuidanceFuncForTests(func(cfg installer.Config) error {
-		if err := os.Remove(cfg.CodexAgentsMDPath()); err != nil {
+		// NEW CONTRACT: strip the block, leave an empty file (0 bytes), not delete
+		if err := installer.StripManagedBlock(cfg.CodexAgentsMDPath()); err != nil {
 			return err
 		}
 		return injectedErr
@@ -531,9 +537,14 @@ func TestUninstallCommand_FailedCodexTeardown_ContinuesForwardNoRollback(t *test
 	if err == nil {
 		t.Fatalf("uninstall command error = nil, want a non-nil aggregate error when a step fails, output:\n%s", out)
 	}
-	// Forward-only: the file StripCodexGuidance removed stays removed (no rollback restore).
-	if _, statErr := os.Stat(codexCfg.CodexAgentsMDPath()); !os.IsNotExist(statErr) {
-		t.Fatalf("Stat(CodexAgentsMDPath) error = %v, want it to stay REMOVED (no rollback)", statErr)
+	// Forward-only: the file StripCodexGuidance stripped stays stripped as an empty file (no rollback restore).
+	// NEW CONTRACT: file should exist and be empty (0 bytes), NOT deleted
+	info, statErr := os.Stat(codexCfg.CodexAgentsMDPath())
+	if statErr != nil {
+		t.Fatalf("Stat(CodexAgentsMDPath) error = %v, want file to exist as empty (no rollback restore)", statErr)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("Stat(CodexAgentsMDPath).Size = %d, want 0 (NEW contract: empty file stays empty, not restored)", info.Size())
 	}
 	// Later steps still ran: the neutral targets.json is removed even though an earlier step failed.
 	if _, statErr := os.Stat(filepath.Join(stateHome, "targets.json")); !os.IsNotExist(statErr) {
