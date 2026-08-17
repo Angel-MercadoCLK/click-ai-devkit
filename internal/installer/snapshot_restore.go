@@ -142,6 +142,15 @@ func PrepareRestore(cfg Config) (PreparedRestore, error) {
 			if warnable {
 				prepared.Drift.WarnableNonVeto = append(prepared.Drift.WarnableNonVeto, entry.OriginalPath)
 			}
+		} else if fp.present && entry.DriftPolicy == DriftPolicyNonVeto {
+			// No-prior-state entry that has since appeared: for a policy click does not own outright,
+			// deleting it (ApplyPreparedRestore's no-prior-state branch) could destroy real, legitimate
+			// data an external tool wrote after the snapshot (review-risk finding). There is no baseline
+			// to veto against — only a decision to delete or not — so this warns exactly like a
+			// present-and-drifted non-veto entry, never vetoes. whole-file-veto/managed-content-veto
+			// entries are deliberately NOT extended here: click owns that content outright, so deleting a
+			// no-prior-state entry it owns is the correct, expected undo, not a foreign-data risk.
+			prepared.Drift.WarnableNonVeto = append(prepared.Drift.WarnableNonVeto, entry.OriginalPath)
 		}
 		prepared.entries = append(prepared.entries, pe)
 	}
@@ -151,10 +160,11 @@ func PrepareRestore(cfg Config) (PreparedRestore, error) {
 // ApplyPreparedRestore executes a prepared restore. Before ANY write it re-fingerprints every
 // entry and refuses if anything changed since PrepareRestore ran (the TOCTOU guard: an
 // interactive confirmation prompt may have sat in between). Restore COVERAGE is the full
-// manifest — including non-veto entries (only VETO SCOPE is ownership-scoped, and the rollback
-// command's warning/consent flow is what protects those, not a narrowed restore): entries with
+// manifest — including non-veto entries (only VETO SCOPE is ownership-scoped): entries with
 // backed-up content are copied back byte-for-byte; no-prior-state markers (Existed=false) remove
-// any file that has since appeared at the original path. The snapshot itself is left intact.
+// any file that has since appeared at the original path, which for a DriftPolicyNonVeto entry is
+// exactly what PrepareRestore's WarnableNonVeto classification (see there) puts in front of the
+// rollback command's warning/consent flow first. The snapshot itself is left intact.
 func ApplyPreparedRestore(prepared PreparedRestore) error {
 	for _, pe := range prepared.entries {
 		fp, err := fingerprintEntry(pe.entry)

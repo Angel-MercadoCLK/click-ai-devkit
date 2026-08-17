@@ -178,3 +178,111 @@ func TestRestoreRun_ComposesPrepareAndApply(t *testing.T) {
 		t.Fatalf("CLAUDE.md after RestoreRun = %q, want restored pre-run content", got)
 	}
 }
+
+// TestPrepareRestore_NoPriorStateNonVetoEntry_WarnsBeforeDeletion is a regression test for a
+// review-risk finding: a manifest entry with Existed=false (the file was absent when the run-start
+// snapshot was taken) was never classified at all — PrepareRestore's `if entry.Existed` guard
+// skipped classifyEntryDrift entirely, so such an entry could never appear in either Vetoes or
+// WarnableNonVeto. ApplyPreparedRestore then unconditionally os.Removes it. For a DriftPolicyNonVeto
+// entry (a registry file click does not own outright, e.g. known_marketplaces.json/
+// installed_plugins.json/Codex config.toml), that meant a real, legitimate file the external
+// `claude`/`codex` CLI populated with genuine data AFTER the snapshot was silently deleted by
+// `click rollback` with zero warning and zero consent — reproduced empirically before this fix.
+//
+// The corrected behavior: a present, DriftPolicyNonVeto, Existed=false entry is classified into
+// WarnableNonVeto (never Vetoes — there is no baseline to refuse against, only a decision to
+// overwrite/delete or not), so the rollback command's existing warn+consent gate covers it exactly
+// like a present-and-drifted non-veto entry already does.
+func TestPrepareRestore_NoPriorStateNonVetoEntry_WarnsBeforeDeletion(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
+	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	// A registry file that did NOT exist when the snapshot was taken.
+	registryPath := filepath.Join(cfg.ClaudeHome, "plugins", "known_marketplaces.json")
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatalf("loadSnapshotManifest() error = %v", err)
+	}
+	manifest.Entries = append(manifest.Entries, manifestEntry{
+		OriginalPath: registryPath,
+		BackupFile:   "",
+		Existed:      false,
+		DriftPolicy:  DriftPolicyNonVeto,
+	})
+	writeManifestDirect(t, cfg, manifest)
+
+	// AFTER the snapshot, the external `claude` CLI populates it with real data.
+	writeTestFile(t, registryPath, `{"marketplaces":{"user-owned":"important real data"}}`)
+
+	prepared, err := PrepareRestore(cfg)
+	if err != nil {
+		t.Fatalf("PrepareRestore() error = %v, want nil", err)
+	}
+	if len(prepared.Drift.Vetoes) != 0 {
+		t.Fatalf("PrepareRestore().Drift.Vetoes = %v, want empty (a no-prior-state entry never vetoes)", prepared.Drift.Vetoes)
+	}
+	found := false
+	for _, p := range prepared.Drift.WarnableNonVeto {
+		if p == registryPath {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("PrepareRestore().Drift.WarnableNonVeto = %v, want it to contain %q "+
+			"(a present, non-veto, no-prior-state entry must be warned about before ApplyPreparedRestore deletes it)",
+			prepared.Drift.WarnableNonVeto, registryPath)
+	}
+
+	// Confirm nothing was written by PrepareRestore itself.
+	after, readErr := os.ReadFile(registryPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile(registryPath) error = %v, want file untouched by PrepareRestore", readErr)
+	}
+	if string(after) != `{"marketplaces":{"user-owned":"important real data"}}` {
+		t.Fatalf("registry file content changed during PrepareRestore, want zero writes")
+	}
+}
+
+// TestPrepareRestore_NoPriorStateWholeFileVetoEntry_DeletesWithoutWarning confirms the scope
+// boundary of the fix above: a whole-file-veto or managed-content-veto entry with Existed=false is
+// content click owns outright, so it is NOT added to WarnableNonVeto — deleting it on rollback (it
+// did not exist before the run) is the correct, expected undo, not a foreign-data risk.
+func TestPrepareRestore_NoPriorStateWholeFileVetoEntry_DeletesWithoutWarning(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	ownedPath := filepath.Join(cfg.ClaudeHome, "click-ai-devkit", "models.json")
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatalf("loadSnapshotManifest() error = %v", err)
+	}
+	manifest.Entries = append(manifest.Entries, manifestEntry{
+		OriginalPath: ownedPath,
+		BackupFile:   "",
+		Existed:      false,
+		DriftPolicy:  DriftPolicyWholeFileVeto,
+	})
+	writeManifestDirect(t, cfg, manifest)
+	writeTestFile(t, ownedPath, `{"profile":"balanced"}`)
+
+	prepared, err := PrepareRestore(cfg)
+	if err != nil {
+		t.Fatalf("PrepareRestore() error = %v, want nil", err)
+	}
+	if len(prepared.Drift.Vetoes) != 0 {
+		t.Fatalf("PrepareRestore().Drift.Vetoes = %v, want empty", prepared.Drift.Vetoes)
+	}
+	for _, p := range prepared.Drift.WarnableNonVeto {
+		if p == ownedPath {
+			t.Fatalf("PrepareRestore().Drift.WarnableNonVeto = %v, want it to NOT contain %q "+
+				"(click owns this file outright; deleting a no-prior-state entry it owns is correct undo, not a risk)",
+				prepared.Drift.WarnableNonVeto, ownedPath)
+		}
+	}
+}
