@@ -7,9 +7,11 @@ import (
 )
 
 // managedMarkdownProjectionHash returns the hash of the managed-content projection for markdown files.
-// The projection is a tagged string: "absent:<hash>" when no exact marker lines exist,
-// "malformed:<marker-sequence>:<hash>" when markers are malformed, or "present:<block>:<hash>"
-// when a well-formed managed block exists. The tag ensures these three cases hash differently.
+// The projection is a tagged digest: "absent:<hash>" when no exact marker lines exist,
+// "malformed:<marker-sequence>:<hash>" when markers are malformed, or "present:<hash>" when a
+// well-formed managed block exists — the block's raw bytes are hashed, never returned, so the
+// manifest never carries click-owned content in plaintext. The tag ensures these three cases hash
+// differently.
 func managedMarkdownProjectionHash(content string) string {
 	lines := crlfAwareSplitLines(content)
 	begin, end := findMarkers(lines)
@@ -52,8 +54,9 @@ func managedMarkdownProjectionHash(content string) string {
 }
 
 // managedSettingsProjectionHash returns the hash of the managed-content projection for settings.json.
-// The projection is a tagged string: "absent:<hash>" when no owned hook exists, or
-// "present:<compact-serialized-hooks>:<hash>" when owned hooks are found.
+// The projection is a tagged digest: "absent:<hash>" when no owned hook exists, or "present:<hash>"
+// when owned hooks are found — the compact-serialized hooks are hashed, never returned, so the
+// manifest never carries click-owned content in plaintext.
 // Owned hooks are identified by matching both MemoryGuardToolMatcher and MemoryGuardCommand.
 // The projection is order-independent to tolerate writeSettingsFile's key-order normalization.
 func managedSettingsProjectionHash(content string) string {
