@@ -687,3 +687,429 @@ func TestSnapshotRun_OpenClawFirstInstall_RecordsNoPriorStateMarker(t *testing.T
 		}
 	}
 }
+
+// --- Task 1: Schema round-trip tests (RED) ---
+
+// TestManifestEntry_RoundTripNewFields tests that the three new optional fields round-trip
+// through JSON marshal/unmarshal correctly when populated.
+func TestManifestEntry_RoundTripNewFields(t *testing.T) {
+	entry := manifestEntry{
+		OriginalPath:               "/some/path",
+		BackupFile:                 "backup.txt",
+		Existed:                    true,
+		ExpectedPostRunHash:        "abc123",
+		DriftPolicy:                "whole-file-veto",
+		ExpectedPostRunManagedHash: "managed456",
+	}
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("json.Marshal(entry) error = %v, want nil", err)
+	}
+
+	var decoded manifestEntry
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal(data) error = %v, want nil", err)
+	}
+
+	if decoded.ExpectedPostRunHash != entry.ExpectedPostRunHash {
+		t.Fatalf("decoded.ExpectedPostRunHash = %q, want %q", decoded.ExpectedPostRunHash, entry.ExpectedPostRunHash)
+	}
+	if decoded.DriftPolicy != entry.DriftPolicy {
+		t.Fatalf("decoded.DriftPolicy = %q, want %q", decoded.DriftPolicy, entry.DriftPolicy)
+	}
+	if decoded.ExpectedPostRunManagedHash != entry.ExpectedPostRunManagedHash {
+		t.Fatalf("decoded.ExpectedPostRunManagedHash = %q, want %q", decoded.ExpectedPostRunManagedHash, entry.ExpectedPostRunManagedHash)
+	}
+}
+
+// TestManifestEntry_AbsentFieldsOmitted tests that the new optional fields are omitted from JSON
+// when empty (omitempty behavior).
+func TestManifestEntry_AbsentFieldsOmitted(t *testing.T) {
+	entry := manifestEntry{
+		OriginalPath: "/some/path",
+		BackupFile:   "backup.txt",
+		Existed:      true,
+		// New fields left at zero values
+	}
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("json.Marshal(entry) error = %v, want nil", err)
+	}
+
+	// Check that the new field keys are not present in the JSON
+	dataStr := string(data)
+	if contains(dataStr, "expectedPostRunHash") {
+		t.Fatalf("JSON contains 'expectedPostRunHash' field when empty, want it omitted: %s", dataStr)
+	}
+	if contains(dataStr, "driftPolicy") {
+		t.Fatalf("JSON contains 'driftPolicy' field when empty, want it omitted: %s", dataStr)
+	}
+	if contains(dataStr, "expectedPostRunManagedHash") {
+		t.Fatalf("JSON contains 'expectedPostRunManagedHash' field when empty, want it omitted: %s", dataStr)
+	}
+
+	// Round-trip should preserve zero values
+	var decoded manifestEntry
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal(data) error = %v, want nil", err)
+	}
+	if decoded.ExpectedPostRunHash != "" {
+		t.Fatalf("decoded.ExpectedPostRunHash = %q, want empty string", decoded.ExpectedPostRunHash)
+	}
+	if decoded.DriftPolicy != "" {
+		t.Fatalf("decoded.DriftPolicy = %q, want empty string", decoded.DriftPolicy)
+	}
+	if decoded.ExpectedPostRunManagedHash != "" {
+		t.Fatalf("decoded.ExpectedPostRunManagedHash = %q, want empty string", decoded.ExpectedPostRunManagedHash)
+	}
+}
+
+// TestLoadSnapshotManifest_UnknownPolicyRejected tests that an unknown policy string is rejected
+// as a load error.
+func TestLoadSnapshotManifest_UnknownPolicyRejected(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	manifestJSON := `{
+  "entries": [
+    {
+      "originalPath": "/some/path",
+      "backupFile": "backup.txt",
+      "existed": true,
+      "driftPolicy": "unknown-evil-policy"
+    }
+  ]
+}`
+	manifestPath := filepath.Join(cfg.BackupDir(), "latest", "manifest.json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(manifestJSON), 0o644); err != nil {
+		t.Fatalf("WriteFile(manifest.json) error = %v", err)
+	}
+
+	_, err := loadSnapshotManifest(cfg)
+	if err == nil {
+		t.Fatal("loadSnapshotManifest() error = nil, want error for unknown policy")
+	}
+	if !contains(err.Error(), "unknown policy") {
+		t.Fatalf("loadSnapshotManifest() error = %v, want error mentioning 'unknown policy'", err)
+	}
+}
+
+// TestLoadSnapshotManifest_ConflictingDuplicatePathRejected tests that duplicate OriginalPath
+// entries with conflicting policies are rejected as a load error.
+func TestLoadSnapshotManifest_ConflictingDuplicatePathRejected(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	manifestJSON := `{
+  "entries": [
+    {
+      "originalPath": "/some/path",
+      "backupFile": "backup1.txt",
+      "existed": true,
+      "driftPolicy": "whole-file-veto"
+    },
+    {
+      "originalPath": "/some/path",
+      "backupFile": "backup2.txt",
+      "existed": true,
+      "driftPolicy": "managed-content-veto"
+    }
+  ]
+}`
+	manifestPath := filepath.Join(cfg.BackupDir(), "latest", "manifest.json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(manifestJSON), 0o644); err != nil {
+		t.Fatalf("WriteFile(manifest.json) error = %v", err)
+	}
+
+	_, err := loadSnapshotManifest(cfg)
+	if err == nil {
+		t.Fatal("loadSnapshotManifest() error = nil, want error for conflicting duplicate paths")
+	}
+	if !contains(err.Error(), "conflicting policies") {
+		t.Fatalf("loadSnapshotManifest() error = %v, want error mentioning 'conflicting policies'", err)
+	}
+}
+
+// TestLoadSnapshotManifest_DuplicatePathWithAgreeingPolicyAccepted tests that duplicate
+// OriginalPath entries with the SAME policy are accepted.
+func TestLoadSnapshotManifest_DuplicatePathWithAgreeingPolicyAccepted(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	manifestJSON := `{
+  "entries": [
+    {
+      "originalPath": "/some/path",
+      "backupFile": "backup1.txt",
+      "existed": true,
+      "driftPolicy": "whole-file-veto"
+    },
+    {
+      "originalPath": "/some/path",
+      "backupFile": "backup2.txt",
+      "existed": true,
+      "driftPolicy": "whole-file-veto"
+    }
+  ]
+}`
+	manifestPath := filepath.Join(cfg.BackupDir(), "latest", "manifest.json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(manifestJSON), 0o644); err != nil {
+		t.Fatalf("WriteFile(manifest.json) error = %v", err)
+	}
+
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatalf("loadSnapshotManifest() error = %v, want nil for agreeing duplicate paths", err)
+	}
+	if len(manifest.Entries) != 2 {
+		t.Fatalf("manifest.Entries = %d, want 2 (both entries preserved)", len(manifest.Entries))
+	}
+}
+
+// TestLoadSnapshotManifest_LegacyManifest_NormalizesToWholeFileVeto tests that a manifest
+// without a DriftPolicy field (legacy v0.5.11 format) normalizes to DriftPolicyWholeFileVeto.
+func TestLoadSnapshotManifest_LegacyManifest_NormalizesToWholeFileVeto(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	manifestJSON := `{
+  "entries": [
+    {
+      "originalPath": "/some/path",
+      "backupFile": "backup.txt",
+      "existed": true
+    }
+  ]
+}`
+	manifestPath := filepath.Join(cfg.BackupDir(), "latest", "manifest.json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(manifestJSON), 0o644); err != nil {
+		t.Fatalf("WriteFile(manifest.json) error = %v", err)
+	}
+
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatalf("loadSnapshotManifest() error = %v, want nil", err)
+	}
+	if len(manifest.Entries) != 1 {
+		t.Fatalf("manifest.Entries = %d, want 1", len(manifest.Entries))
+	}
+	if manifest.Entries[0].DriftPolicy != DriftPolicyWholeFileVeto {
+		t.Fatalf("manifest.Entries[0].DriftPolicy = %q, want %q (normalized)", manifest.Entries[0].DriftPolicy, DriftPolicyWholeFileVeto)
+	}
+}
+
+// contains is a small helper to avoid importing strings package in this file.
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && findSubstring(s, substr))
+}
+
+// findSubstring implements a simple substring search to avoid importing strings package.
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// --- Task 5: Plan-matrix test (Layer B - RED) ---
+
+// TestBuildTargetPlan_AllSnapshotDeclarationsHaveKnownPolicy tests that every
+// SnapshotDecl across all plan variants has a known, non-empty policy, and that
+// any path appearing multiple times has the same policy every time.
+func TestBuildTargetPlan_AllSnapshotDeclarationsHaveKnownPolicy(t *testing.T) {
+	knownPolicies := map[DriftPolicy]bool{
+		DriftPolicyWholeFileVeto:      true,
+		DriftPolicyManagedContentVeto: true,
+		DriftPolicyNonVeto:            true,
+	}
+
+	testCases := []struct {
+		name        string
+		selection   TargetSelection
+		options     PlanOptions
+		description string
+	}{
+		{
+			name:        "Claude-only",
+			selection:   TargetSelection{Claude: true},
+			options:     PlanOptions{},
+			description: "Claude target only, no cloud config",
+		},
+		{
+			name:        "Claude-with-cloud",
+			selection:   TargetSelection{Claude: true},
+			options:     PlanOptions{CloudConfigured: true},
+			description: "Claude target with cloud config",
+		},
+		{
+			name:        "Claude-with-native-model",
+			selection:   TargetSelection{Claude: true},
+			options:     PlanOptions{CodexNativeModel: true},
+			description: "Claude target with native model option (no effect on Claude)",
+		},
+		{
+			name:        "Codex-only",
+			selection:   TargetSelection{Codex: true},
+			options:     PlanOptions{},
+			description: "Codex target only, no native model",
+		},
+		{
+			name:        "Codex-with-native-model",
+			selection:   TargetSelection{Codex: true},
+			options:     PlanOptions{CodexNativeModel: true},
+			description: "Codex target with native model mutation",
+		},
+		{
+			name:        "OpenClaw-only",
+			selection:   TargetSelection{OpenClaw: true},
+			options:     PlanOptions{},
+			description: "OpenClaw target only, no native model",
+		},
+		{
+			name:        "OpenClaw-with-native-model",
+			selection:   TargetSelection{OpenClaw: true},
+			options:     PlanOptions{OpenClawNativeModel: true},
+			description: "OpenClaw target with native model mutation",
+		},
+		{
+			name:        "Claude-and-Codex",
+			selection:   TargetSelection{Claude: true, Codex: true},
+			options:     PlanOptions{},
+			description: "Both Claude and Codex targets",
+		},
+		{
+			name:        "Claude-and-OpenClaw",
+			selection:   TargetSelection{Claude: true, OpenClaw: true},
+			options:     PlanOptions{},
+			description: "Both Claude and OpenClaw targets",
+		},
+		{
+			name:        "All-targets",
+			selection:   TargetSelection{Claude: true, Codex: true, OpenClaw: true},
+			options:     PlanOptions{CloudConfigured: true},
+			description: "All targets with cloud config",
+		},
+		{
+			name:        "All-targets-all-native-models",
+			selection:   TargetSelection{Claude: true, Codex: true, OpenClaw: true},
+			options:     PlanOptions{CloudConfigured: true, CodexNativeModel: true, OpenClawNativeModel: true},
+			description: "All targets with cloud and all native models",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Config{
+				ClaudeHome:   t.TempDir(),
+				CodexHome:    t.TempDir(),
+				OpenClawHome: t.TempDir(),
+			}
+
+			// Create minimal required config paths so Plan builds successfully
+			writeTestFile(t, cfg.ModelsPath(), `{"schema_version":2}`)
+			writeTestFile(t, cfg.KnownMarketplacesPath(), `[]`)
+			writeTestFile(t, cfg.InstalledPluginsPath(), `[]`)
+
+			plan := BuildTargetPlan(cfg, tc.selection, tc.options)
+
+			// Track policies for duplicate detection
+			pathPolicy := make(map[string]DriftPolicy)
+
+			for i, step := range plan.Steps {
+				for j, decl := range step.Snapshot {
+					// Rule 1: every path must be non-empty
+					if decl.Path == "" {
+						t.Errorf("%s: step %d (%s), decl %d has empty Path", tc.description, i, step.ID, j)
+						continue
+					}
+
+					// Rule 2: every policy must be known and non-empty
+					if decl.Policy == "" {
+						t.Errorf("%s: step %d (%s), decl %d (path %s) has empty Policy", tc.description, i, step.ID, j, decl.Path)
+						continue
+					}
+					if !knownPolicies[decl.Policy] {
+						t.Errorf("%s: step %d (%s), decl %d (path %s) has unknown Policy %q", tc.description, i, step.ID, j, decl.Path, decl.Policy)
+						continue
+					}
+
+					// Rule 3: duplicates must have the same policy
+					if priorPolicy, exists := pathPolicy[decl.Path]; exists {
+						if priorPolicy != decl.Policy {
+							t.Errorf("%s: path %s appears with conflicting policies %q and %q", tc.description, decl.Path, priorPolicy, decl.Policy)
+						}
+					} else {
+						pathPolicy[decl.Path] = decl.Policy
+					}
+				}
+			}
+
+			// Also validate the SnapshotSpecs() method
+			specs := plan.SnapshotSpecs()
+			for i, spec := range specs {
+				if spec.Path == "" {
+					t.Errorf("%s: SnapshotSpecs() returned decl %d with empty Path", tc.description, i)
+				}
+				if spec.Policy == "" {
+					t.Errorf("%s: SnapshotSpecs() returned decl %d (path %s) with empty Policy", tc.description, i, spec.Path)
+				}
+				if !knownPolicies[spec.Policy] {
+					t.Errorf("%s: SnapshotSpecs() returned decl %d (path %s) with unknown Policy %q", tc.description, i, spec.Path, spec.Policy)
+				}
+			}
+		})
+	}
+}
+
+// --- Task 3: Typed snapshot declarations (RED) ---
+
+// TestSnapshotDecl_TypeAndConstructor tests the SnapshotDecl type exists and has
+// the required Path and Policy fields, and that the snapshot() constructor function
+// exists and creates correct SnapshotDecl values.
+func TestSnapshotDecl_TypeAndConstructor(t *testing.T) {
+	// This test will compile only once SnapshotDecl and snapshot() exist
+	_ = SnapshotDecl{}
+	_ = snapshot
+
+	decl := snapshot("/some/path", DriftPolicyWholeFileVeto)
+	if decl.Path != "/some/path" {
+		t.Fatalf("snapshot().Path = %q, want %q", decl.Path, "/some/path")
+	}
+	if decl.Policy != DriftPolicyWholeFileVeto {
+		t.Fatalf("snapshot().Policy = %q, want %q", decl.Policy, DriftPolicyWholeFileVeto)
+	}
+}
+
+// TestSnapshotDecl_RequiredArguments tests that the snapshot() constructor requires
+// both path and policy arguments (this will be enforced by the compiler once we
+// make the migration).
+func TestSnapshotDecl_RequiredArguments(t *testing.T) {
+	// This will compile once the types exist - the requirement that both args
+	// are mandatory is enforced by Go's function signature
+	_ = snapshot
+
+	decl := snapshot("/path", DriftPolicyNonVeto)
+	if decl.Path != "/path" {
+		t.Fatalf("snapshot().Path = %q, want %q", decl.Path, "/path")
+	}
+	if decl.Policy != DriftPolicyNonVeto {
+		t.Fatalf("snapshot().Policy = %q, want %q", decl.Policy, DriftPolicyNonVeto)
+	}
+}
+
+// TestTargetPlan_SnapshotSpecsMethod tests that TargetPlan has a SnapshotSpecs()
+// method that returns the typed snapshot declarations.
+func TestTargetPlan_SnapshotSpecsMethod(t *testing.T) {
+	// This will compile only once the migration is complete
+	// var plan TargetPlan
+	// _ = plan.SnapshotSpecs
+	t.Skip("Waiting for Task 4 migration - tests will pass once SnapshotDecl and snapshot() exist")
+}

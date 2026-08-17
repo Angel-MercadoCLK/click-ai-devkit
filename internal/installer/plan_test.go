@@ -221,3 +221,156 @@ func sliceContains(values []string, want string) bool {
 	}
 	return false
 }
+
+// TestBuildTargetPlan_MatrixAssertions guards that every emitted SnapshotDecl across all
+// plan variants has a known, non-empty Policy, and that any path appearing more than once
+// (across steps) has the SAME policy every time. This is Layer B of the omission guards.
+func TestBuildTargetPlan_MatrixAssertions(t *testing.T) {
+	testCases := []struct {
+		name      string
+		selection TargetSelection
+		options   PlanOptions
+		setupFunc func(t *testing.T) Config
+	}{
+		{
+			name:      "Claude-only",
+			selection: TargetSelection{Claude: true},
+			options:   PlanOptions{},
+			setupFunc: func(t *testing.T) Config {
+				return Config{
+					ClaudeHome:     t.TempDir(),
+					ClickStateHome: t.TempDir(),
+				}
+			},
+		},
+		{
+			name:      "Codex-only",
+			selection: TargetSelection{Codex: true},
+			options:   PlanOptions{},
+			setupFunc: func(t *testing.T) Config {
+				cfg := Config{
+					CodexHome:      t.TempDir(),
+					ClickStateHome: t.TempDir(),
+				}
+				return cfg
+			},
+		},
+		{
+			name:      "OpenClaw-only",
+			selection: TargetSelection{OpenClaw: true},
+			options:   PlanOptions{},
+			setupFunc: func(t *testing.T) Config {
+				return Config{
+					OpenClawHome:   t.TempDir(),
+					ClickStateHome: t.TempDir(),
+				}
+			},
+		},
+		{
+			name:      "Claude+Codex combined",
+			selection: TargetSelection{Claude: true, Codex: true},
+			options:   PlanOptions{},
+			setupFunc: func(t *testing.T) Config {
+				return Config{
+					ClaudeHome:     t.TempDir(),
+					CodexHome:      t.TempDir(),
+					ClickStateHome: t.TempDir(),
+				}
+			},
+		},
+		{
+			name:      "Claude+OpenClaw combined",
+			selection: TargetSelection{Claude: true, OpenClaw: true},
+			options:   PlanOptions{},
+			setupFunc: func(t *testing.T) Config {
+				return Config{
+					ClaudeHome:     t.TempDir(),
+					OpenClawHome:   t.TempDir(),
+					ClickStateHome: t.TempDir(),
+				}
+			},
+		},
+		{
+			name:      "All three combined",
+			selection: TargetSelection{Claude: true, Codex: true, OpenClaw: true},
+			options:   PlanOptions{},
+			setupFunc: func(t *testing.T) Config {
+				return Config{
+					ClaudeHome:     t.TempDir(),
+					CodexHome:      t.TempDir(),
+					OpenClawHome:   t.TempDir(),
+					ClickStateHome: t.TempDir(),
+				}
+			},
+		},
+		{
+			name:      "Claude with cloud configured",
+			selection: TargetSelection{Claude: true},
+			options:   PlanOptions{CloudConfigured: true},
+			setupFunc: func(t *testing.T) Config {
+				return Config{
+					ClaudeHome:     t.TempDir(),
+					ClickStateHome: t.TempDir(),
+				}
+			},
+		},
+		{
+			name:      "Codex with native model configured",
+			selection: TargetSelection{Codex: true},
+			options:   PlanOptions{CodexNativeModel: true},
+			setupFunc: func(t *testing.T) Config {
+				return Config{
+					CodexHome:      t.TempDir(),
+					ClickStateHome: t.TempDir(),
+				}
+			},
+		},
+		{
+			name:      "OpenClaw with native model configured",
+			selection: TargetSelection{OpenClaw: true},
+			options:   PlanOptions{OpenClawNativeModel: true},
+			setupFunc: func(t *testing.T) Config {
+				return Config{
+					OpenClawHome:   t.TempDir(),
+					ClickStateHome: t.TempDir(),
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tc.setupFunc(t)
+			plan := BuildTargetPlan(cfg, tc.selection, tc.options)
+
+			// Collect all snapshot declarations and track policies per path
+			pathPolicy := make(map[string]DriftPolicy)
+			knownPolicies := map[DriftPolicy]bool{
+				DriftPolicyWholeFileVeto:      true,
+				DriftPolicyManagedContentVeto: true,
+				DriftPolicyNonVeto:            true,
+			}
+
+			for _, step := range plan.Steps {
+				for _, decl := range step.Snapshot {
+					// Check every path has a known, non-empty policy
+					if decl.Policy == "" {
+						t.Fatalf("step %q has SnapshotDecl with empty Policy for path %q", step.ID, decl.Path)
+					}
+					if !knownPolicies[decl.Policy] {
+						t.Fatalf("step %q has SnapshotDecl with unknown Policy %q for path %q", step.ID, decl.Policy, decl.Path)
+					}
+
+					// Check duplicate paths have consistent policies
+					if priorPolicy, exists := pathPolicy[decl.Path]; exists {
+						if priorPolicy != decl.Policy {
+							t.Fatalf("path %q appears with conflicting policies: %q and %q", decl.Path, priorPolicy, decl.Policy)
+						}
+					} else {
+						pathPolicy[decl.Path] = decl.Policy
+					}
+				}
+			}
+		})
+	}
+}

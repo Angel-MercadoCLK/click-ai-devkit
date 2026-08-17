@@ -14,15 +14,47 @@ import (
 // existed at snapshot time.
 const snapshotManifestName = "manifest.json"
 
+// DriftPolicy specifies how drift (hand-edits) is detected and handled for a snapshotted file.
+type DriftPolicy string
+
+const (
+	// DriftPolicyWholeFileVeto refuses rollback if the entire file has been edited since snapshot.
+	DriftPolicyWholeFileVeto DriftPolicy = "whole-file-veto"
+	// DriftPolicyManagedContentVeto refuses rollback if only the managed content block has been edited.
+	DriftPolicyManagedContentVeto DriftPolicy = "managed-content-veto"
+	// DriftPolicyNonVeto allows rollback regardless of edits (e.g., for config files we don't manage).
+	DriftPolicyNonVeto DriftPolicy = "non-veto"
+)
+
+// SnapshotDecl is a typed snapshot declaration that pairs a file path with its drift policy.
+// Both Path and Policy are required — bare string literals in Snapshot: fields no longer compile.
+type SnapshotDecl struct {
+	Path   string
+	Policy DriftPolicy
+}
+
+// snapshot creates a SnapshotDecl with the given path and policy.
+// This is the only valid way to construct a SnapshotDecl, ensuring every snapshot has an explicit policy.
+func snapshot(path string, policy DriftPolicy) SnapshotDecl {
+	return SnapshotDecl{Path: path, Policy: policy}
+}
+
 // manifestEntry is one snapshotted file's record inside manifest.json. When Existed is false, the
 // source file did not exist at snapshot time (spec Decision 1's "no-prior-state" case): BackupFile
 // is then deliberately left empty — there is nothing to copy — and this explicit, structured
 // Existed=false marker (never an empty/missing file, never an error) IS the no-prior-state marker
 // the spec requires.
+//
+// The three optional fields (ExpectedPostRunHash, DriftPolicy, ExpectedPostRunManagedHash) are
+// for A-record-2 and later: they record post-run hashes and drift policies for drift detection
+// and rollback decisions. They round-trip through JSON and default to safe values when absent.
 type manifestEntry struct {
-	OriginalPath string `json:"originalPath"`
-	BackupFile   string `json:"backupFile"`
-	Existed      bool   `json:"existed"`
+	OriginalPath               string      `json:"originalPath"`
+	BackupFile                 string      `json:"backupFile"`
+	Existed                    bool        `json:"existed"`
+	ExpectedPostRunHash        string      `json:"expectedPostRunHash,omitempty"`
+	DriftPolicy                DriftPolicy `json:"driftPolicy,omitempty"`
+	ExpectedPostRunManagedHash string      `json:"expectedPostRunManagedHash,omitempty"`
 }
 
 // runManifest is manifest.json's on-disk shape: one entry per file SnapshotRun/RestoreRun manage.
@@ -31,10 +63,11 @@ type runManifest struct {
 }
 
 // snapshotSource pairs a Config-resolved original path with the fixed filename its copy uses
-// inside backups/latest/.
+// inside backups/latest/, plus the drift policy to apply.
 type snapshotSource struct {
 	originalPath string
 	backupFile   string
+	policy       DriftPolicy
 }
 
 // snapshotSources returns the per-target set of files a run-start snapshot covers: CLAUDE.md and
@@ -56,42 +89,57 @@ type snapshotSource struct {
 // ZERO behavior change for a Claude-only host: when cfg.OpenClawHome == "" (the zero value, exactly
 // what every pre-existing caller that never sets it produces), this returns the identical 2-entry
 // slice it always did.
+//
+// Drift policies are assigned per-file based on the classification table from PR A-record-1:
+// - managed-content-veto: Claude CLAUDE.md, Claude settings.json, Codex AGENTS.md, OpenClaw AGENTS.md
+// - non-veto: .claude.json (Context7ConfigPath), known_marketplaces.json, installed_plugins.json, Codex config.toml
+// - whole-file-veto: everything else (safe default)
 func snapshotSources(cfg Config) []snapshotSource {
 	sources := []snapshotSource{}
 	if cfg.ClaudeHome != "" {
 		sources = append(sources,
-			snapshotSource{originalPath: cfg.ClaudeMDPath(), backupFile: "CLAUDE.md"},
-			snapshotSource{originalPath: cfg.SettingsPath(), backupFile: "settings.json"},
+			snapshotSource{originalPath: cfg.ClaudeMDPath(), backupFile: "CLAUDE.md", policy: DriftPolicyManagedContentVeto},
+			snapshotSource{originalPath: cfg.SettingsPath(), backupFile: "settings.json", policy: DriftPolicyManagedContentVeto},
 		)
 	}
 	if _, err := os.Stat(cfg.TargetSelectionPath()); err == nil {
-		sources = append(sources, snapshotSource{originalPath: cfg.TargetSelectionPath(), backupFile: "targets.json"})
+		sources = append(sources,
+			snapshotSource{originalPath: cfg.TargetSelectionPath(), backupFile: "targets.json", policy: DriftPolicyWholeFileVeto},
+		)
 	}
 	if cfg.CodexHome != "" {
 		sources = append(sources,
-			snapshotSource{originalPath: cfg.CodexAgentsMDPath(), backupFile: "codex-AGENTS.md"},
-			snapshotSource{originalPath: cfg.CodexModelProfilePath(), backupFile: "codex-model-profile.json"},
+			snapshotSource{originalPath: cfg.CodexAgentsMDPath(), backupFile: "codex-AGENTS.md", policy: DriftPolicyManagedContentVeto},
+			snapshotSource{originalPath: cfg.CodexModelProfilePath(), backupFile: "codex-model-profile.json", policy: DriftPolicyWholeFileVeto},
 		)
+		// Codex config.toml is non-veto (user-owned)
+		if cfg.CodexConfigPath() != "" {
+			sources = append(sources,
+				snapshotSource{originalPath: cfg.CodexConfigPath(), backupFile: "config.toml", policy: DriftPolicyNonVeto},
+			)
+		}
 	}
 	if cfg.OpenClawHome == "" {
 		return sources
 	}
 	sources = append(sources,
-		snapshotSource{originalPath: cfg.OpenClawAgentsMDPath(), backupFile: "AGENTS.md"},
-		snapshotSource{originalPath: cfg.OpenClawSoulMDPath(), backupFile: "SOUL.md"},
-		snapshotSource{originalPath: cfg.OpenClawMCPConfigPath(), backupFile: "openclaw.json"},
-		snapshotSource{originalPath: cfg.OpenClawModelProfilePath(), backupFile: "openclaw-model-profile.json"},
+		snapshotSource{originalPath: cfg.OpenClawAgentsMDPath(), backupFile: "AGENTS.md", policy: DriftPolicyManagedContentVeto},
+		snapshotSource{originalPath: cfg.OpenClawSoulMDPath(), backupFile: "SOUL.md", policy: DriftPolicyWholeFileVeto},
+		snapshotSource{originalPath: cfg.OpenClawMCPConfigPath(), backupFile: "openclaw.json", policy: DriftPolicyWholeFileVeto},
+		snapshotSource{originalPath: cfg.OpenClawModelProfilePath(), backupFile: "openclaw-model-profile.json", policy: DriftPolicyWholeFileVeto},
 	)
 	for _, rel := range openClawPluginRelPaths {
 		sources = append(sources, snapshotSource{
 			originalPath: filepath.Join(cfg.OpenClawPluginDir(), filepath.FromSlash(rel)),
 			backupFile:   openClawPluginBackupFileName(rel),
+			policy:       DriftPolicyWholeFileVeto,
 		})
 	}
 	for _, rel := range openClawSkillRelPaths {
 		sources = append(sources, snapshotSource{
 			originalPath: filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel)),
 			backupFile:   openClawSkillBackupFileName(rel),
+			policy:       DriftPolicyWholeFileVeto,
 		})
 	}
 	return sources
@@ -130,8 +178,8 @@ func SnapshotRun(cfg Config) error {
 
 func SnapshotTargetPlan(cfg Config, plan TargetPlan) error {
 	sources := make([]snapshotSource, 0, len(plan.SnapshotPaths()))
-	for i, path := range plan.SnapshotPaths() {
-		sources = append(sources, snapshotSource{originalPath: path, backupFile: fmt.Sprintf("plan-%03d%s", i+1, filepath.Ext(path))})
+	for i, decl := range plan.SnapshotSpecs() {
+		sources = append(sources, snapshotSource{originalPath: decl.Path, backupFile: fmt.Sprintf("plan-%03d%s", i+1, filepath.Ext(decl.Path)), policy: decl.Policy})
 	}
 	return snapshotRunWithSources(cfg, sources)
 }
@@ -165,6 +213,7 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 					OriginalPath: src.originalPath,
 					BackupFile:   "",
 					Existed:      false,
+					DriftPolicy:  src.policy,
 				})
 				continue
 			}
@@ -179,6 +228,7 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 			OriginalPath: src.originalPath,
 			BackupFile:   src.backupFile,
 			Existed:      true,
+			DriftPolicy:  src.policy,
 		})
 	}
 
@@ -336,6 +386,9 @@ func SnapshotDrift(cfg Config) ([]string, error) {
 }
 
 // loadSnapshotManifest reads and parses BackupDir()/latest/manifest.json.
+// It validates the manifest content: unknown policies are rejected, duplicate paths with
+// conflicting policies are rejected, and absent/empty policies are normalized to
+// DriftPolicyWholeFileVeto for backward compatibility with legacy v0.5.11 manifests.
 func loadSnapshotManifest(cfg Config) (runManifest, error) {
 	data, err := os.ReadFile(snapshotManifestPath(cfg))
 	if err != nil {
@@ -345,6 +398,41 @@ func loadSnapshotManifest(cfg Config) (runManifest, error) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return runManifest{}, fmt.Errorf("installer: parse snapshot manifest: %w", err)
 	}
+
+	// Normalize and validate manifest entries.
+	knownPolicies := map[DriftPolicy]bool{
+		DriftPolicyWholeFileVeto:      true,
+		DriftPolicyManagedContentVeto: true,
+		DriftPolicyNonVeto:            true,
+	}
+
+	// Track policies for duplicate detection: same path must have same policy every time.
+	pathPolicy := make(map[string]DriftPolicy)
+
+	for i := range manifest.Entries {
+		entry := &manifest.Entries[i]
+
+		// Normalize empty/absent policy to whole-file-veto (legacy manifest compatibility).
+		if entry.DriftPolicy == "" {
+			entry.DriftPolicy = DriftPolicyWholeFileVeto
+		}
+
+		// Reject unknown policies.
+		if !knownPolicies[entry.DriftPolicy] {
+			return runManifest{}, fmt.Errorf("installer: manifest entry %s has unknown policy %q", entry.OriginalPath, entry.DriftPolicy)
+		}
+
+		// Reject duplicate paths with conflicting policies.
+		if priorPolicy, exists := pathPolicy[entry.OriginalPath]; exists {
+			if priorPolicy != entry.DriftPolicy {
+				return runManifest{}, fmt.Errorf("installer: manifest has duplicate path %s with conflicting policies %q and %q",
+					entry.OriginalPath, priorPolicy, entry.DriftPolicy)
+			}
+		} else {
+			pathPolicy[entry.OriginalPath] = entry.DriftPolicy
+		}
+	}
+
 	return manifest, nil
 }
 
