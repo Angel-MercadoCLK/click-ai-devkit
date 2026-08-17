@@ -491,6 +491,72 @@ func TestUninstallCommand_CodexOnlySelection_DoesNotRequireClaudeAndRemovesNeutr
 	}
 }
 
+// TestUninstallCommand_CodexOnlySelection_DoesNotTouchRelativeSettingsJSON is a regression test for
+// a review-risk finding on teardown-rollback-hardening: PruneEmptyClickSettingsKeys (PR C) was wired
+// as an unconditional runStep call in runUninstall, NOT gated behind `if selection.Claude` the way
+// every other Claude-scoped teardown step is. cfg.ClaudeHome is only ever assigned inside that gate
+// (runUninstall's own preflight block), so on a Codex-only/OpenClaw-only selection it stays the empty
+// zero value for the whole run, and cfg.SettingsPath() (ClaudeHome-rooted) silently resolves to the
+// RELATIVE path "settings.json" — meaning a Codex-only `click uninstall` run from any directory that
+// happens to contain an unrelated settings.json (a VS Code project, many Node projects) reads and
+// rewrites that FOREIGN file instead of erroring or no-oping. Reproduced empirically before the fix:
+// PruneEmptyClickSettingsKeys(Config{}) returned nil (silent "success") and reformatted an unrelated
+// on-disk settings.json in the process's cwd. This test runs a real Codex-only uninstall from an
+// isolated temp working directory and asserts NOTHING appears there afterward.
+func TestUninstallCommand_CodexOnlySelection_DoesNotTouchRelativeSettingsJSON(t *testing.T) {
+	claudeHome := t.TempDir()
+	stateHome := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	selectionCfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(selectionCfg, installer.TargetSelection{Configured: true, Codex: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	codexCfg := installer.Config{CodexHome: codexHome}
+	if err := installer.WriteManagedBlock(codexCfg.CodexAgentsMDPath(), installer.DefaultCodexAgentsContent); err != nil {
+		t.Fatalf("WriteManagedBlock(CodexAgentsMDPath) error = %v", err)
+	}
+
+	// Run the command from an isolated temp cwd — never the package source directory — so a
+	// relative-path collision is unambiguous and never pollutes the real working tree. Seed a
+	// FOREIGN settings.json there first (the shape a real, unrelated tool/project might leave:
+	// one allowlisted-looking empty key plus real content) — PruneEmptyClickSettingsKeys silently
+	// no-ops on a MISSING file, so without seeding one, this test would trivially pass regardless
+	// of whether the gate exists, proving nothing.
+	isolatedCwd := t.TempDir()
+	originalCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(isolatedCwd); err != nil {
+		t.Fatalf("Chdir(isolatedCwd) error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalCwd) })
+
+	foreignSettingsPath := filepath.Join(isolatedCwd, "settings.json")
+	foreignContent := "{\n  \"enabledPlugins\": {},\n  \"editor.tabSize\": 2,\n  \"miProyecto\": \"datos importantes\"\n}"
+	if err := os.WriteFile(foreignSettingsPath, []byte(foreignContent), 0o600); err != nil {
+		t.Fatalf("WriteFile(foreign settings.json) error = %v", err)
+	}
+
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
+	out, err := execRootWithLookupAndState(t, claudeHome, stateHome, lookup, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall command error = %v, want nil for a Codex-only teardown, output:\n%s", err, out)
+	}
+
+	after, readErr := os.ReadFile(foreignSettingsPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile(foreign settings.json) after uninstall error = %v, want the foreign file to survive untouched", readErr)
+	}
+	if string(after) != foreignContent {
+		t.Fatalf("foreign settings.json in the working directory was modified by a Codex-only uninstall:\nbefore: %s\nafter:  %s\n"+
+			"want it byte-identical — PruneEmptyClickSettingsKeys must never run when Claude is not selected", foreignContent, string(after))
+	}
+}
+
 // TestUninstallCommand_FailedCodexTeardown_ContinuesForwardNoRollback is the inverted Codex-teardown
 // test: a failed Codex step (StripCodexGuidance) must NOT roll back. Its partial effect stays on
 // disk (the AGENTS.md it stripped stays stripped as an empty file), later steps still run to completion (the neutral

@@ -271,12 +271,20 @@ func runUninstall(cmd *cobra.Command) error {
 		}
 	}
 
-	// Pruning step (PR C): removes empty Click-specific keys that the external
-	// `claude` CLI subprocess leaves as orphaned empty maps. Runs after all
-	// uninstall actions to ensure we clean up what the `claude` process did.
-	runStep("configuración vacía de Click", "Limpiando configuración vacía de Click…", "Configuración vacía de Click limpiada", false, func() error {
-		return installer.PruneEmptyClickSettingsKeys(cfg)
-	})
+	// Pruning step (PR C): removes empty Click-specific keys that the external `claude` CLI
+	// subprocess leaves as orphaned empty maps. Runs after all uninstall actions to ensure we clean
+	// up what the `claude` process did. Gated on selection.Claude, mirroring every other
+	// Claude-scoped teardown step (StripClaudeManagedBlock, UnregisterMemoryGuard, ...): cfg.SettingsPath()
+	// is ClaudeHome-rooted, and cfg.ClaudeHome is only ever assigned above inside `if selection.Claude`.
+	// Without this gate, a Codex-only/OpenClaw-only uninstall leaves ClaudeHome empty, SettingsPath()
+	// silently resolves to the RELATIVE path "settings.json", and this step reads/rewrites whatever
+	// unrelated settings.json happens to sit in the process's current working directory (review-risk
+	// finding, teardown-rollback-hardening).
+	if selection.Claude {
+		runStep("configuración vacía de Click", "Limpiando configuración vacía de Click…", "Configuración vacía de Click limpiada", false, func() error {
+			return installer.PruneEmptyClickSettingsKeys(cfg)
+		})
+	}
 
 	// Record post-run snapshot (between pruning and final report)
 	if recordErr := recordSnapshotPostRunFunc(cfg); recordErr != nil {
