@@ -116,7 +116,7 @@ func ManagedBlockBody(path string) (body string, ok bool, err error) {
 }
 
 // ManagedBlockBodyHash returns the canonical sha256 hex digest of the live managed block's body at
-// path, via canonicalContentHash (snapshot.go) — the SAME LF-canonicalization + hash algorithm
+// path, via CanonicalContentHash (snapshot.go) — the SAME LF-canonicalization + hash algorithm
 // PR3's rollback drift check already uses, so a CRLF-saved managed block never counts as drift
 // here either. ok mirrors ManagedBlockBody's: false (no error) means there is no well-formed
 // managed block to hash at all.
@@ -125,7 +125,7 @@ func ManagedBlockBodyHash(path string) (hash string, ok bool, err error) {
 	if err != nil || !ok {
 		return "", ok, err
 	}
-	return canonicalContentHash(body), true, nil
+	return CanonicalContentHash(body), true, nil
 }
 
 // ExpectedManagedBlockHash returns the canonical sha256 hash of THIS click version's compile-time
@@ -134,7 +134,7 @@ func ManagedBlockBodyHash(path string) (hash string, ok bool, err error) {
 // It is always computed fresh at call time; nothing about it is ever persisted or cached, so there
 // is no baseline file that can itself drift out of sync with the binary.
 func ExpectedManagedBlockHash() string {
-	return canonicalContentHash(DefaultManagedContent)
+	return CanonicalContentHash(DefaultManagedContent)
 }
 
 func buildManagedBlock(content string) []string {

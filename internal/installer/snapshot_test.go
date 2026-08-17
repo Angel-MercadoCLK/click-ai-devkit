@@ -334,10 +334,10 @@ func TestCanonicalContentHash_CRLFAndLFEqual(t *testing.T) {
 	lf := "line one\nline two\n"
 	crlf := "line one\r\nline two\r\n"
 
-	gotLF := canonicalContentHash(lf)
-	gotCRLF := canonicalContentHash(crlf)
+	gotLF := CanonicalContentHash(lf)
+	gotCRLF := CanonicalContentHash(crlf)
 	if gotLF != gotCRLF {
-		t.Fatalf("canonicalContentHash(LF) = %q, canonicalContentHash(CRLF) = %q, want equal for the same logical content", gotLF, gotCRLF)
+		t.Fatalf("CanonicalContentHash(LF) = %q, CanonicalContentHash(CRLF) = %q, want equal for the same logical content", gotLF, gotCRLF)
 	}
 }
 
@@ -345,10 +345,10 @@ func TestCanonicalContentHash_CRLFAndLFEqual(t *testing.T) {
 // "always returns the same hash" implementation: genuinely different content must hash
 // differently.
 func TestCanonicalContentHash_DifferentContentDiffers(t *testing.T) {
-	got1 := canonicalContentHash("content A\n")
-	got2 := canonicalContentHash("content B\n")
+	got1 := CanonicalContentHash("content A\n")
+	got2 := CanonicalContentHash("content B\n")
 	if got1 == got2 {
-		t.Fatalf("canonicalContentHash(%q) == canonicalContentHash(%q) == %q, want different hashes for different content", "content A\n", "content B\n", got1)
+		t.Fatalf("CanonicalContentHash(%q) == CanonicalContentHash(%q) == %q, want different hashes for different content", "content A\n", "content B\n", got1)
 	}
 }
 

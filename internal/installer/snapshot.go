@@ -350,9 +350,9 @@ func HasRestorableSnapshot(cfg Config) (bool, error) {
 //
 // SnapshotDrift assumes a manifest already exists; callers should check HasRestorableSnapshot (or
 // HasRunSnapshot) first — mirroring RestoreRun's own contract. Extracted here (rather than
-// duplicated in cli/rollback.go, which cannot reach the unexported canonicalContentHash directly)
+// duplicated in cli/rollback.go, which cannot reach the unexported CanonicalContentHash directly)
 // because both PR3's rollback drift check and PR4's future doctor drift check must reuse the exact
-// same LF-canonicalization + hash algorithm (see canonicalContentHash's own doc comment) — PR4's
+// same LF-canonicalization + hash algorithm (see CanonicalContentHash's own doc comment) — PR4's
 // doctor-side check itself is explicitly out of scope for this change and is NOT implemented here.
 func SnapshotDrift(cfg Config) ([]string, error) {
 	manifest, err := loadSnapshotManifest(cfg)
@@ -378,7 +378,7 @@ func SnapshotDrift(cfg Config) ([]string, error) {
 			}
 			return nil, fmt.Errorf("installer: read %s to check drift: %w", entry.OriginalPath, readCurrentErr)
 		}
-		if canonicalContentHash(string(currentData)) != canonicalContentHash(string(backupData)) {
+		if CanonicalContentHash(string(currentData)) != CanonicalContentHash(string(backupData)) {
 			drifted = append(drifted, entry.OriginalPath)
 		}
 	}
@@ -436,15 +436,16 @@ func loadSnapshotManifest(cfg Config) (runManifest, error) {
 	return manifest, nil
 }
 
-// canonicalContentHash returns the sha256 hex digest of content after canonicalizing line endings
+// CanonicalContentHash returns the sha256 hex digest of content after canonicalizing line endings
 // to LF via crlfAwareSplitLines/joinWithLineEnding (claudemd.go) — so a CRLF-saved file and an
-// LF-saved file with the same logical content always hash identically. Extracted here (rather than
-// duplicated) because BOTH PR3's rollback hand-edit drift check (spec install-rollback Decision 3,
+// LF-saved file with the same logical content always hash identically. Exported for CLI tests
+// that need to verify post-run hashes in manifests. Extracted here (rather than duplicated)
+// because BOTH PR3's rollback hand-edit drift check (spec install-rollback Decision 3,
 // "refuse-by-default" when current content drifts from the snapshot's recorded hash) and PR4's
 // doctor managed-block drift check (spec managed-block-integrity, design's "Drift hash" decision)
 // need the exact same LF-canonicalization + hash algorithm, and must never be allowed to silently
 // diverge from each other.
-func canonicalContentHash(content string) string {
+func CanonicalContentHash(content string) string {
 	canonical := joinWithLineEnding(crlfAwareSplitLines(content), "\n")
 	sum := sha256.Sum256([]byte(canonical))
 	return hex.EncodeToString(sum[:])

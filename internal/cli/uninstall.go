@@ -66,6 +66,20 @@ func SetStripCodexGuidanceFuncForTests(fn func(installer.Config) error) func() {
 	return func() { stripCodexGuidanceFunc = old }
 }
 
+// recordSnapshotPostRunFunc is the injectable seam for RecordSnapshotPostRun.
+// This mirrors the existing stripCodexGuidanceFunc pattern: unexported, cli-local,
+// used only for tests to mock recording behavior without leaking the seam outside
+// the package.
+var recordSnapshotPostRunFunc = installer.RecordSnapshotPostRun
+
+// SetRecordSnapshotPostRunFuncForTests overrides recordSnapshotPostRunFunc for testing.
+// Returns a restore function that resets to the original implementation.
+func SetRecordSnapshotPostRunFuncForTests(fn func(installer.Config) error) func() {
+	old := recordSnapshotPostRunFunc
+	recordSnapshotPostRunFunc = fn
+	return func() { recordSnapshotPostRunFunc = old }
+}
+
 func newUninstallCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "uninstall",
@@ -263,6 +277,11 @@ func runUninstall(cmd *cobra.Command) error {
 	runStep("configuración vacía de Click", "Limpiando configuración vacía de Click…", "Configuración vacía de Click limpiada", false, func() error {
 		return installer.PruneEmptyClickSettingsKeys(cfg)
 	})
+
+	// Record post-run snapshot (between pruning and final report)
+	if recordErr := recordSnapshotPostRunFunc(cfg); recordErr != nil {
+		fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo registrar el estado posterior a la ejecución para rollback: %v", recordErr)))
+	}
 
 	return reportUninstallOutcome(out, r, outcomes)
 }
