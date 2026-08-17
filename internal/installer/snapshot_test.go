@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -404,8 +405,30 @@ func TestHasRestorableSnapshot_TrueWhenAtLeastOneEntryExisted(t *testing.T) {
 	}
 }
 
+// managedBlockMD builds a CLAUDE.md-shaped markdown file whose click-managed block contains
+// managed, with editable developer content above and below the markers.
+func managedBlockMD(managed string) string {
+	return "# developer header\n" + managedBeginMarker + "\n" + managed + "\n" + managedEndMarker + "\ndeveloper tail\n"
+}
+
+// writeManifestDirect writes a manifest.json (and no backup files) straight into
+// BackupDir()/latest/, for tests that hand-craft manifest entries with specific drift policies.
+func writeManifestDirect(t *testing.T, cfg Config, manifest runManifest) {
+	t.Helper()
+	if err := os.MkdirAll(snapshotLatestDir(cfg), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%s) error = %v", snapshotLatestDir(cfg), err)
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("json.MarshalIndent(manifest) error = %v", err)
+	}
+	if err := os.WriteFile(snapshotManifestPath(cfg), append(data, '\n'), 0o600); err != nil {
+		t.Fatalf("WriteFile(manifest.json) error = %v", err)
+	}
+}
+
 // TestSnapshotDrift_NoEdits_ReportsNoDrift guards the "matching hash" half of spec install-rollback
-// Decision 3: content unchanged since the snapshot must report zero drifted paths.
+// Decision 3: content unchanged since the snapshot must report zero vetoes and zero warnings.
 func TestSnapshotDrift_NoEdits_ReportsNoDrift(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "unchanged content\n")
@@ -414,57 +437,320 @@ func TestSnapshotDrift_NoEdits_ReportsNoDrift(t *testing.T) {
 		t.Fatalf("SnapshotRun() error = %v", err)
 	}
 
-	drifted, err := SnapshotDrift(cfg)
+	report, err := SnapshotDrift(cfg)
 	if err != nil {
 		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
 	}
-	if len(drifted) != 0 {
-		t.Fatalf("SnapshotDrift() = %v, want empty (no edits since snapshot)", drifted)
+	if len(report.Vetoes) != 0 || len(report.WarnableNonVeto) != 0 {
+		t.Fatalf("SnapshotDrift() = %+v, want empty report (no edits since snapshot)", report)
 	}
 }
 
 // TestSnapshotDrift_EditedFile_ReportsDrift triangulates against the trivial "always empty"
-// implementation: editing CLAUDE.md after the snapshot must be reported as drift for that path,
-// while the untouched settings.json must not be reported.
+// implementation: editing click-owned content (CLAUDE.md's managed block) after the snapshot must
+// be reported as a veto for that path, while the untouched settings.json must not be reported.
 func TestSnapshotDrift_EditedFile_ReportsDrift(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir()}
-	writeTestFile(t, cfg.ClaudeMDPath(), "original content\n")
+	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
 	if err := SnapshotRun(cfg); err != nil {
 		t.Fatalf("SnapshotRun() error = %v", err)
 	}
 
-	writeTestFile(t, cfg.ClaudeMDPath(), "hand-edited after snapshot\n")
+	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("hand-edited managed block"))
 
-	drifted, err := SnapshotDrift(cfg)
+	report, err := SnapshotDrift(cfg)
 	if err != nil {
 		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
 	}
-	if len(drifted) != 1 || drifted[0] != cfg.ClaudeMDPath() {
-		t.Fatalf("SnapshotDrift() = %v, want exactly [%s]", drifted, cfg.ClaudeMDPath())
+	if len(report.Vetoes) != 1 || report.Vetoes[0] != cfg.ClaudeMDPath() {
+		t.Fatalf("SnapshotDrift().Vetoes = %v, want exactly [%s]", report.Vetoes, cfg.ClaudeMDPath())
+	}
+	if len(report.WarnableNonVeto) != 0 {
+		t.Fatalf("SnapshotDrift().WarnableNonVeto = %v, want empty (a vetoing file is not merely warnable)", report.WarnableNonVeto)
 	}
 }
 
 // TestSnapshotDrift_MissingCurrentFile_NotReportedAsDrift guards the deliberate exception: a file
-// deleted since the snapshot is not reported as "drift" (RestoreRun would simply recreate the
-// known-good content, which is the safe, expected outcome — not a hand-edit to warn about).
+// deleted since the snapshot is not reported as drift (RestoreRun would simply recreate the
+// known-good content, which is the safe, expected outcome — not a hand-edit to warn about), for
+// BOTH veto-policy and non-veto entries.
 func TestSnapshotDrift_MissingCurrentFile_NotReportedAsDrift(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "content\n")
+	sharedPath := filepath.Join(cfg.ClaudeHome, "shared.txt")
+	writeTestFile(t, sharedPath, "shared original\n")
 	if err := SnapshotRun(cfg); err != nil {
 		t.Fatalf("SnapshotRun() error = %v", err)
 	}
+	// Add a non-veto entry to the real snapshot's manifest, with its own backup file.
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatalf("loadSnapshotManifest() error = %v", err)
+	}
+	manifest.Entries = append(manifest.Entries, manifestEntry{
+		OriginalPath: sharedPath,
+		BackupFile:   "shared.txt",
+		Existed:      true,
+		DriftPolicy:  DriftPolicyNonVeto,
+	})
+	writeManifestDirect(t, cfg, manifest)
+	writeTestFile(t, filepath.Join(snapshotLatestDir(cfg), "shared.txt"), "shared original\n")
 
 	if err := os.Remove(cfg.ClaudeMDPath()); err != nil {
 		t.Fatalf("os.Remove(CLAUDE.md) error = %v", err)
 	}
+	if err := os.Remove(sharedPath); err != nil {
+		t.Fatalf("os.Remove(shared.txt) error = %v", err)
+	}
 
-	drifted, err := SnapshotDrift(cfg)
+	report, err := SnapshotDrift(cfg)
 	if err != nil {
 		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
 	}
-	if len(drifted) != 0 {
-		t.Fatalf("SnapshotDrift() = %v, want empty (a missing current file is not drift)", drifted)
+	if len(report.Vetoes) != 0 || len(report.WarnableNonVeto) != 0 {
+		t.Fatalf("SnapshotDrift() = %+v, want empty (a missing current file is neither a veto nor a warning)", report)
+	}
+}
+
+// TestSnapshotDrift_ManagedContentVeto_EditOutsideMarkers_NoVeto is the core ownership-scoping
+// guarantee: a developer's own edits OUTSIDE CLAUDE.md's managed markers touch no click-owned
+// content, so they must never veto a rollback (and a managed-content-veto entry is never merely
+// warnable either).
+func TestSnapshotDrift_ManagedContentVeto_EditOutsideMarkers_NoVeto(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
+	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	writeTestFile(t, cfg.ClaudeMDPath(), "# developer header, hand-edited\n"+managedBeginMarker+"\nmanaged v1\n"+managedEndMarker+"\ndeveloper tail, hand-edited\n")
+
+	report, err := SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+	}
+	if len(report.Vetoes) != 0 || len(report.WarnableNonVeto) != 0 {
+		t.Fatalf("SnapshotDrift() = %+v, want empty (edits outside the managed markers own no click content)", report)
+	}
+}
+
+// TestSnapshotDrift_ManagedContentVeto_SettingsUnrelatedKey_NoVeto covers the settings.json half of
+// the same guarantee: churn on unrelated settings keys (e.g. Claude Code's own writes) must never
+// veto; only edits to click's owned hook entry may.
+func TestSnapshotDrift_ManagedContentVeto_SettingsUnrelatedKey_NoVeto(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	owned := `{"hooks":{"PreToolUse":[{"matcher":"` + MemoryGuardToolMatcher + `","hooks":[{"type":"command","command":"` + MemoryGuardCommand + `"}]}]},"other":true}`
+	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
+	writeTestFile(t, cfg.SettingsPath(), owned)
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	// Unrelated-key churn: no veto.
+	writeTestFile(t, cfg.SettingsPath(), `{"hooks":{"PreToolUse":[{"matcher":"`+MemoryGuardToolMatcher+`","hooks":[{"type":"command","command":"`+MemoryGuardCommand+`"}]}]},"other":false,"claude-code-churn":123}`)
+	report, err := SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+	}
+	if len(report.Vetoes) != 0 {
+		t.Fatalf("SnapshotDrift().Vetoes = %v, want empty after unrelated settings.json churn", report.Vetoes)
+	}
+
+	// Edit to the click-owned hook itself: veto.
+	writeTestFile(t, cfg.SettingsPath(), `{"hooks":{"PreToolUse":[{"matcher":"`+MemoryGuardToolMatcher+`","hooks":[{"type":"command","command":"hand-edited command"}]}]},"other":true}`)
+	report, err = SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+	}
+	if len(report.Vetoes) != 1 || report.Vetoes[0] != cfg.SettingsPath() {
+		t.Fatalf("SnapshotDrift().Vetoes = %v, want exactly [%s] after editing the owned hook", report.Vetoes, cfg.SettingsPath())
+	}
+}
+
+// TestSnapshotDrift_WholeFileVeto_AnyEdit_Vetoes guards the strict policy: a whole-file-veto entry
+// vetoes on ANY content change, with no managed-slice scoping.
+func TestSnapshotDrift_WholeFileVeto_AnyEdit_Vetoes(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	strictPath := filepath.Join(cfg.ClaudeHome, "strict.txt")
+	writeTestFile(t, strictPath, "strict original\n")
+	writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
+		OriginalPath: strictPath,
+		BackupFile:   "strict.txt",
+		Existed:      true,
+		DriftPolicy:  DriftPolicyWholeFileVeto,
+	}}})
+	writeTestFile(t, filepath.Join(snapshotLatestDir(cfg), "strict.txt"), "strict original\n")
+
+	writeTestFile(t, strictPath, "strict hand-edited\n")
+
+	report, err := SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+	}
+	if len(report.Vetoes) != 1 || report.Vetoes[0] != strictPath {
+		t.Fatalf("SnapshotDrift().Vetoes = %v, want exactly [%s]", report.Vetoes, strictPath)
+	}
+}
+
+// TestSnapshotDrift_NonVeto_Edit_WarnsButNeverVetoes guards the non-veto policy: an edited non-veto
+// file (matching neither the pre-run backup nor the post-run baseline) never vetoes, but must be
+// surfaced in WarnableNonVeto so the rollback command can warn and ask for consent.
+func TestSnapshotDrift_NonVeto_Edit_WarnsButNeverVetoes(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	sharedPath := filepath.Join(cfg.ClaudeHome, "shared.txt")
+	writeTestFile(t, sharedPath, "shared original\n")
+	writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
+		OriginalPath: sharedPath,
+		BackupFile:   "shared.txt",
+		Existed:      true,
+		DriftPolicy:  DriftPolicyNonVeto,
+	}}})
+	writeTestFile(t, filepath.Join(snapshotLatestDir(cfg), "shared.txt"), "shared original\n")
+
+	writeTestFile(t, sharedPath, "shared edited by someone else\n")
+
+	report, err := SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+	}
+	if len(report.Vetoes) != 0 {
+		t.Fatalf("SnapshotDrift().Vetoes = %v, want empty (non-veto entries never veto)", report.Vetoes)
+	}
+	if len(report.WarnableNonVeto) != 1 || report.WarnableNonVeto[0] != sharedPath {
+		t.Fatalf("SnapshotDrift().WarnableNonVeto = %v, want exactly [%s]", report.WarnableNonVeto, sharedPath)
+	}
+}
+
+// TestSnapshotDrift_MatchesEitherBaseline_Safe covers the full match matrix: an entry is safe when
+// its current content matches the pre-run backup OR the recorded post-run hash (or both) — drift
+// requires missing BOTH baselines.
+func TestSnapshotDrift_MatchesEitherBaseline_Safe(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pre     string
+		post    string // recorded as ExpectedPostRunHash; "" = no post-run baseline
+		current string
+	}{
+		{name: "pre-only match", pre: "same\n", post: "post-run state\n", current: "same\n"},
+		{name: "post-only match", pre: "pre-run state\n", post: "same\n", current: "same\n"},
+		{name: "both match", pre: "same\n", post: "same\n", current: "same\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Config{ClaudeHome: t.TempDir()}
+			path := filepath.Join(cfg.ClaudeHome, "file.txt")
+			writeTestFile(t, path, tc.current)
+			entry := manifestEntry{
+				OriginalPath: path,
+				BackupFile:   "file.txt",
+				Existed:      true,
+				DriftPolicy:  DriftPolicyWholeFileVeto,
+			}
+			if tc.post != "" {
+				entry.ExpectedPostRunHash = CanonicalContentHash(tc.post)
+			}
+			writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{entry}})
+			writeTestFile(t, filepath.Join(snapshotLatestDir(cfg), "file.txt"), tc.pre)
+
+			report, err := SnapshotDrift(cfg)
+			if err != nil {
+				t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+			}
+			if len(report.Vetoes) != 0 || len(report.WarnableNonVeto) != 0 {
+				t.Fatalf("SnapshotDrift() = %+v, want empty (current matches at least one baseline)", report)
+			}
+		})
+	}
+}
+
+// TestSnapshotDrift_NoPostRunHash_ComparesAgainstPreRunOnly guards the fallback: an entry whose
+// manifest carries no ExpectedPostRunHash compares against the pre-run backup alone, so any edit
+// is drift.
+func TestSnapshotDrift_NoPostRunHash_ComparesAgainstPreRunOnly(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	path := filepath.Join(cfg.ClaudeHome, "file.txt")
+	writeTestFile(t, path, "edited\n")
+	writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
+		OriginalPath: path,
+		BackupFile:   "file.txt",
+		Existed:      true,
+		DriftPolicy:  DriftPolicyWholeFileVeto,
+	}}})
+	writeTestFile(t, filepath.Join(snapshotLatestDir(cfg), "file.txt"), "original\n")
+
+	report, err := SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+	}
+	if len(report.Vetoes) != 1 || report.Vetoes[0] != path {
+		t.Fatalf("SnapshotDrift().Vetoes = %v, want exactly [%s] (no post-run baseline to match)", report.Vetoes, path)
+	}
+}
+
+// TestSnapshotDrift_LegacyManifest_StrictWholeFileBehavior guards backward compatibility: a
+// v0.5.11-shaped manifest (no driftPolicy/expected hashes at all — normalized to whole-file-veto
+// by loadSnapshotManifest) must reproduce the exact pre-hardening strict behavior: any edit to any
+// present entry vetoes, and nothing is ever merely warnable.
+func TestSnapshotDrift_LegacyManifest_StrictWholeFileBehavior(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	path := filepath.Join(cfg.ClaudeHome, "legacy.txt")
+	writeTestFile(t, path, "edited after snapshot\n")
+	if err := os.MkdirAll(snapshotLatestDir(cfg), 0o755); err != nil {
+		t.Fatalf("MkdirAll(latest) error = %v", err)
+	}
+	legacy := `{"entries":[{"originalPath":` + strconv.Quote(path) + `,"backupFile":"legacy.txt","existed":true}]}`
+	if err := os.WriteFile(snapshotManifestPath(cfg), []byte(legacy+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(manifest.json) error = %v", err)
+	}
+	writeTestFile(t, filepath.Join(snapshotLatestDir(cfg), "legacy.txt"), "original\n")
+
+	report, err := SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+	}
+	if len(report.Vetoes) != 1 || report.Vetoes[0] != path {
+		t.Fatalf("SnapshotDrift().Vetoes = %v, want exactly [%s] (legacy manifests stay strict)", report.Vetoes, path)
+	}
+	if len(report.WarnableNonVeto) != 0 {
+		t.Fatalf("SnapshotDrift().WarnableNonVeto = %v, want empty for a legacy manifest", report.WarnableNonVeto)
+	}
+}
+
+// TestSnapshotDrift_ManagedContentVeto_MatchesPostRunManagedBaseline_NoVeto guards the post-run
+// managed baseline: after click's own run rewrites the managed block and RecordSnapshotPostRun
+// records it, that exact state must not veto even though the managed projection now differs from
+// the pre-run backup. A further hand-edit after recording must veto again.
+func TestSnapshotDrift_ManagedContentVeto_MatchesPostRunManagedBaseline_NoVeto(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
+	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	// Click's own run rewrites its managed block, then records the post-run baseline.
+	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v2 (click's own write)"))
+	if err := RecordSnapshotPostRun(cfg); err != nil {
+		t.Fatalf("RecordSnapshotPostRun() error = %v", err)
+	}
+
+	report, err := SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+	}
+	if len(report.Vetoes) != 0 {
+		t.Fatalf("SnapshotDrift().Vetoes = %v, want empty (current matches the recorded post-run managed baseline)", report.Vetoes)
+	}
+
+	// A hand-edit to the managed block AFTER the post-run recording matches neither baseline.
+	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("hand-edited after post-run recording"))
+	report, err = SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
+	}
+	if len(report.Vetoes) != 1 || report.Vetoes[0] != cfg.ClaudeMDPath() {
+		t.Fatalf("SnapshotDrift().Vetoes = %v, want exactly [%s]", report.Vetoes, cfg.ClaudeMDPath())
 	}
 }
 

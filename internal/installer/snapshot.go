@@ -255,46 +255,17 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 	return nil
 }
 
-// RestoreRun restores CLAUDE.md and settings.json to their last run-start snapshot (spec
-// Requirement: Restore Last Run Snapshot). For each manifest entry: if the source existed at
-// snapshot time, its backup content is copied back over the original path byte-for-byte; if it did
-// NOT exist (a no-prior-state marker), any file that has since appeared at the original path is
-// removed instead of being left in place or having content fabricated for it. The snapshot itself
-// is left completely intact afterward (read+write, never a consuming move) so it can be restored
-// from again later. settings.json restoration is coarse and may also revert unrelated writes made
-// by the external `claude` CLI during the same run because they are captured in the same snapshot.
-//
-// RestoreRun assumes a manifest already exists; callers that need to distinguish "no snapshot to
-// restore" from a real error should check HasRunSnapshot first (the rollback command, PR3, owns
-// that user-facing distinction).
+// RestoreRun restores every snapshotted file to its last run-start snapshot (spec Requirement:
+// Restore Last Run Snapshot). It is a thin composition of PrepareRestore + ApplyPreparedRestore
+// with NO prompting and NO warning output of its own: it is used by install/update's automatic
+// failure-recovery paths, which must never prompt a user mid-command. The ownership-scoped
+// drift/consent policy lives in the rollback command, not here.
 func RestoreRun(cfg Config) error {
-	manifest, err := loadSnapshotManifest(cfg)
+	prepared, err := PrepareRestore(cfg)
 	if err != nil {
 		return err
 	}
-
-	latestDir := snapshotLatestDir(cfg)
-	for _, entry := range manifest.Entries {
-		if !entry.Existed {
-			if removeErr := os.Remove(entry.OriginalPath); removeErr != nil && !os.IsNotExist(removeErr) {
-				return fmt.Errorf("installer: remove %s while restoring a no-prior-state entry: %w", entry.OriginalPath, removeErr)
-			}
-			continue
-		}
-
-		backupPath := filepath.Join(latestDir, entry.BackupFile)
-		data, readErr := os.ReadFile(backupPath)
-		if readErr != nil {
-			return fmt.Errorf("installer: read snapshot backup %s: %w", backupPath, readErr)
-		}
-		if mkdirErr := os.MkdirAll(filepath.Dir(entry.OriginalPath), 0o755); mkdirErr != nil {
-			return fmt.Errorf("installer: create restore dir for %s: %w", entry.OriginalPath, mkdirErr)
-		}
-		if writeErr := atomicWriteFile(entry.OriginalPath, data, 0o600); writeErr != nil {
-			return fmt.Errorf("installer: restore %s: %w", entry.OriginalPath, writeErr)
-		}
-	}
-	return nil
+	return ApplyPreparedRestore(prepared)
 }
 
 // HasRunSnapshot reports whether a completed run-start snapshot exists: specifically, whether
@@ -340,49 +311,19 @@ func HasRestorableSnapshot(cfg Config) (bool, error) {
 	return false, nil
 }
 
-// SnapshotDrift reports which of the snapshot's backed-up original paths have been hand-edited
-// since the snapshot was taken: their current on-disk content hash no longer matches the content
-// hash of what SnapshotRun backed up (spec install-rollback Decision 3: refuse-by-default). Only
-// entries with Existed=true are compared — there is nothing recorded to compare a no-prior-state
-// entry against. A current file that is now missing is NOT reported as drift: RestoreRun would
-// simply recreate the exact known-good content in that case, which is the safe, expected outcome,
-// not a hand-edit to warn about.
-//
-// SnapshotDrift assumes a manifest already exists; callers should check HasRestorableSnapshot (or
-// HasRunSnapshot) first — mirroring RestoreRun's own contract. Extracted here (rather than
-// duplicated in cli/rollback.go, which cannot reach the unexported CanonicalContentHash directly)
-// because both PR3's rollback drift check and PR4's future doctor drift check must reuse the exact
-// same LF-canonicalization + hash algorithm (see CanonicalContentHash's own doc comment) — PR4's
+// SnapshotDrift reports the ownership-scoped drift of the snapshot's backed-up files (see
+// DriftReport): which paths veto a rollback because click-owned content changed, and which
+// present non-veto paths merely warrant a warning because they match neither baseline. It shares
+// PrepareRestore's exact classification logic so the drift check and the restore plan can never
+// diverge, and — like RestoreRun — assumes a manifest already exists (callers should check
+// HasRestorableSnapshot first). PR4's future doctor drift check must reuse this same report; that
 // doctor-side check itself is explicitly out of scope for this change and is NOT implemented here.
-func SnapshotDrift(cfg Config) ([]string, error) {
-	manifest, err := loadSnapshotManifest(cfg)
+func SnapshotDrift(cfg Config) (DriftReport, error) {
+	prepared, err := PrepareRestore(cfg)
 	if err != nil {
-		return nil, err
+		return DriftReport{}, err
 	}
-
-	latestDir := snapshotLatestDir(cfg)
-	var drifted []string
-	for _, entry := range manifest.Entries {
-		if !entry.Existed {
-			continue
-		}
-		backupPath := filepath.Join(latestDir, entry.BackupFile)
-		backupData, readBackupErr := os.ReadFile(backupPath)
-		if readBackupErr != nil {
-			return nil, fmt.Errorf("installer: read snapshot backup %s: %w", backupPath, readBackupErr)
-		}
-		currentData, readCurrentErr := os.ReadFile(entry.OriginalPath)
-		if readCurrentErr != nil {
-			if os.IsNotExist(readCurrentErr) {
-				continue
-			}
-			return nil, fmt.Errorf("installer: read %s to check drift: %w", entry.OriginalPath, readCurrentErr)
-		}
-		if CanonicalContentHash(string(currentData)) != CanonicalContentHash(string(backupData)) {
-			drifted = append(drifted, entry.OriginalPath)
-		}
-	}
-	return drifted, nil
+	return prepared.Drift, nil
 }
 
 // loadSnapshotManifest reads and parses BackupDir()/latest/manifest.json.
