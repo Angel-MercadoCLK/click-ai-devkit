@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 )
 
 // RecordSnapshotPostRun records post-run content hashes in the active snapshot manifest.
@@ -50,20 +49,12 @@ func RecordSnapshotPostRun(cfg Config) error {
 		// Set ExpectedPostRunHash for all present files
 		entry.ExpectedPostRunHash = CanonicalContentHash(string(currentData))
 
-		// For managed-content-veto entries, also set ExpectedPostRunManagedHash
+		// For managed-content-veto entries, also set ExpectedPostRunManagedHash — via the SAME
+		// file-type dispatch PrepareRestore's classifyEntryDrift uses (managedProjectionForEntry,
+		// snapshot_restore.go), so what gets recorded here and what gets compared there can never
+		// silently diverge into two independent implementations of the same decision.
 		if entry.DriftPolicy == DriftPolicyManagedContentVeto {
-			// Determine which projection to use based on file type
-			var managedHash string
-			if strings.HasSuffix(entry.OriginalPath, ".md") {
-				managedHash = managedMarkdownProjectionHash(string(currentData))
-			} else if strings.HasSuffix(entry.OriginalPath, "settings.json") {
-				managedHash = managedSettingsProjectionHash(string(currentData))
-			} else if entry.BackupFile == "settings.json" {
-				// Fallback: check backup file name for settings files
-				managedHash = managedSettingsProjectionHash(string(currentData))
-			}
-
-			if managedHash != "" {
+			if managedHash := managedProjectionForEntry(*entry, string(currentData)); managedHash != "" {
 				entry.ExpectedPostRunManagedHash = managedHash
 			}
 		}

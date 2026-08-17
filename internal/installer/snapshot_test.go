@@ -1390,12 +1390,3 @@ func TestSnapshotDecl_RequiredArguments(t *testing.T) {
 		t.Fatalf("snapshot().Policy = %q, want %q", decl.Policy, DriftPolicyNonVeto)
 	}
 }
-
-// TestTargetPlan_SnapshotSpecsMethod tests that TargetPlan has a SnapshotSpecs()
-// method that returns the typed snapshot declarations.
-func TestTargetPlan_SnapshotSpecsMethod(t *testing.T) {
-	// This will compile only once the migration is complete
-	// var plan TargetPlan
-	// _ = plan.SnapshotSpecs
-	t.Skip("Waiting for Task 4 migration - tests will pass once SnapshotDecl and snapshot() exist")
-}

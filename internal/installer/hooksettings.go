@@ -102,11 +102,13 @@ func HasMemoryGuardHook(cfg Config) (bool, error) {
 
 // PruneEmptyClickSettingsKeys removes the three Click-managed top-level keys (enabledPlugins,
 // extraKnownMarketplaces, pluginConfigs) from settings.json ONLY when each is an empty map, which
-// is the state the external `claude` CLI subprocess leaves after removing click's entries. This
-// runs as the final step of uninstall to clean up this orphaned residue. Keys that are null,
-// arrays, strings, numbers, booleans, or non-empty objects are preserved untouched; any key not
-// in the allowlist is never touched. If all keys are removed leaving an empty document, writes
-// {} instead of deleting the file. Performs no write at all when nothing changed.
+// is the state the external `claude` CLI subprocess leaves after removing click's entries. In
+// runUninstall this runs after the whole plan-driven teardown loop, so every possible `claude`
+// subprocess invocation has already happened — but it is not literally the last thing uninstall
+// does; post-run snapshot recording follows it. Keys that are null, arrays, strings, numbers,
+// booleans, or non-empty objects are preserved untouched; any key not in the allowlist is never
+// touched. If all keys are removed leaving an empty document, writes {} instead of deleting the
+// file. Performs no write at all when nothing changed.
 func PruneEmptyClickSettingsKeys(cfg Config) error {
 	settings, err := readSettingsFile(cfg.SettingsPath())
 	if err != nil {
