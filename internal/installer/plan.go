@@ -15,7 +15,7 @@ type Step struct {
 	ID               string
 	Target           PlanTarget
 	Label            string
-	Snapshot         []string
+	Snapshot         []SnapshotDecl
 	InstallActions   []StepActionKind
 	UpdateActions    []StepActionKind
 	UninstallActions []StepActionKind
@@ -115,21 +115,42 @@ func (p TargetPlan) CapabilitiesSummary() string {
 }
 
 func (p TargetPlan) SnapshotPaths() []string {
+	// Derive from typed declarations for backward compatibility with preview.go
 	paths := make([]string, 0, len(p.Steps)*2)
 	seen := map[string]struct{}{}
 	for _, step := range p.Steps {
-		for _, path := range step.Snapshot {
-			if path == "" {
+		for _, decl := range step.Snapshot {
+			if decl.Path == "" {
 				continue
 			}
-			if _, ok := seen[path]; ok {
+			if _, ok := seen[decl.Path]; ok {
 				continue
 			}
-			seen[path] = struct{}{}
-			paths = append(paths, path)
+			seen[decl.Path] = struct{}{}
+			paths = append(paths, decl.Path)
 		}
 	}
 	return paths
+}
+
+// SnapshotSpecs returns the typed snapshot declarations from all steps, preserving order
+// and deduplicating paths. Each path appears at most once in the result.
+func (p TargetPlan) SnapshotSpecs() []SnapshotDecl {
+	specs := make([]SnapshotDecl, 0, len(p.Steps)*2)
+	seen := map[string]struct{}{}
+	for _, step := range p.Steps {
+		for _, decl := range step.Snapshot {
+			if decl.Path == "" {
+				continue
+			}
+			if _, ok := seen[decl.Path]; ok {
+				continue
+			}
+			seen[decl.Path] = struct{}{}
+			specs = append(specs, decl)
+		}
+	}
+	return specs
 }
 
 func (p TargetPlan) InstallActionKinds() []StepActionKind {
@@ -230,11 +251,11 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 	capabilities := make([]string, 0, 3)
 	if selection.Claude {
 		steps = append(steps,
-			Step{ID: "claude-runtime", Target: PlanTargetClaude, Label: "Claude Code", Snapshot: []string{cfg.ClaudeMDPath(), cfg.SettingsPath()}, InstallActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UpdateActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UninstallActions: []StepActionKind{StepActionRemoveMarketplacePlugins}, DoctorChecks: []DoctorCheckKind{DoctorCheckClaude, DoctorCheckClickPluginRegistries, DoctorCheckClickSDDPlugin, DoctorCheckClickMemoryPlugin, DoctorCheckClickReviewPlugin, DoctorCheckClickSkillsPlugin, DoctorCheckClaudeManagedBlock}},
+			Step{ID: "claude-runtime", Target: PlanTargetClaude, Label: "Claude Code", Snapshot: []SnapshotDecl{snapshot(cfg.ClaudeMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.SettingsPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UpdateActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UninstallActions: []StepActionKind{StepActionRemoveMarketplacePlugins}, DoctorChecks: []DoctorCheckKind{DoctorCheckClaude, DoctorCheckClickPluginRegistries, DoctorCheckClickSDDPlugin, DoctorCheckClickMemoryPlugin, DoctorCheckClickReviewPlugin, DoctorCheckClickSkillsPlugin, DoctorCheckClaudeManagedBlock}},
 			// StepActionRemoveModels is StepActionSaveModels' reversal: without it, click's own
 			// models.json (the active profile + per-phase model selection) survived `click uninstall`
 			// forever, so a later reinstall silently inherited the previous run's choices.
-			Step{ID: "claude-models", Target: PlanTargetClaude, Label: "Claude model/profile", Snapshot: []string{cfg.ModelsPath()}, InstallActions: []StepActionKind{StepActionSaveModels}, UpdateActions: []StepActionKind{StepActionSaveModels}, UninstallActions: []StepActionKind{StepActionRemoveModels}, DoctorChecks: []DoctorCheckKind{DoctorCheckModelsConfig, DoctorCheckAppliedPluginConfig}},
+			Step{ID: "claude-models", Target: PlanTargetClaude, Label: "Claude model/profile", Snapshot: []SnapshotDecl{snapshot(cfg.ModelsPath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSaveModels}, UpdateActions: []StepActionKind{StepActionSaveModels}, UninstallActions: []StepActionKind{StepActionRemoveModels}, DoctorChecks: []DoctorCheckKind{DoctorCheckModelsConfig, DoctorCheckAppliedPluginConfig}},
 		)
 		capabilities = append(capabilities, "Claude Code: plugins nativos, SDD, perfiles y modelos por fase")
 	}
@@ -248,7 +269,7 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		// config.toml `model =` value: it is a user-owned setting, and reverting it is ambiguous (there
 		// is no unambiguous "previous" value to restore to). Uninstall only reverses click-owned
 		// managed blocks, click-owned state files, and MCP registrations — never native model values.
-		codexModelStep := Step{ID: "codex-model", Target: PlanTargetCodex, Label: "Codex native model", Snapshot: []string{cfg.CodexConfigPath()}}
+		codexModelStep := Step{ID: "codex-model", Target: PlanTargetCodex, Label: "Codex native model", Snapshot: []SnapshotDecl{snapshot(cfg.CodexConfigPath(), DriftPolicyNonVeto)}}
 		if options.CodexNativeModel {
 			codexModelStep.InstallActions = []StepActionKind{StepActionConfigureCodexNativeModel}
 			codexModelStep.UpdateActions = []StepActionKind{StepActionConfigureCodexNativeModel}
@@ -261,9 +282,9 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		codexMCPStep := Step{ID: "codex-mcp", Target: PlanTargetCodex, Label: "Codex Engram MCP", InstallActions: []StepActionKind{StepActionSyncCodexMCP}, UpdateActions: []StepActionKind{StepActionSyncCodexMCP}, UninstallActions: []StepActionKind{StepActionRemoveCodexMCP}}
 		// codex-model-profile persists Click's own portable tier recommendation. It is reference data
 		// only — it never writes Codex's native config.toml or any ~/.codex/sdd-*.config.toml profile.
-		codexModelProfileStep := Step{ID: "codex-model-profile", Target: PlanTargetCodex, Label: "Codex model profile", Snapshot: []string{cfg.CodexModelProfilePath()}, InstallActions: []StepActionKind{StepActionSaveCodexModelProfile}, UpdateActions: []StepActionKind{StepActionSaveCodexModelProfile}, UninstallActions: []StepActionKind{StepActionRemoveCodexModelProfile}}
+		codexModelProfileStep := Step{ID: "codex-model-profile", Target: PlanTargetCodex, Label: "Codex model profile", Snapshot: []SnapshotDecl{snapshot(cfg.CodexModelProfilePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSaveCodexModelProfile}, UpdateActions: []StepActionKind{StepActionSaveCodexModelProfile}, UninstallActions: []StepActionKind{StepActionRemoveCodexModelProfile}}
 		steps = append(steps,
-			Step{ID: "codex-runtime", Target: PlanTargetCodex, Label: "Codex CLI", Snapshot: []string{cfg.CodexAgentsMDPath()}, InstallActions: []StepActionKind{StepActionSyncCodexGuidance}, UpdateActions: []StepActionKind{StepActionSyncCodexGuidance}, UninstallActions: []StepActionKind{StepActionStripCodexGuidance}, DoctorChecks: []DoctorCheckKind{DoctorCheckCodexGuidance}},
+			Step{ID: "codex-runtime", Target: PlanTargetCodex, Label: "Codex CLI", Snapshot: []SnapshotDecl{snapshot(cfg.CodexAgentsMDPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionSyncCodexGuidance}, UpdateActions: []StepActionKind{StepActionSyncCodexGuidance}, UninstallActions: []StepActionKind{StepActionStripCodexGuidance}, DoctorChecks: []DoctorCheckKind{DoctorCheckCodexGuidance}},
 			codexMCPStep,
 			codexModelProfileStep,
 			codexModelStep,
@@ -289,29 +310,29 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		}
 		openClawMCPStep := Step{ID: "openclaw-mcp", Target: PlanTargetOpenClaw, Label: "OpenClaw Engram MCP", InstallActions: []StepActionKind{StepActionRegisterOpenClawMCP}, UpdateActions: []StepActionKind{StepActionRegisterOpenClawMCP}, UninstallActions: []StepActionKind{StepActionUnregisterOpenClawMCP}}
 		steps = append(steps,
-			Step{ID: "openclaw-runtime", Target: PlanTargetOpenClaw, Label: "OpenClaw", Snapshot: []string{cfg.OpenClawAgentsMDPath(), cfg.OpenClawSoulMDPath(), cfg.OpenClawMCPConfigPath(), cfg.OpenClawModelProfilePath()}, InstallActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UpdateActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UninstallActions: []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClaw}},
+			Step{ID: "openclaw-runtime", Target: PlanTargetOpenClaw, Label: "OpenClaw", Snapshot: []SnapshotDecl{snapshot(cfg.OpenClawAgentsMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.OpenClawSoulMDPath(), DriftPolicyWholeFileVeto), snapshot(cfg.OpenClawMCPConfigPath(), DriftPolicyWholeFileVeto), snapshot(cfg.OpenClawModelProfilePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UpdateActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UninstallActions: []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClaw}},
 			openClawMCPStep,
 			openClawModelStep,
 		)
 		capabilities = append(capabilities, "OpenClaw: workspace, skills y modelo provider/model mediante su CLI")
 	}
 	if selection.Claude || selection.OpenClaw {
-		steps = append(steps, Step{ID: "engram", Target: PlanTargetShared, Label: "Engram", Snapshot: []string{cfg.EngramStatePath()}, InstallActions: []StepActionKind{StepActionSyncEngram}, UpdateActions: []StepActionKind{StepActionSyncEngram}, UninstallActions: []StepActionKind{StepActionRemoveEngram}, DoctorChecks: []DoctorCheckKind{DoctorCheckEngramPlugin, DoctorCheckEngramSubagentVisibility, DoctorCheckEngramBinary, DoctorCheckEngramPath}})
+		steps = append(steps, Step{ID: "engram", Target: PlanTargetShared, Label: "Engram", Snapshot: []SnapshotDecl{snapshot(cfg.EngramStatePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSyncEngram}, UpdateActions: []StepActionKind{StepActionSyncEngram}, UninstallActions: []StepActionKind{StepActionRemoveEngram}, DoctorChecks: []DoctorCheckKind{DoctorCheckEngramPlugin, DoctorCheckEngramSubagentVisibility, DoctorCheckEngramBinary, DoctorCheckEngramPath}})
 	}
 	if options.CloudConfigured && selection.Claude {
 		// StepActionRemoveEngramCloudState is StepActionSyncEngramCloud's reversal. RemoveEngramCloudState
 		// already existed but was reachable only from the zero-caller legacy installer.Uninstall, so
 		// engram-cloud.json survived `click uninstall`. It stays offline: it deletes click's own local
 		// enrollment record and never un-enrolls the shared cloud project other machines still use.
-		steps = append(steps, Step{ID: "engram-cloud", Target: PlanTargetShared, Label: "Engram Cloud", Snapshot: []string{cfg.EngramCloudStatePath()}, InstallActions: []StepActionKind{StepActionSyncEngramCloud}, UpdateActions: []StepActionKind{StepActionSyncEngramCloud}, UninstallActions: []StepActionKind{StepActionRemoveEngramCloudState}, DoctorChecks: []DoctorCheckKind{DoctorCheckEngramCloud}})
+		steps = append(steps, Step{ID: "engram-cloud", Target: PlanTargetShared, Label: "Engram Cloud", Snapshot: []SnapshotDecl{snapshot(cfg.EngramCloudStatePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSyncEngramCloud}, UpdateActions: []StepActionKind{StepActionSyncEngramCloud}, UninstallActions: []StepActionKind{StepActionRemoveEngramCloudState}, DoctorChecks: []DoctorCheckKind{DoctorCheckEngramCloud}})
 	}
 	if selection.Claude {
 		steps = append(steps,
-			Step{ID: "context7", Target: PlanTargetShared, Label: "Context7", Snapshot: []string{cfg.Context7StatePath(), cfg.Context7ConfigPath()}, InstallActions: []StepActionKind{StepActionSyncContext7}, UpdateActions: []StepActionKind{StepActionSyncContext7}, UninstallActions: []StepActionKind{StepActionRemoveContext7}, DoctorChecks: []DoctorCheckKind{DoctorCheckContext7}},
-			Step{ID: "plugins", Target: PlanTargetShared, Label: "plugins", Snapshot: []string{cfg.KnownMarketplacesPath(), cfg.InstalledPluginsPath()}},
-			Step{ID: "memory-guard", Target: PlanTargetShared, Label: "memory guard", Snapshot: []string{cfg.SettingsPath()}, InstallActions: []StepActionKind{StepActionWriteClaudeManagedBlock, StepActionRegisterMemoryGuard}, UpdateActions: []StepActionKind{StepActionWriteClaudeManagedBlock, StepActionRegisterMemoryGuard}, UninstallActions: []StepActionKind{StepActionStripClaudeManagedBlock, StepActionUnregisterMemoryGuard}, DoctorChecks: []DoctorCheckKind{DoctorCheckMemoryGuard}},
+			Step{ID: "context7", Target: PlanTargetShared, Label: "Context7", Snapshot: []SnapshotDecl{snapshot(cfg.Context7StatePath(), DriftPolicyWholeFileVeto), snapshot(cfg.Context7ConfigPath(), DriftPolicyNonVeto)}, InstallActions: []StepActionKind{StepActionSyncContext7}, UpdateActions: []StepActionKind{StepActionSyncContext7}, UninstallActions: []StepActionKind{StepActionRemoveContext7}, DoctorChecks: []DoctorCheckKind{DoctorCheckContext7}},
+			Step{ID: "plugins", Target: PlanTargetShared, Label: "plugins", Snapshot: []SnapshotDecl{snapshot(cfg.KnownMarketplacesPath(), DriftPolicyNonVeto), snapshot(cfg.InstalledPluginsPath(), DriftPolicyNonVeto)}},
+			Step{ID: "memory-guard", Target: PlanTargetShared, Label: "memory guard", Snapshot: []SnapshotDecl{snapshot(cfg.SettingsPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionWriteClaudeManagedBlock, StepActionRegisterMemoryGuard}, UpdateActions: []StepActionKind{StepActionWriteClaudeManagedBlock, StepActionRegisterMemoryGuard}, UninstallActions: []StepActionKind{StepActionStripClaudeManagedBlock, StepActionUnregisterMemoryGuard}, DoctorChecks: []DoctorCheckKind{DoctorCheckMemoryGuard}},
 		)
 	}
-	steps = append(steps, Step{ID: "sdd-assets", Target: PlanTargetShared, Label: "SDD assets", Snapshot: []string{cfg.TargetSelectionPath()}, UninstallActions: []StepActionKind{StepActionRemoveTargetSelection}})
+	steps = append(steps, Step{ID: "sdd-assets", Target: PlanTargetShared, Label: "SDD assets", Snapshot: []SnapshotDecl{snapshot(cfg.TargetSelectionPath(), DriftPolicyWholeFileVeto)}, UninstallActions: []StepActionKind{StepActionRemoveTargetSelection}})
 	return TargetPlan{Selection: selection, Capabilities: capabilities, Steps: steps}
 }

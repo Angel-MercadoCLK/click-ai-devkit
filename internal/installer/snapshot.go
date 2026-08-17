@@ -14,15 +14,47 @@ import (
 // existed at snapshot time.
 const snapshotManifestName = "manifest.json"
 
+// DriftPolicy specifies how drift (hand-edits) is detected and handled for a snapshotted file.
+type DriftPolicy string
+
+const (
+	// DriftPolicyWholeFileVeto refuses rollback if the entire file has been edited since snapshot.
+	DriftPolicyWholeFileVeto DriftPolicy = "whole-file-veto"
+	// DriftPolicyManagedContentVeto refuses rollback if only the managed content block has been edited.
+	DriftPolicyManagedContentVeto DriftPolicy = "managed-content-veto"
+	// DriftPolicyNonVeto allows rollback regardless of edits (e.g., for config files we don't manage).
+	DriftPolicyNonVeto DriftPolicy = "non-veto"
+)
+
+// SnapshotDecl is a typed snapshot declaration that pairs a file path with its drift policy.
+// Both Path and Policy are required — bare string literals in Snapshot: fields no longer compile.
+type SnapshotDecl struct {
+	Path   string
+	Policy DriftPolicy
+}
+
+// snapshot creates a SnapshotDecl with the given path and policy.
+// This is the only valid way to construct a SnapshotDecl, ensuring every snapshot has an explicit policy.
+func snapshot(path string, policy DriftPolicy) SnapshotDecl {
+	return SnapshotDecl{Path: path, Policy: policy}
+}
+
 // manifestEntry is one snapshotted file's record inside manifest.json. When Existed is false, the
 // source file did not exist at snapshot time (spec Decision 1's "no-prior-state" case): BackupFile
 // is then deliberately left empty — there is nothing to copy — and this explicit, structured
 // Existed=false marker (never an empty/missing file, never an error) IS the no-prior-state marker
 // the spec requires.
+//
+// The three optional fields (ExpectedPostRunHash, DriftPolicy, ExpectedPostRunManagedHash) are
+// for A-record-2 and later: they record post-run hashes and drift policies for drift detection
+// and rollback decisions. They round-trip through JSON and default to safe values when absent.
 type manifestEntry struct {
-	OriginalPath string `json:"originalPath"`
-	BackupFile   string `json:"backupFile"`
-	Existed      bool   `json:"existed"`
+	OriginalPath               string      `json:"originalPath"`
+	BackupFile                 string      `json:"backupFile"`
+	Existed                    bool        `json:"existed"`
+	ExpectedPostRunHash        string      `json:"expectedPostRunHash,omitempty"`
+	DriftPolicy                DriftPolicy `json:"driftPolicy,omitempty"`
+	ExpectedPostRunManagedHash string      `json:"expectedPostRunManagedHash,omitempty"`
 }
 
 // runManifest is manifest.json's on-disk shape: one entry per file SnapshotRun/RestoreRun manage.
@@ -31,10 +63,11 @@ type runManifest struct {
 }
 
 // snapshotSource pairs a Config-resolved original path with the fixed filename its copy uses
-// inside backups/latest/.
+// inside backups/latest/, plus the drift policy to apply.
 type snapshotSource struct {
 	originalPath string
 	backupFile   string
+	policy       DriftPolicy
 }
 
 // snapshotSources returns the per-target set of files a run-start snapshot covers: CLAUDE.md and
@@ -56,42 +89,57 @@ type snapshotSource struct {
 // ZERO behavior change for a Claude-only host: when cfg.OpenClawHome == "" (the zero value, exactly
 // what every pre-existing caller that never sets it produces), this returns the identical 2-entry
 // slice it always did.
+//
+// Drift policies are assigned per-file based on the classification table from PR A-record-1:
+// - managed-content-veto: Claude CLAUDE.md, Claude settings.json, Codex AGENTS.md, OpenClaw AGENTS.md
+// - non-veto: .claude.json (Context7ConfigPath), known_marketplaces.json, installed_plugins.json, Codex config.toml
+// - whole-file-veto: everything else (safe default)
 func snapshotSources(cfg Config) []snapshotSource {
 	sources := []snapshotSource{}
 	if cfg.ClaudeHome != "" {
 		sources = append(sources,
-			snapshotSource{originalPath: cfg.ClaudeMDPath(), backupFile: "CLAUDE.md"},
-			snapshotSource{originalPath: cfg.SettingsPath(), backupFile: "settings.json"},
+			snapshotSource{originalPath: cfg.ClaudeMDPath(), backupFile: "CLAUDE.md", policy: DriftPolicyManagedContentVeto},
+			snapshotSource{originalPath: cfg.SettingsPath(), backupFile: "settings.json", policy: DriftPolicyManagedContentVeto},
 		)
 	}
 	if _, err := os.Stat(cfg.TargetSelectionPath()); err == nil {
-		sources = append(sources, snapshotSource{originalPath: cfg.TargetSelectionPath(), backupFile: "targets.json"})
+		sources = append(sources,
+			snapshotSource{originalPath: cfg.TargetSelectionPath(), backupFile: "targets.json", policy: DriftPolicyWholeFileVeto},
+		)
 	}
 	if cfg.CodexHome != "" {
 		sources = append(sources,
-			snapshotSource{originalPath: cfg.CodexAgentsMDPath(), backupFile: "codex-AGENTS.md"},
-			snapshotSource{originalPath: cfg.CodexModelProfilePath(), backupFile: "codex-model-profile.json"},
+			snapshotSource{originalPath: cfg.CodexAgentsMDPath(), backupFile: "codex-AGENTS.md", policy: DriftPolicyManagedContentVeto},
+			snapshotSource{originalPath: cfg.CodexModelProfilePath(), backupFile: "codex-model-profile.json", policy: DriftPolicyWholeFileVeto},
 		)
+		// Codex config.toml is non-veto (user-owned)
+		if cfg.CodexConfigPath() != "" {
+			sources = append(sources,
+				snapshotSource{originalPath: cfg.CodexConfigPath(), backupFile: "config.toml", policy: DriftPolicyNonVeto},
+			)
+		}
 	}
 	if cfg.OpenClawHome == "" {
 		return sources
 	}
 	sources = append(sources,
-		snapshotSource{originalPath: cfg.OpenClawAgentsMDPath(), backupFile: "AGENTS.md"},
-		snapshotSource{originalPath: cfg.OpenClawSoulMDPath(), backupFile: "SOUL.md"},
-		snapshotSource{originalPath: cfg.OpenClawMCPConfigPath(), backupFile: "openclaw.json"},
-		snapshotSource{originalPath: cfg.OpenClawModelProfilePath(), backupFile: "openclaw-model-profile.json"},
+		snapshotSource{originalPath: cfg.OpenClawAgentsMDPath(), backupFile: "AGENTS.md", policy: DriftPolicyManagedContentVeto},
+		snapshotSource{originalPath: cfg.OpenClawSoulMDPath(), backupFile: "SOUL.md", policy: DriftPolicyWholeFileVeto},
+		snapshotSource{originalPath: cfg.OpenClawMCPConfigPath(), backupFile: "openclaw.json", policy: DriftPolicyWholeFileVeto},
+		snapshotSource{originalPath: cfg.OpenClawModelProfilePath(), backupFile: "openclaw-model-profile.json", policy: DriftPolicyWholeFileVeto},
 	)
 	for _, rel := range openClawPluginRelPaths {
 		sources = append(sources, snapshotSource{
 			originalPath: filepath.Join(cfg.OpenClawPluginDir(), filepath.FromSlash(rel)),
 			backupFile:   openClawPluginBackupFileName(rel),
+			policy:       DriftPolicyWholeFileVeto,
 		})
 	}
 	for _, rel := range openClawSkillRelPaths {
 		sources = append(sources, snapshotSource{
 			originalPath: filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel)),
 			backupFile:   openClawSkillBackupFileName(rel),
+			policy:       DriftPolicyWholeFileVeto,
 		})
 	}
 	return sources
@@ -130,8 +178,8 @@ func SnapshotRun(cfg Config) error {
 
 func SnapshotTargetPlan(cfg Config, plan TargetPlan) error {
 	sources := make([]snapshotSource, 0, len(plan.SnapshotPaths()))
-	for i, path := range plan.SnapshotPaths() {
-		sources = append(sources, snapshotSource{originalPath: path, backupFile: fmt.Sprintf("plan-%03d%s", i+1, filepath.Ext(path))})
+	for i, decl := range plan.SnapshotSpecs() {
+		sources = append(sources, snapshotSource{originalPath: decl.Path, backupFile: fmt.Sprintf("plan-%03d%s", i+1, filepath.Ext(decl.Path)), policy: decl.Policy})
 	}
 	return snapshotRunWithSources(cfg, sources)
 }
@@ -165,6 +213,7 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 					OriginalPath: src.originalPath,
 					BackupFile:   "",
 					Existed:      false,
+					DriftPolicy:  src.policy,
 				})
 				continue
 			}
@@ -179,6 +228,7 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 			OriginalPath: src.originalPath,
 			BackupFile:   src.backupFile,
 			Existed:      true,
+			DriftPolicy:  src.policy,
 		})
 	}
 
@@ -205,46 +255,17 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 	return nil
 }
 
-// RestoreRun restores CLAUDE.md and settings.json to their last run-start snapshot (spec
-// Requirement: Restore Last Run Snapshot). For each manifest entry: if the source existed at
-// snapshot time, its backup content is copied back over the original path byte-for-byte; if it did
-// NOT exist (a no-prior-state marker), any file that has since appeared at the original path is
-// removed instead of being left in place or having content fabricated for it. The snapshot itself
-// is left completely intact afterward (read+write, never a consuming move) so it can be restored
-// from again later. settings.json restoration is coarse and may also revert unrelated writes made
-// by the external `claude` CLI during the same run because they are captured in the same snapshot.
-//
-// RestoreRun assumes a manifest already exists; callers that need to distinguish "no snapshot to
-// restore" from a real error should check HasRunSnapshot first (the rollback command, PR3, owns
-// that user-facing distinction).
+// RestoreRun restores every snapshotted file to its last run-start snapshot (spec Requirement:
+// Restore Last Run Snapshot). It is a thin composition of PrepareRestore + ApplyPreparedRestore
+// with NO prompting and NO warning output of its own: it is used by install/update's automatic
+// failure-recovery paths, which must never prompt a user mid-command. The ownership-scoped
+// drift/consent policy lives in the rollback command, not here.
 func RestoreRun(cfg Config) error {
-	manifest, err := loadSnapshotManifest(cfg)
+	prepared, err := PrepareRestore(cfg)
 	if err != nil {
 		return err
 	}
-
-	latestDir := snapshotLatestDir(cfg)
-	for _, entry := range manifest.Entries {
-		if !entry.Existed {
-			if removeErr := os.Remove(entry.OriginalPath); removeErr != nil && !os.IsNotExist(removeErr) {
-				return fmt.Errorf("installer: remove %s while restoring a no-prior-state entry: %w", entry.OriginalPath, removeErr)
-			}
-			continue
-		}
-
-		backupPath := filepath.Join(latestDir, entry.BackupFile)
-		data, readErr := os.ReadFile(backupPath)
-		if readErr != nil {
-			return fmt.Errorf("installer: read snapshot backup %s: %w", backupPath, readErr)
-		}
-		if mkdirErr := os.MkdirAll(filepath.Dir(entry.OriginalPath), 0o755); mkdirErr != nil {
-			return fmt.Errorf("installer: create restore dir for %s: %w", entry.OriginalPath, mkdirErr)
-		}
-		if writeErr := atomicWriteFile(entry.OriginalPath, data, 0o600); writeErr != nil {
-			return fmt.Errorf("installer: restore %s: %w", entry.OriginalPath, writeErr)
-		}
-	}
-	return nil
+	return ApplyPreparedRestore(prepared)
 }
 
 // HasRunSnapshot reports whether a completed run-start snapshot exists: specifically, whether
@@ -290,52 +311,25 @@ func HasRestorableSnapshot(cfg Config) (bool, error) {
 	return false, nil
 }
 
-// SnapshotDrift reports which of the snapshot's backed-up original paths have been hand-edited
-// since the snapshot was taken: their current on-disk content hash no longer matches the content
-// hash of what SnapshotRun backed up (spec install-rollback Decision 3: refuse-by-default). Only
-// entries with Existed=true are compared — there is nothing recorded to compare a no-prior-state
-// entry against. A current file that is now missing is NOT reported as drift: RestoreRun would
-// simply recreate the exact known-good content in that case, which is the safe, expected outcome,
-// not a hand-edit to warn about.
-//
-// SnapshotDrift assumes a manifest already exists; callers should check HasRestorableSnapshot (or
-// HasRunSnapshot) first — mirroring RestoreRun's own contract. Extracted here (rather than
-// duplicated in cli/rollback.go, which cannot reach the unexported canonicalContentHash directly)
-// because both PR3's rollback drift check and PR4's future doctor drift check must reuse the exact
-// same LF-canonicalization + hash algorithm (see canonicalContentHash's own doc comment) — PR4's
+// SnapshotDrift reports the ownership-scoped drift of the snapshot's backed-up files (see
+// DriftReport): which paths veto a rollback because click-owned content changed, and which
+// present non-veto paths merely warrant a warning because they match neither baseline. It shares
+// PrepareRestore's exact classification logic so the drift check and the restore plan can never
+// diverge, and — like RestoreRun — assumes a manifest already exists (callers should check
+// HasRestorableSnapshot first). PR4's future doctor drift check must reuse this same report; that
 // doctor-side check itself is explicitly out of scope for this change and is NOT implemented here.
-func SnapshotDrift(cfg Config) ([]string, error) {
-	manifest, err := loadSnapshotManifest(cfg)
+func SnapshotDrift(cfg Config) (DriftReport, error) {
+	prepared, err := PrepareRestore(cfg)
 	if err != nil {
-		return nil, err
+		return DriftReport{}, err
 	}
-
-	latestDir := snapshotLatestDir(cfg)
-	var drifted []string
-	for _, entry := range manifest.Entries {
-		if !entry.Existed {
-			continue
-		}
-		backupPath := filepath.Join(latestDir, entry.BackupFile)
-		backupData, readBackupErr := os.ReadFile(backupPath)
-		if readBackupErr != nil {
-			return nil, fmt.Errorf("installer: read snapshot backup %s: %w", backupPath, readBackupErr)
-		}
-		currentData, readCurrentErr := os.ReadFile(entry.OriginalPath)
-		if readCurrentErr != nil {
-			if os.IsNotExist(readCurrentErr) {
-				continue
-			}
-			return nil, fmt.Errorf("installer: read %s to check drift: %w", entry.OriginalPath, readCurrentErr)
-		}
-		if canonicalContentHash(string(currentData)) != canonicalContentHash(string(backupData)) {
-			drifted = append(drifted, entry.OriginalPath)
-		}
-	}
-	return drifted, nil
+	return prepared.Drift, nil
 }
 
 // loadSnapshotManifest reads and parses BackupDir()/latest/manifest.json.
+// It validates the manifest content: unknown policies are rejected, duplicate paths with
+// conflicting policies are rejected, and absent/empty policies are normalized to
+// DriftPolicyWholeFileVeto for backward compatibility with legacy v0.5.11 manifests.
 func loadSnapshotManifest(cfg Config) (runManifest, error) {
 	data, err := os.ReadFile(snapshotManifestPath(cfg))
 	if err != nil {
@@ -345,18 +339,54 @@ func loadSnapshotManifest(cfg Config) (runManifest, error) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return runManifest{}, fmt.Errorf("installer: parse snapshot manifest: %w", err)
 	}
+
+	// Normalize and validate manifest entries.
+	knownPolicies := map[DriftPolicy]bool{
+		DriftPolicyWholeFileVeto:      true,
+		DriftPolicyManagedContentVeto: true,
+		DriftPolicyNonVeto:            true,
+	}
+
+	// Track policies for duplicate detection: same path must have same policy every time.
+	pathPolicy := make(map[string]DriftPolicy)
+
+	for i := range manifest.Entries {
+		entry := &manifest.Entries[i]
+
+		// Normalize empty/absent policy to whole-file-veto (legacy manifest compatibility).
+		if entry.DriftPolicy == "" {
+			entry.DriftPolicy = DriftPolicyWholeFileVeto
+		}
+
+		// Reject unknown policies.
+		if !knownPolicies[entry.DriftPolicy] {
+			return runManifest{}, fmt.Errorf("installer: manifest entry %s has unknown policy %q", entry.OriginalPath, entry.DriftPolicy)
+		}
+
+		// Reject duplicate paths with conflicting policies.
+		if priorPolicy, exists := pathPolicy[entry.OriginalPath]; exists {
+			if priorPolicy != entry.DriftPolicy {
+				return runManifest{}, fmt.Errorf("installer: manifest has duplicate path %s with conflicting policies %q and %q",
+					entry.OriginalPath, priorPolicy, entry.DriftPolicy)
+			}
+		} else {
+			pathPolicy[entry.OriginalPath] = entry.DriftPolicy
+		}
+	}
+
 	return manifest, nil
 }
 
-// canonicalContentHash returns the sha256 hex digest of content after canonicalizing line endings
+// CanonicalContentHash returns the sha256 hex digest of content after canonicalizing line endings
 // to LF via crlfAwareSplitLines/joinWithLineEnding (claudemd.go) — so a CRLF-saved file and an
-// LF-saved file with the same logical content always hash identically. Extracted here (rather than
-// duplicated) because BOTH PR3's rollback hand-edit drift check (spec install-rollback Decision 3,
+// LF-saved file with the same logical content always hash identically. Exported for CLI tests
+// that need to verify post-run hashes in manifests. Extracted here (rather than duplicated)
+// because BOTH PR3's rollback hand-edit drift check (spec install-rollback Decision 3,
 // "refuse-by-default" when current content drifts from the snapshot's recorded hash) and PR4's
 // doctor managed-block drift check (spec managed-block-integrity, design's "Drift hash" decision)
 // need the exact same LF-canonicalization + hash algorithm, and must never be allowed to silently
 // diverge from each other.
-func canonicalContentHash(content string) string {
+func CanonicalContentHash(content string) string {
 	canonical := joinWithLineEnding(crlfAwareSplitLines(content), "\n")
 	sum := sha256.Sum256([]byte(canonical))
 	return hex.EncodeToString(sum[:])

@@ -599,3 +599,137 @@ func TestWriteManagedBlock_InjectedWriteErrorLeavesOriginalIntact(t *testing.T) 
 		t.Fatalf("file content = %q after a failed write, want untouched original %q", got, original)
 	}
 }
+
+// --- Byte-exactness tests for StripManagedBlock (PR B: teardown-rollback-hardening) ---
+//
+// These tests enforce that StripManagedBlock preserves bytes exactly: line endings, whitespace,
+// trailing-newline state, and surrounding blank lines. The old implementation normalized through
+// joinWithLineEnding(..., detectLineEnding(existing)), which corrupted mixed-line-ending files
+// and changed trailing-newline state.
+
+func TestStripManagedBlock_PreservesMixedLineEndingsByteForByte(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+
+	// CRLF header, LF block, LF footer - mixed endings
+	header := "# header\r\n"
+	middle := managedBeginMarker + "\nmanaged body\n" + managedEndMarker + "\n"
+	footer := "# footer\n"
+	full := header + middle + footer
+	if err := os.WriteFile(path, []byte(full), 0o644); err != nil {
+		t.Fatalf("seed WriteFile() error = %v", err)
+	}
+
+	if err := StripManagedBlock(path); err != nil {
+		t.Fatalf("StripManagedBlock() error = %v", err)
+	}
+
+	got := readFile(t, path)
+	want := header + footer
+	if got != want {
+		t.Fatalf("StripManagedBlock() output = %q, want mixed line endings preserved byte-for-byte: %q", got, want)
+	}
+}
+
+func TestStripManagedBlock_PreservesNoTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+
+	// File without trailing newline - should stay without one after stripping
+	before := "# before\n"
+	middle := managedBeginMarker + "\nbody\n" + managedEndMarker + "\n"
+	after := "# after"
+	full := before + middle + after // NO trailing newline on 'after'
+	if err := os.WriteFile(path, []byte(full), 0o644); err != nil {
+		t.Fatalf("seed WriteFile() error = %v", err)
+	}
+
+	if err := StripManagedBlock(path); err != nil {
+		t.Fatalf("StripManagedBlock() error = %v", err)
+	}
+
+	got := readFile(t, path)
+	want := before + after // Still NO trailing newline
+	if got != want {
+		t.Fatalf("StripManagedBlock() output = %q, want trailing-newline state preserved: %q", got, want)
+	}
+}
+
+func TestStripManagedBlock_PreservesSurroundingWhitespace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+
+	// Blank lines and space-only lines around markers must be preserved exactly
+	before := "# before\n\n" // blank line after
+	middle := managedBeginMarker + "\nbody\n" + managedEndMarker + "\n"
+	after := "   \n# after\n" // space-only line before
+	full := before + middle + after
+	if err := os.WriteFile(path, []byte(full), 0o644); err != nil {
+		t.Fatalf("seed WriteFile() error = %v", err)
+	}
+
+	if err := StripManagedBlock(path); err != nil {
+		t.Fatalf("StripManagedBlock() error = %v", err)
+	}
+
+	got := readFile(t, path)
+	want := before + after
+	if got != want {
+		t.Fatalf("StripManagedBlock() output = %q, want surrounding whitespace preserved: %q", got, want)
+	}
+}
+
+func TestStripManagedBlock_EndMarkerLastLineWithoutTerminator(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+
+	// End marker as last line WITHOUT terminator - removal goes through EOF
+	before := "# before\n"
+	middle := managedBeginMarker + "\nbody\n" + managedEndMarker // NO terminator
+	full := before + middle
+	if err := os.WriteFile(path, []byte(full), 0o644); err != nil {
+		t.Fatalf("seed WriteFile() error = %v", err)
+	}
+
+	if err := StripManagedBlock(path); err != nil {
+		t.Fatalf("StripManagedBlock() error = %v", err)
+	}
+
+	got := readFile(t, path)
+	want := before
+	if got != want {
+		t.Fatalf("StripManagedBlock() output = %q, want EOF-aware removal: %q", got, want)
+	}
+}
+
+func TestStripManagedBlock_BlockOnlyFileBecomesZeroBytes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+
+	// File containing ONLY the managed block - should become 0 bytes, not deleted
+	full := managedBeginMarker + "\nbody\n" + managedEndMarker + "\n"
+	if err := os.WriteFile(path, []byte(full), 0o644); err != nil {
+		t.Fatalf("seed WriteFile() error = %v", err)
+	}
+
+	if err := StripManagedBlock(path); err != nil {
+		t.Fatalf("StripManagedBlock() error = %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() after StripManagedBlock error = %v, want file to exist as 0 bytes", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("Stat().Size = %d, want 0 (block-only file becomes empty, not deleted)", info.Size())
+	}
+
+	// Verify content is empty
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("ReadFile() = %q, want empty slice", got)
+	}
+}

@@ -230,3 +230,405 @@ func TestRegisterMemoryGuardHook_WritesThroughSymlinkedSettings(t *testing.T) {
 		t.Fatal("HasMemoryGuardHook() after RegisterMemoryGuardHook() through a symlink = false, want true")
 	}
 }
+
+// --- PR C: PruneEmptyClickSettingsKeys tests ---
+
+// TestPruneEmptyClickSettingsKeys_DeletesOnlyEmptyClickKeys proves C.1(a)-(c): deletes the three
+// Click-specific keys ONLY when each is an empty map, preserving them for non-map or non-empty values,
+// and never touching any non-allowlisted key.
+func TestPruneEmptyClickSettingsKeys_DeletesOnlyEmptyClickKeys(t *testing.T) {
+	tests := []struct {
+		name     string
+		initial  map[string]any
+		wantPost map[string]any
+	}{
+		{
+			name: "all three empty maps are deleted",
+			initial: map[string]any{
+				"enabledPlugins":         map[string]any{},
+				"extraKnownMarketplaces": map[string]any{},
+				"pluginConfigs":          map[string]any{},
+				"foreignKey":             "keep me",
+				"hooks":                  map[string]any{"PreToolUse": []any{}},
+			},
+			wantPost: map[string]any{
+				"foreignKey": "keep me",
+				"hooks":      map[string]any{"PreToolUse": []any{}},
+			},
+		},
+		{
+			name: "non-empty map values are preserved",
+			initial: map[string]any{
+				"enabledPlugins":         map[string]any{"click-sdd": true},
+				"extraKnownMarketplaces": map[string]any{},
+				"pluginConfigs":          map[string]any{},
+				"foreignKey":             "keep me",
+			},
+			wantPost: map[string]any{
+				"enabledPlugins": map[string]any{"click-sdd": true},
+				"foreignKey":     "keep me",
+			},
+		},
+		{
+			name: "null values are preserved",
+			initial: map[string]any{
+				"enabledPlugins":         nil,
+				"extraKnownMarketplaces": nil,
+				"pluginConfigs":          nil,
+				"foreignKey":             "keep me",
+			},
+			wantPost: map[string]any{
+				"enabledPlugins":         nil,
+				"extraKnownMarketplaces": nil,
+				"pluginConfigs":          nil,
+				"foreignKey":             "keep me",
+			},
+		},
+		{
+			name: "array values are preserved",
+			initial: map[string]any{
+				"enabledPlugins":         []any{"click-sdd"},
+				"extraKnownMarketplaces": map[string]any{},
+				"pluginConfigs":          map[string]any{},
+				"foreignKey":             "keep me",
+			},
+			wantPost: map[string]any{
+				"enabledPlugins": []any{"click-sdd"},
+				"foreignKey":     "keep me",
+			},
+		},
+		{
+			name: "string values are preserved",
+			initial: map[string]any{
+				"enabledPlugins":         "not a map",
+				"extraKnownMarketplaces": map[string]any{},
+				"pluginConfigs":          map[string]any{},
+				"foreignKey":             "keep me",
+			},
+			wantPost: map[string]any{
+				"enabledPlugins": "not a map",
+				"foreignKey":     "keep me",
+			},
+		},
+		{
+			name: "number values are preserved",
+			initial: map[string]any{
+				"enabledPlugins":         42,
+				"extraKnownMarketplaces": map[string]any{},
+				"pluginConfigs":          map[string]any{},
+				"foreignKey":             "keep me",
+			},
+			wantPost: map[string]any{
+				"enabledPlugins": 42,
+				"foreignKey":     "keep me",
+			},
+		},
+		{
+			name: "boolean values are preserved",
+			initial: map[string]any{
+				"enabledPlugins":         true,
+				"extraKnownMarketplaces": map[string]any{},
+				"pluginConfigs":          map[string]any{},
+				"foreignKey":             "keep me",
+			},
+			wantPost: map[string]any{
+				"enabledPlugins": true,
+				"foreignKey":     "keep me",
+			},
+		},
+		{
+			name: "foreign keys are never touched",
+			initial: map[string]any{
+				"enabledPlugins":         map[string]any{},
+				"extraKnownMarketplaces": map[string]any{},
+				"pluginConfigs":          map[string]any{},
+				"foreignKey1":            "keep1",
+				"foreignKey2":            map[string]any{},
+				"hooks":                  map[string]any{"PreToolUse": []any{}},
+			},
+			wantPost: map[string]any{
+				"foreignKey1": "keep1",
+				"foreignKey2": map[string]any{},
+				"hooks":       map[string]any{"PreToolUse": []any{}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "settings.json")
+
+			// Seed initial settings
+			if err := os.WriteFile(path, []byte(`{}`+"\n"), 0o600); err != nil {
+				t.Fatalf("seed WriteFile() error = %v", err)
+			}
+			if err := writeSettingsFile(path, tt.initial); err != nil {
+				t.Fatalf("writeSettingsFile() initial seed error = %v", err)
+			}
+
+			cfg := Config{ClaudeHome: dir}
+			if err := PruneEmptyClickSettingsKeys(cfg); err != nil {
+				t.Fatalf("PruneEmptyClickSettingsKeys() error = %v", err)
+			}
+
+			got, err := readSettingsFile(path)
+			if err != nil {
+				t.Fatalf("readSettingsFile() error = %v", err)
+			}
+
+			if !mapsEqual(got, tt.wantPost) {
+				t.Fatalf("PruneEmptyClickSettingsKeys() result =\n%#v\nwant\n%#v", got, tt.wantPost)
+			}
+		})
+	}
+}
+
+// TestPruneEmptyClickSettingsKeys_NoWriteWhenNothingChanged proves C.1(d): performs no write at all
+// when nothing changed. This is verified by overriding createTempFile to return an error; if a write
+// were attempted, the test would fail.
+func TestPruneEmptyClickSettingsKeys_NoWriteWhenNothingChanged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	// Seed with content that has nothing to prune (no empty Click keys)
+	initial := map[string]any{
+		"enabledPlugins":         map[string]any{"click-sdd": true},
+		"extraKnownMarketplaces": map[string]any{"official": true},
+		"pluginConfigs":          map[string]any{"click-sdd": map[string]any{"option": "value"}},
+		"foreignKey":             "keep me",
+	}
+	if err := os.WriteFile(path, []byte(`{}`+"\n"), 0o600); err != nil {
+		t.Fatalf("seed WriteFile() error = %v", err)
+	}
+	if err := writeSettingsFile(path, initial); err != nil {
+		t.Fatalf("writeSettingsFile() initial seed error = %v", err)
+	}
+
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() original error = %v", err)
+	}
+
+	// Inject a failing createTempFile to prove no write happens
+	injectedErr := errors.New("injected write failure - should never be called")
+	old := createTempFile
+	createTempFile = func(dir, pattern string) (tempFileWriter, error) {
+		return &fakeFailingTempFile{name: filepath.Join(dir, ".click-injected-fake"), writeErr: injectedErr}, nil
+	}
+	defer func() { createTempFile = old }()
+
+	cfg := Config{ClaudeHome: dir}
+	pruneErr := PruneEmptyClickSettingsKeys(cfg)
+
+	// If a write was attempted, createTempFile would have returned the failing writer
+	// and pruneErr would be non-nil (wrapping injectedErr). Success proves no write.
+	if pruneErr != nil {
+		t.Fatalf("PruneEmptyClickSettingsKeys() error = %v, want nil when nothing changed (proves no write was attempted)", pruneErr)
+	}
+
+	// File should be byte-identical (no write happened)
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() after error = %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("file content = %q after prune with nothing to change, want original %q (proves no write was attempted)", got, original)
+	}
+}
+
+// TestPruneEmptyClickSettingsKeys_EmptyDocumentBecomesEmptyObject proves C.1(e): pruning that empties
+// the document writes {} and never deletes settings.json.
+func TestPruneEmptyClickSettingsKeys_EmptyDocumentBecomesEmptyObject(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	// Seed with ONLY the three empty Click keys (nothing else)
+	initial := map[string]any{
+		"enabledPlugins":         map[string]any{},
+		"extraKnownMarketplaces": map[string]any{},
+		"pluginConfigs":          map[string]any{},
+	}
+	if err := os.WriteFile(path, []byte(`{}`+"\n"), 0o600); err != nil {
+		t.Fatalf("seed WriteFile() error = %v", err)
+	}
+	if err := writeSettingsFile(path, initial); err != nil {
+		t.Fatalf("writeSettingsFile() initial seed error = %v", err)
+	}
+
+	cfg := Config{ClaudeHome: dir}
+	if err := PruneEmptyClickSettingsKeys(cfg); err != nil {
+		t.Fatalf("PruneEmptyClickSettingsKeys() error = %v", err)
+	}
+
+	// File must still exist (never deleted)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("Stat() after prune that empties document error = %v, want file to exist", err)
+	}
+
+	// Content must be exactly {} with trailing newline (writeSettingsFile format), not null
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	got := string(data)
+	want := "{}\n" // json.MarshalIndent produces {} for empty object, plus newline
+	if got != want {
+		t.Fatalf("file content = %q after prune that empties document, want exactly %q (writeSettingsFile format, never delete, never null)", got, want)
+	}
+
+	// Verify the content is actually an empty object, not empty maps or other structures
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("json.Unmarshal(file content) error = %v", err)
+	}
+	if len(parsed) != 0 {
+		t.Fatalf("parsed content has %d keys, want 0 (empty object), parsed = %#v", len(parsed), parsed)
+	}
+}
+
+// TestPruneEmptyClickSettingsKeys_InjectedWriteErrorLeavesOriginalIntact proves C.1(f): an injected
+// write failure leaves the original file byte-identical, following TestWriteSettingsFile_InjectedWriteErrorLeavesOriginalIntact's
+// established pattern.
+func TestPruneEmptyClickSettingsKeys_InjectedWriteErrorLeavesOriginalIntact(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	// Seed with content that WILL be pruned (three empty maps)
+	initial := map[string]any{
+		"enabledPlugins":         map[string]any{},
+		"extraKnownMarketplaces": map[string]any{},
+		"pluginConfigs":          map[string]any{},
+		"foreignKey":             "keep me",
+	}
+	if err := os.WriteFile(path, []byte(`{}`+"\n"), 0o600); err != nil {
+		t.Fatalf("seed WriteFile() error = %v", err)
+	}
+	if err := writeSettingsFile(path, initial); err != nil {
+		t.Fatalf("writeSettingsFile() initial seed error = %v", err)
+	}
+
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() original error = %v", err)
+	}
+
+	// Inject a failing createTempFile to test error handling
+	injectedErr := errors.New("injected write failure")
+	old := createTempFile
+	createTempFile = func(dir, pattern string) (tempFileWriter, error) {
+		return &fakeFailingTempFile{name: filepath.Join(dir, ".click-injected-fake"), writeErr: injectedErr}, nil
+	}
+	defer func() { createTempFile = old }()
+
+	cfg := Config{ClaudeHome: dir}
+	pruneErr := PruneEmptyClickSettingsKeys(cfg)
+
+	// Error must propagate
+	if pruneErr == nil {
+		t.Fatal("PruneEmptyClickSettingsKeys() error = nil, want the injected write error to propagate")
+	}
+	if !errors.Is(pruneErr, injectedErr) {
+		t.Fatalf("PruneEmptyClickSettingsKeys() error = %v, want it to wrap %v", pruneErr, injectedErr)
+	}
+
+	// File must be byte-identical to original (no corruption on write failure)
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() after error = %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("file content = %q after a failed prune write, want untouched original %q", got, original)
+	}
+}
+
+// mapsEqual is a test helper for deep map comparison.
+func mapsEqual(a, b map[string]any) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok {
+			return false
+		}
+		// Type-aware comparison for this test's use cases
+		switch av := av.(type) {
+		case map[string]any:
+			bvMap, ok := bv.(map[string]any)
+			if !ok || !mapsEqual(av, bvMap) {
+				return false
+			}
+		case []any:
+			bvSlice, ok := bv.([]any)
+			if !ok || !slicesEqual(av, bvSlice) {
+				return false
+			}
+		default:
+			// Handle JSON number normalization (int becomes float64)
+			if !valuesEqual(av, bv) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// valuesEqual compares two values, handling JSON number normalization and type differences.
+func valuesEqual(a, b any) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+
+	// Handle float64 comparison (JSON numbers unmarshal to float64)
+	af, aOk := a.(float64)
+	bf, bOk := b.(float64)
+	if aOk && bOk {
+		return af == bf
+	}
+
+	// Handle int -> float64 comparison
+	ai, aOk := a.(int)
+	if aOk {
+		if bf, bOk := b.(float64); bOk {
+			return float64(ai) == bf
+		}
+	}
+	bi, bOk := b.(int)
+	if bOk {
+		if af, aOk := a.(float64); aOk {
+			return float64(bi) == af
+		}
+	}
+
+	return a == b
+}
+
+// slicesEqual is a test helper for deep slice comparison.
+func slicesEqual(a, b []any) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		switch av := a[i].(type) {
+		case map[string]any:
+			bvMap, ok := b[i].(map[string]any)
+			if !ok || !mapsEqual(av, bvMap) {
+				return false
+			}
+		case []any:
+			bvSlice, ok := b[i].([]any)
+			if !ok || !slicesEqual(av, bvSlice) {
+				return false
+			}
+		default:
+			if av != b[i] {
+				return false
+			}
+		}
+	}
+	return true
+}

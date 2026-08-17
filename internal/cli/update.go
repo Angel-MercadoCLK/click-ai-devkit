@@ -105,6 +105,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Arm deferred post-run snapshot recording (only when proceed=true)
+	defer func() {
+		if recordErr := recordSnapshotPostRunFunc(cfg); recordErr != nil {
+			fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo registrar el estado posterior a la ejecución para rollback: %v", recordErr)))
+		}
+	}()
+
 	// Confirmed migration behavior for the real-SDD-taxonomy realignment: a stale (pre-realignment
 	// or otherwise outdated schema_version) models.json is backed up to models.json.bak FIRST,
 	// then fully regenerated with new-taxonomy defaults — old per-phase overrides are never

@@ -302,11 +302,26 @@ func (r *testCommandRunner) writeSettings() error {
 		}
 		pluginConfigs[pluginID] = map[string]any{"options": optionsAny}
 	}
-	settingsData, err := json.Marshal(map[string]any{"enabledPlugins": enabled, "pluginConfigs": pluginConfigs})
+
+	// MERGE: read existing settings.json if present, preserve foreign keys, set/replace only the keys we own
+	settingsPath := filepath.Join(r.home, "settings.json")
+	existingSettings := map[string]any{}
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		if err := json.Unmarshal(data, &existingSettings); err != nil {
+			// If file exists but is corrupt, overwrite with fresh data (conservative fallback)
+			existingSettings = map[string]any{}
+		}
+	}
+	// Set/replace only the keys this runner owns
+	existingSettings["enabledPlugins"] = enabled
+	existingSettings["pluginConfigs"] = pluginConfigs
+
+	settingsData, err := json.MarshalIndent(existingSettings, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(r.home, "settings.json"), settingsData, 0o600)
+	settingsData = append(settingsData, '\n')
+	return os.WriteFile(settingsPath, settingsData, 0o600)
 }
 
 func writeTestFile(path, content string) {
@@ -1875,5 +1890,63 @@ func TestUpdateCommand_TakesRunStartSnapshotBeforeWrites(t *testing.T) {
 	}
 	if !has {
 		t.Fatal("HasRunSnapshot() = false after `click update`, want true")
+	}
+}
+
+// TestTestCommandRunner_writeSettings_PreservesForeignKeys proves that the fake claude
+// CLI double (testCommandRunner.writeSettings) preserves unrelated top-level keys when
+// writing settings.json — a merge fix (teardown-rollback-hardening) replaced the
+// double's original wholesale-write behavior, which used to destroy them.
+func TestTestCommandRunner_writeSettings_PreservesForeignKeys(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+
+	// Seed a pre-existing settings.json with foreign keys
+	settingsPath := filepath.Join(home, "settings.json")
+	initialSettings := map[string]any{
+		"enabledPlugins": map[string]any{"existing-plugin": true},
+		"foreignKey":     "must survive",
+		"anotherForeign": map[string]any{"nested": "value"},
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				map[string]any{"matcher": "foreign-matcher", "hooks": []any{}},
+			},
+		},
+	}
+	settingsData, err := json.MarshalIndent(initialSettings, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal initial settings: %v", err)
+	}
+	if err := os.WriteFile(settingsPath, settingsData, 0o600); err != nil {
+		t.Fatalf("write initial settings: %v", err)
+	}
+
+	// Register a plugin and let the fake runner write settings
+	runner.plugins["test-plugin@marketplace"] = true
+
+	// This is the writeSettings call that currently overwrites wholesale
+	if err := runner.writeSettings(); err != nil {
+		t.Fatalf("writeSettings() error = %v", err)
+	}
+
+	// Read back what was written
+	var after map[string]any
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings after writeSettings: %v", err)
+	}
+	if err := json.Unmarshal(data, &after); err != nil {
+		t.Fatalf("unmarshal settings after writeSettings: %v", err)
+	}
+
+	// RED: foreign keys are destroyed by the current wholesale-write implementation
+	if after["foreignKey"] != "must survive" {
+		t.Fatalf("foreignKey = %v after writeSettings, want \"must survive\" (current wholesale-write destroys foreign keys)", after["foreignKey"])
+	}
+	if after["anotherForeign"] == nil {
+		t.Fatalf("anotherForeign = <nil> after writeSettings, want map{\"nested\": \"value\"} (current wholesale-write destroys foreign keys)")
+	}
+	if after["hooks"] == nil {
+		t.Fatalf("hooks = <nil> after writeSettings, want foreign hooks to survive (current wholesale-write destroys foreign keys)")
 	}
 }

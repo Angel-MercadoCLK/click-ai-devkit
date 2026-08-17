@@ -116,7 +116,7 @@ func ManagedBlockBody(path string) (body string, ok bool, err error) {
 }
 
 // ManagedBlockBodyHash returns the canonical sha256 hex digest of the live managed block's body at
-// path, via canonicalContentHash (snapshot.go) — the SAME LF-canonicalization + hash algorithm
+// path, via CanonicalContentHash (snapshot.go) — the SAME LF-canonicalization + hash algorithm
 // PR3's rollback drift check already uses, so a CRLF-saved managed block never counts as drift
 // here either. ok mirrors ManagedBlockBody's: false (no error) means there is no well-formed
 // managed block to hash at all.
@@ -125,7 +125,7 @@ func ManagedBlockBodyHash(path string) (hash string, ok bool, err error) {
 	if err != nil || !ok {
 		return "", ok, err
 	}
-	return canonicalContentHash(body), true, nil
+	return CanonicalContentHash(body), true, nil
 }
 
 // ExpectedManagedBlockHash returns the canonical sha256 hash of THIS click version's compile-time
@@ -134,7 +134,7 @@ func ManagedBlockBodyHash(path string) (hash string, ok bool, err error) {
 // It is always computed fresh at call time; nothing about it is ever persisted or cached, so there
 // is no baseline file that can itself drift out of sync with the binary.
 func ExpectedManagedBlockHash() string {
-	return canonicalContentHash(DefaultManagedContent)
+	return CanonicalContentHash(DefaultManagedContent)
 }
 
 func buildManagedBlock(content string) []string {
@@ -284,16 +284,74 @@ func spliceManagedBlock(existing string, block []string) (result string, changed
 // removeManagedBlock strips the first well-formed marker pair (and everything between, inclusive)
 // from existing. changed is false when no such pair was found, so callers can treat it as a
 // true no-op.
+//
+// This implementation performs raw byte-span removal to preserve line endings, whitespace,
+// and trailing-newline state exactly. It builds a line index of (logicalText, rawStart, rawEnd)
+// where rawEnd includes the line terminator, then passes the logical texts to findMarkers,
+// and splices out exactly the bytes from rawStart of the begin-marker line through rawEnd of
+// the end-marker line (or through EOF if the end-marker line has no terminator).
 func removeManagedBlock(existing string) (result string, changed bool) {
-	lines := crlfAwareSplitLines(existing)
-	begin, end := findMarkers(lines)
+	// Build line index: each entry is (logical text, raw start, raw end including terminator)
+	type line struct {
+		logical string // text without trailing \r
+		start   int    // raw byte offset where this line starts
+		end     int    // raw byte offset where this line ends (includes \n or \r\n, or == len(existing) for EOF)
+	}
+
+	lines := make([]line, 0)
+	i := 0
+
+	for i < len(existing) {
+		lineStart := i
+
+		// Find the end of this line
+		for i < len(existing) {
+			if existing[i] == '\n' {
+				i++
+				break
+			}
+			if existing[i] == '\r' && i+1 < len(existing) && existing[i+1] == '\n' {
+				i += 2
+				break
+			}
+			i++
+		}
+
+		// Extract logical text (without line terminator)
+		lineEnd := i
+		logical := existing[lineStart:lineEnd]
+		// Strip CRLF or LF terminator to get logical text for marker matching
+		if len(logical) >= 2 && logical[len(logical)-2:] == "\r\n" {
+			logical = logical[:len(logical)-2]
+		} else if len(logical) >= 1 && logical[len(logical)-1] == '\n' {
+			logical = logical[:len(logical)-1]
+		}
+
+		lines = append(lines, line{
+			logical: logical,
+			start:   lineStart,
+			end:     lineEnd,
+		})
+	}
+
+	// Build logical text slice for findMarkers
+	logicalLines := make([]string, len(lines))
+	for i, l := range lines {
+		logicalLines[i] = l.logical
+	}
+
+	// Find markers in logical text
+	begin, end := findMarkers(logicalLines)
 	if begin == -1 || end == -1 {
 		return existing, false
 	}
-	newLines := make([]string, 0, len(lines)-(end-begin+1))
-	newLines = append(newLines, lines[:begin]...)
-	newLines = append(newLines, lines[end+1:]...)
-	return joinWithLineEnding(newLines, detectLineEnding(existing)), true
+
+	// Splice out exactly the bytes from rawStart of begin-marker line through rawEnd of end-marker line
+	beginRawStart := lines[begin].start
+	endRawEnd := lines[end].end
+
+	result = existing[:beginRawStart] + existing[endRawEnd:]
+	return result, true
 }
 
 func equalLines(a, b []string) bool {

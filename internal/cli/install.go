@@ -139,6 +139,14 @@ func runInstall(cmd *cobra.Command) error {
 		fmt.Fprintln(out, r.Info("Instalación cancelada."))
 		return nil
 	}
+
+	// Arm deferred post-run snapshot recording (only when proceed=true)
+	defer func() {
+		if recordErr := recordSnapshotPostRunFunc(cfg); recordErr != nil {
+			fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo registrar el estado posterior a la ejecución para rollback: %v", recordErr)))
+		}
+	}()
+
 	if err := installer.SaveTargetSelection(cfg, selection); err != nil {
 		return err
 	}

@@ -1,0 +1,78 @@
+package installer
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+// RecordSnapshotPostRun records post-run content hashes in the active snapshot manifest.
+// It reads the current content of each snapshotted file, computes hashes, and atomically
+// updates the manifest file only. Backup files are never touched, and no new snapshot
+// generation directory is created.
+//
+// For entries that Existed at snapshot time AND are still present now, it sets
+// ExpectedPostRunHash to the canonical hash of the current raw content. If the entry's
+// DriftPolicy is DriftPolicyManagedContentVeto, it also sets ExpectedPostRunManagedHash
+// using the appropriate projection (markdown for .md files, settings for settings.json).
+//
+// Entries that did not exist at snapshot time (Existed=false) are skipped outright — there
+// is no pre-run baseline to record a post-run counterpart against. For entries that DID
+// exist at snapshot time but are absent now, both post-run fields remain unset.
+//
+// On any read or write failure, it returns an error — the caller is responsible for
+// treating this as non-fatal (e.g., converting to a warning).
+func RecordSnapshotPostRun(cfg Config) error {
+	// Load the active manifest
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		return fmt.Errorf("installer: load manifest for post-run recording: %w", err)
+	}
+
+	// For each entry, record the current content hashes
+	for i := range manifest.Entries {
+		entry := &manifest.Entries[i]
+
+		// Skip entries that didn't exist at snapshot time
+		if !entry.Existed {
+			continue
+		}
+
+		// Read the current content
+		currentData, err := os.ReadFile(entry.OriginalPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// File no longer exists - leave post fields unset and continue
+				continue
+			}
+			return fmt.Errorf("installer: read %s for post-run recording: %w", entry.OriginalPath, err)
+		}
+
+		// Set ExpectedPostRunHash for all present files
+		entry.ExpectedPostRunHash = CanonicalContentHash(string(currentData))
+
+		// For managed-content-veto entries, also set ExpectedPostRunManagedHash — via the SAME
+		// file-type dispatch PrepareRestore's classifyEntryDrift uses (managedProjectionForEntry,
+		// snapshot_restore.go), so what gets recorded here and what gets compared there can never
+		// silently diverge into two independent implementations of the same decision.
+		if entry.DriftPolicy == DriftPolicyManagedContentVeto {
+			if managedHash := managedProjectionForEntry(*entry, string(currentData)); managedHash != "" {
+				entry.ExpectedPostRunManagedHash = managedHash
+			}
+		}
+	}
+
+	// Atomically rewrite only the manifest file
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("installer: marshal post-run manifest: %w", err)
+	}
+	manifestData = append(manifestData, '\n')
+
+	manifestPath := snapshotManifestPath(cfg)
+	if err := atomicWriteFile(manifestPath, manifestData, 0o600); err != nil {
+		return fmt.Errorf("installer: write post-run manifest: %w", err)
+	}
+
+	return nil
+}
