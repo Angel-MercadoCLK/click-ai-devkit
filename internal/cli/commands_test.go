@@ -1895,8 +1895,8 @@ func TestUpdateCommand_TakesRunStartSnapshotBeforeWrites(t *testing.T) {
 
 // TestTestCommandRunner_writeSettings_PreservesForeignKeys proves that the fake claude
 // CLI double (testCommandRunner.writeSettings) preserves unrelated top-level keys when
-// writing settings.json. This is RED against the current wholesale-write implementation
-// and will pass after the merge fix.
+// writing settings.json — a merge fix (teardown-rollback-hardening) replaced the
+// double's original wholesale-write behavior, which used to destroy them.
 func TestTestCommandRunner_writeSettings_PreservesForeignKeys(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)

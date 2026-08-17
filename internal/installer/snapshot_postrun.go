@@ -11,12 +11,14 @@ import (
 // updates the manifest file only. Backup files are never touched, and no new snapshot
 // generation directory is created.
 //
-// For entries that currently exist, it sets ExpectedPostRunHash to the canonical hash
-// of the current raw content. If the entry's DriftPolicy is DriftPolicyManagedContentVeto,
-// it also sets ExpectedPostRunManagedHash using the appropriate projection (markdown
-// for .md files, settings for settings.json).
+// For entries that Existed at snapshot time AND are still present now, it sets
+// ExpectedPostRunHash to the canonical hash of the current raw content. If the entry's
+// DriftPolicy is DriftPolicyManagedContentVeto, it also sets ExpectedPostRunManagedHash
+// using the appropriate projection (markdown for .md files, settings for settings.json).
 //
-// For entries that are currently absent, both post-run fields remain unset.
+// Entries that did not exist at snapshot time (Existed=false) are skipped outright — there
+// is no pre-run baseline to record a post-run counterpart against. For entries that DID
+// exist at snapshot time but are absent now, both post-run fields remain unset.
 //
 // On any read or write failure, it returns an error — the caller is responsible for
 // treating this as non-fatal (e.g., converting to a warning).
