@@ -283,35 +283,68 @@ func TestFetchLatest_BodyReadErrorPropagates(t *testing.T) {
 }
 
 func TestFetchLatest_AlwaysClosesBody(t *testing.T) {
-	fake := &fakeRoundTripper{
-		responseCode: 200,
-	}
-
-	// Override the body to track Close() calls
-	closeTracker := &closeTrackingReader{
-		ReadCloser: io.NopCloser(strings.NewReader(`{"tag_name":"v0.5.0"}`)),
-		onClose: func() {
-			// Successfully closed
-		},
-	}
-	fake.bodyToRead = closeTracker
-
-	client := &http.Client{
-		Transport: fake,
-		Timeout:   2 * time.Second,
-	}
-
 	// Success case - body should be closed
-	_, err := fetchLatest(client, "http://fake.example", "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	{
+		closeCalled := false
+		fake := &fakeRoundTripper{
+			responseCode: 200,
+		}
+
+		// Override the body to track Close() calls
+		closeTracker := &closeTrackingReader{
+			ReadCloser: io.NopCloser(strings.NewReader(`{"tag_name":"v0.5.0"}`)),
+			onClose: func() {
+				closeCalled = true
+			},
+		}
+		fake.bodyToRead = closeTracker
+
+		client := &http.Client{
+			Transport: fake,
+			Timeout:   2 * time.Second,
+		}
+
+		_, err := fetchLatest(client, "http://fake.example", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Assert the body was closed
+		if !closeCalled {
+			t.Error("body was not closed in success case")
+		}
 	}
 
-	// Error case - body should still be closed
-	fake.responseErr = io.EOF
-	_, err = fetchLatest(client, "http://fake.example", "")
-	if err == nil {
-		t.Fatal("expected error")
+	// Error case - non-2xx status code (body should still be closed)
+	{
+		closeCalled := false
+		fake := &fakeRoundTripper{
+			responseCode: 404, // Non-2xx status
+		}
+
+		// Override the body to track Close() calls
+		closeTracker := &closeTrackingReader{
+			ReadCloser: io.NopCloser(strings.NewReader(`{"tag_name":"v0.5.0"}`)),
+			onClose: func() {
+				closeCalled = true
+			},
+		}
+		fake.bodyToRead = closeTracker
+
+		client := &http.Client{
+			Transport: fake,
+			Timeout:   2 * time.Second,
+		}
+
+		_, err := fetchLatest(client, "http://fake.example", "")
+		if err == nil {
+			t.Fatal("expected error for 404 status")
+		}
+
+		// Assert the body was closed even when status code is an error
+		if !closeCalled {
+			t.Error("body was not closed in non-2xx status error case")
+		}
 	}
 }
 
