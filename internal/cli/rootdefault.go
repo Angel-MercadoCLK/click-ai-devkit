@@ -42,7 +42,6 @@ func runInteractiveRoot(cmd *cobra.Command, launchMenu func() (string, error), d
 		latest := normalizeV(notice.Latest)
 		current := normalizeV(notice.Current)
 
-		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, fmt.Sprintf("Hay una nueva versión de click disponible: %s (tienes %s).", latest, current))
 		fmt.Fprintln(out, "Se ejecutará `click update` para actualizar.")
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/menu"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/selfupdate"
 )
 
 // --- interactive() gate: every branch that must resolve to false (safe, non-hanging). ---
@@ -447,6 +449,249 @@ func TestRunMenuLoop_EmptyChosenReturnsNil(t *testing.T) {
 	}
 	if dispatchCalls != 0 {
 		t.Fatalf("dispatchFn called %d times, want 0 (empty Chosen means nothing to dispatch)", dispatchCalls)
+	}
+}
+
+func TestRunInteractiveRoot_CheckRunsBeforeFirstMenuLaunch(t *testing.T) {
+	cmd := &cobra.Command{Version: "0.4.0"}
+	var out bytes.Buffer
+	var in bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetIn(&in)
+
+	// Track if checkForUpdate was called
+	checkCalled := false
+	originalCheckForUpdate := checkForUpdate
+	defer func() { checkForUpdate = originalCheckForUpdate }()
+	checkForUpdate = func(current string) (selfupdate.Notice, bool) {
+		checkCalled = true
+		return selfupdate.Notice{}, false // No update available
+	}
+
+	launchMenuCalled := false
+	launchMenu := func() (string, error) {
+		launchMenuCalled = true
+		if !checkCalled {
+			t.Error("launchMenu called before checkForUpdate")
+		}
+		return menu.ActionQuit, nil
+	}
+	dispatchFn := func(args []string) error { return nil }
+
+	err := runInteractiveRoot(cmd, launchMenu, dispatchFn)
+	if err != nil {
+		t.Fatalf("runInteractiveRoot() error = %v, want nil", err)
+	}
+
+	if !checkCalled {
+		t.Error("checkForUpdate was not called")
+	}
+	if !launchMenuCalled {
+		t.Error("launchMenu was not called")
+	}
+}
+
+func TestRunInteractiveRoot_NoNoticeGoesStraightToMenu(t *testing.T) {
+	cmd := &cobra.Command{Version: "0.4.0"}
+	var out bytes.Buffer
+	var in bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetIn(&in)
+
+	// Stub checkForUpdate to return no notice
+	originalCheckForUpdate := checkForUpdate
+	defer func() { checkForUpdate = originalCheckForUpdate }()
+	checkForUpdate = func(current string) (selfupdate.Notice, bool) {
+		return selfupdate.Notice{}, false
+	}
+
+	launchMenuCalled := false
+	launchMenu := func() (string, error) {
+		launchMenuCalled = true
+		return menu.ActionQuit, nil
+	}
+	dispatchCalled := false
+	dispatchFn := func(args []string) error {
+		dispatchCalled = true
+		return nil
+	}
+
+	err := runInteractiveRoot(cmd, launchMenu, dispatchFn)
+	if err != nil {
+		t.Fatalf("runInteractiveRoot() error = %v, want nil", err)
+	}
+
+	if out.Len() != 0 {
+		t.Errorf("expected no output when no update available, got: %q", out.String())
+	}
+	if !launchMenuCalled {
+		t.Error("launchMenu was not called when no update available")
+	}
+	if dispatchCalled {
+		t.Error("dispatchFn should not be called when no update available")
+	}
+}
+
+func TestRunInteractiveRoot_NoticeOutputExact(t *testing.T) {
+	cmd := &cobra.Command{Version: "0.4.0"}
+	var out bytes.Buffer
+	// Feed 'n' to decline the update
+	in := bytes.NewBufferString("n\n")
+	cmd.SetOut(&out)
+	cmd.SetIn(in)
+
+	// Stub checkForUpdate to return a notice
+	originalCheckForUpdate := checkForUpdate
+	defer func() { checkForUpdate = originalCheckForUpdate }()
+	checkForUpdate = func(current string) (selfupdate.Notice, bool) {
+		return selfupdate.Notice{Latest: "v0.5.0", Current: "0.4.0"}, true
+	}
+
+	launchMenuCalled := false
+	launchMenu := func() (string, error) {
+		launchMenuCalled = true
+		return menu.ActionQuit, nil
+	}
+	dispatchFn := func(args []string) error { return nil }
+
+	err := runInteractiveRoot(cmd, launchMenu, dispatchFn)
+	if err != nil {
+		t.Fatalf("runInteractiveRoot() error = %v, want nil", err)
+	}
+
+	output := out.String()
+	// Assert exact output: notice lines, no leading blank line, then confirmProceed prompt
+	expectedPrefix := "Hay una nueva versión de click disponible: v0.5.0 (tienes v0.4.0).\n" +
+		"Se ejecutará `click update` para actualizar.\n" +
+		"[i] ¿Continuar? [y/N]: "
+	if !strings.HasPrefix(output, expectedPrefix) {
+		t.Errorf("output does not match expected prefix\nGot: %q\nWant prefix: %q", output, expectedPrefix)
+	}
+
+	// Also assert there's NO leading blank line (this pins the Defect 3 fix)
+	if strings.HasPrefix(output, "\n") {
+		t.Error("output should not start with a blank line")
+	}
+
+	if !launchMenuCalled {
+		t.Error("launchMenu should be called after declining update")
+	}
+}
+
+func TestRunInteractiveRoot_AcceptDispatchesExactlyUpdate(t *testing.T) {
+	cmd := &cobra.Command{Version: "0.4.0"}
+	var out bytes.Buffer
+	// Feed 'y' to accept the update
+	in := bytes.NewBufferString("y\n")
+	cmd.SetOut(&out)
+	cmd.SetIn(in)
+
+	// Stub checkForUpdate to return a notice
+	originalCheckForUpdate := checkForUpdate
+	defer func() { checkForUpdate = originalCheckForUpdate }()
+	checkForUpdate = func(current string) (selfupdate.Notice, bool) {
+		return selfupdate.Notice{Latest: "v0.5.0", Current: "0.4.0"}, true
+	}
+
+	launchMenuCalled := false
+	launchMenu := func() (string, error) {
+		launchMenuCalled = true
+		return menu.ActionQuit, nil
+	}
+
+	var dispatchedArgs []string
+	dispatchFn := func(args []string) error {
+		dispatchedArgs = args
+		return nil
+	}
+
+	err := runInteractiveRoot(cmd, launchMenu, dispatchFn)
+	if err != nil {
+		t.Fatalf("runInteractiveRoot() error = %v, want nil", err)
+	}
+
+	// Assert dispatchFn was called with EXACTLY ["update"]
+	if !reflect.DeepEqual(dispatchedArgs, []string{"update"}) {
+		t.Errorf("dispatchFn called with %v, want exactly [update]", dispatchedArgs)
+	}
+
+	if !launchMenuCalled {
+		t.Error("launchMenu should be called after dispatching update")
+	}
+}
+
+func TestRunInteractiveRoot_DeclineVariantsAreNoOps(t *testing.T) {
+	declineInputs := []string{"n\n", "\n", ""} // 'n', bare Enter, EOF
+
+	for _, input := range declineInputs {
+		t.Run("input_"+strings.TrimSpace(strings.ReplaceAll(input, "\n", "\\n")), func(t *testing.T) {
+			cmd := &cobra.Command{Version: "0.4.0"}
+			var out bytes.Buffer
+			in := bytes.NewBufferString(input)
+			cmd.SetOut(&out)
+			cmd.SetIn(in)
+
+			// Stub checkForUpdate to return a notice
+			originalCheckForUpdate := checkForUpdate
+			defer func() { checkForUpdate = originalCheckForUpdate }()
+			checkForUpdate = func(current string) (selfupdate.Notice, bool) {
+				return selfupdate.Notice{Latest: "v0.5.0", Current: "0.4.0"}, true
+			}
+
+			launchMenuCalled := false
+			launchMenu := func() (string, error) {
+				launchMenuCalled = true
+				return menu.ActionQuit, nil
+			}
+			dispatchCalled := false
+			dispatchFn := func(args []string) error {
+				dispatchCalled = true
+				return nil
+			}
+
+			err := runInteractiveRoot(cmd, launchMenu, dispatchFn)
+			if err != nil {
+				t.Fatalf("runInteractiveRoot() error = %v, want nil", err)
+			}
+
+			if dispatchCalled {
+				t.Error("dispatchFn should not be called when declining update")
+			}
+			if !launchMenuCalled {
+				t.Error("launchMenu should be called after declining update")
+			}
+		})
+	}
+}
+
+func TestRunInteractiveRoot_NoticeOutputHasNoLeadingBlankLine(t *testing.T) {
+	// RED: This test should fail because current code has fmt.Fprintln(out, "") before the notice
+	cmd := &cobra.Command{Version: "0.4.0"}
+	var out bytes.Buffer
+	var in bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetIn(&in)
+
+	// Stub checkForUpdate to return a notice
+	originalCheckForUpdate := checkForUpdate
+	defer func() { checkForUpdate = originalCheckForUpdate }()
+	checkForUpdate = func(current string) (selfupdate.Notice, bool) {
+		return selfupdate.Notice{Latest: "v0.5.0", Current: "0.4.0"}, true
+	}
+
+	// Stub launchMenu and dispatchFn
+	launchMenu := func() (string, error) { return menu.ActionQuit, nil }
+	dispatchFn := func(args []string) error { return nil }
+
+	err := runInteractiveRoot(cmd, launchMenu, dispatchFn)
+	if err != nil {
+		t.Fatalf("runInteractiveRoot() error = %v, want nil", err)
+	}
+
+	output := out.String()
+	// The output should start with the notice line, NOT with a blank line
+	if !strings.HasPrefix(output, "Hay una nueva versión de click disponible:") {
+		t.Errorf("output should start with notice text, got: %q\n(red: current code has leading blank line)", output)
 	}
 }
 
