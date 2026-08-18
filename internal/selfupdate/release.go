@@ -33,6 +33,11 @@ func githubToken() string {
 	return os.Getenv("GH_TOKEN")
 }
 
+// maxResponseBytes caps how much of a release response is read into memory.
+// GitHub's real payload is a few kilobytes; the cap only exists so a hostile,
+// compromised or proxy-injected endpoint cannot force an unbounded read.
+const maxResponseBytes = 1 << 20 // 1 MiB
+
 // releaseResponse is the minimal JSON structure we care about.
 type releaseResponse struct {
 	TagName string `json:"tag_name"`
@@ -61,7 +66,7 @@ func fetchLatest(client *http.Client, endpoint, token string) (string, error) {
 		return "", fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return "", fmt.Errorf("read body: %w", err)
 	}

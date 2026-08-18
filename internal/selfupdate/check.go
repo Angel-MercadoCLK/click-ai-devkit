@@ -17,6 +17,7 @@ package selfupdate
 
 import (
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
@@ -27,9 +28,6 @@ type Notice struct {
 	Latest  string
 	Current string
 }
-
-// checkForUpdate is a seam for testing.
-var checkForUpdate = Check
 
 // resolveStateHome is a seam for testing.
 var resolveStateHome = installer.ResolveClickStateHome
@@ -54,65 +52,63 @@ func Check(current string) (Notice, bool) {
 		return Notice{}, false
 	}
 
-	// Skip non-comparable versions
-	_, comparable := compareVersions(current, current)
-	if !comparable {
+	// Skip non-comparable versions (e.g. the "dev" default of a local build).
+	// Comparing current against itself is the cheapest way to ask the
+	// comparator whether it can parse this version at all.
+	if _, isComparable := compareVersions(current, current); !isComparable {
 		return Notice{}, false
 	}
 
 	attemptTime := now()
 
-	// Resolve cache file path
-	stateHome, err := resolveStateHome()
-	if err != nil {
-		// State home resolution failure: still attempt network check
-		return attemptNetworkCheck(current, attemptTime)
+	// Resolve the cache file path. An empty path means persistence is
+	// impossible (no resolvable state home): the check still runs, it simply
+	// cannot be cached. It must never fall back to a path built from an empty
+	// root, which would resolve to the filesystem root.
+	var cachePath string
+	if stateHome, err := resolveStateHome(); err == nil {
+		cachePath = filepath.Join(stateHome, cacheFile)
 	}
 
-	cachePath := stateHome + "/" + cacheFile
-
-	// Try to read existing cache
-	entry, err := readCache(cachePath)
-	if err == nil && !entry.CheckedAt.IsZero() {
-		// Within TTL? Use cache without network call
-		if attemptTime.Sub(entry.CheckedAt) < cacheTTL {
-			if entry.Latest != "" {
-				order, comp := compareVersions(entry.Latest, current)
-				if comp && order > 0 {
-					return Notice{
-						Latest:  entry.Latest,
-						Current: current,
-					}, true
-				}
+	// Read the cache once and reuse it both for the TTL decision and, on a
+	// miss, to preserve the last known tag across a failed refresh.
+	var cachedLatest string
+	if cachePath != "" {
+		if entry, err := readCache(cachePath); err == nil && !entry.CheckedAt.IsZero() {
+			cachedLatest = entry.Latest
+			if attemptTime.Sub(entry.CheckedAt) < cacheTTL {
+				return noticeIfNewer(entry.Latest, current)
 			}
-			return Notice{}, false
 		}
 	}
 
 	// Cache miss or expired: fetch from network
-	return attemptNetworkCheck(current, attemptTime)
+	return attemptNetworkCheck(current, attemptTime, cachePath, cachedLatest)
+}
+
+// noticeIfNewer reports an update notice when latest is a comparable version
+// strictly greater than current. An empty or non-comparable latest is silently
+// treated as "nothing to report".
+func noticeIfNewer(latest, current string) (Notice, bool) {
+	if latest == "" {
+		return Notice{}, false
+	}
+	order, comp := compareVersions(latest, current)
+	if comp && order > 0 {
+		return Notice{Latest: latest, Current: current}, true
+	}
+	return Notice{}, false
 }
 
 // attemptNetworkCheck tries to fetch the latest release from GitHub.
 // Returns a Notice if an update is available, otherwise no notice.
-// All failures are silent and will update the cache checked_at time.
-func attemptNetworkCheck(current string, attemptTime time.Time) (Notice, bool) {
-	// Resolve cache file path
-	stateHome, err := resolveStateHome()
-	cachePath := stateHome + "/" + cacheFile
-
-	// Read existing cache to potentially preserve Latest on failure
-	var cachedLatest string
-	if err == nil {
-		if entry, err := readCache(cachePath); err == nil {
-			cachedLatest = entry.Latest
-		}
-	}
-
-	// Fetch latest release
-	client := newHTTPClient()
-	token := githubToken()
-	latest, err := fetchLatest(client, latestReleaseURL, token)
+// All failures are silent. Every attempt — success or failure — records
+// checked_at so an unreachable network is retried at most once per TTL rather
+// than on every launch. cachePath may be empty, in which case nothing is
+// persisted at all. cachedLatest is the last known tag, preserved across a
+// failed refresh.
+func attemptNetworkCheck(current string, attemptTime time.Time, cachePath, cachedLatest string) (Notice, bool) {
+	latest, err := fetchLatest(newHTTPClient(), latestReleaseURL, githubToken())
 
 	entry := cacheEntry{
 		CheckedAt: attemptTime,
@@ -121,35 +117,35 @@ func attemptNetworkCheck(current string, attemptTime time.Time) (Notice, bool) {
 
 	if err != nil {
 		// Network or decode failure: update checked_at but keep old Latest
-		writeCacheSilent(cachePath, entry)
+		persist(cachePath, entry)
 		return Notice{}, false
 	}
 
 	// Validate fetched tag is comparable
-	_, comp := compareVersions(latest, current)
-	if !comp {
+	if _, comp := compareVersions(latest, current); !comp {
 		// Fetched tag is non-comparable: don't update Latest, but update checked_at
-		writeCacheSilent(cachePath, entry)
+		persist(cachePath, entry)
 		return Notice{}, false
 	}
 
 	// Success: update Latest
 	entry.Latest = latest
-	writeCacheSilent(cachePath, entry)
+	persist(cachePath, entry)
 
-	// Check if latest > current
-	order, _ := compareVersions(latest, current)
-	if order > 0 {
-		return Notice{
-			Latest:  latest,
-			Current: current,
-		}, true
-	}
-
-	return Notice{}, false
+	return noticeIfNewer(latest, current)
 }
 
-// writeCacheSilent writes the cache, ignoring any errors.
-func writeCacheSilent(path string, entry cacheEntry) {
+// persist writes the cache entry unless no cache path could be resolved.
+func persist(cachePath string, entry cacheEntry) {
+	if cachePath == "" {
+		return
+	}
+	writeCacheSilent(cachePath, entry)
+}
+
+// writeCacheSilent writes the cache, ignoring any errors. It is a package var
+// (like now, resolveStateHome and newHTTPClient) so tests can observe whether a
+// write was attempted at all, and with which path.
+var writeCacheSilent = func(path string, entry cacheEntry) {
 	_ = writeCache(path, entry)
 }
