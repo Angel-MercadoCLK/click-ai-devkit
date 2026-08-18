@@ -6,7 +6,6 @@ import (
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/agentbuilder"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
@@ -342,23 +341,24 @@ func (m AgentBuilderModel) updatePlacement(keyMsg tea.KeyMsg) (tea.Model, tea.Cm
 func (m AgentBuilderModel) View() string {
 	switch m.Step {
 	case StepEngine:
-		return m.renderList("Elija el motor del agente", engineLabels(m.engines), "↑/↓ mover · enter confirmar · q/esc cancelar")
+		return m.renderList("MOTOR DEL AGENTE", engineLabels(m.engines), agentBuilderChooseHints)
 	case StepDescription:
-		return renderInputWithError("Describa el agente que quiere crear", m.input, m.PreviewError)
+		return renderInputWithError("DESCRIPCIÓN DEL AGENTE", m.input, m.PreviewError)
 	case StepSDDMode:
-		return m.renderList("Elija la integración SDD", sddModeLabels(), "↑/↓ mover · enter confirmar · q/esc cancelar")
+		return m.renderList("INTEGRACIÓN SDD", sddModeLabels(), agentBuilderChooseHints)
 	case StepPhase:
-		return m.renderList("Elija la fase SDD que este agente va a apoyar", phaseLabelsForAgentBuilder(), "↑/↓ mover · enter confirmar · q/esc cancelar")
+		return m.renderList("FASE SDD QUE APOYA", phaseLabelsForAgentBuilder(), agentBuilderChooseHints)
 	case StepThemes:
 		prompt := agentBuilderThemePrompts[m.ThemeIndex]
 		return renderInputWithError(fmt.Sprintf("%d/%d · %s", m.ThemeIndex+1, len(agentBuilderThemePrompts), prompt.title), m.input, m.PreviewError)
 	case StepPreview:
 		if m.EditingPreview {
-			return renderInput("Edite el Markdown final", m.input)
+			return renderInput("MARKDOWN FINAL", m.input)
 		}
 		return m.renderPreview()
 	case StepPlacement:
-		return m.renderList("Elija dónde instalar el agente", placementLabels(), "↑/↓ mover · enter instalar · q/esc cancelar")
+		return m.renderList("UBICACIÓN DEL AGENTE", placementLabels(),
+			Hints("↑/↓", "mover", "enter", "instalar", "q · esc", "cancelar"))
 	case StepDone:
 		return "Agente confirmado"
 	default:
@@ -366,45 +366,39 @@ func (m AgentBuilderModel) View() string {
 	}
 }
 
-func (m AgentBuilderModel) renderList(title string, rows []string, help string) string {
+// agentBuilderChooseHints is the key help shared by every plain "pick one" step of the wizard.
+var agentBuilderChooseHints = Hints("↑/↓", "mover", "enter", "confirmar", "q · esc", "cancelar")
+
+func (m AgentBuilderModel) renderList(caption string, rows []string, hints string) string {
 	var b strings.Builder
-	b.WriteString(styleRenderer.NewStyle().Bold(true).Render(title))
-	b.WriteString("\n\n")
+	rendered := make([]string, 0, len(rows))
 	for i, row := range rows {
-		marker := "  "
-		line := marker + row
-		if i == m.cursor {
-			line = "> " + row
-			line = styleRenderer.NewStyle().Foreground(lipgloss.Color("6")).Render(line)
-		}
-		b.WriteString(line)
-		b.WriteString("\n")
+		rendered = append(rendered, Row(i == m.cursor, row))
 	}
-	b.WriteString("\n")
-	b.WriteString(styleRenderer.NewStyle().Faint(true).Render(help))
+	b.WriteString(Screen(caption, rendered))
+	b.WriteString("\n\n")
+	b.WriteString(hints)
 	return b.String()
 }
 
 func (m AgentBuilderModel) renderPreview() string {
 	var b strings.Builder
-	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Revise el agente antes de instalar"))
-	b.WriteString("\n\n")
+	b.WriteString(Heading("REVISIÓN DEL AGENTE"))
+	b.WriteString("\n")
 	if m.PreviewError != "" {
-		b.WriteString(styleRenderer.NewStyle().Foreground(lipgloss.Color("9")).Render(m.PreviewError))
+		b.WriteString(Danger(m.PreviewError))
 		b.WriteString("\n\n")
 	}
-	b.WriteString(m.PreviewContent)
-	b.WriteString("\n")
+	b.WriteString(Panel(m.PreviewContent))
+	b.WriteString("\n\n")
+
+	actions := make([]string, 0, len(agentBuilderPreviewActions))
 	for i, action := range agentBuilderPreviewActions {
-		line := "  " + action
-		if i == m.cursor {
-			line = styleRenderer.NewStyle().Foreground(lipgloss.Color("6")).Render("> " + action)
-		}
-		b.WriteString(line)
-		b.WriteString("\n")
+		actions = append(actions, Row(i == m.cursor, action))
 	}
-	b.WriteString("\n")
-	b.WriteString(styleRenderer.NewStyle().Faint(true).Render("↑/↓ mover · enter elegir · q/esc cancelar"))
+	b.WriteString(strings.Join(actions, "\n"))
+	b.WriteString("\n\n")
+	b.WriteString(Hints("↑/↓", "mover", "enter", "elegir", "q · esc", "cancelar"))
 	return b.String()
 }
 
@@ -412,17 +406,17 @@ func renderInput(title, value string) string {
 	return renderInputWithError(title, value, "")
 }
 
-func renderInputWithError(title, value, errorMessage string) string {
+func renderInputWithError(caption, value, errorMessage string) string {
 	var b strings.Builder
-	b.WriteString(styleRenderer.NewStyle().Bold(true).Render(title))
-	b.WriteString("\n\n")
+	b.WriteString(Heading(caption))
+	b.WriteString("\n")
 	if errorMessage != "" {
-		b.WriteString(styleRenderer.NewStyle().Foreground(lipgloss.Color("9")).Render(errorMessage))
+		b.WriteString(Danger(errorMessage))
 		b.WriteString("\n\n")
 	}
-	b.WriteString(value)
+	b.WriteString(Panel(value))
 	b.WriteString("\n\n")
-	b.WriteString(styleRenderer.NewStyle().Faint(true).Render("escriba su respuesta · enter continuar · esc cancelar"))
+	b.WriteString(Hints("escriba su respuesta", "", "enter", "continuar", "esc", "cancelar"))
 	return b.String()
 }
 

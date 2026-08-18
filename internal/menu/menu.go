@@ -84,16 +84,20 @@ const comingSoonMsg = "próximamente — todavía no implementado"
 // cyan→blue ramp in internal/ui; both share the same raw glyphs via ui.BannerArt().
 var wordmarkRamp = []string{"#ffffff", "#ffe2c4", "#ffc48c", "#ffa654", "#ff8c2e", "#ff7a1a"}
 
+// The shared roles come from internal/ui's brand palette rather than being redeclared here, so
+// this screen and the selection screens cannot drift apart. Only the spark-logo colors, which
+// nothing else draws, stay local.
 const (
-	menuOrange = "#ff8c2e" // accent: spark core, active row, pointer, footer keys
-	menuRay    = "#b5701f" // spark rays
-	menuWhite  = "#ffffff" // spark companion star
-	menuDust   = "#6b5138" // spark dust dot
-	menuLabel  = "#d3dae2" // inactive item label
-	menuNum    = "#4b5663" // item number
-	menuBorder = "#3d4753" // menu box border
-	menuTitle  = "#b98a5a" // "MENÚ" caption
-	menuDim    = "#5a6470" // tagline, footer text, coming-soon notice
+	menuOrange = ui.BrandAccent // accent: spark core, active row, pointer, footer keys
+	menuLabel  = ui.BrandLabel  // inactive item label
+	menuNum    = ui.BrandMuted  // item number
+	menuBorder = ui.BrandBorder // menu box border
+	menuTitle  = ui.BrandTitle  // "MENÚ" caption
+	menuDim    = ui.BrandDim    // tagline, footer text, coming-soon notice
+
+	menuRay   = "#b5701f" // spark rays
+	menuWhite = "#ffffff" // spark companion star
+	menuDust  = "#6b5138" // spark dust dot
 )
 
 // sparkLogo is the AI-spark brand mark shown to the left of the wordmark: a four-point star with

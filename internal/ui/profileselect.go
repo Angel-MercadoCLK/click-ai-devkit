@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
@@ -111,33 +110,25 @@ func (m *ProfileSelectModel) moveCursor(delta int) {
 // description, plus a short Spanish key-help line matching modelselect.go's own.
 func (m ProfileSelectModel) View() string {
 	var b strings.Builder
-	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Elija un perfil de orquestación para click-sdd"))
-	b.WriteString("\n\n")
 
+	labels := make([]string, 0, len(profileSelectNames))
+	for _, name := range profileSelectNames {
+		labels = append(labels, string(name))
+	}
+	width := WidestLabel(labels)
+
+	rows := make([]string, 0, len(profileSelectNames))
 	for i, name := range profileSelectNames {
-		marker := "  "
-		if i == m.Cursor {
-			marker = "> "
-		}
-		line := fmt.Sprintf("%s%-12s %s", marker, name, profileDescriptions[name])
-		if i == m.Cursor {
-			// Real visual weight for the cursor row: the existing cyan (6) foreground stays, plus
-			// a complementing blue (4) background — both already this package's own established
-			// colors (see renderer.go's Step/Info roles), no new hex/color invented.
-			line = styleRenderer.NewStyle().Foreground(lipgloss.Color("6")).Background(lipgloss.Color("4")).Bold(true).Render(line)
-		} else {
-			// Dim every non-selected row so the cursor row reads with real contrast instead of
-			// flat, same-weight text — reuses the Faint(true) convention already used for the
-			// help line below.
-			line = styleRenderer.NewStyle().Faint(true).Render(line)
-		}
-		b.WriteString(line)
-		b.WriteString("\n")
+		rows = append(rows, Row(i == m.Cursor,
+			fmt.Sprintf("%s  %s", PadLabel(string(name), width), profileDescriptions[name])))
 	}
 
-	b.WriteString("\n")
-	b.WriteString(styleRenderer.NewStyle().Faint(true).Render(
-		"↑/↓ mover · enter confirmar (sin cambios = balanced) · q/esc cancelar",
+	b.WriteString(Screen("PERFIL DE ORQUESTACIÓN", rows))
+	b.WriteString("\n\n")
+	b.WriteString(Hints(
+		"↑/↓", "mover",
+		"enter", "confirmar (sin cambios = balanced)",
+		"q · esc", "cancelar",
 	))
 	return b.String()
 }

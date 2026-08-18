@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
@@ -157,19 +156,18 @@ func (m InstallWizardModel) View() string {
 	}
 }
 
-// installWizardChrome renders the shared wizard frame: a "Paso X de N" indicator (styled with the
-// same cyan (color 6) this package already uses for the "Step" role — see renderer.go's Step
-// method — rather than inventing a new color), the active sub-model's own body verbatim, and a
-// wizard-level footer hint appended below the sub-model's own (unmodified) footer line.
+// installWizardChrome renders the shared wizard frame: a "Paso X de N" indicator in the brand
+// accent, the active sub-model's own body verbatim, and a wizard-level footer hint appended below
+// the sub-model's own (unmodified) footer line.
 func installWizardChrome(step int, body, hint string) string {
 	var b strings.Builder
 	indicator := fmt.Sprintf("Paso %d de %d", step, installWizardStepCount)
-	b.WriteString(styleRenderer.NewStyle().Foreground(lipgloss.Color("6")).Bold(true).Render(indicator))
+	b.WriteString(brandStyle(BrandAccent).Bold(true).Render(indicator))
 	b.WriteString("\n\n")
 	b.WriteString(body)
 	if hint != "" {
 		b.WriteString("\n")
-		b.WriteString(styleRenderer.NewStyle().Faint(true).Render(hint))
+		b.WriteString(Note(hint))
 	}
 	return b.String()
 }
