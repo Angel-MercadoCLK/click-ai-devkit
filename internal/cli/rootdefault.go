@@ -25,9 +25,26 @@ var checkForUpdate = func(current string) (selfupdate.Notice, bool) {
 // standing menu and print help instead, without needing to fake a non-TTY environment.
 const noInteractiveFlag = "no-interactive"
 
-// normalizeV strips all leading 'v' characters then prepends exactly one.
+// normalizeV strips all leading 'v' characters, prepends exactly one, and pads
+// 2-component versions to 3 components (e.g., "1.2" → "v1.2.0") per spec R11.
+// For non-standard forms, falls back to single v-prefix behavior.
 func normalizeV(v string) string {
-	return "v" + strings.TrimLeft(v, "v")
+	// Strip all leading 'v' characters
+	stripped := strings.TrimLeft(v, "v")
+
+	// Split on '.' to check component count
+	parts := strings.Split(stripped, ".")
+
+	// If exactly 2 components, pad with ".0" for the missing patch
+	if len(parts) == 2 {
+		// Only pad if both parts are non-empty (defensive)
+		if parts[0] != "" && parts[1] != "" {
+			return "v" + parts[0] + "." + parts[1] + ".0"
+		}
+	}
+
+	// For 3+ components or non-standard forms, just prepend 'v'
+	return "v" + stripped
 }
 
 // runInteractiveRoot handles the interactive menu flow, including update checks.
