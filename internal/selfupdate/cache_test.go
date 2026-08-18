@@ -46,8 +46,8 @@ func TestCache_RoundTrip(t *testing.T) {
 	}
 
 	// Should have snake_case checked_at
-	if contains(jsonStr, `"checked_at"`) {
-		t.Logf("correctly uses snake_case checked_at")
+	if !contains(jsonStr, `"checked_at"`) {
+		t.Errorf("expected snake_case checked_at field in JSON, got: %s", jsonStr)
 	}
 
 	// When Latest is empty, it should be omitted (omitempty)
@@ -206,7 +206,8 @@ func TestWriteCache_FileMode0600(t *testing.T) {
 
 func TestAtomicWriteFile_InjectedWriteErrorLeavesOriginalIntact(t *testing.T) {
 	// Create an original file with known content
-	cacheFile := filepath.Join(t.TempDir(), "cache.json")
+	testDir := t.TempDir()
+	cacheFile := filepath.Join(testDir, "cache.json")
 	originalContent := []byte("original content")
 	err := os.WriteFile(cacheFile, originalContent, 0o600)
 	if err != nil {
@@ -216,7 +217,7 @@ func TestAtomicWriteFile_InjectedWriteErrorLeavesOriginalIntact(t *testing.T) {
 	// Try to write with content that will fail during write
 	// We can't easily inject errors into os.WriteFile, so we test
 	// by using a directory as the path (will fail)
-	badFile := filepath.Join(t.TempDir(), "dir-as-file")
+	badFile := filepath.Join(testDir, "dir-as-file")
 
 	// Create a directory at the path to make it fail
 	os.Mkdir(badFile, 0o755)
@@ -238,7 +239,8 @@ func TestAtomicWriteFile_InjectedWriteErrorLeavesOriginalIntact(t *testing.T) {
 }
 
 func TestAtomicWriteFile_NoTempLeftovers(t *testing.T) {
-	cacheFile := filepath.Join(t.TempDir(), "cache.json")
+	testDir := t.TempDir()
+	cacheFile := filepath.Join(testDir, "cache.json")
 
 	// Successful write
 	entry := cacheEntry{
@@ -251,7 +253,7 @@ func TestAtomicWriteFile_NoTempLeftovers(t *testing.T) {
 	}
 
 	// Check for temp files in the directory
-	entries, err := os.ReadDir(t.TempDir())
+	entries, err := os.ReadDir(testDir)
 	if err != nil {
 		t.Fatalf("read directory: %v", err)
 	}
@@ -264,7 +266,7 @@ func TestAtomicWriteFile_NoTempLeftovers(t *testing.T) {
 	}
 
 	// Failed write (directory as file)
-	badFile := filepath.Join(t.TempDir(), "bad")
+	badFile := filepath.Join(testDir, "bad")
 	os.Mkdir(badFile, 0o755)
 	err = atomicWriteFile(badFile, []byte("content"), 0o600)
 	if err == nil {
@@ -272,7 +274,7 @@ func TestAtomicWriteFile_NoTempLeftovers(t *testing.T) {
 	}
 
 	// Check again for temp files
-	entries, err = os.ReadDir(t.TempDir())
+	entries, err = os.ReadDir(testDir)
 	if err != nil {
 		t.Fatalf("read directory: %v", err)
 	}
