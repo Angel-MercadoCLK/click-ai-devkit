@@ -132,7 +132,7 @@ Se ejecutará `click update` para actualizar.
 ¿Continuar? [y/N]:
 ```
 
-- The cache file lives at `<CLICK_STATE_HOME>/update-check.json` (normally `~/.click/state/update-check.json`).
+- The cache file lives at `<CLICK_STATE_HOME>/update-check.json` (normally `~/.config/click-ai-devkit/update-check.json` on Linux/macOS, `%AppData%\click-ai-devkit\update-check.json` on Windows).
 - Dev builds (`version == "dev"`) never check for updates.
 - Set `CLICK_NO_SELF_UPDATE=1` to disable the check entirely.
 - The check uses GitHub's Releases API with a 2s timeout; `GITHUB_TOKEN` or `GH_TOKEN` can increase rate limits but are never required.
