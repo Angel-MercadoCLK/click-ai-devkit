@@ -140,7 +140,9 @@ func TestFetchLatest_StatusCodes(t *testing.T) {
 		{"201 success", 201, false},
 		{"299 success", 299, false},
 		{"300 redirect error", 300, true},
+		{"403 forbidden", 403, true},
 		{"404 not found", 404, true},
+		{"429 rate limited", 429, true},
 		{"500 server error", 500, true},
 	}
 
