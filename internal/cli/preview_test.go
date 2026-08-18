@@ -342,7 +342,7 @@ func TestConfirmProceed_PrintsPrompt(t *testing.T) {
 // still happens.
 func TestConfirmAndSnapshot_NonInteractive_SkipsPlanAndTakesSnapshotImmediately(t *testing.T) {
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: t.TempDir()}
 	plan := installer.BuildTargetPlan(cfg, installer.TargetSelection{Configured: true, Claude: true}, installer.PlanOptions{})
 	cmd := NewRootCommand()
 	var out bytes.Buffer
@@ -371,7 +371,7 @@ func TestConfirmAndSnapshot_NonInteractive_SkipsPlanAndTakesSnapshotImmediately(
 // scenario: the plan is shown, and confirming "y" takes the snapshot.
 func TestConfirmAndSnapshot_InteractiveConfirm_ShowsPlanAndTakesSnapshot(t *testing.T) {
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: t.TempDir()}
 	plan := installer.BuildTargetPlan(cfg, installer.TargetSelection{Configured: true, Claude: true}, installer.PlanOptions{})
 	cmd := NewRootCommand()
 	cmd.SetIn(strings.NewReader("y\n"))
@@ -401,7 +401,7 @@ func TestConfirmAndSnapshot_InteractiveConfirm_ShowsPlanAndTakesSnapshot(t *test
 // no error, and — critically — no snapshot (the first write in the whole chain) ever happens.
 func TestConfirmAndSnapshot_InteractiveDecline_NoSnapshotTaken(t *testing.T) {
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: t.TempDir()}
 	plan := installer.BuildTargetPlan(cfg, installer.TargetSelection{Configured: true, Claude: true}, installer.PlanOptions{})
 	cmd := NewRootCommand()
 	cmd.SetIn(strings.NewReader("n\n"))

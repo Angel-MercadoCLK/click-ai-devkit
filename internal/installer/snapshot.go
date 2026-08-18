@@ -148,12 +148,48 @@ func snapshotSources(cfg Config) []snapshotSource {
 // snapshotLatestDir is the single-latest-retention snapshot directory (design's "Retention"
 // decision: fixed backups/latest/, overwritten each run — no ring, no history).
 func snapshotLatestDir(cfg Config) string {
-	return filepath.Join(cfg.BackupDir(), "latest")
+	backupDir := cfg.BackupDir()
+	if backupDir == "" {
+		return ""
+	}
+	return filepath.Join(backupDir, "latest")
 }
 
-// snapshotManifestPath is where manifest.json lives inside the latest snapshot directory.
+// snapshotReadDir resolves which snapshot directory to READ from. It is the current location
+// whenever that holds a completed snapshot, and otherwise the legacy ClaudeHome-rooted location
+// from before BackupDir() moved to ClickStateHome — so an install upgraded mid-cycle can still roll
+// back the run it took before upgrading. When neither holds a snapshot it returns the current
+// location, so "nothing to restore" is reported against the place snapshots are actually written.
+//
+// Writes never go through here: snapshotLatestDir is always the current location, which is what
+// makes the legacy fallback read-only and lets the migration actually complete on the next run.
+func snapshotReadDir(cfg Config) string {
+	current := snapshotLatestDir(cfg)
+	if current != "" {
+		if _, err := os.Stat(filepath.Join(current, snapshotManifestName)); err == nil {
+			return current
+		}
+	}
+	legacy := cfg.LegacyBackupDir()
+	if legacy == "" {
+		return current
+	}
+	legacyLatest := filepath.Join(legacy, "latest")
+	if _, err := os.Stat(filepath.Join(legacyLatest, snapshotManifestName)); err == nil {
+		return legacyLatest
+	}
+	return current
+}
+
+// snapshotManifestPath is where manifest.json lives inside the snapshot directory being read.
+// Empty when no snapshot location resolves at all, which os.Stat/os.ReadFile then report as
+// "does not exist" — the correct answer for an installer with no state home configured.
 func snapshotManifestPath(cfg Config) string {
-	return filepath.Join(snapshotLatestDir(cfg), snapshotManifestName)
+	readDir := snapshotReadDir(cfg)
+	if readDir == "" {
+		return ""
+	}
+	return filepath.Join(readDir, snapshotManifestName)
 }
 
 // SnapshotRun takes exactly one run-start snapshot of CLAUDE.md and settings.json, writing it to
@@ -186,6 +222,9 @@ func SnapshotTargetPlan(cfg Config, plan TargetPlan) error {
 
 func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 	backupDir := cfg.BackupDir()
+	if backupDir == "" {
+		return fmt.Errorf("installer: cannot snapshot: no click state home configured")
+	}
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
 		return fmt.Errorf("installer: create backup dir %s: %w", backupDir, err)
 	}

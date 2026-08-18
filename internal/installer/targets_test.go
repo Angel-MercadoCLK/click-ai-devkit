@@ -84,7 +84,7 @@ func TestCodexPath_UsesBinaryLookupSeam(t *testing.T) {
 
 func TestCodexGuidance_IsIdempotentRemovableAndSnapshotRestorable(t *testing.T) {
 	codexHome := t.TempDir()
-	cfg := Config{ClaudeHome: t.TempDir(), CodexHome: codexHome}
+	cfg := Config{ClaudeHome: t.TempDir(), CodexHome: codexHome, ClickStateHome: t.TempDir()}
 	path := cfg.CodexAgentsMDPath()
 	if err := os.WriteFile(path, []byte("user guidance\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestCodexGuidance_IsIdempotentRemovableAndSnapshotRestorable(t *testing.T) 
 }
 
 func TestTargetSelection_IsIncludedInSnapshotAndRestore(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	want := TargetSelection{Configured: true, Claude: true, OpenClaw: false}
 	if err := SaveTargetSelection(cfg, want); err != nil {
 		t.Fatalf("SaveTargetSelection() error = %v", err)

@@ -66,7 +66,13 @@ func runRollback(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	cfg := installer.Config{ClaudeHome: claudeHome}
+	// ClickStateHome roots BackupDir(); ClaudeHome is still needed so the read-through to a
+	// pre-migration snapshot location (LegacyBackupDir) can find one.
+	clickStateHome, err := installer.ResolveClickStateHome()
+	if err != nil {
+		return err
+	}
+	cfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: clickStateHome}
 
 	restorable, err := installer.HasRestorableSnapshot(cfg)
 	if err != nil {
