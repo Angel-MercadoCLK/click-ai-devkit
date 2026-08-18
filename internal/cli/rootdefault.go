@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/selfupdate"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
 
@@ -14,9 +16,74 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// checkForUpdate is a seam for testing.
+var checkForUpdate = func(current string) (selfupdate.Notice, bool) {
+	return selfupdate.Check(current)
+}
+
 // noInteractiveFlag lets a developer/script force bare `click`'s default action to skip the
 // standing menu and print help instead, without needing to fake a non-TTY environment.
 const noInteractiveFlag = "no-interactive"
+
+// normalizeV strips all leading 'v' characters, prepends exactly one, and pads
+// 2-component versions to 3 components (e.g., "1.2" → "v1.2.0") per spec R11.
+// For non-standard forms, falls back to single v-prefix behavior.
+func normalizeV(v string) string {
+	// Strip all leading 'v' characters
+	stripped := strings.TrimLeft(v, "v")
+
+	// Split on '.' to check component count
+	parts := strings.Split(stripped, ".")
+
+	// If exactly 2 components, pad with ".0" for the missing patch
+	if len(parts) == 2 {
+		// Only pad if both parts are non-empty (defensive)
+		if parts[0] != "" && parts[1] != "" {
+			return "v" + parts[0] + "." + parts[1] + ".0"
+		}
+	}
+
+	// For 3+ components or non-standard forms, just prepend 'v'
+	return "v" + stripped
+}
+
+// runInteractiveRoot handles the interactive menu flow, including update checks.
+// It is called after the interactive() gate succeeds.
+func runInteractiveRoot(cmd *cobra.Command, launchMenu func() (string, error), dispatchFn func([]string) error) error {
+	out := cmd.OutOrStdout()
+	in := cmd.InOrStdin()
+
+	// Check for updates (if seam allows)
+	notice, available := checkForUpdate(cmd.Version)
+	if available {
+		latest := normalizeV(notice.Latest)
+		current := normalizeV(notice.Current)
+
+		fmt.Fprintln(out, fmt.Sprintf("Hay una nueva versión de click disponible: %s (tienes %s).", latest, current))
+		fmt.Fprintln(out, "Se ejecutará `click update` para actualizar.")
+
+		// Ask user to proceed
+		proceed, err := confirmProceed(in, out, rendererFor(cmd, out))
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			// User declined, proceed to menu
+			return runMenuLoop(launchMenu, dispatchFn)
+		}
+
+		// User accepted, dispatch update
+		if err := dispatchFn([]string{"update"}); err != nil {
+			return err
+		}
+
+		// After update, launch menu (user may want to continue)
+		return runMenuLoop(launchMenu, dispatchFn)
+	}
+
+	// No update notice, proceed to menu
+	return runMenuLoop(launchMenu, dispatchFn)
+}
 
 // runRootDefault is root's RunE: it only ever runs when no registered subcommand matched (bare
 // `click`, or `click` followed by an unrecognized token). A non-empty args here means the first
@@ -46,7 +113,7 @@ func runRootDefault(cmd *cobra.Command, args []string) error {
 	dispatchFn := func(args []string) error {
 		return dispatch(cmd, args)
 	}
-	err := runMenuLoop(launchMenu, dispatchFn)
+	err := runInteractiveRoot(cmd, launchMenu, dispatchFn)
 	// A dispatch-originated failure has already been shown to the user exactly once (either
 	// cobra's own single "Error: ..." line from dispatch()'s inner Execute() call, or the
 	// subcommand's own self-silenced report, e.g. `doctor`'s Fail lines). Without this, the outer
