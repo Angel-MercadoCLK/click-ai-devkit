@@ -76,10 +76,11 @@ func parseAndValidateVersion(v string) ([3]int, bool) {
 			}
 		}
 
-		// Now that we know it's all digits, parse it
+		// All-digit now, but still rejectable: an empty component (as in
+		// "1..2") skips the loop above, and a very long run of digits
+		// overflows int. Atoi catches both.
 		num, err := strconv.Atoi(parts[i])
 		if err != nil {
-			// Should never happen given the digit-only check above
 			return [3]int{}, false
 		}
 		result[i] = num
