@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
@@ -129,33 +128,28 @@ func (m *ModelSelectModel) cycleCurrent(delta int) {
 // selected model, plus a short Spanish key-help line (D10: dev-facing CLI text may be Spanish).
 func (m ModelSelectModel) View() string {
 	var b strings.Builder
-	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Elija el modelo por fase para click-sdd"))
-	b.WriteString("\n\n")
 
+	// Width is measured, not a hardcoded %-16s: the longest phase labels ("review-readability")
+	// overflowed that budget and pushed their model column out of alignment with every other row.
+	labels := make([]string, 0, len(modelconfig.Phases))
+	for _, phase := range modelconfig.Phases {
+		labels = append(labels, phaseLabels[phase])
+	}
+	width := WidestLabel(labels)
+
+	rows := make([]string, 0, len(modelconfig.Phases))
 	for i, phase := range modelconfig.Phases {
-		marker := "  "
-		if i == m.Cursor {
-			marker = "> "
-		}
-		line := fmt.Sprintf("%s%-16s %s", marker, phaseLabels[phase], m.Selection[phase])
-		if i == m.Cursor {
-			// Real visual weight for the cursor row: the existing cyan (6) foreground stays, plus
-			// a complementing blue (4) background — both already this package's own established
-			// colors (see renderer.go's Step/Info roles), no new hex/color invented.
-			line = styleRenderer.NewStyle().Foreground(lipgloss.Color("6")).Background(lipgloss.Color("4")).Bold(true).Render(line)
-		} else {
-			// Dim every non-selected row so the cursor row reads with real contrast instead of
-			// flat, same-weight text — reuses the Faint(true) convention already used for the
-			// help line below.
-			line = styleRenderer.NewStyle().Faint(true).Render(line)
-		}
-		b.WriteString(line)
-		b.WriteString("\n")
+		rows = append(rows, Row(i == m.Cursor,
+			fmt.Sprintf("%s  %s", PadLabel(phaseLabels[phase], width), m.Selection[phase])))
 	}
 
-	b.WriteString("\n")
-	b.WriteString(styleRenderer.NewStyle().Faint(true).Render(
-		"↑/↓ mover · ←/→ cambiar modelo · enter confirmar (sin cambios = defaults) · q/esc cancelar",
+	b.WriteString(Screen("MODELO POR FASE", rows))
+	b.WriteString("\n\n")
+	b.WriteString(Hints(
+		"↑/↓", "mover",
+		"←/→", "cambiar modelo",
+		"enter", "confirmar (sin cambios = defaults)",
+		"q · esc", "cancelar",
 	))
 	return b.String()
 }

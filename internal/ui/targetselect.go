@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // TargetSelectModel is the small multi-select screen for Click-managed runtimes.
@@ -96,8 +95,6 @@ func (m *TargetSelectModel) moveCursor(delta int) {
 
 func (m TargetSelectModel) View() string {
 	var b strings.Builder
-	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Seleccione los runtimes de instalación"))
-	b.WriteString("\n\n")
 	rows := []string{}
 	if m.ClaudeFound {
 		rows = append(rows, m.row(0, "Claude Code", m.Claude, true, "plugins nativos, SDD y modelos por fase"))
@@ -108,39 +105,27 @@ func (m TargetSelectModel) View() string {
 	if m.CodexFound {
 		rows = append(rows, m.row(2, "Codex CLI", m.Codex, true, "AGENTS.md gestionado y modelo nativo de config.toml"))
 	}
-	b.WriteString(strings.Join(rows, "\n"))
-	b.WriteString("\n\nOtros runtimes: no soportados todavía; no se pueden seleccionar.\n")
-	b.WriteString("\n↑/↓ mover · espacio alternar · enter continuar · q/esc cancelar")
+
+	b.WriteString(Screen("RUNTIMES DE INSTALACIÓN", rows))
+	b.WriteString("\n\n")
+	b.WriteString(Note("Otros runtimes: no soportados todavía; no se pueden seleccionar."))
+	b.WriteString("\n\n")
+	b.WriteString(Hints(
+		"↑/↓", "mover",
+		"espacio", "alternar",
+		"enter", "continuar",
+		"q · esc", "cancelar",
+	))
 	return b.String()
 }
 
 func (m TargetSelectModel) row(index int, name string, selected, detected bool, capabilities string) string {
-	marker := "  "
-	cursor := index == m.Cursor
-	if cursor {
-		marker = "> "
-	}
 	state := "no detectado"
 	if detected {
 		state = "detectado"
 	}
-	content := fmt.Sprintf("%s[%s] %s (%s)\n   Capacidades: %s", marker, boolMarker(selected), name, state, capabilities)
-	if cursor {
-		// Real visual weight for the cursor row: the existing cyan (6) foreground role, plus a
-		// complementing blue (4) background — both already this package's own established colors
-		// (see renderer.go's Step/Info roles), no new hex/color invented. Kept consistent with
-		// ProfileSelectModel/ModelSelectModel's own cursor-row styling (design consistency across
-		// the screens composed together in InstallWizardModel).
-		return styleRenderer.NewStyle().Foreground(lipgloss.Color("6")).Background(lipgloss.Color("4")).Bold(true).Render(content)
-	}
-	// Dim every non-selected row so the cursor row reads with real contrast instead of flat,
-	// same-weight text — reuses the Faint(true) convention already used for help text.
-	return styleRenderer.NewStyle().Faint(true).Render(content)
-}
-
-func boolMarker(value bool) string {
-	if value {
-		return "x"
-	}
-	return " "
+	return RowWithMarker(index == m.Cursor,
+		Marker(selected),
+		fmt.Sprintf("%s (%s)", name, state),
+		"Capacidades: "+capabilities)
 }

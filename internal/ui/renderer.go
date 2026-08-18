@@ -26,11 +26,18 @@ import (
 // lipgloss.Renderer.ColorProfile() re-derives the profile from the environment unless
 // SetColorProfile is also called explicitly (see lipgloss's renderer.go: it only trusts an
 // explicit profile once explicitColorProfile is set).
+//
+// The profile is TrueColor, not ANSI. The 16-color ANSI profile quantizes any hex color to the
+// nearest of 16, which is why the selection screens were written against raw ANSI indices
+// (Color("6") on Color("4")) instead of the brand palette the root menu uses — the palette simply
+// could not survive the downgrade. Named ANSI colors (Color("1")…Color("9"), still used by
+// Success/Fail/Info/Warn below) are unaffected: a profile only ever limits a downgrade, it never
+// rewrites an already-ANSI color.
 var styleRenderer = newForcedColorRenderer()
 
 func newForcedColorRenderer() *lipgloss.Renderer {
-	r := lipgloss.NewRenderer(io.Discard, termenv.WithProfile(termenv.ANSI))
-	r.SetColorProfile(termenv.ANSI)
+	r := lipgloss.NewRenderer(io.Discard, termenv.WithProfile(termenv.TrueColor))
+	r.SetColorProfile(termenv.TrueColor)
 	return r
 }
 

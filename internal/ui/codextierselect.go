@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 )
@@ -87,28 +86,28 @@ func (m *CodexTierSelectModel) moveCursor(delta int) {
 // summary, plus a short Spanish key-help line matching ProfileSelectModel's own.
 func (m CodexTierSelectModel) View() string {
 	var b strings.Builder
-	b.WriteString(styleRenderer.NewStyle().Bold(true).Render("Elija un nivel de modelos para Codex"))
-	b.WriteString("\n\n")
 
+	labels := make([]string, 0, len(codexTierNames))
+	for _, name := range codexTierNames {
+		labels = append(labels, string(name))
+	}
+	width := WidestLabel(labels)
+
+	// The per-phase model summary goes on its own continuation line: inlined it made each row wrap
+	// well past any sane terminal width.
+	rows := make([]string, 0, len(codexTierNames))
 	for i, name := range codexTierNames {
-		marker := "  "
-		if i == m.Cursor {
-			marker = "> "
-		}
-		summary := codexTierSummary(name)
-		line := fmt.Sprintf("%s%-12s %s — %s", marker, name, codexTierDescriptions[name], summary)
-		if i == m.Cursor {
-			line = styleRenderer.NewStyle().Foreground(lipgloss.Color("6")).Background(lipgloss.Color("4")).Bold(true).Render(line)
-		} else {
-			line = styleRenderer.NewStyle().Faint(true).Render(line)
-		}
-		b.WriteString(line)
-		b.WriteString("\n")
+		rows = append(rows, Row(i == m.Cursor,
+			fmt.Sprintf("%s  %s", PadLabel(string(name), width), codexTierDescriptions[name]),
+			codexTierSummary(name)))
 	}
 
-	b.WriteString("\n")
-	b.WriteString(styleRenderer.NewStyle().Faint(true).Render(
-		"↑/↓ mover · enter confirmar (sin cambios = recommended) · q/esc cancelar",
+	b.WriteString(Screen("NIVEL DE MODELOS PARA CODEX", rows))
+	b.WriteString("\n\n")
+	b.WriteString(Hints(
+		"↑/↓", "mover",
+		"enter", "confirmar (sin cambios = recommended)",
+		"q · esc", "cancelar",
 	))
 	return b.String()
 }
