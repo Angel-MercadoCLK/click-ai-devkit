@@ -68,13 +68,18 @@ func parseAndValidateVersion(v string) ([3]int, bool) {
 
 	result := [3]int{0, 0, 0}
 	for i := 0; i < len(parts); i++ {
+		// Reject any component containing non-digit characters (including + and -)
+		// before attempting to parse. This enforces numeric-only components.
+		for _, r := range parts[i] {
+			if r < '0' || r > '9' {
+				return [3]int{}, false
+			}
+		}
+
+		// Now that we know it's all digits, parse it
 		num, err := strconv.Atoi(parts[i])
 		if err != nil {
-			// Non-numeric component
-			return [3]int{}, false
-		}
-		if num < 0 {
-			// Negative numbers are invalid
+			// Should never happen given the digit-only check above
 			return [3]int{}, false
 		}
 		result[i] = num
