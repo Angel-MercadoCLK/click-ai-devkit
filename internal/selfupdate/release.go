@@ -42,7 +42,7 @@ func fetchLatest(client *http.Client, endpoint, token string) (string, error) {
 	}
 
 	if token != "" {
-		req.Header.Set("Authorization", "token "+token)
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := client.Do(req)

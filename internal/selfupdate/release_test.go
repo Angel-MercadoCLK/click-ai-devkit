@@ -47,7 +47,7 @@ func TestFetchLatest_AuthorizationHeader(t *testing.T) {
 				os.Setenv("GITHUB_TOKEN", "ghp_test123")
 				os.Unsetenv("GH_TOKEN")
 			},
-			wantHeader: "token ghp_test123",
+			wantHeader: "Bearer ghp_test123",
 		},
 		{
 			name: "GH_TOKEN only",
@@ -55,7 +55,7 @@ func TestFetchLatest_AuthorizationHeader(t *testing.T) {
 				os.Unsetenv("GITHUB_TOKEN")
 				os.Setenv("GH_TOKEN", "gho_test456")
 			},
-			wantHeader: "token gho_test456",
+			wantHeader: "Bearer gho_test456",
 		},
 		{
 			name: "both tokens (GITHUB_TOKEN wins)",
@@ -63,7 +63,7 @@ func TestFetchLatest_AuthorizationHeader(t *testing.T) {
 				os.Setenv("GITHUB_TOKEN", "ghp_primary")
 				os.Setenv("GH_TOKEN", "gho_secondary")
 			},
-			wantHeader: "token ghp_primary",
+			wantHeader: "Bearer ghp_primary",
 		},
 		{
 			name: "no tokens",
@@ -101,6 +101,32 @@ func TestFetchLatest_AuthorizationHeader(t *testing.T) {
 				t.Errorf("expected Authorization header %q, got %q", tt.wantHeader, gotHeader)
 			}
 		})
+	}
+}
+
+func TestFetchLatest_UsesBearerScheme(t *testing.T) {
+	// This test proves the bug: the code currently uses "token" but should use "Bearer"
+	os.Setenv("GITHUB_TOKEN", "test_token_123")
+	defer os.Unsetenv("GITHUB_TOKEN")
+
+	var gotHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("Authorization")
+		w.WriteHeader(200)
+		w.Write([]byte(`{"tag_name":"v0.5.0"}`))
+	}))
+	defer server.Close()
+
+	token := githubToken()
+	_, err := fetchLatest(newHTTPClient(), server.URL, token)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// RED: this should fail with current code (which sends "token test_token_123")
+	wantHeader := "Bearer test_token_123"
+	if gotHeader != wantHeader {
+		t.Errorf("expected Authorization header %q, got %q (bug: code uses 'token' instead of 'Bearer')", wantHeader, gotHeader)
 	}
 }
 
