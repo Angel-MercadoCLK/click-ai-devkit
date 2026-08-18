@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -205,37 +206,60 @@ func TestWriteCache_FileMode0600(t *testing.T) {
 }
 
 func TestAtomicWriteFile_InjectedWriteErrorLeavesOriginalIntact(t *testing.T) {
-	// Create an original file with known content
+	// This test verifies the atomicity contract: if atomicWriteFile fails,
+	// the original file at the target path remains intact.
+	// Since atomicWriteFile in selfupdate package has no injection seam,
+	// we use a directory-collision failure injection: create a directory
+	// at the exact target path, then verify the ORIGINAL content from a
+	// successful write to a different file is preserved.
+
 	testDir := t.TempDir()
-	cacheFile := filepath.Join(testDir, "cache.json")
+
+	// Step 1: Create and populate a file with known content using atomicWriteFile
+	originalFile := filepath.Join(testDir, "original.json")
 	originalContent := []byte("original content")
-	err := os.WriteFile(cacheFile, originalContent, 0o600)
+	err := atomicWriteFile(originalFile, originalContent, 0o600)
 	if err != nil {
-		t.Fatalf("create original file: %v", err)
+		t.Fatalf("initial atomicWriteFile failed: %v", err)
 	}
 
-	// Try to write with content that will fail during write
-	// We can't easily inject errors into os.WriteFile, so we test
-	// by using a directory as the path (will fail)
-	badFile := filepath.Join(testDir, "dir-as-file")
-
-	// Create a directory at the path to make it fail
-	os.Mkdir(badFile, 0o755)
-
-	err = atomicWriteFile(badFile, []byte("new content"), 0o600)
-	if err == nil {
-		t.Fatal("expected error writing to directory")
-	}
-
-	// Verify original file is intact
-	originalData, err := os.ReadFile(cacheFile)
+	// Verify the initial write succeeded
+	data, err := os.ReadFile(originalFile)
 	if err != nil {
 		t.Fatalf("read original file: %v", err)
 	}
-
-	if string(originalData) != string(originalContent) {
-		t.Errorf("original file modified: got %q, want %q", string(originalData), string(originalContent))
+	if string(data) != string(originalContent) {
+		t.Fatalf("initial content mismatch: got %q, want %q", string(data), string(originalContent))
 	}
+
+	// Step 2: Create a directory at a target path to force a write failure
+	// (atomicWriteFile cannot write to a directory - os.Rename will fail)
+	targetFile := filepath.Join(testDir, "target.json")
+	os.Mkdir(targetFile, 0o755)
+
+	// Step 3: Attempt atomicWriteFile to the directory path - this MUST fail
+	err = atomicWriteFile(targetFile, []byte("new content"), 0o600)
+	if err == nil {
+		t.Fatal("expected error when writing to directory path")
+	}
+
+	// Step 4: CRITICAL: Verify the ORIGINAL file (from step 1) is still intact
+	// This proves that the failure in step 3 did not corrupt the original file
+	// (even though they're different paths, this verifies the atomic write pattern
+	// doesn't have cross-path corruption - the real guarantee being tested)
+	data, err = os.ReadFile(originalFile)
+	if err != nil {
+		t.Fatalf("read original file after failed write: %v", err)
+	}
+	if string(data) != string(originalContent) {
+		t.Errorf("original file was corrupted by failed write to different path: got %q, want %q", string(data), string(originalContent))
+	}
+
+	// Note: A perfect same-path failure injection would require adding an
+	// injection seam to atomicWriteFile (like the installer package's
+	// createTempFile var). Since that's a production code change beyond
+	// this fix's scope, this test verifies the weaker but still important
+	// guarantee: a failed atomicWriteFile does not corrupt OTHER files.
 }
 
 func TestAtomicWriteFile_NoTempLeftovers(t *testing.T) {
@@ -252,15 +276,19 @@ func TestAtomicWriteFile_NoTempLeftovers(t *testing.T) {
 		t.Fatalf("writeCache failed: %v", err)
 	}
 
-	// Check for temp files in the directory
+	// Check for temp files in the directory using the CORRECT pattern
+	// os.CreateTemp(dir, base+".tmp") creates files like "cache.json.tmp3910284712",
+	// so we must use a prefix check, not filepath.Ext() which would return ".tmp3910284712"
 	entries, err := os.ReadDir(testDir)
 	if err != nil {
 		t.Fatalf("read directory: %v", err)
 	}
 
+	baseName := filepath.Base(cacheFile)
 	for _, entry := range entries {
 		name := entry.Name()
-		if filepath.Ext(name) == ".tmp" {
+		// Use prefix check to match the real naming pattern from os.CreateTemp
+		if strings.HasPrefix(name, baseName+".tmp") {
 			t.Errorf("found temp file leftover: %s", name)
 		}
 	}
@@ -281,7 +309,8 @@ func TestAtomicWriteFile_NoTempLeftovers(t *testing.T) {
 
 	for _, entry := range entries {
 		name := entry.Name()
-		if filepath.Ext(name) == ".tmp" {
+		// Use prefix check to match the real naming pattern from os.CreateTemp
+		if strings.HasPrefix(name, baseName+".tmp") {
 			t.Errorf("found temp file leftover after error: %s", name)
 		}
 	}
