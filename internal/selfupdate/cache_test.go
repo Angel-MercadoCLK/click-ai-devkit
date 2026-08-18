@@ -301,16 +301,18 @@ func TestAtomicWriteFile_NoTempLeftovers(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
-	// Check again for temp files
+	// Check again for temp files - using the CORRECT base name for badFile
 	entries, err = os.ReadDir(testDir)
 	if err != nil {
 		t.Fatalf("read directory: %v", err)
 	}
 
+	badBaseName := filepath.Base(badFile)
 	for _, entry := range entries {
 		name := entry.Name()
 		// Use prefix check to match the real naming pattern from os.CreateTemp
-		if strings.HasPrefix(name, baseName+".tmp") {
+		// This time we check for badFile's temp files (bad.tmp*), not cache.json's
+		if strings.HasPrefix(name, badBaseName+".tmp") {
 			t.Errorf("found temp file leftover after error: %s", name)
 		}
 	}
