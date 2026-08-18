@@ -357,3 +357,40 @@ func (c *closeTrackingReader) Close() error {
 	c.onClose()
 	return c.ReadCloser.Close()
 }
+
+func TestFetchLatest_DoesNotFollowRedirects(t *testing.T) {
+	// Track whether the redirect target was called
+	redirectTargetCalled := false
+
+	// Create the redirect target server (the endpoint we should NOT reach)
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectTargetCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"tag_name":"v9.9.9"}`))
+	}))
+	defer targetServer.Close()
+
+	// Create the initial server that returns a redirect
+	initialServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return a 302 redirect to the target server
+		w.Header().Set("Location", targetServer.URL)
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer initialServer.Close()
+
+	// Use the default HTTP client (which should NOT follow redirects after fix)
+	client := newHTTPClient()
+
+	// Attempt to fetch - this should fail because redirect should be treated as non-2xx
+	tag, err := fetchLatest(client, initialServer.URL, "")
+
+	// After the fix, we expect an error (redirect treated as failure)
+	// Before the fix, this would succeed and return "v9.9.9"
+	if err == nil {
+		t.Errorf("expected error when encountering redirect, got nil error and tag=%s", tag)
+	}
+	if redirectTargetCalled {
+		t.Error("redirect target was called - client followed redirect (should NOT happen)")
+	}
+}

@@ -11,8 +11,14 @@ import (
 
 var (
 	// newHTTPClient is a seam for testing. Returns a client with 2s timeout.
+	// Rejects redirects to avoid fetching from unintended endpoints.
 	newHTTPClient = func() *http.Client {
-		return &http.Client{Timeout: 2 * time.Second}
+		return &http.Client{
+			Timeout: 2 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
 	}
 	// latestReleaseURL is a seam for testing.
 	latestReleaseURL = "https://api.github.com/repos/Angel-MercadoCLK/click-ai-devkit/releases/latest"
