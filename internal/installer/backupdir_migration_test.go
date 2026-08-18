@@ -23,7 +23,11 @@ func TestConfig_BackupDir_RootedAtClickStateHome(t *testing.T) {
 		ClickStateHome: filepath.Join("some", "state", "click-ai-devkit"),
 	}
 
-	want := filepath.Join("some", "state", "click-ai-devkit", "click-ai-devkit", "backups")
+	// No extra "click-ai-devkit" segment: that segment only exists to namespace click's files
+	// inside someone else's home (~/.claude/click-ai-devkit/...). ClickStateHome IS click's own
+	// directory already, so repeating it would produce .../click-ai-devkit/click-ai-devkit/backups.
+	// Matches how targets.json sits directly at <ClickStateHome>/targets.json.
+	want := filepath.Join("some", "state", "click-ai-devkit", "backups")
 	if got := cfg.BackupDir(); got != want {
 		t.Errorf("BackupDir() = %q, want %q", got, want)
 	}

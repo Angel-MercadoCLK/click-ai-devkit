@@ -156,8 +156,20 @@ func (c Config) SettingsPath() string {
 }
 
 // EngramStatePath stores the Click-managed pinned Engram metadata.
+//
+// Engram is shared between Claude and OpenClaw (BuildTargetPlan includes its step for either), so
+// this is reachable with ClaudeHome unset. ClaudeHome stays the preferred root — that is where
+// every existing install already keeps engram.json, and switching roots would orphan it — but a
+// Claude-less selection falls back to ClickStateHome instead of resolving to a relative path under
+// the process working directory.
 func (c Config) EngramStatePath() string {
-	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "engram.json")
+	if c.ClaudeHome != "" {
+		return filepathJoinClickState(c.ClaudeHome, "engram.json")
+	}
+	if c.ClickStateHome != "" {
+		return filepath.Join(c.ClickStateHome, "engram.json")
+	}
+	return ""
 }
 
 // EngramCloudStatePath stores the Engram Cloud enrollment state ({enrolled, server, project}).
@@ -194,11 +206,15 @@ func (c Config) ModelsPath() string {
 // Returns "" when ClickStateHome is unset rather than a path relative to the process working
 // directory — scattering backups next to wherever click was launched from is never correct, and a
 // relative path here is what produced stray click-ai-devkit/ directories in the source tree.
+// It sits directly under ClickStateHome, with no extra "click-ai-devkit" segment: that segment
+// exists only to namespace click's files inside someone else's home (~/.claude/click-ai-devkit/…),
+// and ClickStateHome already IS click's own directory. This matches TargetSelectionPath, which puts
+// targets.json at <ClickStateHome>/targets.json.
 func (c Config) BackupDir() string {
 	if c.ClickStateHome == "" {
 		return ""
 	}
-	return filepath.Join(c.ClickStateHome, "click-ai-devkit", "backups")
+	return filepath.Join(c.ClickStateHome, "backups")
 }
 
 // LegacyBackupDir is the pre-migration, ClaudeHome-rooted backup location. It exists purely so an
@@ -209,7 +225,7 @@ func (c Config) LegacyBackupDir() string {
 	if c.ClaudeHome == "" {
 		return ""
 	}
-	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "backups")
+	return filepathJoinClickState(c.ClaudeHome, "backups")
 }
 
 // ProfileArtifactPath is where a named orchestration profile's generic RuntimeProfile JSON
