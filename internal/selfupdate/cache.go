@@ -69,9 +69,17 @@ func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
 	}
 	tempPath := tempFile.Name()
 
-	// Ensure temp file is cleaned up on error
+	// Clean up the temp file unless it was successfully renamed into place.
+	// The handle must be closed before removal: on Windows an open file cannot
+	// be deleted, so an early return that skipped Close would leak both the
+	// descriptor and the temp file.
+	closed := false
+	renamed := false
 	defer func() {
-		if _, err := os.Stat(tempPath); err == nil {
+		if !closed {
+			tempFile.Close()
+		}
+		if !renamed {
 			os.Remove(tempPath)
 		}
 	}()
@@ -90,6 +98,7 @@ func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
 	if err := tempFile.Close(); err != nil {
 		return fmt.Errorf("close temp: %w", err)
 	}
+	closed = true
 
 	// Set permissions
 	if err := os.Chmod(tempPath, mode); err != nil {
@@ -100,6 +109,7 @@ func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
 	if err := os.Rename(tempPath, path); err != nil {
 		return fmt.Errorf("rename: %w", err)
 	}
+	renamed = true
 
 	// Temp file is now the target, don't delete it
 	return nil
