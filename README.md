@@ -122,6 +122,22 @@ que existe como subcomando de `click` (por ejemplo, "Iniciar instalación" ejecu
 install`), así que el menú es una capa de descubrimiento, no un camino paralelo. Fuera de una TTY
 (scripts, CI) `click` sin argumentos imprime la ayuda en vez de intentar abrir el menú.
 
+### Update notifications
+
+When running `click` interactively (no arguments, in a TTY), the CLI automatically checks GitHub for a newer release at most once per 24 hours. If an update is available, it prints a notification in Spanish before the menu appears and offers to run `click update` for you:
+
+```
+Hay una nueva versión de click disponible: v{latest} (tienes v{current}).
+Se ejecutará `click update` para actualizar.
+¿Continuar? [y/N]:
+```
+
+- The cache file lives at `<CLICK_STATE_HOME>/update-check.json` (normally `~/.click/state/update-check.json`).
+- Dev builds (`version == "dev"`) never check for updates.
+- Set `CLICK_NO_SELF_UPDATE=1` to disable the check entirely.
+- The check uses GitHub's Releases API with a 2s timeout; `GITHUB_TOKEN` or `GH_TOKEN` can increase rate limits but are never required.
+- All failures (network, cache, parsing) are silent and never block the menu — the CLI continues to operate normally regardless of update check results.
+
 ## memory-guard
 
 `memory-guard` es un hook PreToolUse de Claude Code que intercepta cada llamada a `mem_save`
