@@ -109,18 +109,16 @@ func TestWiring(t *testing.T) {
 		// return a non-nil error, but for the wrong reason, silently defeating this test's purpose.
 		lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex", "claude": "/usr/bin/claude", "git": "/usr/bin/git"}}
 
-		// Claude is deliberately included in the selection (not Codex-only) so cfg.ClaudeHome is
-		// actually populated: update.go only sets cfg.ClaudeHome inside `if selection.Claude { ... }`
-		// (update.go:55-60), so a Codex-only selection leaves it as the empty zero value for the whole
-		// run. Config.BackupDir() is unconditionally ClaudeHome-rooted (config.go:184-186), so with an
-		// empty ClaudeHome it resolves to a RELATIVE path and the real snapshot/manifest silently lands
-		// under the process's CURRENT WORKING DIRECTORY instead of any home directory — confirmed by
-		// reproducing it live: a Codex-only run here polluted the repo with an untracked
-		// internal/cli/click-ai-devkit/backups/latest/manifest.json. That is a genuine, independent
-		// production defect (the same relative-BackupDir() bug class already known for uninstall.go),
-		// out of scope for teardown-rollback-hardening's three defects — see the memory entry filed for
-		// it. Including Claude here keeps this test grounded in the currently-correct code path rather
-		// than accidentally asserting the buggy one as expected behavior.
+		// Claude is deliberately included in the selection (not Codex-only) because this test asserts
+		// on Claude-side effects; update.go only sets cfg.ClaudeHome inside `if selection.Claude { ... }`,
+		// so a Codex-only selection leaves it as the empty zero value for the whole run.
+		//
+		// This used to matter far more: BackupDir() was ClaudeHome-rooted, so an empty ClaudeHome made
+		// it resolve to a RELATIVE path and the snapshot landed under the process's working directory
+		// — reproduced live as an untracked internal/cli/click-ai-devkit/ in the repo. BackupDir() is
+		// now rooted at ClickStateHome (which is always resolved) and returns "" rather than a relative
+		// path when unset, so a Codex-only run snapshots correctly. Claude stays in the selection here
+		// purely for this test's own assertions, no longer to dodge that defect.
 		if err := installer.SaveTargetSelection(installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}, installer.TargetSelection{Configured: true, Claude: true, Codex: true}); err != nil {
 			t.Fatalf("SaveTargetSelection() error = %v", err)
 		}
@@ -155,7 +153,7 @@ func TestWiring(t *testing.T) {
 		}
 
 		// Read manifest.json and verify the post-run hash matches the RESTORED content
-		latestDir := filepath.Join(installer.Config{ClaudeHome: claudeHome}.BackupDir(), "latest")
+		latestDir := filepath.Join(installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}.BackupDir(), "latest")
 		manifestRaw, err := os.ReadFile(filepath.Join(latestDir, "manifest.json"))
 		if err != nil {
 			t.Fatalf("ReadFile(manifest.json) error = %v, want it written by SnapshotRun", err)
@@ -249,7 +247,7 @@ func TestWiring(t *testing.T) {
 		}
 		wantSettingsHash := installer.CanonicalContentHash(string(settingsBytes))
 
-		latestDir := filepath.Join(installer.Config{ClaudeHome: claudeHome}.BackupDir(), "latest")
+		latestDir := filepath.Join(installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}.BackupDir(), "latest")
 		manifestRaw, err := os.ReadFile(filepath.Join(latestDir, "manifest.json"))
 		if err != nil {
 			t.Fatalf("ReadFile(manifest.json) error = %v, want it written by SnapshotRun", err)
@@ -378,7 +376,7 @@ func TestWiring(t *testing.T) {
 
 			// Read manifest.json and verify it has entries with Existed=false for files that didn't exist
 			// before install, and entries with Existed=true for files that did exist
-			cfg := installer.Config{ClaudeHome: home}
+			cfg := installer.Config{ClaudeHome: home, ClickStateHome: os.Getenv("CLICK_STATE_HOME")}
 			latestDir := filepath.Join(cfg.BackupDir(), "latest")
 			manifestRaw, err := os.ReadFile(filepath.Join(latestDir, "manifest.json"))
 			if err != nil {
@@ -441,7 +439,7 @@ func TestWiring(t *testing.T) {
 			}
 
 			// Read manifest.json and verify it has entries
-			cfg := installer.Config{ClaudeHome: home}
+			cfg := installer.Config{ClaudeHome: home, ClickStateHome: os.Getenv("CLICK_STATE_HOME")}
 			latestDir := filepath.Join(cfg.BackupDir(), "latest")
 			manifestRaw, err := os.ReadFile(filepath.Join(latestDir, "manifest.json"))
 			if err != nil {
@@ -482,7 +480,7 @@ func TestWiring(t *testing.T) {
 			}
 
 			// Read manifest.json and verify it has entries
-			cfg := installer.Config{ClaudeHome: home}
+			cfg := installer.Config{ClaudeHome: home, ClickStateHome: os.Getenv("CLICK_STATE_HOME")}
 			latestDir := filepath.Join(cfg.BackupDir(), "latest")
 			manifestRaw, err := os.ReadFile(filepath.Join(latestDir, "manifest.json"))
 			if err != nil {

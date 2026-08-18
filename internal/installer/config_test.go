@@ -181,9 +181,11 @@ func TestConfig_ProfileAgentsDir(t *testing.T) {
 // TestConfig_BackupDir guards snapshot.go's run-snapshot storage location (install-reliability-
 // foundation change): <ClaudeHome>/click-ai-devkit/backups.
 func TestConfig_BackupDir(t *testing.T) {
-	cfg := Config{ClaudeHome: filepath.Join("some", "home", ".claude")}
+	// Rooted at ClickStateHome, not ClaudeHome: the snapshot is click's own state and must exist
+	// for Claude-less selections too. See backupdir_migration_test.go for the full contract.
+	cfg := Config{ClickStateHome: filepath.Join("some", "state")}
 
-	want := filepath.Join("some", "home", ".claude", "click-ai-devkit", "backups")
+	want := filepath.Join("some", "state", "click-ai-devkit", "backups")
 	if got := cfg.BackupDir(); got != want {
 		t.Errorf("BackupDir() = %q, want %q", got, want)
 	}

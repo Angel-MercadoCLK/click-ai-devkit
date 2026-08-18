@@ -41,7 +41,7 @@ func seedResolvableGit(t *testing.T) func() {
 }
 
 func TestRun_BeforeInstall_ReportsUnhealthy(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	report := Run(cfg)
 
@@ -54,7 +54,7 @@ func TestRun_BeforeInstall_ReportsUnhealthy(t *testing.T) {
 }
 
 func TestRun_AfterInstall_ReportsHealthy(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	restoreGit := seedResolvableGit(t)
 	defer restoreGit()
@@ -89,7 +89,7 @@ func TestRun_AfterInstall_ReportsHealthy(t *testing.T) {
 }
 
 func TestRun_AfterUninstall_ReportsUnhealthy(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	seedInstalledState(t, cfg)
 	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
@@ -116,7 +116,7 @@ func TestRun_AfterUninstall_ReportsUnhealthy(t *testing.T) {
 }
 
 func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	report := Run(cfg)
 
 	// 13 base checks now that the Claude plugin registries check joins the foundational checks,
@@ -130,7 +130,7 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 // --- Engram Cloud enrollment check (PR2) ---
 
 func TestCheckEngramCloud_EnrolledAndTokenPresent_ReportsHealthy(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	seedEngramCloudState(t, cfg, map[string]any{"enrolled": true, "server": "http://127.0.0.1:18080", "project": "click-ai-devkit"})
 	t.Setenv("ENGRAM_CLOUD_TOKEN", "present")
 
@@ -145,7 +145,7 @@ func TestCheckEngramCloud_EnrolledAndTokenPresent_ReportsHealthy(t *testing.T) {
 }
 
 func TestCheckEngramCloud_NoToken_ReportsLocalOnlyHealthy(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	// State may be absent or stale; without a token the machine is local-only by choice.
 	seedEngramCloudState(t, cfg, map[string]any{"enrolled": false})
 	t.Setenv("ENGRAM_CLOUD_TOKEN", "")
@@ -161,7 +161,7 @@ func TestCheckEngramCloud_NoToken_ReportsLocalOnlyHealthy(t *testing.T) {
 }
 
 func TestCheckEngramCloud_MissingState_ReportsUnhealthy(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	t.Setenv("ENGRAM_CLOUD_TOKEN", "present")
 
 	c := checkEngramCloud(cfg)
@@ -175,7 +175,7 @@ func TestCheckEngramCloud_MissingState_ReportsUnhealthy(t *testing.T) {
 }
 
 func TestCheckEngramCloud_EnrolledFalse_ReportsUnhealthy(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	seedEngramCloudState(t, cfg, map[string]any{"enrolled": false, "server": "http://127.0.0.1:18080", "project": "click-ai-devkit"})
 	t.Setenv("ENGRAM_CLOUD_TOKEN", "present")
 
@@ -187,7 +187,7 @@ func TestCheckEngramCloud_EnrolledFalse_ReportsUnhealthy(t *testing.T) {
 }
 
 func TestCheckEngramCloud_MalformedState_ReportsUnhealthy(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	path := cfg.EngramCloudStatePath()
 	if err := os.MkdirAll(filepathDir(path), 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
@@ -205,7 +205,7 @@ func TestCheckEngramCloud_MalformedState_ReportsUnhealthy(t *testing.T) {
 }
 
 func TestCheckEngramCloud_ReadOnlyNoSubprocess(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	seedEngramCloudState(t, cfg, map[string]any{"enrolled": true, "server": "http://127.0.0.1:18080", "project": "click-ai-devkit"})
 	t.Setenv("ENGRAM_CLOUD_TOKEN", "present")
 
@@ -277,7 +277,7 @@ func TestCheckOpenClaw_ReportsHealthyWhenResolvable(t *testing.T) {
 		return fakeGitLookup{resolved: map[string]string{"openclaw": "/usr/bin/openclaw"}}
 	})
 	defer restore()
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	report := Run(cfg)
 
@@ -310,7 +310,7 @@ func TestCheckOpenClaw_ReportsHealthyWhenAbsent(t *testing.T) {
 		return fakeGitLookup{resolved: map[string]string{}}
 	})
 	defer restore()
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	report := Run(cfg)
 
@@ -340,7 +340,7 @@ func TestCheckOpenClawNativeModelAction_UnavailableButHealthyWithGuidance(t *tes
 	})
 	defer restoreStatus()
 
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	report := Run(cfg)
 
 	var checked bool
@@ -367,7 +367,7 @@ func TestCheckOpenClawNativeModelAction_UnavailableButHealthyWithGuidance(t *tes
 func TestCheckGit_ReportsHealthyWhenResolvable(t *testing.T) {
 	restore := seedResolvableGit(t)
 	defer restore()
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	report := Run(cfg)
 
@@ -398,7 +398,7 @@ func TestCheckGit_ReportsUnhealthyWithActionableMessageWhenMissing(t *testing.T)
 		return fakeGitLookup{resolved: map[string]string{}}
 	})
 	defer restore()
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	report := Run(cfg)
 
@@ -427,7 +427,7 @@ func TestCheckClaude_ReportsHealthyWhenResolvable(t *testing.T) {
 		return fakeGitLookup{resolved: map[string]string{"claude": "/usr/bin/claude"}}
 	})
 	defer restore()
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	report := Run(cfg)
 
@@ -459,7 +459,7 @@ func TestCheckClaude_ReportsUnhealthyWithActionableMessageWhenMissing(t *testing
 		return fakeGitLookup{resolved: map[string]string{}}
 	})
 	defer restore()
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	report := Run(cfg)
 
@@ -487,7 +487,7 @@ func TestCheckClaude_ReportsUnhealthyWithActionableMessageWhenMissing(t *testing
 func TestCheckClickBinary_ReportsHealthyWhenResolvable(t *testing.T) {
 	restore := seedResolvableClickBinary(t, "/usr/bin/click")
 	defer restore()
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	report := Run(cfg)
 
@@ -519,7 +519,7 @@ func TestCheckClickBinary_ReportsHealthyWhenResolvable(t *testing.T) {
 func TestCheckClickBinary_ReportsUnhealthyWithActionableMessageWhenMissing(t *testing.T) {
 	restore := seedUnresolvableClickBinary(t)
 	defer restore()
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	report := Run(cfg)
 
@@ -566,7 +566,7 @@ func seedUnresolvableClickBinary(t *testing.T) func() {
 // taxonomy-migration spec: a home where `click install` never ran must not be flagged unhealthy for
 // models.json — it just means defaults will be generated on the next install/update.
 func TestCheckModelsConfig_AbsentFile_ReportsHealthy(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	report := Run(cfg)
 
@@ -589,7 +589,7 @@ func TestCheckModelsConfig_AbsentFile_ReportsHealthy(t *testing.T) {
 // (pre-taxonomy-realignment) models.json, and that doctor never mutates it (NFR-012: read-only) —
 // the raw file content must be unchanged after Run().
 func TestCheckModelsConfig_StaleFile_ReportsUnhealthy(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	legacy := map[string]string{"orchestrator": "opus", "prd_writer": "opus", "architect": "opus", "reviewer": "opus", "memory_curator": "sonnet"}
 	rawBefore, err := json.Marshal(legacy)
 	if err != nil {
@@ -636,7 +636,7 @@ func TestCheckModelsConfig_StaleFile_ReportsUnhealthy(t *testing.T) {
 // (installer.EngramBinaryRemediationMessage) — not a bare "missing" note that leaves the developer
 // guessing the next step.
 func TestCheckEngramBinary_ReportsRemediationWhenMissing(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	t.Setenv("CLICK_ENGRAM_BINARY_PATH", filepath.Join(t.TempDir(), "does-not-exist", "engram.exe"))
 
 	m, err := manifest.Load()
@@ -678,7 +678,7 @@ func TestCheckEngramBinary_ReportsRemediationWhenMissing(t *testing.T) {
 // exists (installer.SnapshotRun ran, proving click actually wrote this block at least once) and the
 // live body hash matches ExpectedManagedBlockHash(), the check must report healthy.
 func TestCheckClaudeMD_HashMatchesBaseline_ReportsHealthy(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
 		t.Fatalf("WriteManagedBlock() error = %v", err)
 	}
@@ -710,7 +710,7 @@ func TestCheckClaudeMD_HashMatchesBaseline_ReportsHealthy(t *testing.T) {
 // manages" and MUST NOT accuse the user of manipulation ("tampered"/"manipulated") — it might just
 // mean "run click update". This must also never mutate the file (doctor stays read-only).
 func TestCheckClaudeMD_DriftAfterBaseline_ReportsUnhealthyWithoutTamperedWording(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
 		t.Fatalf("WriteManagedBlock() error = %v", err)
 	}
@@ -769,7 +769,7 @@ func TestCheckClaudeMD_DriftAfterBaseline_ReportsUnhealthyWithoutTamperedWording
 // "can't verify" is not itself proof of a problem the way an actual hash mismatch against a known
 // baseline is.
 func TestCheckClaudeMD_NoBaselineEverRecorded_ReportsDistinctUnknownStatus(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
 		t.Fatalf("WriteManagedBlock() error = %v", err)
 	}
@@ -820,7 +820,7 @@ func TestCheckClaudeMD_NoBaselineEverRecorded_ReportsDistinctUnknownStatus(t *te
 // ClaudeHome where `click install` never ran (or context7 was never synced) must report
 // unhealthy, not silently skip the check.
 func TestCheckContext7_ReportsMissingByDefault(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	report := Run(cfg)
 
@@ -844,7 +844,7 @@ func TestCheckContext7_ReportsMissingByDefault(t *testing.T) {
 // per documentacion/spikes/spike-g-context7.md) rather than shelling out — matching every other
 // check in this package.
 func TestCheckContext7_ReportsHealthyWhenRegistered(t *testing.T) {
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	seedContext7Registered(t, cfg)
 
 	report := Run(cfg)
@@ -926,7 +926,7 @@ func TestCheckEngramPath_PersistedAndLive_ReportsHealthy(t *testing.T) {
 	restoreProbes := setEngramPathProbes(true, true)
 	defer restoreProbes()
 
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	c := checkEngramPath(cfg)
 
 	if !c.Healthy {
@@ -945,7 +945,7 @@ func TestCheckEngramPath_PersistedButNotLive_ReportsHealthyWithRestartMessage(t 
 	restoreProbes := setEngramPathProbes(true, false)
 	defer restoreProbes()
 
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	c := checkEngramPath(cfg)
 
 	if !c.Healthy {
@@ -966,7 +966,7 @@ func TestCheckEngramPath_NotPersistedButLive_ReportsHealthy(t *testing.T) {
 	restoreProbes := setEngramPathProbes(false, true)
 	defer restoreProbes()
 
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	c := checkEngramPath(cfg)
 
 	if !c.Healthy {
@@ -982,7 +982,7 @@ func TestCheckEngramPath_NeitherPersistedNorLive_ReportsUnhealthy(t *testing.T) 
 	restoreProbes := setEngramPathProbes(false, false)
 	defer restoreProbes()
 
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	c := checkEngramPath(cfg)
 
 	if c.Healthy {
@@ -1003,7 +1003,7 @@ func TestCheckEngramPath_PersistedProbeError_ReportsUnhealthy(t *testing.T) {
 	restoreLive := installer.SetLivePathContainsProbeForTests(func(dir string) bool { return true })
 	defer restoreLive()
 
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	c := checkEngramPath(cfg)
 
 	if c.Healthy {
@@ -1023,7 +1023,7 @@ func TestCheckEngramPath_GoBinDirError_ReportsUnhealthy(t *testing.T) {
 	})
 	defer restore()
 
-	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	c := checkEngramPath(cfg)
 
 	if c.Healthy {

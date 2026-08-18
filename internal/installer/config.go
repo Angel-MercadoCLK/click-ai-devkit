@@ -176,12 +176,39 @@ func (c Config) ModelsPath() string {
 	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "models.json")
 }
 
-// BackupDir is where snapshot.go stores the single run-start snapshot of CLAUDE.md + settings.json
-// (install-reliability-foundation change): one run writes BackupDir()/latest/{CLAUDE.md,
-// settings.json,manifest.json}, overwritten on the next successful run (single-latest retention —
-// see design's "Retention" decision). Kept under click-ai-devkit/ rather than as flat siblings next
-// to the snapshotted files themselves, matching where engram.json/models.json already live.
+// BackupDir is where snapshot.go stores the single run-start snapshot of every path the run is
+// about to touch (install-reliability-foundation change): one run writes BackupDir()/latest/ plus a
+// manifest.json, overwritten on the next successful run (single-latest retention — see design's
+// "Retention" decision).
+//
+// It is rooted at ClickStateHome, NOT ClaudeHome. The snapshot is click's own state and must exist
+// for every selection, including Claude-less ones: a Codex-only or OpenClaw-only run still
+// snapshots real files (Codex config.toml / AGENTS.md / model profiles, OpenClaw's workspace
+// files). ClaudeHome is only populated when Claude is among the selected runtimes, so rooting the
+// backups there made filepath.Join("", ...) yield a RELATIVE path and scattered the safety net into
+// whatever directory click happened to be launched from.
+//
+// Snapshots written by versions before this change live under LegacyBackupDir(); snapshot.go reads
+// through to that location when this one holds no snapshot yet.
+//
+// Returns "" when ClickStateHome is unset rather than a path relative to the process working
+// directory — scattering backups next to wherever click was launched from is never correct, and a
+// relative path here is what produced stray click-ai-devkit/ directories in the source tree.
 func (c Config) BackupDir() string {
+	if c.ClickStateHome == "" {
+		return ""
+	}
+	return filepath.Join(c.ClickStateHome, "click-ai-devkit", "backups")
+}
+
+// LegacyBackupDir is the pre-migration, ClaudeHome-rooted backup location. It exists purely so an
+// install upgraded from an earlier version can still find (and roll back from) the snapshot its
+// last run wrote. It is READ-ONLY: new snapshots always go to BackupDir(). Returns "" when
+// ClaudeHome is unset, letting callers skip the fallback entirely.
+func (c Config) LegacyBackupDir() string {
+	if c.ClaudeHome == "" {
+		return ""
+	}
 	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "backups")
 }
 

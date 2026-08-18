@@ -77,10 +77,12 @@ func appendRollbackManifestEntry(t *testing.T, cfg installer.Config, entry rollb
 // execRollbackWithStdin runs the real `rollback` command through the real root cobra tree with an
 // explicit stdin — the exact shape the standing menu's dispatch produces ([]string{"rollback"}
 // with the caller's streams), unlike execRoot which always pins stdin to an empty buffer.
-func execRollbackWithStdin(t *testing.T, claudeHome, stdin string, args ...string) (string, error) {
+// stateHome must be the same one the test seeded its snapshot under: BackupDir() is rooted at
+// ClickStateHome, so a throwaway one here would hide the snapshot from the command.
+func execRollbackWithStdin(t *testing.T, claudeHome, stateHome, stdin string, args ...string) (string, error) {
 	t.Helper()
 	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
-	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	t.Setenv("CLICK_STATE_HOME", stateHome)
 	t.Setenv("CLICK_OPENCLAW_HOME", t.TempDir())
 
 	root := NewRootCommand()
@@ -120,6 +122,8 @@ func seedWarnableSharedFile(t *testing.T, cfg installer.Config) string {
 func TestRollback_NoSnapshotEver_ReportsNothingToRestoreNoError(t *testing.T) {
 	home := t.TempDir()
 
+	// No cfg and no seeded snapshot here on purpose: this is the "SnapshotRun never ran" case, so
+	// execRoot's own throwaway state home is exactly right.
 	out, err := execRoot(t, home, "rollback")
 	if err != nil {
 		t.Fatalf("rollback error = %v, want nil when no snapshot ever ran, output:\n%s", err, out)
@@ -134,12 +138,13 @@ func TestRollback_NoSnapshotEver_ReportsNothingToRestoreNoError(t *testing.T) {
 // no-prior-state markers) -> still nothing to restore.
 func TestRollback_SnapshotAllNoPriorState_ReportsNothingToRestoreNoError(t *testing.T) {
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	stateHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
 	if err := installer.SnapshotRun(cfg); err != nil {
 		t.Fatalf("installer.SnapshotRun() error = %v", err)
 	}
 
-	out, err := execRoot(t, home, "rollback")
+	out, err := execRootWithStateHome(t, home, stateHome, "rollback")
 	if err != nil {
 		t.Fatalf("rollback error = %v, want nil, output:\n%s", err, out)
 	}
@@ -154,14 +159,15 @@ func TestRollback_SnapshotAllNoPriorState_ReportsNothingToRestoreNoError(t *test
 // vetoing and nothing warnable, no consent is needed even on a non-TTY.
 func TestRollback_MatchingHash_NoForce_RestoresBothFilesAndSnapshotSurvives(t *testing.T) {
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	stateHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
 	writeRollbackTestFile(t, cfg.ClaudeMDPath(), "snapshot content\n")
 	writeRollbackTestFile(t, cfg.SettingsPath(), `{"snapshot":true}`)
 	if err := installer.SnapshotRun(cfg); err != nil {
 		t.Fatalf("installer.SnapshotRun() error = %v", err)
 	}
 
-	out, err := execRoot(t, home, "rollback")
+	out, err := execRootWithStateHome(t, home, stateHome, "rollback")
 	if err != nil {
 		t.Fatalf("rollback error = %v, want nil, output:\n%s", err, out)
 	}
@@ -192,7 +198,8 @@ func TestRollback_MatchingHash_NoForce_RestoresBothFilesAndSnapshotSurvives(t *t
 // currently are (zero writes).
 func TestRollback_DriftNoForce_RefusesAndMakesZeroWrites(t *testing.T) {
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	stateHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
 	writeRollbackTestFile(t, cfg.ClaudeMDPath(), rollbackManagedBlockMD("managed v1"))
 	writeRollbackTestFile(t, cfg.SettingsPath(), `{"original":true}`)
 	if err := installer.SnapshotRun(cfg); err != nil {
@@ -200,7 +207,7 @@ func TestRollback_DriftNoForce_RefusesAndMakesZeroWrites(t *testing.T) {
 	}
 	writeRollbackTestFile(t, cfg.ClaudeMDPath(), rollbackManagedBlockMD("hand-edited managed block"))
 
-	out, err := execRoot(t, home, "rollback")
+	out, err := execRootWithStateHome(t, home, stateHome, "rollback")
 	if err == nil {
 		t.Fatalf("rollback error = nil, want a refusal error when click-owned content drifted, output:\n%s", out)
 	}
@@ -235,7 +242,8 @@ func TestRollback_DriftNoForce_RefusesAndMakesZeroWrites(t *testing.T) {
 // entries pending, so no consent is required).
 func TestRollback_DriftWithForce_Proceeds(t *testing.T) {
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	stateHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
 	writeRollbackTestFile(t, cfg.ClaudeMDPath(), rollbackManagedBlockMD("managed v1"))
 	writeRollbackTestFile(t, cfg.SettingsPath(), `{"original":true}`)
 	if err := installer.SnapshotRun(cfg); err != nil {
@@ -243,7 +251,7 @@ func TestRollback_DriftWithForce_Proceeds(t *testing.T) {
 	}
 	writeRollbackTestFile(t, cfg.ClaudeMDPath(), rollbackManagedBlockMD("hand-edited managed block"))
 
-	out, err := execRoot(t, home, "rollback", "--force")
+	out, err := execRootWithStateHome(t, home, stateHome, "rollback", "--force")
 	if err != nil {
 		t.Fatalf("rollback --force error = %v, want nil, output:\n%s", err, out)
 	}
@@ -264,10 +272,11 @@ func TestRollback_DriftWithForce_Proceeds(t *testing.T) {
 func TestRollback_MenuDispatchShape_InteractiveYes_WarnsAndRestores(t *testing.T) {
 	forceTerminalDetection(t, true, true)
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	stateHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
 	sharedPath := seedWarnableSharedFile(t, cfg)
 
-	out, err := execRollbackWithStdin(t, home, "y\n", "rollback")
+	out, err := execRollbackWithStdin(t, home, stateHome, "y\n", "rollback")
 	if err != nil {
 		t.Fatalf("rollback error = %v, want nil after interactive consent, output:\n%s", err, out)
 	}
@@ -300,10 +309,11 @@ func TestRollback_InteractiveDecline_ZeroWrites(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			forceTerminalDetection(t, true, true)
 			home := t.TempDir()
-			cfg := installer.Config{ClaudeHome: home}
+			stateHome := t.TempDir()
+			cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
 			sharedPath := seedWarnableSharedFile(t, cfg)
 
-			out, err := execRollbackWithStdin(t, home, tc.stdin, "rollback")
+			out, err := execRollbackWithStdin(t, home, stateHome, tc.stdin, "rollback")
 			if err != nil {
 				t.Fatalf("rollback error = %v, want nil (declining is a clean outcome), output:\n%s", err, out)
 			}
@@ -341,10 +351,11 @@ func TestRollback_NonInteractivePendingWarnableWithoutYes_Refuses(t *testing.T) 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
-			cfg := installer.Config{ClaudeHome: home}
+			stateHome := t.TempDir()
+			cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
 			sharedPath := seedWarnableSharedFile(t, cfg)
 
-			out, err := execRoot(t, home, tc.args...)
+			out, err := execRootWithStateHome(t, home, stateHome, tc.args...)
 			if err == nil {
 				t.Fatalf("rollback error = nil, want a refusal when consent is required but cannot be asked, output:\n%s", out)
 			}
@@ -366,10 +377,11 @@ func TestRollback_NonInteractivePendingWarnableWithoutYes_Refuses(t *testing.T) 
 // confirmation prompt entirely and restores, including the warnable shared file.
 func TestRollback_Yes_SkipsPromptAndRestores(t *testing.T) {
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	stateHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
 	sharedPath := seedWarnableSharedFile(t, cfg)
 
-	out, err := execRoot(t, home, "rollback", "--yes")
+	out, err := execRootWithStateHome(t, home, stateHome, "rollback", "--yes")
 	if err != nil {
 		t.Fatalf("rollback --yes error = %v, want nil, output:\n%s", err, out)
 	}
@@ -390,7 +402,8 @@ func TestRollback_Yes_SkipsPromptAndRestores(t *testing.T) {
 // consent: non-interactive rollback without --yes must proceed straight through.
 func TestRollback_NonVetoMatchingBaseline_NotWarned(t *testing.T) {
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	stateHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
 	uneditedPath := filepath.Join(home, "unedited.txt")
 	postRunPath := filepath.Join(home, "postrun.txt")
 	writeRollbackTestFile(t, cfg.ClaudeMDPath(), rollbackManagedBlockMD("managed v1"))
@@ -414,7 +427,7 @@ func TestRollback_NonVetoMatchingBaseline_NotWarned(t *testing.T) {
 		DriftPolicy:         "non-veto",
 	}, "pre-run state\n")
 
-	out, err := execRoot(t, home, "rollback")
+	out, err := execRootWithStateHome(t, home, stateHome, "rollback")
 	if err != nil {
 		t.Fatalf("rollback error = %v, want nil (nothing requires consent), output:\n%s", err, out)
 	}
@@ -432,11 +445,12 @@ func TestRollback_NonVetoMatchingBaseline_NotWarned(t *testing.T) {
 // both the vetoing file and the shared file.
 func TestRollback_Force_DoesNotImplyWarnableConsent(t *testing.T) {
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	stateHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
 	sharedPath := seedWarnableSharedFile(t, cfg)
 	writeRollbackTestFile(t, cfg.ClaudeMDPath(), rollbackManagedBlockMD("hand-edited managed block"))
 
-	out, err := execRoot(t, home, "rollback", "--force")
+	out, err := execRootWithStateHome(t, home, stateHome, "rollback", "--force")
 	if err == nil {
 		t.Fatalf("rollback --force error = nil, want a refusal (pending shared-file consent), output:\n%s", out)
 	}
@@ -451,7 +465,7 @@ func TestRollback_Force_DoesNotImplyWarnableConsent(t *testing.T) {
 		t.Fatalf("shared.txt after refused --force rollback = %q, want untouched (zero writes)", got)
 	}
 
-	out, err = execRoot(t, home, "rollback", "--force", "--yes")
+	out, err = execRootWithStateHome(t, home, stateHome, "rollback", "--force", "--yes")
 	if err != nil {
 		t.Fatalf("rollback --force --yes error = %v, want nil, output:\n%s", err, out)
 	}

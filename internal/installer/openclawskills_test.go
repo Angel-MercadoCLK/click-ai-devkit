@@ -14,7 +14,7 @@ import (
 // TestSyncOpenClawSkills_EmptyHome_NoOp guards the OpenClaw absent/skip scenario: when
 // cfg.OpenClawHome is empty, SyncOpenClawSkills must write nothing and return nil.
 func TestSyncOpenClawSkills_EmptyHome_NoOp(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() error = %v, want nil no-op when OpenClawHome is empty", err)
 	}
@@ -23,7 +23,7 @@ func TestSyncOpenClawSkills_EmptyHome_NoOp(t *testing.T) {
 // TestSyncOpenClawSkills_WritesBothSkills verifies the happy path: both clickhola and clickdev
 // SKILL.md files are written under cfg.OpenClawSkillsDir() with the embedded asset bytes.
 func TestSyncOpenClawSkills_WritesBothSkills(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() error = %v", err)
@@ -46,7 +46,7 @@ func TestSyncOpenClawSkills_WritesBothSkills(t *testing.T) {
 }
 
 func TestSyncOpenClawSkills_WritesPortableSDDWorkflow(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() error = %v", err)
 	}
@@ -83,7 +83,7 @@ func TestOpenClawSDDEntry_DoesNotExposeClaudeDelegation(t *testing.T) {
 // TestSyncOpenClawSkills_Rerun_ByteIdenticalOutput is PR3's idempotency case: re-running with the
 // same cfg must produce byte-identical output (no timestamp or nonce is templated).
 func TestSyncOpenClawSkills_Rerun_ByteIdenticalOutput(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() 1st run error = %v", err)
@@ -109,7 +109,7 @@ func TestSyncOpenClawSkills_Rerun_ByteIdenticalOutput(t *testing.T) {
 // TestSyncOpenClawSkills_ChangedContent_Overwrites verifies that when the on-disk SKILL.md has
 // drifted from the embedded asset, SyncOpenClawSkills restores the owned bytes.
 func TestSyncOpenClawSkills_ChangedContent_Overwrites(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() 1st run error = %v", err)
@@ -138,7 +138,7 @@ func TestSyncOpenClawSkills_ChangedContent_Overwrites(t *testing.T) {
 // path: when atomicWriteFile fails, the existing target file must remain byte-for-byte intact. We
 // inject the failure via the package-level createTempFile seam used by pathenv.go's own tests.
 func TestSyncOpenClawSkills_InjectedWriteError_PreservesOldBytes(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() baseline run error = %v", err)
@@ -179,7 +179,7 @@ func TestSyncOpenClawSkills_InjectedWriteError_PreservesOldBytes(t *testing.T) {
 // TestSyncOpenClawSkills_MkdirAllFailure_WrapsContextualError verifies that a filesystem failure
 // during destination directory creation is surfaced as a contextual error from SyncOpenClawSkills.
 func TestSyncOpenClawSkills_MkdirAllFailure_WrapsContextualError(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	// Make the skills directory path itself a regular file, so MkdirAll(".../skills/clickhola")
 	// cannot create a directory named "skills".
@@ -200,7 +200,7 @@ func TestSyncOpenClawSkills_MkdirAllFailure_WrapsContextualError(t *testing.T) {
 
 // TestRemoveOpenClawSkills_EmptyHome_NoOp guards the OpenClaw absent/skip scenario for removal.
 func TestRemoveOpenClawSkills_EmptyHome_NoOp(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := RemoveOpenClawSkills(cfg); err != nil {
 		t.Fatalf("RemoveOpenClawSkills() error = %v, want nil no-op when OpenClawHome is empty", err)
 	}
@@ -208,7 +208,7 @@ func TestRemoveOpenClawSkills_EmptyHome_NoOp(t *testing.T) {
 
 // TestRemoveOpenClawSkills_Absent_NoOp verifies that removing never-installed skills is harmless.
 func TestRemoveOpenClawSkills_Absent_NoOp(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := RemoveOpenClawSkills(cfg); err != nil {
 		t.Fatalf("RemoveOpenClawSkills() error = %v, want nil when skills dir is absent", err)
 	}
@@ -217,7 +217,7 @@ func TestRemoveOpenClawSkills_Absent_NoOp(t *testing.T) {
 // TestRemoveOpenClawSkills_RemovesOnlyOwnedDirs verifies that RemoveOpenClawSkills deletes
 // clickhola and clickdev but leaves any user-created sibling skill directories untouched.
 func TestRemoveOpenClawSkills_RemovesOnlyOwnedDirs(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() error = %v", err)
@@ -244,7 +244,7 @@ func TestRemoveOpenClawSkills_RemovesOnlyOwnedDirs(t *testing.T) {
 }
 
 func TestRemoveOpenClawSkills_PreservesUserFilesInsideOwnedDirs(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() error = %v", err)
 	}
@@ -276,7 +276,7 @@ func portableSDDSkillDirs() []string {
 // TestRemoveOpenClawSkills_Failure_WrapsContextualError verifies that an underlying RemoveAll
 // failure is surfaced as a contextual error from RemoveOpenClawSkills.
 func TestRemoveOpenClawSkills_Failure_WrapsContextualError(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	injectedErr := errors.New("injected remove failure")
 	old := removeAll

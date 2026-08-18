@@ -117,7 +117,9 @@ func PrepareRestore(cfg Config) (PreparedRestore, error) {
 		return PreparedRestore{}, err
 	}
 
-	latestDir := snapshotLatestDir(cfg)
+	// Must resolve the same way loadSnapshotManifest just did, or a legacy-located manifest would
+	// be paired with backup files looked up in the current (still empty) directory.
+	latestDir := snapshotReadDir(cfg)
 	prepared := PreparedRestore{}
 	for _, entry := range manifest.Entries {
 		pe := preparedRestoreEntry{entry: entry}

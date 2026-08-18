@@ -27,7 +27,7 @@ func writeTestFile(t *testing.T, path, content string) {
 // settings.json must both be copied into BackupDir()/latest/, with a manifest.json recording
 // originalPath/backupFile/existed for each.
 func TestSnapshotRun_CopiesBothFilesAndWritesManifest(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "# my CLAUDE.md\n")
 	writeTestFile(t, cfg.SettingsPath(), `{"hooks":{}}`)
 
@@ -92,7 +92,7 @@ func TestSnapshotRun_CopiesBothFilesAndWritesManifest(t *testing.T) {
 // NOT error and must record an explicit no-prior-state marker (Existed=false, no backup file) —
 // never an empty/missing manifest and never a fabricated backup file.
 func TestSnapshotRun_MissingSource_RecordsNoPriorStateMarker(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	if err := SnapshotRun(cfg); err != nil {
 		t.Fatalf("SnapshotRun() error = %v, want nil even when no source files exist yet", err)
@@ -124,7 +124,7 @@ func TestSnapshotRun_MissingSource_RecordsNoPriorStateMarker(t *testing.T) {
 // SnapshotRun, editing both files, then RestoreRun, both files must come back byte-for-byte to
 // their snapshotted content.
 func TestRestoreRun_RestoresBothFilesByteForByte(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "original CLAUDE.md\n")
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
 
@@ -161,7 +161,7 @@ func TestRestoreRun_RestoresBothFilesByteForByte(t *testing.T) {
 // remove any file that has since appeared at that original path, rather than leaving it in place
 // or fabricating content.
 func TestRestoreRun_ExistedFalseRemovesOriginal(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	// Neither file exists at snapshot time -> both entries are no-prior-state markers.
 	if err := SnapshotRun(cfg); err != nil {
 		t.Fatalf("SnapshotRun() error = %v", err)
@@ -183,7 +183,7 @@ func TestRestoreRun_ExistedFalseRemovesOriginal(t *testing.T) {
 // consuming move: the snapshot files under backups/latest/ must still be present and unchanged
 // after a restore, so rollback can be run again later.
 func TestRestoreRun_BackupSurvivesRestore(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "snapshot content\n")
 	writeTestFile(t, cfg.SettingsPath(), `{"snapshot":true}`)
 	if err := SnapshotRun(cfg); err != nil {
@@ -210,7 +210,7 @@ func TestRestoreRun_BackupSurvivesRestore(t *testing.T) {
 // TestHasRunSnapshot_FalseWhenAbsent guards the base case: a home where SnapshotRun never ran must
 // report no run snapshot.
 func TestHasRunSnapshot_FalseWhenAbsent(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	has, err := HasRunSnapshot(cfg)
 	if err != nil {
@@ -224,7 +224,7 @@ func TestHasRunSnapshot_FalseWhenAbsent(t *testing.T) {
 // TestHasRunSnapshot_TrueWhenManifestPresent guards the base positive case: after a real
 // SnapshotRun with existing source files, HasRunSnapshot must report true.
 func TestHasRunSnapshot_TrueWhenManifestPresent(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "content\n")
 	writeTestFile(t, cfg.SettingsPath(), `{}`)
 	if err := SnapshotRun(cfg); err != nil {
@@ -247,7 +247,7 @@ func TestHasRunSnapshot_TrueWhenManifestPresent(t *testing.T) {
 // true. Callers that need "is there anything to actually restore" must inspect each manifest
 // entry's Existed flag themselves (PR3's concern), not rely on HasRunSnapshot for that.
 func TestHasRunSnapshot_TrueEvenWhenAllEntriesAreNoPriorState(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	// Neither CLAUDE.md nor settings.json exists -> both manifest entries are no-prior-state.
 	if err := SnapshotRun(cfg); err != nil {
 		t.Fatalf("SnapshotRun() error = %v", err)
@@ -269,7 +269,7 @@ func TestHasRunSnapshot_TrueEvenWhenAllEntriesAreNoPriorState(t *testing.T) {
 // left in an ambiguous half-written state — and must never touch the original source files it only
 // reads from.
 func TestSnapshotRun_InjectedTempFileFailure_LeavesPriorSnapshotAndOriginalsUntouched(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "first run content\n")
 	writeTestFile(t, cfg.SettingsPath(), `{"run":1}`)
 
@@ -356,7 +356,7 @@ func TestCanonicalContentHash_DifferentContentDiffers(t *testing.T) {
 // TestHasRestorableSnapshot_FalseWhenNoSnapshotAtAll guards the base "never ran" case: no manifest
 // at all means nothing to restore (PR3's `click rollback` "No snapshot exists" scenario).
 func TestHasRestorableSnapshot_FalseWhenNoSnapshotAtAll(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	has, err := HasRestorableSnapshot(cfg)
 	if err != nil {
@@ -373,7 +373,7 @@ func TestHasRestorableSnapshot_FalseWhenNoSnapshotAtAll(t *testing.T) {
 // restore. This is exactly the distinction HasRunSnapshot's own doc comment defers to a future
 // caller — this is that caller.
 func TestHasRestorableSnapshot_FalseWhenAllEntriesNoPriorState(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := SnapshotRun(cfg); err != nil {
 		t.Fatalf("SnapshotRun() error = %v", err)
 	}
@@ -390,7 +390,7 @@ func TestHasRestorableSnapshot_FalseWhenAllEntriesNoPriorState(t *testing.T) {
 // TestHasRestorableSnapshot_TrueWhenAtLeastOneEntryExisted triangulates against the trivial
 // "always false" implementation: a real snapshot with actual backed-up content must report true.
 func TestHasRestorableSnapshot_TrueWhenAtLeastOneEntryExisted(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "content\n")
 	if err := SnapshotRun(cfg); err != nil {
 		t.Fatalf("SnapshotRun() error = %v", err)
@@ -430,7 +430,7 @@ func writeManifestDirect(t *testing.T, cfg Config, manifest runManifest) {
 // TestSnapshotDrift_NoEdits_ReportsNoDrift guards the "matching hash" half of spec install-rollback
 // Decision 3: content unchanged since the snapshot must report zero vetoes and zero warnings.
 func TestSnapshotDrift_NoEdits_ReportsNoDrift(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "unchanged content\n")
 	writeTestFile(t, cfg.SettingsPath(), `{"unchanged":true}`)
 	if err := SnapshotRun(cfg); err != nil {
@@ -450,7 +450,7 @@ func TestSnapshotDrift_NoEdits_ReportsNoDrift(t *testing.T) {
 // implementation: editing click-owned content (CLAUDE.md's managed block) after the snapshot must
 // be reported as a veto for that path, while the untouched settings.json must not be reported.
 func TestSnapshotDrift_EditedFile_ReportsDrift(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
 	if err := SnapshotRun(cfg); err != nil {
@@ -476,7 +476,7 @@ func TestSnapshotDrift_EditedFile_ReportsDrift(t *testing.T) {
 // known-good content, which is the safe, expected outcome — not a hand-edit to warn about), for
 // BOTH veto-policy and non-veto entries.
 func TestSnapshotDrift_MissingCurrentFile_NotReportedAsDrift(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "content\n")
 	sharedPath := filepath.Join(cfg.ClaudeHome, "shared.txt")
 	writeTestFile(t, sharedPath, "shared original\n")
@@ -518,7 +518,7 @@ func TestSnapshotDrift_MissingCurrentFile_NotReportedAsDrift(t *testing.T) {
 // content, so they must never veto a rollback (and a managed-content-veto entry is never merely
 // warnable either).
 func TestSnapshotDrift_ManagedContentVeto_EditOutsideMarkers_NoVeto(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
 	if err := SnapshotRun(cfg); err != nil {
@@ -540,7 +540,7 @@ func TestSnapshotDrift_ManagedContentVeto_EditOutsideMarkers_NoVeto(t *testing.T
 // the same guarantee: churn on unrelated settings keys (e.g. Claude Code's own writes) must never
 // veto; only edits to click's owned hook entry may.
 func TestSnapshotDrift_ManagedContentVeto_SettingsUnrelatedKey_NoVeto(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	owned := `{"hooks":{"PreToolUse":[{"matcher":"` + MemoryGuardToolMatcher + `","hooks":[{"type":"command","command":"` + MemoryGuardCommand + `"}]}]},"other":true}`
 	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
 	writeTestFile(t, cfg.SettingsPath(), owned)
@@ -572,7 +572,7 @@ func TestSnapshotDrift_ManagedContentVeto_SettingsUnrelatedKey_NoVeto(t *testing
 // TestSnapshotDrift_WholeFileVeto_AnyEdit_Vetoes guards the strict policy: a whole-file-veto entry
 // vetoes on ANY content change, with no managed-slice scoping.
 func TestSnapshotDrift_WholeFileVeto_AnyEdit_Vetoes(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	strictPath := filepath.Join(cfg.ClaudeHome, "strict.txt")
 	writeTestFile(t, strictPath, "strict original\n")
 	writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
@@ -598,7 +598,7 @@ func TestSnapshotDrift_WholeFileVeto_AnyEdit_Vetoes(t *testing.T) {
 // file (matching neither the pre-run backup nor the post-run baseline) never vetoes, but must be
 // surfaced in WarnableNonVeto so the rollback command can warn and ask for consent.
 func TestSnapshotDrift_NonVeto_Edit_WarnsButNeverVetoes(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	sharedPath := filepath.Join(cfg.ClaudeHome, "shared.txt")
 	writeTestFile(t, sharedPath, "shared original\n")
 	writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
@@ -638,7 +638,7 @@ func TestSnapshotDrift_MatchesEitherBaseline_Safe(t *testing.T) {
 		{name: "both match", pre: "same\n", post: "same\n", current: "same\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := Config{ClaudeHome: t.TempDir()}
+			cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 			path := filepath.Join(cfg.ClaudeHome, "file.txt")
 			writeTestFile(t, path, tc.current)
 			entry := manifestEntry{
@@ -668,7 +668,7 @@ func TestSnapshotDrift_MatchesEitherBaseline_Safe(t *testing.T) {
 // manifest carries no ExpectedPostRunHash compares against the pre-run backup alone, so any edit
 // is drift.
 func TestSnapshotDrift_NoPostRunHash_ComparesAgainstPreRunOnly(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	path := filepath.Join(cfg.ClaudeHome, "file.txt")
 	writeTestFile(t, path, "edited\n")
 	writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
@@ -693,7 +693,7 @@ func TestSnapshotDrift_NoPostRunHash_ComparesAgainstPreRunOnly(t *testing.T) {
 // by loadSnapshotManifest) must reproduce the exact pre-hardening strict behavior: any edit to any
 // present entry vetoes, and nothing is ever merely warnable.
 func TestSnapshotDrift_LegacyManifest_StrictWholeFileBehavior(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	path := filepath.Join(cfg.ClaudeHome, "legacy.txt")
 	writeTestFile(t, path, "edited after snapshot\n")
 	if err := os.MkdirAll(snapshotLatestDir(cfg), 0o755); err != nil {
@@ -722,7 +722,7 @@ func TestSnapshotDrift_LegacyManifest_StrictWholeFileBehavior(t *testing.T) {
 // records it, that exact state must not veto even though the managed projection now differs from
 // the pre-run backup. A further hand-edit after recording must veto again.
 func TestSnapshotDrift_ManagedContentVeto_MatchesPostRunManagedBaseline_NoVeto(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
 	if err := SnapshotRun(cfg); err != nil {
@@ -763,7 +763,7 @@ func TestSnapshotDrift_ManagedContentVeto_MatchesPostRunManagedBaseline_NoVeto(t
 // (SyncOpenClawPlugin/SyncOpenClawSkills are never called here), so their entries are expected as
 // no-prior-state markers, exactly like a first-ever install would produce.
 func TestSnapshotRun_OpenClawPresent_CapturesPortableFiles(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "# claude\n")
 	writeTestFile(t, cfg.SettingsPath(), `{}`)
 	writeTestFile(t, cfg.OpenClawAgentsMDPath(), "# agents\n")
@@ -812,7 +812,7 @@ func TestSnapshotRun_OpenClawPresent_CapturesPortableFiles(t *testing.T) {
 }
 
 func TestRestoreRun_OpenClawModelProfile_RestoresPortableArtifact(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.OpenClawModelProfilePath(), `{"schema_version":2,"profile":"balanced","models":{"explore":"sonnet"}}`)
 	if err := SnapshotRun(cfg); err != nil {
 		t.Fatalf("SnapshotRun() error = %v", err)
@@ -834,7 +834,7 @@ func TestRestoreRun_OpenClawModelProfile_RestoresPortableArtifact(t *testing.T) 
 // (rather than relying only on TestSnapshotRun_CopiesBothFilesAndWritesManifest's pre-existing
 // count) so the "unchanged from pre-change behavior" guarantee has its own named regression guard.
 func TestSnapshotRun_OpenClawAbsent_CapturesOnlyClaudeFiles(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "# claude\n")
 	writeTestFile(t, cfg.SettingsPath(), `{}`)
 
@@ -856,7 +856,7 @@ func TestSnapshotRun_OpenClawAbsent_CapturesOnlyClaudeFiles(t *testing.T) {
 // byte-for-byte to their snapshotted content — proving RestoreRun needs no cfg.OpenClawHome-aware
 // change of its own, since it replays whatever paths SnapshotRun recorded in the manifest.
 func TestRestoreRun_OpenClawFilesPresent_RestoresAllFiles(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "claude original\n")
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
 	writeTestFile(t, cfg.OpenClawAgentsMDPath(), "agents original\n")
@@ -900,7 +900,7 @@ func TestRestoreRun_OpenClawFilesPresent_RestoresAllFiles(t *testing.T) {
 // must come back byte-for-byte to their snapshotted content — proving RestoreRun needs no
 // cfg.OpenClawHome-aware change of its own, since it replays whatever paths SnapshotRun recorded.
 func TestRestoreRun_OpenClawSkillsPresent_RestoresBothFiles(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "claude original\n")
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
 	writeTestFile(t, cfg.OpenClawAgentsMDPath(), "agents original\n")
@@ -943,7 +943,7 @@ func TestRestoreRun_OpenClawSkillsPresent_RestoresBothFiles(t *testing.T) {
 // an explicit no-prior-state marker for each of them, exactly like Claude's own first-ever-install
 // case, never an error and never a fabricated backup file.
 func TestSnapshotRun_OpenClawFirstInstall_RecordsNoPriorStateMarker(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "# claude\n")
 	writeTestFile(t, cfg.SettingsPath(), `{}`)
 	// Deliberately do NOT create AGENTS.md/SOUL.md/openclaw.json — first-ever OpenClaw install.
@@ -1055,7 +1055,7 @@ func TestManifestEntry_AbsentFieldsOmitted(t *testing.T) {
 // TestLoadSnapshotManifest_UnknownPolicyRejected tests that an unknown policy string is rejected
 // as a load error.
 func TestLoadSnapshotManifest_UnknownPolicyRejected(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	manifestJSON := `{
   "entries": [
     {
@@ -1086,7 +1086,7 @@ func TestLoadSnapshotManifest_UnknownPolicyRejected(t *testing.T) {
 // TestLoadSnapshotManifest_ConflictingDuplicatePathRejected tests that duplicate OriginalPath
 // entries with conflicting policies are rejected as a load error.
 func TestLoadSnapshotManifest_ConflictingDuplicatePathRejected(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	manifestJSON := `{
   "entries": [
     {
@@ -1123,7 +1123,7 @@ func TestLoadSnapshotManifest_ConflictingDuplicatePathRejected(t *testing.T) {
 // TestLoadSnapshotManifest_DuplicatePathWithAgreeingPolicyAccepted tests that duplicate
 // OriginalPath entries with the SAME policy are accepted.
 func TestLoadSnapshotManifest_DuplicatePathWithAgreeingPolicyAccepted(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	manifestJSON := `{
   "entries": [
     {
@@ -1160,7 +1160,7 @@ func TestLoadSnapshotManifest_DuplicatePathWithAgreeingPolicyAccepted(t *testing
 // TestLoadSnapshotManifest_LegacyManifest_NormalizesToWholeFileVeto tests that a manifest
 // without a DriftPolicy field (legacy v0.5.11 format) normalizes to DriftPolicyWholeFileVeto.
 func TestLoadSnapshotManifest_LegacyManifest_NormalizesToWholeFileVeto(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	manifestJSON := `{
   "entries": [
     {

@@ -1,0 +1,9 @@
+{
+  "entries": [
+    {
+      "originalPath": "/some/path",
+      "backupFile": "backup.txt",
+      "existed": true
+    }
+  ]
+}

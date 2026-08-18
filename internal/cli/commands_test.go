@@ -85,8 +85,17 @@ func seedResolvableGit(t *testing.T) {
 
 func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
 	t.Helper()
+	return execRootWithStateHome(t, claudeHome, t.TempDir(), args...)
+}
+
+// execRootWithStateHome is execRoot for tests that must pin CLICK_STATE_HOME themselves. Anything
+// that seeds state with its own installer.Config and then expects the command to find it needs
+// this: BackupDir() is rooted at ClickStateHome, so a test that let execRoot pick a fresh throwaway
+// state home would write its snapshot somewhere the command never looks.
+func execRootWithStateHome(t *testing.T, claudeHome, stateHome string, args ...string) (string, error) {
+	t.Helper()
 	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
-	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	t.Setenv("CLICK_STATE_HOME", stateHome)
 	// openclaw-target-support (PR-C safety fix): `click uninstall` now unconditionally resolves
 	// OpenClawHome (installer.ResolveOpenClawHome) to remove the memory-guard plugin dir, regardless
 	// of whether openclaw itself is currently resolvable on PATH. Without this override, every
@@ -1774,13 +1783,14 @@ func (r *manifestCheckingRunner) Run(name string, args ...string) error {
 // direct file writes install.go itself performs.
 func TestInstallCommand_SnapshotTakenBeforeFirstClaudeCommand(t *testing.T) {
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	stateHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
 	base := newTestCommandRunner(home)
 	runner := &manifestCheckingRunner{CommandRunner: base, cfg: cfg}
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 
-	if _, err := execRoot(t, home, "install"); err != nil {
+	if _, err := execRootWithStateHome(t, home, stateHome, "install"); err != nil {
 		t.Fatalf("install command error = %v", err)
 	}
 	if !runner.checkedFirstRun {
@@ -1795,7 +1805,8 @@ func TestInstallCommand_SnapshotTakenBeforeFirstClaudeCommand(t *testing.T) {
 // invariant test above for `click update`.
 func TestUpdateCommand_SnapshotTakenBeforeFirstClaudeCommand(t *testing.T) {
 	home := t.TempDir()
-	cfg := installer.Config{ClaudeHome: home}
+	stateHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
 	base := newTestCommandRunner(home)
 	runner := &manifestCheckingRunner{CommandRunner: base, cfg: cfg}
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1806,7 +1817,7 @@ func TestUpdateCommand_SnapshotTakenBeforeFirstClaudeCommand(t *testing.T) {
 	}
 	t.Setenv("CLICK_ENGRAM_BINARY_PATH", binaryPath)
 
-	if _, err := execRoot(t, home, "update"); err != nil {
+	if _, err := execRootWithStateHome(t, home, stateHome, "update"); err != nil {
 		t.Fatalf("update command error = %v", err)
 	}
 	if !runner.checkedFirstRun {
@@ -1864,7 +1875,7 @@ func TestInstallCommand_TakesRunStartSnapshotBeforeWrites(t *testing.T) {
 	if _, err := execRoot(t, home, "install"); err != nil {
 		t.Fatalf("install command error = %v", err)
 	}
-	has, err := installer.HasRunSnapshot(installer.Config{ClaudeHome: home})
+	has, err := installer.HasRunSnapshot(installer.Config{ClaudeHome: home, ClickStateHome: os.Getenv("CLICK_STATE_HOME")})
 	if err != nil {
 		t.Fatalf("HasRunSnapshot() error = %v", err)
 	}
@@ -1884,7 +1895,7 @@ func TestUpdateCommand_TakesRunStartSnapshotBeforeWrites(t *testing.T) {
 	if _, err := execRoot(t, home, "update"); err != nil {
 		t.Fatalf("update command error = %v", err)
 	}
-	has, err := installer.HasRunSnapshot(installer.Config{ClaudeHome: home})
+	has, err := installer.HasRunSnapshot(installer.Config{ClaudeHome: home, ClickStateHome: os.Getenv("CLICK_STATE_HOME")})
 	if err != nil {
 		t.Fatalf("HasRunSnapshot() error = %v", err)
 	}

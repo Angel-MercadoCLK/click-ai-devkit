@@ -15,7 +15,7 @@ import (
 // test: with cfg.OpenClawHome populated, SyncOpenClawPlugin must write hooks.js and plugin.json
 // under cfg.OpenClawPluginDir(), with {{CLICK_BIN}} replaced by the resolved absolute click path.
 func TestSyncOpenClawPlugin_WritesHooksJSAndManifest_WithTemplatedClickBinPath(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	// Deliberately forward-slash-only (not filepath.Join, which would emit backslashes on Windows —
 	// this session's own platform) so this general test can assert a plain substring match without
 	// getting entangled with escapeForJSSingleQuotedString's backslash-doubling behavior; THAT
@@ -55,7 +55,7 @@ func TestSyncOpenClawPlugin_WritesHooksJSAndManifest_WithTemplatedClickBinPath(t
 // TestSyncOpenClawPlugin_Absent_NoOp mirrors SyncOpenClawWorkspace/SyncOpenClawMCPConfig's own
 // absent-guard tests: cfg.OpenClawHome == "" must write nothing anywhere.
 func TestSyncOpenClawPlugin_Absent_NoOp(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := SyncOpenClawPlugin(cfg); err != nil {
 		t.Fatalf("SyncOpenClawPlugin() error = %v, want nil no-op when OpenClawHome is empty", err)
 	}
@@ -65,7 +65,7 @@ func TestSyncOpenClawPlugin_Absent_NoOp(t *testing.T) {
 // fallback branch: when osExecutable fails, hooks.js must be templated with the bare command name
 // "click", not left with the placeholder or an error.
 func TestSyncOpenClawPlugin_ExecutableResolutionFails_FallsBackToBareClick(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	restore := SetOSExecutableForTests(func() (string, error) {
 		return "", errors.New("os.Executable: not supported on this platform")
 	})
@@ -90,7 +90,7 @@ func TestSyncOpenClawPlugin_ExecutableResolutionFails_FallsBackToBareClick(t *te
 // binary path (this session's own platform) the moment Node loads hooks.js. Backslashes must be
 // doubled before substitution.
 func TestSyncOpenClawPlugin_WindowsBackslashPath_EscapedForJSStringLiteral(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	winPath := `C:\Users\CLK090\bin\click.exe`
 	restore := SetOSExecutableForTests(func() (string, error) { return winPath, nil })
 	defer restore()
@@ -115,7 +115,7 @@ func TestSyncOpenClawPlugin_WindowsBackslashPath_EscapedForJSStringLiteral(t *te
 // TestSyncOpenClawPlugin_Rerun_ByteIdenticalOutput is task 3.6's idempotency half: re-running
 // SyncOpenClawPlugin with an unchanged resolved click path must produce byte-identical output.
 func TestSyncOpenClawPlugin_Rerun_ByteIdenticalOutput(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	restore := SetOSExecutableForTests(func() (string, error) { return "/opt/click/bin/click", nil })
 	defer restore()
 
@@ -148,7 +148,7 @@ func TestSyncOpenClawPlugin_Rerun_ByteIdenticalOutput(t *testing.T) {
 // — proving the plugin's files ride PR-B's existing per-target snapshot/rollback mechanism for free,
 // with zero snapshot.go logic beyond the snapshotSources entries this batch adds.
 func TestOpenClawPlugin_SnapshotAndRestore_RestoresByteForByte(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	restore := SetOSExecutableForTests(func() (string, error) { return "/opt/click/bin/click", nil })
 	defer restore()
 
@@ -185,7 +185,7 @@ func TestOpenClawPlugin_SnapshotAndRestore_RestoresByteForByte(t *testing.T) {
 // --- Task 3.13's supporting RED coverage (RemoveOpenClawPlugin) ---
 
 func TestRemoveOpenClawPlugin_RemovesEntireDir(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	restore := SetOSExecutableForTests(func() (string, error) { return "/opt/click/bin/click", nil })
 	defer restore()
 
@@ -205,14 +205,14 @@ func TestRemoveOpenClawPlugin_RemovesEntireDir(t *testing.T) {
 }
 
 func TestRemoveOpenClawPlugin_AbsentDir_NoOp(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := RemoveOpenClawPlugin(cfg); err != nil {
 		t.Fatalf("RemoveOpenClawPlugin() error = %v, want nil when the plugin was never installed", err)
 	}
 }
 
 func TestRemoveOpenClawPlugin_OpenClawHomeEmpty_NoOp(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := RemoveOpenClawPlugin(cfg); err != nil {
 		t.Fatalf("RemoveOpenClawPlugin() error = %v, want nil no-op when OpenClawHome is empty", err)
 	}

@@ -12,7 +12,7 @@ import (
 // writing NOTHING — every original file keeps its current content, so an interactive confirmation
 // can safely sit between prepare and apply.
 func TestPrepareRestore_ProducesReportWithZeroWrites(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	sharedPath := filepath.Join(cfg.ClaudeHome, "shared.txt")
 	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
@@ -68,7 +68,7 @@ func TestPrepareRestore_ProducesReportWithZeroWrites(t *testing.T) {
 // caller has decided to proceed, apply restores EVERY manifest entry from its pre-run snapshot —
 // including warnable non-veto entries (only veto scope is ownership-scoped, never coverage).
 func TestApplyPreparedRestore_RestoresEveryEntryIncludingNonVeto(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	sharedPath := filepath.Join(cfg.ClaudeHome, "shared.txt")
 	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
@@ -120,7 +120,7 @@ func TestApplyPreparedRestore_RestoresEveryEntryIncludingNonVeto(t *testing.T) {
 // confirmation prompt sat in between), apply must refuse BEFORE any write — leaving every file
 // untouched, not just the changed one.
 func TestApplyPreparedRestore_RefusesWhenFingerprintChanged(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
 	if err := SnapshotRun(cfg); err != nil {
@@ -158,7 +158,7 @@ func TestApplyPreparedRestore_RefusesWhenFingerprintChanged(t *testing.T) {
 // full manifest (including non-veto entries) without any prompting or drift refusal of its own,
 // exactly as install/update's automatic failure-recovery paths require.
 func TestRestoreRun_ComposesPrepareAndApply(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
 	if err := SnapshotRun(cfg); err != nil {
@@ -194,7 +194,7 @@ func TestRestoreRun_ComposesPrepareAndApply(t *testing.T) {
 // overwrite/delete or not), so the rollback command's existing warn+consent gate covers it exactly
 // like a present-and-drifted non-veto entry already does.
 func TestPrepareRestore_NoPriorStateNonVetoEntry_WarnsBeforeDeletion(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
 	if err := SnapshotRun(cfg); err != nil {
@@ -252,7 +252,7 @@ func TestPrepareRestore_NoPriorStateNonVetoEntry_WarnsBeforeDeletion(t *testing.
 // content click owns outright, so it is NOT added to WarnableNonVeto — deleting it on rollback (it
 // did not exist before the run) is the correct, expected undo, not a foreign-data risk.
 func TestPrepareRestore_NoPriorStateWholeFileVetoEntry_DeletesWithoutWarning(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir()}
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := SnapshotRun(cfg); err != nil {
 		t.Fatalf("SnapshotRun() error = %v", err)
 	}
