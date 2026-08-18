@@ -185,7 +185,7 @@ func TestConfig_BackupDir(t *testing.T) {
 	// for Claude-less selections too. See backupdir_migration_test.go for the full contract.
 	cfg := Config{ClickStateHome: filepath.Join("some", "state")}
 
-	want := filepath.Join("some", "state", "click-ai-devkit", "backups")
+	want := filepath.Join("some", "state", "backups")
 	if got := cfg.BackupDir(); got != want {
 		t.Errorf("BackupDir() = %q, want %q", got, want)
 	}
