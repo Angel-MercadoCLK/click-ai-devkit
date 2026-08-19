@@ -124,13 +124,20 @@ install`), así que el menú es una capa de descubrimiento, no un camino paralel
 
 ### Update notifications
 
-When running `click` interactively (no arguments, in a TTY), the CLI automatically checks GitHub for a newer release at most once per 24 hours. If an update is available, it prints a notification in Spanish before the menu appears and offers to run `click update` for you:
+When running `click` interactively (no arguments, in a TTY), the CLI automatically checks GitHub for a newer release at most once per 24 hours. If an update is available, it prints a notification in Spanish before the menu appears with upgrade guidance specific to how click was installed:
 
 ```
 Hay una nueva versión de click disponible: v{latest} (tienes v{current}).
-Se ejecutará `click update` para actualizar.
-¿Continuar? [y/N]:
+[i] La instalación está gestionada por Scoop desde el bucket <bucket>.
+[i] Para actualizar, ejecuta: scoop update; scoop update click
+
+or
+
+[i] La nueva versión debe descargarse manualmente.
+[i] Visita: https://github.com/Angel-MercadoCLK/click-ai-devkit/releases/latest
 ```
+
+Note: `click update` syncs the devkit (plugins, Engram, skills, etc.) rather than the binary itself. Binary updates follow the path shown in the notification.
 
 - The cache file lives at `<CLICK_STATE_HOME>/update-check.json` (normally `~/.config/click-ai-devkit/update-check.json` on Linux/macOS, `%AppData%\click-ai-devkit\update-check.json` on Windows).
 - Dev builds (`version == "dev"`) never check for updates.
