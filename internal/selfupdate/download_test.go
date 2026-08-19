@@ -363,3 +363,33 @@ func TestDownloadToSibling_StreamsHashesAndBounds(t *testing.T) {
 		})
 	}
 }
+
+// TestDownloadToSibling_TransportErrorIsRetried pins that a connection-level failure drives the
+// full retry budget. isRetryableError originally recognised only status-based *downloadError
+// values, so a transport failure — wrapped with %w and therefore not that type — aborted after a
+// single attempt. That is precisely the transient case retries exist for: a DNS hiccup or a reset
+// connection would have failed the update outright.
+func TestDownloadToSibling_TransportErrorIsRetried(t *testing.T) {
+	originalSleep := downloadRetrySleep
+	t.Cleanup(func() { downloadRetrySleep = originalSleep })
+
+	var waits []time.Duration
+	downloadRetrySleep = func(attempt int) time.Duration {
+		waits = append(waits, originalSleep(attempt))
+		return 0 // do not actually sleep in tests
+	}
+
+	// Port 1 is reserved and never listening: connecting fails at the transport layer, before any
+	// HTTP response exists.
+	_, _, err := downloadToSibling("http://127.0.0.1:1/click.zip", t.TempDir(), "click-*.zip")
+	if err == nil {
+		t.Fatal("downloadToSibling() = nil error, want a transport failure")
+	}
+
+	if len(waits) != 2 {
+		t.Fatalf("retry waits = %v (%d attempts), want 2 waits for 3 total attempts", waits, len(waits)+1)
+	}
+	if waits[0] != 250*time.Millisecond || waits[1] != 500*time.Millisecond {
+		t.Errorf("retry waits = %v, want [250ms 500ms]", waits)
+	}
+}

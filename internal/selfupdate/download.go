@@ -2,6 +2,7 @@ package selfupdate
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -149,7 +150,9 @@ func downloadAttempt(url, targetDir, pattern string) (string, []byte, error) {
 	client := newDownloadClient()
 	resp, err := client.Get(url)
 	if err != nil {
-		return "", nil, fmt.Errorf("download request: %w", err)
+		// Tagged so isRetryableError can tell a transport failure apart from the deterministic
+		// failures below, which must never be retried.
+		return "", nil, fmt.Errorf("download request: %w: %w", errTransportFailure, err)
 	}
 	defer resp.Body.Close()
 
@@ -224,13 +227,28 @@ func isRetryableStatus(statusCode int) bool {
 	}
 }
 
-// isRetryableError returns true if the error should trigger a retry.
+// isRetryableError reports whether err should trigger another attempt.
+//
+// Two classes are retryable, per the approved bounds:
+//
+//   - A status-based *downloadError whose code is one of 408/429/500/502/503/504.
+//   - A transport failure that occurred BEFORE any usable response — a refused or reset
+//     connection, a DNS hiccup, a dial timeout. These are the transient faults retries exist for.
+//
+// Everything else fails immediately: a non-retryable status, a checksum mismatch, malformed
+// metadata, invalid archive contents, and any disk-write error. Retrying those would only repeat a
+// deterministic failure.
 func isRetryableError(err error) bool {
-	if de, ok := err.(*downloadError); ok {
+	var de *downloadError
+	if errors.As(err, &de) {
 		return de.retryable
 	}
-	return false
+	// Not a status-based failure, so the request never produced a usable response: transport-level.
+	return errors.Is(err, errTransportFailure)
 }
+
+// errTransportFailure marks a failure that happened before any HTTP response was obtained.
+var errTransportFailure = errors.New("transport failure")
 
 // downloadError represents a download error with retry information.
 type downloadError struct {

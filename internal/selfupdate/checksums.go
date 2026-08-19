@@ -9,6 +9,19 @@ import (
 	"strings"
 )
 
+// What this checksum does and does NOT establish (spec RAD-5).
+//
+// checksums.txt is published unsigned, from the same origin as the archive it describes. Verifying
+// an archive against it therefore establishes INTEGRITY — it catches corruption, truncation, a
+// partial download, and tampering below an uncompromised TLS connection. It does NOT establish
+// AUTHENTICITY: an attacker who can publish a release can publish a malicious archive together
+// with a checksum that matches it perfectly, and this check would pass.
+//
+// TLS is the real authenticity boundary here. Genuine publisher authentication would require
+// signing the artifacts, which is deliberately out of scope for this change — an accepted
+// limitation for an internal tool served from the organization's own repository, recorded here so
+// no future reader mistakes a matching checksum for proof of origin.
+//
 // expectedChecksum reads a checksums.txt file and returns the SHA-256 hash
 // for the given filename. Returns an error if:
 // - The file is empty or malformed
