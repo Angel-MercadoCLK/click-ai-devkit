@@ -505,6 +505,15 @@ func TestRunInteractiveRoot_NoNoticeGoesStraightToMenu(t *testing.T) {
 		return selfupdate.Notice{}, false
 	}
 
+	// Stub detectInstallation to track if it's called
+	originalDetectInstallation := detectInstallation
+	defer func() { detectInstallation = originalDetectInstallation }()
+	detectionCalled := false
+	detectInstallation = func() selfupdate.Installation {
+		detectionCalled = true
+		return selfupdate.Installation{}
+	}
+
 	launchMenuCalled := false
 	launchMenu := func() (string, error) {
 		launchMenuCalled = true
@@ -530,15 +539,16 @@ func TestRunInteractiveRoot_NoNoticeGoesStraightToMenu(t *testing.T) {
 	if dispatchCalled {
 		t.Error("dispatchFn should not be called when no update available")
 	}
+	if detectionCalled {
+		t.Error("detectInstallation should not be called when no update available")
+	}
 }
 
-func TestRunInteractiveRoot_NoticeOutputExact(t *testing.T) {
+func TestRunInteractiveRoot_ScoopNotice_PrintsScoopRemediation(t *testing.T) {
 	cmd := &cobra.Command{Version: "0.4.0"}
 	var out bytes.Buffer
-	// Feed 'n' to decline the update
-	in := bytes.NewBufferString("n\n")
 	cmd.SetOut(&out)
-	cmd.SetIn(in)
+	cmd.SetIn(&bytes.Buffer{})
 
 	// Stub checkForUpdate to return a notice
 	originalCheckForUpdate := checkForUpdate
@@ -547,50 +557,15 @@ func TestRunInteractiveRoot_NoticeOutputExact(t *testing.T) {
 		return selfupdate.Notice{Latest: "v0.5.0", Current: "0.4.0"}, true
 	}
 
-	launchMenuCalled := false
-	launchMenu := func() (string, error) {
-		launchMenuCalled = true
-		return menu.ActionQuit, nil
-	}
-	dispatchFn := func(args []string) error { return nil }
-
-	err := runInteractiveRoot(cmd, launchMenu, dispatchFn)
-	if err != nil {
-		t.Fatalf("runInteractiveRoot() error = %v, want nil", err)
-	}
-
-	output := out.String()
-	// Assert exact output: notice lines, no leading blank line, then confirmProceed prompt
-	expectedPrefix := "Hay una nueva versión de click disponible: v0.5.0 (tienes v0.4.0).\n" +
-		"Se ejecutará `click update` para actualizar.\n" +
-		"[i] ¿Continuar? [y/N]: "
-	if !strings.HasPrefix(output, expectedPrefix) {
-		t.Errorf("output does not match expected prefix\nGot: %q\nWant prefix: %q", output, expectedPrefix)
-	}
-
-	// Also assert there's NO leading blank line (this pins the Defect 3 fix)
-	if strings.HasPrefix(output, "\n") {
-		t.Error("output should not start with a blank line")
-	}
-
-	if !launchMenuCalled {
-		t.Error("launchMenu should be called after declining update")
-	}
-}
-
-func TestRunInteractiveRoot_AcceptDispatchesExactlyUpdate(t *testing.T) {
-	cmd := &cobra.Command{Version: "0.4.0"}
-	var out bytes.Buffer
-	// Feed 'y' to accept the update
-	in := bytes.NewBufferString("y\n")
-	cmd.SetOut(&out)
-	cmd.SetIn(in)
-
-	// Stub checkForUpdate to return a notice
-	originalCheckForUpdate := checkForUpdate
-	defer func() { checkForUpdate = originalCheckForUpdate }()
-	checkForUpdate = func(current string) (selfupdate.Notice, bool) {
-		return selfupdate.Notice{Latest: "v0.5.0", Current: "0.4.0"}, true
+	// Stub detectInstallation to return Scoop
+	originalDetectInstallation := detectInstallation
+	defer func() { detectInstallation = originalDetectInstallation }()
+	detectInstallation = func() selfupdate.Installation {
+		return selfupdate.Installation{
+			Method:     selfupdate.InstallScoop,
+			Executable: "",
+			Bucket:     "click",
+		}
 	}
 
 	launchMenuCalled := false
@@ -598,10 +573,9 @@ func TestRunInteractiveRoot_AcceptDispatchesExactlyUpdate(t *testing.T) {
 		launchMenuCalled = true
 		return menu.ActionQuit, nil
 	}
-
-	var dispatchedArgs []string
+	dispatchCalls := 0
 	dispatchFn := func(args []string) error {
-		dispatchedArgs = args
+		dispatchCalls++
 		return nil
 	}
 
@@ -610,13 +584,246 @@ func TestRunInteractiveRoot_AcceptDispatchesExactlyUpdate(t *testing.T) {
 		t.Fatalf("runInteractiveRoot() error = %v, want nil", err)
 	}
 
-	// Assert dispatchFn was called with EXACTLY ["update"]
-	if !reflect.DeepEqual(dispatchedArgs, []string{"update"}) {
-		t.Errorf("dispatchFn called with %v, want exactly [update]", dispatchedArgs)
+	output := out.String()
+
+	// Assert version line is present
+	if !strings.Contains(output, "Hay una nueva versión de click disponible: v0.5.0 (tienes v0.4.0).") {
+		t.Errorf("output missing version line, got: %q", output)
 	}
 
+	// Assert Scoop-specific remediation
+	if !strings.Contains(output, "scoop update; scoop update click") {
+		t.Errorf("output missing Scoop remediation command, got: %q", output)
+	}
+
+	// Assert bucket is mentioned
+	if !strings.Contains(output, "click") {
+		t.Errorf("output missing bucket name, got: %q", output)
+	}
+
+	// Assert NO dispatch was called
+	if dispatchCalls != 0 {
+		t.Errorf("dispatchFn called %d times, want 0", dispatchCalls)
+	}
+
+	// Assert NO confirmation prompt text
+	if strings.Contains(output, "¿Continuar?") {
+		t.Error("output should not contain confirmation prompt")
+	}
+
+	// Assert menu was reached
 	if !launchMenuCalled {
-		t.Error("launchMenu should be called after dispatching update")
+		t.Error("launchMenu should have been called")
+	}
+}
+
+func TestRunInteractiveRoot_UnknownNotice_PrintsManualReleaseURL(t *testing.T) {
+	cmd := &cobra.Command{Version: "0.4.0"}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetIn(&bytes.Buffer{})
+
+	// Stub checkForUpdate to return a notice
+	originalCheckForUpdate := checkForUpdate
+	defer func() { checkForUpdate = originalCheckForUpdate }()
+	checkForUpdate = func(current string) (selfupdate.Notice, bool) {
+		return selfupdate.Notice{Latest: "v0.5.0", Current: "0.4.0"}, true
+	}
+
+	// Stub detectInstallation to return Unknown
+	originalDetectInstallation := detectInstallation
+	defer func() { detectInstallation = originalDetectInstallation }()
+	detectInstallation = func() selfupdate.Installation {
+		return selfupdate.Installation{
+			Method:     selfupdate.InstallUnknown,
+			Executable: "",
+			Bucket:     "",
+		}
+	}
+
+	launchMenuCalled := false
+	launchMenu := func() (string, error) {
+		launchMenuCalled = true
+		return menu.ActionQuit, nil
+	}
+	dispatchCalls := 0
+	dispatchFn := func(args []string) error {
+		dispatchCalls++
+		return nil
+	}
+
+	err := runInteractiveRoot(cmd, launchMenu, dispatchFn)
+	if err != nil {
+		t.Fatalf("runInteractiveRoot() error = %v, want nil", err)
+	}
+
+	output := out.String()
+
+	// Assert version line is present
+	if !strings.Contains(output, "Hay una nueva versión de click disponible: v0.5.0 (tienes v0.4.0).") {
+		t.Errorf("output missing version line, got: %q", output)
+	}
+
+	// Assert manual release URL is present
+	if !strings.Contains(output, "https://github.com/Angel-MercadoCLK/click-ai-devkit/releases/latest") {
+		t.Errorf("output missing manual release URL, got: %q", output)
+	}
+
+	// Assert NO dispatch was called
+	if dispatchCalls != 0 {
+		t.Errorf("dispatchFn called %d times, want 0", dispatchCalls)
+	}
+
+	// Assert NO confirmation prompt text
+	if strings.Contains(output, "¿Continuar?") {
+		t.Error("output should not contain confirmation prompt")
+	}
+
+	// Assert menu was reached
+	if !launchMenuCalled {
+		t.Error("launchMenu should have been called")
+	}
+}
+
+func TestRunInteractiveRoot_StandaloneNotice_PrintsManualRemediation_ContinuesToMenu(t *testing.T) {
+	cmd := &cobra.Command{Version: "0.4.0"}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetIn(&bytes.Buffer{})
+
+	// Stub checkForUpdate to return a notice
+	originalCheckForUpdate := checkForUpdate
+	defer func() { checkForUpdate = originalCheckForUpdate }()
+	checkForUpdate = func(current string) (selfupdate.Notice, bool) {
+		return selfupdate.Notice{Latest: "v0.5.0", Current: "0.4.0"}, true
+	}
+
+	// Stub detectInstallation to return Standalone
+	originalDetectInstallation := detectInstallation
+	defer func() { detectInstallation = originalDetectInstallation }()
+	detectInstallation = func() selfupdate.Installation {
+		return selfupdate.Installation{
+			Method:     selfupdate.InstallStandalone,
+			Executable: "",
+			Bucket:     "",
+		}
+	}
+
+	launchMenuCalled := false
+	launchMenu := func() (string, error) {
+		launchMenuCalled = true
+		return menu.ActionQuit, nil
+	}
+	dispatchCalls := 0
+	dispatchFn := func(args []string) error {
+		dispatchCalls++
+		return nil
+	}
+
+	err := runInteractiveRoot(cmd, launchMenu, dispatchFn)
+	if err != nil {
+		t.Fatalf("runInteractiveRoot() error = %v, want nil", err)
+	}
+
+	output := out.String()
+
+	// Assert version line is present
+	if !strings.Contains(output, "Hay una nueva versión de click disponible: v0.5.0 (tienes v0.4.0).") {
+		t.Errorf("output missing version line, got: %q", output)
+	}
+
+	// Assert manual release URL is present
+	if !strings.Contains(output, "https://github.com/Angel-MercadoCLK/click-ai-devkit/releases/latest") {
+		t.Errorf("output missing manual release URL, got: %q", output)
+	}
+
+	// Assert NO dispatch was called
+	if dispatchCalls != 0 {
+		t.Errorf("dispatchFn called %d times, want 0", dispatchCalls)
+	}
+
+	// Assert NO confirmation prompt text
+	if strings.Contains(output, "¿Continuar?") {
+		t.Error("output should not contain confirmation prompt")
+	}
+
+	// Assert menu was reached
+	if !launchMenuCalled {
+		t.Error("launchMenu should have been called")
+	}
+}
+
+func TestRunInteractiveRoot_NoticeAcceptNeverDispatchesUpdate(t *testing.T) {
+	testCases := []struct {
+		name   string
+		method selfupdate.InstallMethod
+		input  string
+	}{
+		{
+			name:   "Scoop",
+			method: selfupdate.InstallScoop,
+			input:  "y\n",
+		},
+		{
+			name:   "Unknown",
+			method: selfupdate.InstallUnknown,
+			input:  "y\n",
+		},
+		{
+			name:   "Standalone",
+			method: selfupdate.InstallStandalone,
+			input:  "y\n",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := &cobra.Command{Version: "0.4.0"}
+			var out bytes.Buffer
+			in := bytes.NewBufferString(tc.input)
+			cmd.SetOut(&out)
+			cmd.SetIn(in)
+
+			// Stub checkForUpdate to return a notice
+			originalCheckForUpdate := checkForUpdate
+			defer func() { checkForUpdate = originalCheckForUpdate }()
+			checkForUpdate = func(current string) (selfupdate.Notice, bool) {
+				return selfupdate.Notice{Latest: "v0.5.0", Current: "0.4.0"}, true
+			}
+
+			// Stub detectInstallation to return the test method
+			originalDetectInstallation := detectInstallation
+			defer func() { detectInstallation = originalDetectInstallation }()
+			detectInstallation = func() selfupdate.Installation {
+				return selfupdate.Installation{
+					Method:     tc.method,
+					Executable: "",
+					Bucket:     "click",
+				}
+			}
+
+			var dispatchedArgs [][]string
+			dispatchFn := func(args []string) error {
+				dispatchedArgs = append(dispatchedArgs, args)
+				return nil
+			}
+
+			launchMenu := func() (string, error) {
+				return menu.ActionQuit, nil
+			}
+
+			err := runInteractiveRoot(cmd, launchMenu, dispatchFn)
+			if err != nil {
+				t.Fatalf("runInteractiveRoot() error = %v, want nil", err)
+			}
+
+			// Assert dispatchFn was NEVER called with ["update"]
+			for _, args := range dispatchedArgs {
+				if reflect.DeepEqual(args, []string{"update"}) {
+					t.Errorf("dispatchFn was called with [update], should never dispatch update")
+				}
+			}
+		})
 	}
 }
 

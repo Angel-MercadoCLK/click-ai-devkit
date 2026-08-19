@@ -9,6 +9,7 @@ import (
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/selfupdate"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/ui"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
 
@@ -20,6 +21,9 @@ import (
 var checkForUpdate = func(current string) (selfupdate.Notice, bool) {
 	return selfupdate.Check(current)
 }
+
+// detectInstallation is a seam for testing.
+var detectInstallation = selfupdate.DetectInstallation
 
 // noInteractiveFlag lets a developer/script force bare `click`'s default action to skip the
 // standing menu and print help instead, without needing to fake a non-TTY environment.
@@ -47,11 +51,31 @@ func normalizeV(v string) string {
 	return "v" + stripped
 }
 
+// renderUpdateRemediation prints the remediation instructions for an available update
+// based on the installation method.
+func renderUpdateRemediation(out io.Writer, r *ui.Renderer, inst selfupdate.Installation, latest, current string) {
+	switch inst.Method {
+	case selfupdate.InstallScoop:
+		fmt.Fprintln(out, r.Info(fmt.Sprintf(
+			"La instalación está gestionada por Scoop desde el bucket %s.",
+			inst.Bucket,
+		)))
+		fmt.Fprintln(out, r.Info("Para actualizar, ejecuta: scoop update; scoop update click"))
+	case selfupdate.InstallStandalone, selfupdate.InstallUnknown:
+		fmt.Fprintln(out, r.Info(
+			"La nueva versión debe descargarse manualmente.",
+		))
+		fmt.Fprintln(out, r.Info(
+			"Visita: https://github.com/Angel-MercadoCLK/click-ai-devkit/releases/latest",
+		))
+	}
+	fmt.Fprintln(out) // Blank line before menu
+}
+
 // runInteractiveRoot handles the interactive menu flow, including update checks.
 // It is called after the interactive() gate succeeds.
 func runInteractiveRoot(cmd *cobra.Command, launchMenu func() (string, error), dispatchFn func([]string) error) error {
 	out := cmd.OutOrStdout()
-	in := cmd.InOrStdin()
 
 	// Check for updates (if seam allows)
 	notice, available := checkForUpdate(cmd.Version)
@@ -60,28 +84,14 @@ func runInteractiveRoot(cmd *cobra.Command, launchMenu func() (string, error), d
 		current := normalizeV(notice.Current)
 
 		fmt.Fprintf(out, "Hay una nueva versión de click disponible: %s (tienes %s).\n", latest, current)
-		fmt.Fprintln(out, "Se ejecutará `click update` para actualizar.")
 
-		// Ask user to proceed
-		proceed, err := confirmProceed(in, out, rendererFor(cmd, out))
-		if err != nil {
-			return err
-		}
-		if !proceed {
-			// User declined, proceed to menu
-			return runMenuLoop(launchMenu, dispatchFn)
-		}
-
-		// User accepted, dispatch update
-		if err := dispatchFn([]string{"update"}); err != nil {
-			return err
-		}
-
-		// After update, launch menu (user may want to continue)
-		return runMenuLoop(launchMenu, dispatchFn)
+		// Print remediation based on installation method
+		inst := detectInstallation()
+		r := rendererFor(cmd, out)
+		renderUpdateRemediation(out, r, inst, latest, current)
 	}
 
-	// No update notice, proceed to menu
+	// Always proceed to menu (no dispatch, no confirmation)
 	return runMenuLoop(launchMenu, dispatchFn)
 }
 

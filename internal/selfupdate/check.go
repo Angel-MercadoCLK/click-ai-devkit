@@ -1,4 +1,5 @@
-// Package selfupdate provides silent self-update notification for the click CLI.
+// Package selfupdate provides silent self-update notification and installation
+// method classification for the click CLI.
 //
 // The Check() function determines if an update is available by:
 //   - Comparing versions using a numeric semantic version comparator
@@ -13,6 +14,10 @@
 // The cache is updated with the checked_at timestamp on every attempt (success
 // or failure) to prevent retry loops, while the latest version is only updated
 // on successful fetches with valid comparable tags.
+//
+// The package also provides installation method detection through DetectInstallation(),
+// which classifies the current CLI installation as Scoop, standalone, or unknown
+// based on metadata files and shim indirection patterns.
 package selfupdate
 
 import (
