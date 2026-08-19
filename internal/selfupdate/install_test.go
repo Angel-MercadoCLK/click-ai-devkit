@@ -417,3 +417,40 @@ func TestParseShimTarget_StillRejectsRealControlCharacters(t *testing.T) {
 		})
 	}
 }
+
+// TestIsAbsoluteShimTarget_HostIndependent pins that shim targets are judged the same way wherever
+// the tests run. filepath.IsAbs answers according to the host, so it accepted Windows paths locally
+// and rejected every one of them on ubuntu CI — and would have rejected the POSIX temp paths the
+// detection tests point shims at had it been applied the other way round.
+func TestIsAbsoluteShimTarget_HostIndependent(t *testing.T) {
+	absolute := []string{
+		`C:\tools\click.exe`,
+		`C:/Users/test/click.exe`,
+		`d:\lower\drive.exe`,
+		`\\server\share\click.exe`,
+		// POSIX form: not what a real shim contains, but what t.TempDir() hands the detection
+		// tests on a non-Windows host, so the parser must accept it too.
+		`/usr/local/bin/click`,
+		`/tmp/TestDetect123/click`,
+	}
+	for _, p := range absolute {
+		if !isAbsoluteShimTarget(p) {
+			t.Errorf("isAbsoluteShimTarget(%q) = false, want true", p)
+		}
+	}
+
+	relative := []string{
+		``,
+		`click.exe`,
+		`.\click.exe`,
+		`..\click.exe`,
+		`C:`,
+		`C:click.exe`,
+		`1:\not-a-drive.exe`,
+	}
+	for _, p := range relative {
+		if isAbsoluteShimTarget(p) {
+			t.Errorf("isAbsoluteShimTarget(%q) = true, want false", p)
+		}
+	}
+}

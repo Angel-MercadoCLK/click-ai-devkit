@@ -171,8 +171,8 @@ func parseShimTarget(data []byte) (string, error) {
 		return "", errors.New("no path assignment found in shim")
 	}
 
-	// Validate path is absolute and contains no control characters or suspicious escape-like sequences
-	if !filepath.IsAbs(foundPath) {
+	// Validate the path is absolute — see isAbsoluteShimTarget for why filepath.IsAbs is wrong here.
+	if !isAbsoluteShimTarget(foundPath) {
 		return "", fmt.Errorf("path is not absolute: %s", foundPath)
 	}
 
@@ -189,6 +189,27 @@ func parseShimTarget(data []byte) (string, error) {
 	// Real control characters are already rejected by the loop above, which is the correct check.
 
 	return foundPath, nil
+}
+
+// isAbsoluteShimTarget reports whether p is an absolute path under either Windows or POSIX rules,
+// independently of the host OS.
+//
+// Deliberately not filepath.IsAbs, which answers according to the host: a real shim always contains
+// a Windows path, so on a non-Windows host filepath.IsAbs would reject every legitimate target,
+// while on Windows it rejects the POSIX-style temp paths the tests point shims at. Judging the form
+// by both conventions removes that coupling. This only checks the SHAPE — whether the target
+// actually exists, is a regular file, and is owned by Scoop is verified afterwards by stat and the
+// metadata probe, which is where the real authority belongs.
+func isAbsoluteShimTarget(p string) bool {
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\\`) {
+		return true
+	}
+	if len(p) < 3 {
+		return false
+	}
+	drive := p[0]
+	isLetter := (drive >= 'a' && drive <= 'z') || (drive >= 'A' && drive <= 'Z')
+	return isLetter && p[1] == ':' && (p[2] == '\\' || p[2] == '/')
 }
 
 // shimPathFor returns the expected path to a .shim file for the given executable.
