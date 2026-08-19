@@ -207,9 +207,9 @@ type ownershipState int
 
 const (
 	ownershipNone    ownershipState = iota // No Scoop metadata present
-	ownershipPartial                        // Some metadata present but incomplete
-	ownershipInvalid                        // Metadata present but malformed
-	ownershipValid                          // Complete, valid Scoop metadata
+	ownershipPartial                       // Some metadata present but incomplete
+	ownershipInvalid                       // Metadata present but malformed
+	ownershipValid                         // Complete, valid Scoop metadata
 )
 
 // probeScoopDirectory examines a directory for Scoop metadata files.
@@ -285,28 +285,13 @@ type Installation struct {
 // DetectInstallation determines how the CLI was installed by examining
 // the running executable and its metadata. Returns an Installation struct
 // with the detected method and associated information.
+// Deliberately independent of the running version. How click was installed is a filesystem
+// question; the version answers a different one. Dev builds are already excluded upstream — Check
+// skips any non-comparable version, so the notice path (the only caller) never runs for them and
+// detection is never consulted. An earlier revision gated this on reading the update cache and a
+// hardcoded placeholder version, which made every machine without a cache file report Unknown even
+// when Scoop plainly owned the binary.
 func DetectInstallation() Installation {
-	// Check if this is a dev build by attempting to read the version from state
-	// If we can't read the state, we can't determine the version, so treat as dev/unknown
-	var currentVersion string
-	if stateHome, err := resolveStateHome(); err == nil {
-		cachePath := filepath.Join(stateHome, cacheFile)
-		if _, err := readCache(cachePath); err == nil {
-			// Try to get the current version from the environment or build info
-			// For now, just use a placeholder - the real version will come from the CLI
-			currentVersion = "0.0.0" // Placeholder
-		}
-	}
-
-	// If we couldn't determine a version (dev build), return unknown
-	comparable := false
-	if currentVersion != "" {
-		_, comparable = compareVersions(currentVersion, currentVersion)
-	}
-	if !comparable {
-		return Installation{Method: InstallUnknown}
-	}
-
 	// Resolve the running executable path
 	exePath := resolveRunningExecutable()
 	if exePath == "" {

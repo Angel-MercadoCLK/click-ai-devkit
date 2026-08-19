@@ -11,10 +11,10 @@ import (
 // resolveRunningExecutable degrades gracefully when its underlying seams fail.
 func TestResolveRunningExecutable_SeamFailuresYieldUnknownInputs(t *testing.T) {
 	tests := []struct {
-		name           string
-		setupSeams     func()
-		teardownSeams  func()
-		wantUnknown    bool // true if we expect empty string (unknown)
+		name          string
+		setupSeams    func()
+		teardownSeams func()
+		wantUnknown   bool // true if we expect empty string (unknown)
 	}{
 		{
 			name: "executablePath returns error",
@@ -156,10 +156,10 @@ func TestResolveRunningExecutable_ValidExecutableReturnsPath(t *testing.T) {
 // TestProbeScoopDirectory_ClassifiesOwnership tests ownership state detection.
 func TestProbeScoopDirectory_ClassifiesOwnership(t *testing.T) {
 	tests := []struct {
-		name         string
-		setupFiles   func(dir string) error
-		wantState    ownershipState
-		wantBucket   string // only meaningful when state == ownershipValid
+		name       string
+		setupFiles func(dir string) error
+		wantState  ownershipState
+		wantBucket string // only meaningful when state == ownershipValid
 	}{
 		{
 			name: "both manifest and install present and valid",
@@ -560,28 +560,36 @@ func TestDetectInstallation_UnknownOnAmbiguity(t *testing.T) {
 	}
 }
 
-// TestDetectInstallation_DevVersionIsUnknown tests that dev versions are classified as unknown.
-func TestDetectInstallation_DevVersionIsUnknown(t *testing.T) {
+// TestDetectInstallation_IsIndependentOfUpdateCacheAndVersion pins that classification depends
+// only on the filesystem, never on the update cache or the running version. An earlier revision
+// gated detection on reading the cache plus a hardcoded placeholder version, so any machine
+// without an update-check.json — every fresh install — reported Unknown even when Scoop owned the
+// binary. Dev builds are excluded upstream by Check, not here.
+func TestDetectInstallation_IsIndependentOfUpdateCacheAndVersion(t *testing.T) {
 	dir := t.TempDir()
 	fakeExe := filepath.Join(dir, "click.exe")
 	if err := os.WriteFile(fakeExe, []byte("fake exe"), 0o755); err != nil {
 		t.Fatalf("failed to create fake executable: %v", err)
 	}
+	if err := os.WriteFile(
+		filepath.Join(dir, "manifest.json"),
+		[]byte(`{"version":"1.2.3","url":"https://example.com/click.zip","hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}`),
+		0o644,
+	); err != nil {
+		t.Fatalf("failed to create manifest: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(dir, "install.json"),
+		[]byte(`{"bucket":"click","architecture":"64bit"}`),
+		0o644,
+	); err != nil {
+		t.Fatalf("failed to create install.json: %v", err)
+	}
 
-	// Save and restore seams
 	originalExecutablePath := executablePath
 	originalEvalSymlinks := evalExecutableSymlinks
 	originalStatExecutable := statExecutable
 	originalResolveStateHome := resolveStateHome
-
-	executablePath = func() (string, error) { return fakeExe, nil }
-	evalExecutableSymlinks = func(path string) (string, error) { return path, nil }
-	statExecutable = os.Stat
-	// Make resolveStateHome fail, which makes the version check treat it as dev
-	resolveStateHome = func() (string, error) {
-		return "", errors.New("mock error")
-	}
-
 	t.Cleanup(func() {
 		executablePath = originalExecutablePath
 		evalExecutableSymlinks = originalEvalSymlinks
@@ -589,16 +597,18 @@ func TestDetectInstallation_DevVersionIsUnknown(t *testing.T) {
 		resolveStateHome = originalResolveStateHome
 	})
 
-	install := DetectInstallation()
+	executablePath = func() (string, error) { return fakeExe, nil }
+	evalExecutableSymlinks = func(path string) (string, error) { return path, nil }
+	statExecutable = os.Stat
+	// No resolvable state home at all: there is no cache to read. Scoop must still be detected.
+	resolveStateHome = func() (string, error) { return "", errors.New("no state home") }
 
-	if install.Method != InstallUnknown {
-		t.Errorf("DetectInstallation() Method = %v, want InstallUnknown", install.Method)
+	got := DetectInstallation()
+	if got.Method != InstallScoop {
+		t.Errorf("DetectInstallation() Method = %v, want InstallScoop despite an unreadable state home", got.Method)
 	}
-	if install.Executable != "" {
-		t.Errorf("DetectInstallation() Executable = %q, want empty string", install.Executable)
-	}
-	if install.Bucket != "" {
-		t.Errorf("DetectInstallation() Bucket = %q, want empty string", install.Bucket)
+	if got.Bucket != "click" {
+		t.Errorf("DetectInstallation() Bucket = %q, want %q", got.Bucket, "click")
 	}
 }
 
