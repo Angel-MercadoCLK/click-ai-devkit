@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseVersionOutput_SingleTrimmedCobraLine(t *testing.T) {
@@ -176,4 +177,33 @@ func withReplacementSeams(t *testing.T, rename func(string, string) error, run f
 	oldRename, oldRun := renameExecutable, runVersionCommand
 	renameExecutable, runVersionCommand = rename, run
 	t.Cleanup(func() { renameExecutable, runVersionCommand = oldRename, oldRun })
+}
+
+// TestReplaceAndValidate_AfterValidated_NoRollbackPermitted pins the commit boundary (W3/U3 → W4/U4):
+// once the new executable has been validated the transaction is committed, and a later failure —
+// here the best-effort backup cleanup — must neither surface as an error nor undo the swap. Without
+// this guard a future refactor could plausibly "handle" the cleanup error by rolling back a binary
+// that is already proven good.
+func TestReplaceAndValidate_AfterValidated_NoRollbackPermitted(t *testing.T) {
+	target, staged := replacementFiles(t)
+	withReplacementSeams(t, os.Rename, func(string) ([]byte, error) {
+		return []byte("click version 0.7.0\n"), nil
+	})
+
+	originalRemove, originalSleep := removeExecutable, fileRetrySleep
+	t.Cleanup(func() { removeExecutable, fileRetrySleep = originalRemove, originalSleep })
+	removeExecutable = func(string) error { return errors.New("backup is locked by another process") }
+	fileRetrySleep = func(time.Duration) {} // do not actually wait out the retry budget
+
+	if err := replaceAndValidate(target, staged, "0.6.0", "0.7.0"); err != nil {
+		t.Fatalf("replaceAndValidate() = %v, want nil: a validated executable is committed and a "+
+			"cleanup failure must not fail the update", err)
+	}
+
+	if got := string(mustRead(t, target)); got != "new" {
+		t.Errorf("target content = %q, want %q: the committed swap must not be rolled back", got, "new")
+	}
+	if _, err := os.Stat(target + ".old"); err != nil {
+		t.Errorf("backup missing after a failed cleanup: %v; it should simply be left behind", err)
+	}
 }
