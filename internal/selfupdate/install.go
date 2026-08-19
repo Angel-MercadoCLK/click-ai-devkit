@@ -11,6 +11,15 @@ import (
 	"unicode"
 )
 
+// executablePath is a seam for testing. Defaults to os.Executable.
+var executablePath = os.Executable
+
+// evalExecutableSymlinks is a seam for testing. Defaults to filepath.EvalSymlinks.
+var evalExecutableSymlinks = filepath.EvalSymlinks
+
+// statExecutable is a seam for testing. Defaults to os.Stat.
+var statExecutable = os.Stat
+
 // readOwnershipFile is a seam for testing.
 var readOwnershipFile = readBoundedFile
 
@@ -191,4 +200,207 @@ func shimPathFor(executable string) string {
 		base = strings.TrimSuffix(base, ext)
 	}
 	return base + ".shim"
+}
+
+// ownershipState represents the classification of Scoop ownership.
+type ownershipState int
+
+const (
+	ownershipNone    ownershipState = iota // No Scoop metadata present
+	ownershipPartial                        // Some metadata present but incomplete
+	ownershipInvalid                        // Metadata present but malformed
+	ownershipValid                          // Complete, valid Scoop metadata
+)
+
+// probeScoopDirectory examines a directory for Scoop metadata files.
+// Returns the ownership state and, if valid, the bucket URL from install.json.
+func probeScoopDirectory(dir string) (ownershipState, string) {
+	manifestPath := filepath.Join(dir, "manifest.json")
+	installPath := filepath.Join(dir, "install.json")
+
+	// Check which files exist
+	manifestExists := false
+	installExists := false
+
+	if _, err := os.Stat(manifestPath); err == nil {
+		manifestExists = true
+	}
+	if _, err := os.Stat(installPath); err == nil {
+		installExists = true
+	}
+
+	// Neither present: not a Scoop install
+	if !manifestExists && !installExists {
+		return ownershipNone, ""
+	}
+
+	// Both present: validate both
+	if manifestExists && installExists {
+		manifestData, err := readOwnershipFile(manifestPath, maxMetadataBytes)
+		if err != nil {
+			return ownershipInvalid, ""
+		}
+		if err := parseManifest(manifestData); err != nil {
+			return ownershipInvalid, ""
+		}
+
+		installData, err := readOwnershipFile(installPath, maxMetadataBytes)
+		if err != nil {
+			return ownershipInvalid, ""
+		}
+		bucket, err := parseInstall(installData)
+		if err != nil {
+			return ownershipInvalid, ""
+		}
+
+		return ownershipValid, bucket
+	}
+
+	// Only one present: partial
+	return ownershipPartial, ""
+}
+
+// InstallMethod represents the detected installation method.
+type InstallMethod int
+
+const (
+	// InstallUnknown means the installation method could not be determined.
+	InstallUnknown InstallMethod = iota
+	// InstallScoop means the CLI was installed via Scoop.
+	InstallScoop
+	// InstallStandalone means the CLI was installed as a standalone binary.
+	InstallStandalone
+)
+
+// Installation represents information about how the CLI was installed.
+type Installation struct {
+	// Method is the detected installation method.
+	Method InstallMethod
+	// Executable is the absolute path to the running executable.
+	Executable string
+	// Bucket is the Scoop bucket URL (only populated for InstallScoop).
+	Bucket string
+}
+
+// DetectInstallation determines how the CLI was installed by examining
+// the running executable and its metadata. Returns an Installation struct
+// with the detected method and associated information.
+func DetectInstallation() Installation {
+	// Check if this is a dev build by attempting to read the version from state
+	// If we can't read the state, we can't determine the version, so treat as dev/unknown
+	var currentVersion string
+	if stateHome, err := resolveStateHome(); err == nil {
+		cachePath := filepath.Join(stateHome, cacheFile)
+		if _, err := readCache(cachePath); err == nil {
+			// Try to get the current version from the environment or build info
+			// For now, just use a placeholder - the real version will come from the CLI
+			currentVersion = "0.0.0" // Placeholder
+		}
+	}
+
+	// If we couldn't determine a version (dev build), return unknown
+	comparable := false
+	if currentVersion != "" {
+		_, comparable = compareVersions(currentVersion, currentVersion)
+	}
+	if !comparable {
+		return Installation{Method: InstallUnknown}
+	}
+
+	// Resolve the running executable path
+	exePath := resolveRunningExecutable()
+	if exePath == "" {
+		return Installation{Method: InstallUnknown}
+	}
+
+	// Check for Scoop metadata in the executable's directory
+	exeDir := filepath.Dir(exePath)
+	state, bucket := probeScoopDirectory(exeDir)
+
+	if state == ownershipValid {
+		return Installation{
+			Method:     InstallScoop,
+			Executable: exePath,
+			Bucket:     bucket,
+		}
+	}
+
+	// If we have partial metadata (not valid, not none), it's ambiguous - return unknown
+	if state == ownershipPartial || state == ownershipInvalid {
+		return Installation{Method: InstallUnknown}
+	}
+
+	// Check for Scoop shim indirection
+	shimPath := shimPathFor(exePath)
+	shimData, err := readOwnershipFile(shimPath, maxMetadataBytes)
+	if err == nil {
+		shimTarget, err := parseShimTarget(shimData)
+		if err == nil {
+			// Validate the shim target is a regular file
+			targetInfo, statErr := os.Stat(shimTarget)
+			if statErr == nil && targetInfo.Mode().IsRegular() {
+				// Probe the shim target's directory for Scoop metadata
+				targetDir := filepath.Dir(shimTarget)
+				targetState, targetBucket := probeScoopDirectory(targetDir)
+				if targetState == ownershipValid {
+					return Installation{
+						Method:     InstallScoop,
+						Executable: shimTarget,
+						Bucket:     targetBucket,
+					}
+				}
+				// If target has partial or invalid metadata, it's ambiguous
+				if targetState == ownershipPartial || targetState == ownershipInvalid {
+					return Installation{Method: InstallUnknown}
+				}
+			}
+			// If shim target is not a regular file, it's ambiguous
+			if statErr != nil || !targetInfo.Mode().IsRegular() {
+				return Installation{Method: InstallUnknown}
+			}
+		}
+	}
+
+	// No Scoop metadata found: standalone
+	return Installation{
+		Method:     InstallStandalone,
+		Executable: exePath,
+		Bucket:     "",
+	}
+}
+
+// resolveRunningExecutable returns the absolute path to the currently running
+// executable, or an empty string if resolution fails. Resolution involves:
+// 1. Getting the executable path via os.Executable
+// 2. Resolving symlinks/junctions via filepath.EvalSymlinks
+// 3. Verifying the resolved path is a regular file
+// Any failure at any step returns empty string (unknown), not an error.
+func resolveRunningExecutable() string {
+	// Step 1: Get the executable path
+	path, err := executablePath()
+	if err != nil {
+		return ""
+	}
+
+	// Step 2: Resolve symlinks and junctions
+	resolved, err := evalExecutableSymlinks(path)
+	if err != nil {
+		return ""
+	}
+
+	// Step 3: Verify it's a regular file (not a directory)
+	info, err := statExecutable(resolved)
+	if err != nil {
+		return ""
+	}
+	if !info.Mode().IsRegular() {
+		return ""
+	}
+
+	// Step 4: Verify the resolved path is absolute
+	if !filepath.IsAbs(resolved) {
+		return ""
+	}
+
+	return resolved
 }
