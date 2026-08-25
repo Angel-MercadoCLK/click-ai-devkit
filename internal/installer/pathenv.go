@@ -54,6 +54,24 @@ func SetPathStoreFactoryForTests(factory func() pathStore) func() {
 	return func() { pathStoreFactory = old }
 }
 
+// settingsSecurityFactory is the injectable factory for owner-only file security. It applies
+// security to a file path, typically after atomic writes to temp files. Tests can override this
+// to inject failures or verify behavior.
+var settingsSecurityFactory func(path string) error
+
+// init wires the default settingsSecurityFactory to the Apply function.
+func init() {
+	settingsSecurityFactory = Apply
+}
+
+// SetSettingsSecurityFactoryForTests overrides the settings security factory for tests and
+// returns a restore function.
+func SetSettingsSecurityFactoryForTests(factory func(path string) error) func() {
+	old := settingsSecurityFactory
+	settingsSecurityFactory = factory
+	return func() { settingsSecurityFactory = old }
+}
+
 // GoBinDir resolves the Go bin directory `go install` places provisioned binaries into: the
 // toolchain's own resolved GOBIN if set, otherwise GOPATH/bin. It shells out via the same
 // injectable CommandRunner ("go env ...") this package already uses for `claude plugin ...`
@@ -282,6 +300,13 @@ func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
 	if err := os.Chmod(tmpName, mode); err != nil {
 		return fmt.Errorf("installer: chmod temp file for %s: %w", target, err)
 	}
+
+	// Apply owner-only security to the temp file before the rename.
+	// This ensures the file is never briefly world-readable at its final path.
+	if err := settingsSecurityFactory(tmpName); err != nil {
+		return fmt.Errorf("installer: apply owner-only security to %s: %w", target, err)
+	}
+
 	if err := os.Rename(tmpName, target); err != nil {
 		return fmt.Errorf("installer: rename temp file to %s: %w", target, err)
 	}
