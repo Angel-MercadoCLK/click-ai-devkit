@@ -26,9 +26,11 @@ The exact version is controlled by click-ai-devkit release metadata.
 
 ## Claude Code wiring
 
-`click` writes its own MCP entry with an **absolute binary path**.
+`click` registers the Engram Claude Code **plugin** (the mechanism that actually wires Engram's tools into a session). The plugin's bundled `.mcp.json` launches a bare, PATH-resolved `engram` binary; click does not write its own MCP entry.
 
-This makes the installed machine deterministic:
+Because the binary is PATH-resolved rather than pinned to an absolute path, click guarantees determinism
+through the **installed version**, not through the invocation path — it owns which `engram` version is on the
+machine and where it is installed:
 
 - every developer gets the same Engram version for the same click-ai-devkit release
 - `click update` can move the pin in a controlled way
