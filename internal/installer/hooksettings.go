@@ -186,11 +186,12 @@ func readSettingsFile(path string) (map[string]any, error) {
 	return settings, nil
 }
 
-// writeSettingsFile writes Claude Code's settings.json via atomicWriteFile (pathenv.go) instead of
-// a direct os.WriteFile — see writeJSONFile's doc comment above for why: settings.json is exactly
-// the file a dotfiles-managed ~/.claude/ commonly symlinks, and a non-atomic write through/over it
-// is the concrete risk this fixes (broken symlink at best, a corrupted file if interrupted
-// mid-write at worst).
+// writeSettingsFile writes Claude Code's settings.json via atomicWriteFileOwnerOnly (pathenv.go)
+// instead of a direct os.WriteFile — see writeJSONFile's doc comment above for why: settings.json
+// is exactly the file a dotfiles-managed ~/.claude/ commonly symlinks, and a non-atomic write
+// through/over it is the concrete risk this fixes (broken symlink at best, a corrupted file if
+// interrupted mid-write at worst). The owner-only security is applied because settings.json may
+// contain sensitive data like ENGRAM_CLOUD_TOKEN in future slices.
 func writeSettingsFile(path string, settings map[string]any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("installer: create settings dir: %w", err)
@@ -200,7 +201,7 @@ func writeSettingsFile(path string, settings map[string]any) error {
 		return fmt.Errorf("installer: marshal settings: %w", err)
 	}
 	data = append(data, '\n')
-	if err := atomicWriteFile(path, data, 0o600); err != nil {
+	if err := atomicWriteFileOwnerOnly(path, data); err != nil {
 		return fmt.Errorf("installer: write settings: %w", err)
 	}
 	return nil

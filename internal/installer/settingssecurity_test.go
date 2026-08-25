@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -99,5 +100,91 @@ func TestWriteSettingsFile_OwnerOnlyPermissionsAfterWrite(t *testing.T) {
 	}
 	if !only {
 		t.Error("writeSettingsFile did not result in owner-only permissions")
+	}
+}
+
+// TestAtomicWriteFile_PreservesCallerRequestedMode proves that atomicWriteFile
+// respects the mode requested by the caller. Regression test for slice 2 over-broad
+// security application where settingsSecurityFactory was called unconditionally in
+// the shared helper, silently overriding all callers' requested modes.
+//
+// Skipped on Windows because Windows does not use POSIX file modes; the
+// security primitive on Windows applies a protected DACL, not a mode change.
+func TestAtomicWriteFile_PreservesCallerRequestedMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows: POSIX file modes are not applicable")
+	}
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "testfile.txt")
+	content := []byte("test content")
+	requestedMode := os.FileMode(0o644)
+
+	if err := atomicWriteFile(targetPath, content, requestedMode); err != nil {
+		t.Fatalf("atomicWriteFile failed: %v", err)
+	}
+
+	// Verify the file has the requested mode
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		t.Fatalf("failed to stat file: %v", err)
+	}
+
+	if info.Mode().Perm() != requestedMode {
+		t.Errorf("atomicWriteFile did not preserve caller requested mode: got %o, want %o", info.Mode().Perm(), requestedMode)
+	}
+}
+
+// TestAtomicWriteFile_DoesNotApplyOwnerOnlySecurity proves that a plain
+// atomicWriteFile call does NOT invoke settingsSecurityFactory. Regression test
+// for slice 2 over-broad security application where the shared helper was
+// applying owner-only security to ALL callers, not just settings writes.
+func TestAtomicWriteFile_DoesNotApplyOwnerOnlySecurity(t *testing.T) {
+	tmpDir := t.TempDir()
+	targetPath := filepath.Join(tmpDir, "testfile.txt")
+	content := []byte("test content")
+
+	// Install a recording security factory that fails if called
+	securityFactoryCalled := false
+	restore := SetSettingsSecurityFactoryForTests(func(path string) error {
+		securityFactoryCalled = true
+		return errors.New("security factory should not be called by plain atomicWriteFile")
+	})
+	defer restore()
+
+	if err := atomicWriteFile(targetPath, content, 0o644); err != nil {
+		t.Fatalf("atomicWriteFile failed: %v", err)
+	}
+
+	// The security factory must NOT have been called
+	if securityFactoryCalled {
+		t.Error("atomicWriteFile called settingsSecurityFactory when it should not have")
+	}
+}
+
+// TestWriteSettingsFile_AppliesOwnerOnlySecurity proves that writeSettingsFile
+// DOES invoke settingsSecurityFactory exactly once. This confirms the security
+// primitive is wired correctly to the settings path only.
+func TestWriteSettingsFile_AppliesOwnerOnlySecurity(t *testing.T) {
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+
+	tmpDir := t.TempDir()
+	settingsPath := filepath.Join(tmpDir, "settings.json")
+	settings := map[string]any{"test": "data"}
+
+	// Install a recording security factory
+	securityFactoryCallCount := 0
+	restore := SetSettingsSecurityFactoryForTests(func(path string) error {
+		securityFactoryCallCount++
+		return nil // succeed, but record the call
+	})
+	defer restore()
+
+	if err := writeSettingsFile(settingsPath, settings); err != nil {
+		t.Fatalf("writeSettingsFile failed: %v", err)
+	}
+
+	// The security factory MUST have been called exactly once
+	if securityFactoryCallCount != 1 {
+		t.Errorf("writeSettingsFile called settingsSecurityFactory %d times, want exactly 1", securityFactoryCallCount)
 	}
 }

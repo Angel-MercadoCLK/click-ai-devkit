@@ -268,6 +268,21 @@ var createTempFile = func(dir, pattern string) (tempFileWriter, error) {
 // content at that real location. A non-symlink path is unaffected: resolveWriteTarget returns it
 // unchanged.
 func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
+	return atomicWriteFileInternal(path, content, mode, nil)
+}
+
+// atomicWriteFileOwnerOnly is atomicWriteFile with owner-only security applied to the temp file
+// before the rename. Use this for security-sensitive files like ~/.claude/settings.json that must
+// not be world-readable even momentarily.
+func atomicWriteFileOwnerOnly(path string, content []byte) error {
+	return atomicWriteFileInternal(path, content, 0o600, settingsSecurityFactory)
+}
+
+// atomicWriteFileInternal is the shared implementation for both atomicWriteFile (plain) and
+// atomicWriteFileOwnerOnly (secured). If securityFn is non-nil, it is applied to the temp file
+// after chmod and before rename; otherwise only chmod is applied, preserving the caller's
+// requested mode.
+func atomicWriteFileInternal(path string, content []byte, mode os.FileMode, securityFn func(string) error) error {
 	target, err := resolveWriteTarget(path)
 	if err != nil {
 		return fmt.Errorf("installer: resolve write target for %s: %w", path, err)
@@ -301,10 +316,11 @@ func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
 		return fmt.Errorf("installer: chmod temp file for %s: %w", target, err)
 	}
 
-	// Apply owner-only security to the temp file before the rename.
-	// This ensures the file is never briefly world-readable at its final path.
-	if err := settingsSecurityFactory(tmpName); err != nil {
-		return fmt.Errorf("installer: apply owner-only security to %s: %w", target, err)
+	// Apply security function if provided (e.g., owner-only security for settings files)
+	if securityFn != nil {
+		if err := securityFn(tmpName); err != nil {
+			return fmt.Errorf("installer: apply security to %s: %w", target, err)
+		}
 	}
 
 	if err := os.Rename(tmpName, target); err != nil {
