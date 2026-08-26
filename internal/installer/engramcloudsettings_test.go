@@ -291,8 +291,22 @@ func TestConfigureEngramCloudSessionSync_RegistersManagedHook(t *testing.T) {
 		t.Fatalf("managedEngramCloudHookCommand() error = %v", err)
 	}
 
-	if got, want := entry["command"], expectedCmd; got != want {
-		t.Fatalf("entry[\"command\"] = %v, want %q", got, want)
+	entryHooks, ok := entry["hooks"].([]any)
+	if !ok {
+		t.Fatalf("entry[\"hooks\"] not present or not a slice, got = %T", entry["hooks"])
+	}
+
+	if len(entryHooks) != 1 {
+		t.Fatalf("entry[\"hooks\"] has %d entries, want 1", len(entryHooks))
+	}
+
+	hook, ok := entryHooks[0].(map[string]any)
+	if !ok {
+		t.Fatalf("hooks[0] is not a map, got = %T", entryHooks[0])
+	}
+
+	if got, want := hook["command"], expectedCmd; got != want {
+		t.Fatalf("hook[\"command\"] = %v, want %q", got, want)
 	}
 }
 

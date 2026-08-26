@@ -54,6 +54,82 @@ func ConfigureEngramCloudSessionSync(cfg Config, m *manifest.Manifest, mode Clou
 
 	settings["env"] = env
 
+	// Register managed SessionStart hook
+	managedHookCmd, err := managedEngramCloudHookCommand(m.EngramCloud.Project)
+	if err != nil {
+		return fmt.Errorf("installer: generate managed hook command: %w", err)
+	}
+
+	// Ensure hooks block exists
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok || hooks == nil {
+		hooks = map[string]any{}
+		settings["hooks"] = hooks
+	}
+
+	// Get or create SessionStart entries
+	sessionStart, ok := hooks["SessionStart"].([]any)
+	if !ok || sessionStart == nil {
+		sessionStart = []any{}
+	}
+
+	// Remove any existing managed hooks (matcher "" with our command)
+	filteredSessionStart := make([]any, 0, len(sessionStart))
+	for _, rawEntry := range sessionStart {
+		entry, ok := rawEntry.(map[string]any)
+		if !ok {
+			filteredSessionStart = append(filteredSessionStart, rawEntry)
+			continue
+		}
+
+		matcher, _ := entry["matcher"].(string)
+		if matcher != "" {
+			// Not a managed hook - preserve it
+			filteredSessionStart = append(filteredSessionStart, rawEntry)
+			continue
+		}
+
+		// This is a managed hook - check if it has our command
+		hooksList, ok := entry["hooks"].([]any)
+		if !ok {
+			filteredSessionStart = append(filteredSessionStart, rawEntry)
+			continue
+		}
+
+		hasManagedCmd := false
+		for _, rawHook := range hooksList {
+			hook, ok := rawHook.(map[string]any)
+			if !ok {
+				continue
+			}
+			hookType, _ := hook["type"].(string)
+			hookCmd, _ := hook["command"].(string)
+			if hookType == "command" && hookCmd == managedHookCmd {
+				hasManagedCmd = true
+				break
+			}
+		}
+
+		if !hasManagedCmd {
+			// Different managed hook (old command) - preserve it as foreign
+			filteredSessionStart = append(filteredSessionStart, rawEntry)
+		}
+		// If hasManagedCmd, we skip this entry (we'll add a fresh one)
+	}
+
+	// Append exactly one new managed hook entry
+	managedEntry := map[string]any{
+		"matcher": "",
+		"hooks": []any{
+			map[string]any{
+				"type":    "command",
+				"command": managedHookCmd,
+			},
+		},
+	}
+	filteredSessionStart = append(filteredSessionStart, managedEntry)
+	hooks["SessionStart"] = filteredSessionStart
+
 	// Capture the new canonical form
 	newBytes, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
