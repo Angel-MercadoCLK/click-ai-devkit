@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
@@ -47,10 +49,14 @@ func ConfigureEngramCloudSessionSync(cfg Config, m *manifest.Manifest, mode Clou
 	env["ENGRAM_CLOUD_AUTOSYNC"] = "1"
 	env["ENGRAM_CLOUD_SERVER"] = m.EngramCloud.Server
 
-	// Only write the token in persist mode
+	// Handle token based on persistence mode
 	if mode == CloudTokenPersistencePersist {
 		env["ENGRAM_CLOUD_TOKEN"] = token
+	} else if mode == CloudTokenPersistenceDecline {
+		// Remove click-owned token in decline mode, preserving foreign entries
+		delete(env, "ENGRAM_CLOUD_TOKEN")
 	}
+	// NoOp mode: don't touch the token at all
 
 	settings["env"] = env
 
@@ -139,6 +145,109 @@ func ConfigureEngramCloudSessionSync(cfg Config, m *manifest.Manifest, mode Clou
 
 	// Short-circuit: no write when the document is already canonical
 	if bytes.Equal(originalBytes, newBytes) {
+		return nil
+	}
+
+	return writeSettingsFile(cfg.SettingsPath(), settings)
+}
+
+// RemoveEngramCloudSessionSync removes click-owned Engram Cloud environment and managed hooks
+// from Claude Code's settings.json. It performs one selective atomic rewrite, preserving all
+// foreign entries and pruning empty containers.
+func RemoveEngramCloudSessionSync(cfg Config) error {
+	settings, err := readSettingsFile(cfg.SettingsPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("installer: read settings: %w", err)
+	}
+
+	changed := false
+
+	// Remove click-owned env keys (selective, not whole-key like PruneEmptyClickSettingsKeys)
+	env, ok := settings["env"].(map[string]any)
+	if ok {
+		if _, present := env["ENGRAM_CLOUD_AUTOSYNC"]; present {
+			delete(env, "ENGRAM_CLOUD_AUTOSYNC")
+			changed = true
+		}
+		if _, present := env["ENGRAM_CLOUD_SERVER"]; present {
+			delete(env, "ENGRAM_CLOUD_SERVER")
+			changed = true
+		}
+		if _, present := env["ENGRAM_CLOUD_TOKEN"]; present {
+			delete(env, "ENGRAM_CLOUD_TOKEN")
+			changed = true
+		}
+
+		// Prune env block when empty
+		if len(env) == 0 {
+			delete(settings, "env")
+		}
+	}
+
+	// Remove managed SessionStart hooks
+	hooks, ok := settings["hooks"].(map[string]any)
+	if ok {
+		sessionStart, ok := hooks["SessionStart"].([]any)
+		if ok {
+			filteredSessionStart := make([]any, 0, len(sessionStart))
+			for _, rawEntry := range sessionStart {
+				entry, ok := rawEntry.(map[string]any)
+				if !ok {
+					filteredSessionStart = append(filteredSessionStart, rawEntry)
+					continue
+				}
+
+				matcher, _ := entry["matcher"].(string)
+				if matcher == "" {
+					// This is a managed hook - remove it (check command to be sure)
+					entryHooks, _ := entry["hooks"].([]any)
+					isManaged := false
+					for _, hookRaw := range entryHooks {
+						hook, ok := hookRaw.(map[string]any)
+						if !ok {
+							continue
+						}
+						if hook["type"] == "command" {
+							cmd, _ := hook["command"].(string)
+							// Check if this is our managed command (contains click engram-cloud-import or timeout engram sync)
+							if cmd != "" && (strings.Contains(cmd, "click engram-cloud-import") ||
+								strings.Contains(cmd, "timeout 5 engram sync --cloud --import")) {
+								isManaged = true
+								break
+							}
+						}
+					}
+					if isManaged {
+						changed = true
+						continue // Skip this entry (remove it)
+					}
+				}
+
+				// Foreign hook - preserve it
+				filteredSessionStart = append(filteredSessionStart, rawEntry)
+			}
+
+			if len(filteredSessionStart) != len(sessionStart) {
+				hooks["SessionStart"] = filteredSessionStart
+			}
+
+			// Prune SessionStart container when empty
+			if len(filteredSessionStart) == 0 {
+				delete(hooks, "SessionStart")
+			}
+
+			// Prune hooks block when empty
+			if len(hooks) == 0 {
+				delete(settings, "hooks")
+			}
+		}
+	}
+
+	// Short-circuit: no write when nothing changed
+	if !changed {
 		return nil
 	}
 
