@@ -165,6 +165,143 @@ type cloudError struct{ msg string }
 
 func (e *cloudError) Error() string { return e.msg }
 
+// TestInstall_ConfigureFailureWarnsAndContinues is task 5.15's RED test: a failing
+// configureEngramCloudSessionSyncFunc must leave install exiting 0 with a Spanish warning (ECS-10.1,
+// ECS-10.2), and a recording order assertion shows configure runs before enrollment (DD-4 ordering).
+// It covers both the CloudResolvable-without-token dispatch path (the env block and hook must still
+// be written so a later token export activates everything — the whole point of the rename) and the
+// persisted-token path (configure before enroll).
+func TestInstall_ConfigureFailureWarnsAndContinues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	seedResolvableGit(t)
+
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	configureCalls := 0
+	restoreConfigure := installer.SetConfigureEngramCloudSessionSyncFuncForTests(func(cfg installer.Config, m *manifest.Manifest, mode installer.CloudTokenPersistence, token string) error {
+		configureCalls++
+		return errTestCloudSettings
+	})
+	defer restoreConfigure()
+
+	cloudCalls := 0
+	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+		cloudCalls++
+		return nil
+	})
+	defer restoreCloud()
+
+	t.Run("token-absent-still-writes-session-sync-via-dispatch", func(t *testing.T) {
+		configureCalls = 0
+		cloudCalls = 0
+		t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+		t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+		// ENGRAM_CLOUD_TOKEN intentionally absent.
+		root := NewRootCommand()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetIn(&bytes.Buffer{})
+		root.SetArgs([]string{"install"})
+
+		if err := root.Execute(); err != nil {
+			t.Fatalf("install command error = %v, want nil (cloud settings failure must be non-fatal), output:\n%s", err, out.String())
+		}
+		if configureCalls != 1 {
+			t.Fatalf("ConfigureEngramCloudSessionSync called %d times, want 1 (CloudResolvable without token must still write env block and hook)", configureCalls)
+		}
+		if !strings.Contains(out.String(), errTestCloudSettings.Error()) {
+			t.Fatalf("install output = %q, want the warning to include the underlying error %q", out.String(), errTestCloudSettings.Error())
+		}
+		if !strings.Contains(out.String(), "Instalación completa.") {
+			t.Fatalf("install output = %q, want the command to continue to completion after the configure failure", out.String())
+		}
+	})
+
+	t.Run("persist-order-configure-before-enrollment", func(t *testing.T) {
+		configureCalls = 0
+		cloudCalls = 0
+		t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+		t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+		t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+
+		var order []string
+		restoreConfigure2 := installer.SetConfigureEngramCloudSessionSyncFuncForTests(func(cfg installer.Config, m *manifest.Manifest, mode installer.CloudTokenPersistence, token string) error {
+			configureCalls++
+			order = append(order, "configure")
+			return errTestCloudSettings
+		})
+		defer restoreConfigure2()
+		restoreCloud2 := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+			cloudCalls++
+			order = append(order, "enrollment")
+			return nil
+		})
+		defer restoreCloud2()
+
+		root := NewRootCommand()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetIn(&bytes.Buffer{})
+		root.SetArgs([]string{"install", "--" + persistEngramCloudTokenFlag})
+
+		if err := root.Execute(); err != nil {
+			t.Fatalf("install command error = %v, want nil (cloud settings failure must be non-fatal)", err)
+		}
+		if len(order) != 2 || order[0] != "configure" || order[1] != "enrollment" {
+			t.Fatalf("recorded order = %v, want [configure enrollment]", order)
+		}
+		if configureCalls != 1 {
+			t.Fatalf("ConfigureEngramCloudSessionSync called %d times, want exactly 1", configureCalls)
+		}
+		if !strings.Contains(out.String(), "No se pudo configurar Engram Cloud Session Sync") {
+			t.Fatalf("install output missing the Spanish cloud-settings warning")
+		}
+	})
+}
+
+var errTestCloudSettings = &cloudSettingsError{msg: "cloud settings write failed"}
+
+type cloudSettingsError struct{ msg string }
+
+func (e *cloudSettingsError) Error() string { return e.msg }
+
+// TestInstall_EnrollmentRunnerFailureStillExitZero is task 5.17's ECS-10.7 proof: an Engram Cloud
+// enrollment runner error leaves install exiting 0 with the Spanish warning and the local install
+// complete. The dedicated opt-in authorizes the enrollment to run (DD-3).
+func TestInstall_EnrollmentRunnerFailureStillExitZero(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableEngram(t)
+
+	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+		return errTestEngramCloud
+	})
+	defer restoreCloud()
+
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "cloud-token")
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+
+	out, err := execRoot(t, home, "install", "--"+persistEngramCloudTokenFlag)
+	if err != nil {
+		t.Fatalf("install command error = %v, want nil (enrollment runner failure must be non-fatal), output:\n%s", err, out)
+	}
+	if !strings.Contains(out, "No se pudo sincronizar Engram Cloud") {
+		t.Fatalf("install output = %q, want it to contain the Spanish enrollment-failure warning", out)
+	}
+	if !strings.Contains(out, "Instalación completa.") {
+		t.Fatalf("install output = %q, want the command to continue to completion after the enrollment failure", out)
+	}
+}
+
 // TestInstallCommand_CodexMCPFailureIsNonFatal is FIX 2's non-fatal contract, mirroring
 // TestInstallCommand_CloudConfigured_EnrollmentFailureIsNonFatal for Codex's Engram MCP
 // registration (D45 "supplementary integrations are non-fatal" pattern): a failure registering

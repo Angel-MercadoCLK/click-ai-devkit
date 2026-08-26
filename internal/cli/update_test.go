@@ -257,3 +257,102 @@ func TestUpdateCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
 		t.Fatalf("SyncCodexGuidance called %d times, want 1 — the AGENTS.md write step must still have run before the failed MCP step", guidanceCalls)
 	}
 }
+
+// TestUpdate_ConfigureFailureWarnsAndContinues is task 5.17's RED test: update mirrors install's
+// non-fatal configure contract (ECS-10.1, ECS-10.2, ECS-10.7): a failing configureEngramCloudSession
+// SyncFunc leaves update exiting 0 with a Spanish warning, and a recording order assertion shows
+// configure runs before enrollment.
+func TestUpdate_ConfigureFailureWarnsAndContinues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	seedResolvableGit(t)
+
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+
+	var order []string
+	restoreConfigure := installer.SetConfigureEngramCloudSessionSyncFuncForTests(func(cfg installer.Config, m *manifest.Manifest, mode installer.CloudTokenPersistence, token string) error {
+		order = append(order, "configure")
+		return errTestCloudSettings
+	})
+	defer restoreConfigure()
+	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+		order = append(order, "enrollment")
+		return nil
+	})
+	defer restoreCloud()
+
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"update", "--" + persistEngramCloudTokenFlag})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("update command error = %v, want nil (cloud settings failure must be non-fatal)", err)
+	}
+	if len(order) != 2 || order[0] != "configure" || order[1] != "enrollment" {
+		t.Fatalf("recorded order = %v, want [configure enrollment]", order)
+	}
+	if !strings.Contains(out.String(), "No se pudo configurar Engram Cloud Session Sync") {
+		t.Fatalf("update output missing the Spanish cloud-settings warning")
+	}
+	if !strings.Contains(out.String(), errTestCloudSettings.Error()) {
+		t.Fatalf("update output missing the underlying error %q", errTestCloudSettings.Error())
+	}
+	if !strings.Contains(out.String(), "Update completo.") {
+		t.Fatalf("update output missing the completion message")
+	}
+}
+
+// TestUpdate_DeclineWarnsAutosyncDisabled is task 5.17's RED test: a declined persistence decision
+// (non-interactive without the dedicated opt-in) prints the Spanish autosync-disabled warning and
+// still exits 0 (ECS-3.3, ECS-3.4).
+func TestUpdate_DeclineWarnsAutosyncDisabled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	seedResolvableGit(t)
+
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+
+	cloudCalls := 0
+	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+		cloudCalls++
+		return nil
+	})
+	defer restoreCloud()
+
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"update"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("update command error = %v, want nil (decline remains successful)", err)
+	}
+	if !strings.Contains(out.String(), "autosync desactivado") {
+		t.Fatalf("update output missing the Spanish autosync-disabled warning (ECS-3.3)")
+	}
+	if cloudCalls != 0 {
+		t.Fatalf("SyncEngramCloud called %d times, want 0 (decline without --persist-engram-cloud-token skips enrollment)", cloudCalls)
+	}
+	if !strings.Contains(out.String(), "Update completo.") {
+		t.Fatalf("update output missing the completion message")
+	}
+}

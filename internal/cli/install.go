@@ -151,14 +151,17 @@ func runInstall(cmd *cobra.Command) error {
 	token := os.Getenv("ENGRAM_CLOUD_TOKEN")
 	server := os.Getenv("CLICK_ENGRAM_CLOUD_SERVER")
 	project := os.Getenv("CLICK_ENGRAM_CLOUD_PROJECT")
-	// D40 enrollment only runs when the token was actually persisted: without it the session-sync
-	// hook cannot authenticate on later sessions, so enrolling the current run alone is pointless
-	// (ECS-3.3). The consent block below records that decision; the StepActionSyncEngramCloud case
-	// in the dispatch loop consults cloudEnrollmentAllowed.
+	// persistenceMode is default-deny: only the dedicated --persist-engram-cloud-token flag or an
+	// interactive affirmative answer upgrades it to Persist (DD-3, ECS-3.5/3.6). The dispatch loop's
+	// StepActionConfigureEngramCloudSessionSync case consumes it to write the env block and hook
+	// exactly once — token present or not, since CloudResolvable makes the token optional — and the
+	// StepActionSyncEngramCloud case only enrolls when the token was actually persisted (ECS-3.3).
+	persistenceMode := installer.CloudTokenPersistenceDecline
 	cloudEnrollmentAllowed := false
 	if server != "" && project != "" && token != "" {
 		emitConsentPrompt(out)
-		persistenceMode, readErr := resolveCloudTokenPersistence(nonInteractive, persistFlag, sharedReader)
+		var readErr error
+		persistenceMode, readErr = resolveCloudTokenPersistence(nonInteractive, persistFlag, sharedReader)
 		if readErr != nil {
 			fmt.Fprintln(out, r.Warn(consentSkippedWarning))
 		}
@@ -166,9 +169,6 @@ func runInstall(cmd *cobra.Command) error {
 			fmt.Fprintln(out, r.Warn(autosyncDisabledWarning))
 		}
 		cloudEnrollmentAllowed = persistenceMode == installer.CloudTokenPersistencePersist
-		if configureErr := installer.ConfigureEngramCloudSessionSync(cfg, m, persistenceMode, token); configureErr != nil {
-			fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo configurar Engram Cloud Session Sync: %v. La instalación local continúa.", configureErr)))
-		}
 	}
 
 	// Arm deferred post-run snapshot recording (only when proceed=true)
@@ -211,6 +211,14 @@ func runInstall(cmd *cobra.Command) error {
 				return err
 			} else if !resolvable {
 				fmt.Fprintln(out, r.Info(installer.EngramBinaryRemediationMessage(m.Engram.Version)))
+			}
+		case installer.StepActionConfigureEngramCloudSessionSync:
+			// Writes the click-owned env block and SessionStart hook. With a token the consent block
+			// above already resolved persistenceMode; without one (CloudResolvable) the env block and
+			// hook are still written so a later token export activates everything with no reinstall
+			// (DD-4). Non-fatal with a Spanish warning (ECS-10.1/10.2).
+			if configureErr := installer.ConfigureEngramCloudSessionSync(cfg, m, persistenceMode, token); configureErr != nil {
+				fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo configurar Engram Cloud Session Sync: %v. La instalación local continúa.", configureErr)))
 			}
 		case installer.StepActionSyncEngramCloud:
 			if installer.EngramCloudPartiallyConfigured(cfg, m) {
