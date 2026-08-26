@@ -820,3 +820,190 @@ func TestRemoveEngramCloudSessionSync_PrunesClickOnlyEmptyContainersAndIsIdempot
 		t.Fatalf("second removal rewrote the file (modification time changed)")
 	}
 }
+
+// TestSnapshotRun_RedactsEngramCloudTokenFromSettingsBackup is the RED test for task 4.18:
+// a snapshot of a settings.json containing a consented token produces a backup whose bytes
+// do not contain the token value; only env.ENGRAM_CLOUD_TOKEN is redacted and every other
+// key survives. The failure assertion prints a fixed redacted message, never the settings bytes (NFR-6).
+func TestSnapshotRun_RedactsEngramCloudTokenFromSettingsBackup(t *testing.T) {
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+
+	// Seed settings with a consented token and other keys
+	seedSettings := `{
+  "env": {
+    "ENGRAM_CLOUD_AUTOSYNC": "1",
+    "ENGRAM_CLOUD_SERVER": "https://engram.example.com",
+    "ENGRAM_CLOUD_TOKEN": "consented-token-value",
+    "OTHER_KEY": "other-value"
+  },
+  "otherTopLevel": "value"
+}` + "\n"
+	if err := os.WriteFile(settingsPath, []byte(seedSettings), 0o600); err != nil {
+		t.Fatalf("seed settings.json: %v", err)
+	}
+
+	cfg := Config{
+		ClaudeHome:     dir,
+		ClickStateHome: dir,
+	}
+
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+
+	// Read the backup file
+	backupPath := filepath.Join(cfg.BackupDir(), "latest", "settings.json")
+	backupBytes, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatalf("ReadFile(backup) error = %v", err)
+	}
+
+	// The token should not appear in the backup (use fixed redacted assertion)
+	if bytes.Contains(backupBytes, []byte("consented-token-value")) {
+		t.Fatal("backup contains the token value - it should be redacted (NFR-6 violation)")
+	}
+
+	// Verify other keys are preserved
+	var backup map[string]any
+	if err := json.Unmarshal(backupBytes, &backup); err != nil {
+		t.Fatalf("json.Unmarshal(backup) error = %v", err)
+	}
+
+	env, ok := backup["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("backup[\"env\"] not present or not a map")
+	}
+
+	// Verify AUTOSYNC and SERVER are preserved
+	if got, want := env["ENGRAM_CLOUD_AUTOSYNC"], "1"; got != want {
+		t.Fatalf("backup[\"ENGRAM_CLOUD_AUTOSYNC\"] = %v, want %q", got, want)
+	}
+
+	if got, want := env["ENGRAM_CLOUD_SERVER"], "https://engram.example.com"; got != want {
+		t.Fatalf("backup[\"ENGRAM_CLOUD_SERVER\"] = %v, want %q", got, want)
+	}
+
+	// Verify TOKEN is redacted (present but redacted, not removed)
+	if _, present := env["ENGRAM_CLOUD_TOKEN"]; !present {
+		t.Fatalf("backup[\"ENGRAM_CLOUD_TOKEN\"] should be present but redacted, got = absent")
+	}
+
+	// Verify it's redacted (not the original value)
+	if tokenVal, ok := env["ENGRAM_CLOUD_TOKEN"].(string); ok && tokenVal == "consented-token-value" {
+		t.Fatal("backup token value should be redacted, not the original value (NFR-6 violation)")
+	}
+
+	// Verify OTHER_KEY is preserved
+	if got, want := env["OTHER_KEY"], "other-value"; got != want {
+		t.Fatalf("backup[\"OTHER_KEY\"] = %v, want %q", got, want)
+	}
+
+	// Verify other top-level keys are preserved
+	if got, want := backup["otherTopLevel"], "value"; got != want {
+		t.Fatalf("backup[\"otherTopLevel\"] = %v, want %q", got, want)
+	}
+}
+
+// TestRedactEngramCloudToken_ByteIdenticalPassthroughWhenNoToken is the RED test for PRIORITY 1:
+// when no ENGRAM_CLOUD_TOKEN is present, redactEngramCloudToken must return the input bytes
+// completely unchanged — no parse-and-re-marshal, no reformatting, no added trailing newline.
+// This is critical for snapshot subsystem's byte-for-byte fidelity contract.
+func TestRedactEngramCloudToken_ByteIdenticalPassthroughWhenNoToken(t *testing.T) {
+	testCases := []struct {
+		name  string
+		input []byte
+	}{
+		{
+			name:  "compact JSON with no trailing newline",
+			input: []byte(`{"hooks":{}}`),
+		},
+		{
+			name:  "compact JSON with trailing newline",
+			input: []byte(`{"hooks":{}}` + "\n"),
+		},
+		{
+			name:  "non-alphabetical key order",
+			input: []byte(`{"z_last":1,"a_first":2,"env":{}}`),
+		},
+		{
+			name:  "env present but no token",
+			input: []byte(`{"env":{"OTHER_KEY":"value"},"hooks":{}}`),
+		},
+		{
+			name:  "minimal settings",
+			input: []byte(`{}`),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactEngramCloudToken(tc.input)
+
+			// Byte-identical comparison - must be exactly the same
+			if !bytes.Equal(got, tc.input) {
+				t.Fatalf("redactEngramCloudToken() returned different bytes when no token present\ninput:  %q\ngot:    %q\nwant:   %q", tc.input, got, tc.input)
+			}
+		})
+	}
+}
+
+// TestRedactEngramCloudToken_TokenValueRemovedWhenPresent is the GREEN test companion:
+// when a token IS present, the token value is gone from the output.
+// Note: we cannot preserve byte-for-byte fidelity when redacting, but we ensure
+// the token value is completely removed and other content is preserved.
+func TestRedactEngramCloudToken_TokenValueRemovedWhenPresent(t *testing.T) {
+	testCases := []struct {
+		name         string
+		input        []byte
+		mustContain  []string  // These strings must appear in output
+		mustNotContain []string // These strings must NOT appear in output
+	}{
+		{
+			name: "token present with compact JSON",
+			input: []byte(`{"env":{"ENGRAM_CLOUD_TOKEN":"secret-value","OTHER_KEY":"other"},"hooks":{}}`),
+			mustContain: []string{`"OTHER_KEY"`, `"other"`, `"hooks"`, `{}`},
+			mustNotContain: []string{`"secret-value"`},
+		},
+		{
+			name: "token with formatted JSON",
+			input: []byte(`{
+  "env": {
+    "ENGRAM_CLOUD_TOKEN": "my-secret-token",
+    "ENGRAM_CLOUD_AUTOSYNC": "1"
+  },
+  "hooks": {}
+}`),
+			mustContain: []string{`"ENGRAM_CLOUD_AUTOSYNC"`, `"1"`, `"hooks"`},
+			mustNotContain: []string{`"my-secret-token"`},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactEngramCloudToken(tc.input)
+			gotStr := string(got)
+
+			// Verify must-contain strings
+			for _, must := range tc.mustContain {
+				if !bytes.Contains(got, []byte(must)) {
+					t.Fatalf("redacted output missing expected content %q\ngot: %s", must, gotStr)
+				}
+			}
+
+			// Verify must-not-contain strings (especially the token value)
+			for _, mustNot := range tc.mustNotContain {
+				if bytes.Contains(got, []byte(mustNot)) {
+					t.Fatalf("redacted output contains forbidden content %q\ngot: %s", mustNot, gotStr)
+				}
+			}
+
+			// Verify the redacted placeholder is present
+			if !bytes.Contains(got, []byte(`"ENGRAM_CLOUD_TOKEN"`)) {
+				t.Fatalf("redacted output missing token key entirely\ngot: %s", gotStr)
+			}
+		})
+	}
+}

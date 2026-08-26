@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -220,6 +221,61 @@ func SnapshotTargetPlan(cfg Config, plan TargetPlan) error {
 	return snapshotRunWithSources(cfg, sources)
 }
 
+// redactEngramCloudToken removes the value of env.ENGRAM_CLOUD_TOKEN from settings.json
+// backups, replacing it with a redacted placeholder.
+//
+// IMPORTANT: Rollback cannot restore a prior token because this redaction permanently
+// removes the token value from the backup. The next install/update must re-consent
+// or receive the token externally (NFR-6, DD-7 consequence acknowledgement).
+//
+// This ensures that if a developer syncs their ~/.claude directory into a dotfiles repo
+// or backup, they won't leak the token.
+//
+// Byte-fidelity contract: When no ENGRAM_CLOUD_TOKEN is present, this function
+// returns the input bytes completely unchanged — no reformatting, no reordering,
+// no added or removed whitespace. This preserves the snapshot subsystem's
+// byte-for-byte backup fidelity contract.
+func redactEngramCloudToken(data []byte) []byte {
+	// Fast path: check if the token key exists without full parsing
+	// This preserves byte-fidelity when no token is present
+	tokenKey := []byte(`"ENGRAM_CLOUD_TOKEN"`)
+	if !bytes.Contains(data, tokenKey) {
+		// No token present, return bytes unchanged
+		return data
+	}
+
+	// Token key exists, parse to confirm it's actually in the env section
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		// If parsing fails, return the original bytes unchanged
+		// (ECS-10.3/10.4: preserve original on parse failure)
+		return data
+	}
+
+	// Check if token is actually in env.ENGRAM_CLOUD_TOKEN
+	env, ok := settings["env"].(map[string]any)
+	if !ok {
+		// No env section, return bytes unchanged
+		return data
+	}
+	if _, present := env["ENGRAM_CLOUD_TOKEN"]; !present {
+		// Token key found but not in env (false positive), return bytes unchanged
+		return data
+	}
+
+	// Token is present, redact it
+	env["ENGRAM_CLOUD_TOKEN"] = "[REDACTED]"
+
+	// Marshal back to JSON with consistent formatting
+	redacted, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		// If marshaling fails, return the original bytes unchanged
+		return data
+	}
+	redacted = append(redacted, '\n')
+	return redacted
+}
+
 func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 	backupDir := cfg.BackupDir()
 	if backupDir == "" {
@@ -257,6 +313,11 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 				continue
 			}
 			return fmt.Errorf("installer: read %s for snapshot: %w", src.originalPath, readErr)
+		}
+
+		// Redact env.ENGRAM_CLOUD_TOKEN from settings.json backups (NFR-6)
+		if filepath.Base(src.originalPath) == "settings.json" {
+			data = redactEngramCloudToken(data)
 		}
 
 		backupPath := filepath.Join(tmpDir, src.backupFile)
