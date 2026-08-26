@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,8 +11,10 @@ import (
 )
 
 // TestInstallCommand_CloudConfigured_RunsCloudStepAfterEngram is task 4.3's RED test: when cloud
-// server/project/token are all present, `click install` must run the Engram Cloud enrollment step
-// right after the local Engram step, using Spanish user-facing labels.
+// server/project/token are all present and the dedicated --persist-engram-cloud-token opt-in is
+// given (DD-3 consent: unattended runs need it to authorize token persistence and therefore D40
+// enrollment), `click install` must run the Engram Cloud enrollment step right after the local
+// Engram step, using Spanish user-facing labels.
 func TestInstallCommand_CloudConfigured_RunsCloudStepAfterEngram(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
@@ -29,7 +33,7 @@ func TestInstallCommand_CloudConfigured_RunsCloudStepAfterEngram(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
 
-	out, err := execRoot(t, home, "install")
+	out, err := execRoot(t, home, "install", "--"+persistEngramCloudTokenFlag)
 	if err != nil {
 		t.Fatalf("install command error = %v, output:\n%s", err, out)
 	}
@@ -114,6 +118,7 @@ func TestInstallCommand_CloudConfigured_PartialTokenMissing_SkipsCloudStep(t *te
 // so a flaky/unreachable cloud server must never abort an otherwise-valid local install. The command
 // must (a) return nil, (b) surface a Spanish warning containing the underlying error, and (c) still
 // run the purely-local steps that follow the cloud step (CLAUDE.md managed block, completion line).
+// The --persist-engram-cloud-token opt-in authorizes the enrollment to run unattended (DD-3).
 func TestInstallCommand_CloudConfigured_EnrollmentFailureIsNonFatal(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
@@ -130,7 +135,7 @@ func TestInstallCommand_CloudConfigured_EnrollmentFailureIsNonFatal(t *testing.T
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
 
-	out, err := execRoot(t, home, "install")
+	out, err := execRoot(t, home, "install", "--"+persistEngramCloudTokenFlag)
 	if err != nil {
 		t.Fatalf("install command error = %v, want nil (cloud failure must be non-fatal), output:\n%s", err, out)
 	}
@@ -210,3 +215,63 @@ var errTestCodexMCP = &codexMCPError{msg: "codex mcp add failed"}
 type codexMCPError struct{ msg string }
 
 func (e *codexMCPError) Error() string { return e.msg }
+
+func TestInstall_SharedReaderConsentBeforeTokenWrite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	seedResolvableGit(t)
+
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	configureCalls := []string{}
+	restoreConfigure := installer.SetConfigureEngramCloudSessionSyncFuncForTests(func(cfg installer.Config, m *manifest.Manifest, mode installer.CloudTokenPersistence, token string) error {
+		configureCalls = append(configureCalls, fmt.Sprintf("mode=%d,token=%s", mode, token))
+		return nil
+	})
+	defer restoreConfigure()
+
+	cloudCalls := 0
+	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+		cloudCalls++
+		return nil
+	})
+	defer restoreCloud()
+
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+
+	stdin := bytes.NewBufferString("y\n")
+	root.SetIn(stdin)
+	root.SetArgs([]string{"install"})
+
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("install command error = %v, output:\n%s", err, out.String())
+	}
+
+	if len(configureCalls) != 1 {
+		t.Fatalf("ConfigureEngramCloudSessionSync called %d times, want 1", len(configureCalls))
+	}
+	expectedCall := fmt.Sprintf("mode=%d,token=test-token", installer.CloudTokenPersistenceDecline)
+	if configureCalls[0] != expectedCall {
+		t.Fatalf("ConfigureEngramCloudSessionSync call = %q, want %q", configureCalls[0], expectedCall)
+	}
+
+	if cloudCalls != 0 {
+		t.Fatalf("SyncEngramCloud called %d times, want 0 (non-interactive without --persist-engram-cloud-token)", cloudCalls)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Instalación completa.") {
+		t.Fatalf("install output = %q, want it to contain completion message", output)
+	}
+}

@@ -1232,7 +1232,7 @@ func TestBuildTargetPlan_AllSnapshotDeclarationsHaveKnownPolicy(t *testing.T) {
 		{
 			name:        "Claude-with-cloud",
 			selection:   TargetSelection{Claude: true},
-			options:     PlanOptions{CloudConfigured: true},
+			options:     PlanOptions{CloudResolvable: true},
 			description: "Claude target with cloud config",
 		},
 		{
@@ -1280,13 +1280,13 @@ func TestBuildTargetPlan_AllSnapshotDeclarationsHaveKnownPolicy(t *testing.T) {
 		{
 			name:        "All-targets",
 			selection:   TargetSelection{Claude: true, Codex: true, OpenClaw: true},
-			options:     PlanOptions{CloudConfigured: true},
+			options:     PlanOptions{CloudResolvable: true},
 			description: "All targets with cloud config",
 		},
 		{
 			name:        "All-targets-all-native-models",
 			selection:   TargetSelection{Claude: true, Codex: true, OpenClaw: true},
-			options:     PlanOptions{CloudConfigured: true, CodexNativeModel: true, OpenClawNativeModel: true},
+			options:     PlanOptions{CloudResolvable: true, CodexNativeModel: true, OpenClawNativeModel: true},
 			description: "All targets with cloud and all native models",
 		},
 	}

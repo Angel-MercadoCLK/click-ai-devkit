@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
@@ -109,7 +110,8 @@ func runRollback(cmd *cobra.Command) error {
 				fmt.Fprintln(out, r.Info("Modo no interactivo: ejecute `click rollback --yes` para confirmar la restauración."))
 				return fmt.Errorf("cli: rollback rechazado: %d archivo(s) compartido(s) requieren confirmación con --yes", len(report.WarnableNonVeto))
 			}
-			proceed, err := confirmProceed(cmd.InOrStdin(), out, r)
+			reader := bufio.NewReader(cmd.InOrStdin())
+			proceed, err := confirmProceed(reader, out, r)
 			if err != nil {
 				return err
 			}

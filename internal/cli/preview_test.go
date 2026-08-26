@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"path/filepath"
 	"strings"
@@ -253,7 +254,7 @@ func TestRenderWritePlan_DifferentStepsProducesDifferentOutput(t *testing.T) {
 func TestConfirmProceed_LowercaseY_ReturnsTrue(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	proceed, err := confirmProceed(strings.NewReader("y\n"), &out, r)
+	proceed, err := confirmProceed(bufio.NewReader(strings.NewReader("y\n")), &out, r)
 	if err != nil {
 		t.Fatalf("confirmProceed() error = %v", err)
 	}
@@ -266,7 +267,7 @@ func TestConfirmProceed_LowercaseY_ReturnsTrue(t *testing.T) {
 func TestConfirmProceed_Yes_ReturnsTrue(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	proceed, err := confirmProceed(strings.NewReader("yes\n"), &out, r)
+	proceed, err := confirmProceed(bufio.NewReader(strings.NewReader("yes\n")), &out, r)
 	if err != nil {
 		t.Fatalf("confirmProceed() error = %v", err)
 	}
@@ -278,7 +279,7 @@ func TestConfirmProceed_Yes_ReturnsTrue(t *testing.T) {
 func TestConfirmProceed_UppercaseY_ReturnsTrue(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	proceed, err := confirmProceed(strings.NewReader("Y\n"), &out, r)
+	proceed, err := confirmProceed(bufio.NewReader(strings.NewReader("Y\n")), &out, r)
 	if err != nil {
 		t.Fatalf("confirmProceed() error = %v", err)
 	}
@@ -290,7 +291,7 @@ func TestConfirmProceed_UppercaseY_ReturnsTrue(t *testing.T) {
 func TestConfirmProceed_ExplicitNo_ReturnsFalse(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	proceed, err := confirmProceed(strings.NewReader("n\n"), &out, r)
+	proceed, err := confirmProceed(bufio.NewReader(strings.NewReader("n\n")), &out, r)
 	if err != nil {
 		t.Fatalf("confirmProceed() error = %v", err)
 	}
@@ -302,7 +303,7 @@ func TestConfirmProceed_ExplicitNo_ReturnsFalse(t *testing.T) {
 func TestConfirmProceed_EmptyInput_ReturnsFalseNoError(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	proceed, err := confirmProceed(strings.NewReader(""), &out, r)
+	proceed, err := confirmProceed(bufio.NewReader(strings.NewReader("")), &out, r)
 	if err != nil {
 		t.Fatalf("confirmProceed() error = %v, want nil on empty/EOF input (default-deny, not a failure)", err)
 	}
@@ -317,7 +318,7 @@ func TestConfirmProceed_EmptyInput_ReturnsFalseNoError(t *testing.T) {
 func TestConfirmProceed_YesWithoutTrailingNewline_ReturnsTrue(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	proceed, err := confirmProceed(strings.NewReader("y"), &out, r)
+	proceed, err := confirmProceed(bufio.NewReader(strings.NewReader("y")), &out, r)
 	if err != nil {
 		t.Fatalf("confirmProceed() error = %v, want nil (EOF is not an error here)", err)
 	}
@@ -329,7 +330,7 @@ func TestConfirmProceed_YesWithoutTrailingNewline_ReturnsTrue(t *testing.T) {
 func TestConfirmProceed_PrintsPrompt(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	if _, err := confirmProceed(strings.NewReader("n\n"), &out, r); err != nil {
+	if _, err := confirmProceed(bufio.NewReader(strings.NewReader("n\n")), &out, r); err != nil {
 		t.Fatalf("confirmProceed() error = %v", err)
 	}
 	if !strings.Contains(out.String(), "¿Continuar?") {
@@ -348,7 +349,7 @@ func TestConfirmAndSnapshot_NonInteractive_SkipsPlanAndTakesSnapshotImmediately(
 	var out bytes.Buffer
 	r := rendererFor(cmd, &out)
 
-	proceed, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, true, []string{"Paso 1…"})
+	proceed, _, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, true, []string{"Paso 1…"})
 	if err != nil {
 		t.Fatalf("confirmAndSnapshot() error = %v", err)
 	}
@@ -378,7 +379,7 @@ func TestConfirmAndSnapshot_InteractiveConfirm_ShowsPlanAndTakesSnapshot(t *test
 	var out bytes.Buffer
 	r := rendererFor(cmd, &out)
 
-	proceed, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, false, []string{"Paso 1…"})
+	proceed, _, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, false, []string{"Paso 1…"})
 	if err != nil {
 		t.Fatalf("confirmAndSnapshot() error = %v", err)
 	}
@@ -408,7 +409,7 @@ func TestConfirmAndSnapshot_InteractiveDecline_NoSnapshotTaken(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(cmd, &out)
 
-	proceed, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, false, []string{"Paso 1…"})
+	proceed, _, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, false, []string{"Paso 1…"})
 	if err != nil {
 		t.Fatalf("confirmAndSnapshot() error = %v", err)
 	}

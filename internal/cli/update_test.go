@@ -64,8 +64,9 @@ func TestIsNonInteractiveUpdate_FlagsForceNonInteractiveOnFullTTY(t *testing.T) 
 }
 
 // TestUpdateCommand_CloudConfigured_RunsCloudStepAfterEngram is task 4.5's RED test: when cloud
-// server/project/token are all present, `click update` must re-sync Engram Cloud right after the
-// local Engram pin step, using Spanish user-facing labels.
+// server/project/token are all present and the dedicated --persist-engram-cloud-token opt-in is
+// given (DD-3 consent), `click update` must re-sync Engram Cloud right after the local Engram pin
+// step, using Spanish user-facing labels.
 func TestUpdateCommand_CloudConfigured_RunsCloudStepAfterEngram(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
@@ -84,7 +85,7 @@ func TestUpdateCommand_CloudConfigured_RunsCloudStepAfterEngram(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
 
-	out, err := execRoot(t, home, "update")
+	out, err := execRoot(t, home, "update", "--"+persistEngramCloudTokenFlag)
 	if err != nil {
 		t.Fatalf("update command error = %v, output:\n%s", err, out)
 	}
@@ -166,6 +167,7 @@ func TestUpdateCommand_CloudConfigured_PartialTokenMissing_SkipsCloudStep(t *tes
 // re-sync failure must be NON-FATAL to `click update`. The command must (a) return nil, (b) surface a
 // Spanish warning containing the underlying error, and (c) still run the remaining steps through to
 // completion (Context7 sync and the completion line follow the cloud step in runUpdate).
+// The --persist-engram-cloud-token opt-in authorizes the re-sync to run unattended (DD-3).
 func TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
@@ -182,7 +184,7 @@ func TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
 
-	out, err := execRoot(t, home, "update")
+	out, err := execRoot(t, home, "update", "--"+persistEngramCloudTokenFlag)
 	if err != nil {
 		t.Fatalf("update command error = %v, want nil (cloud failure must be non-fatal), output:\n%s", err, out)
 	}

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,13 +24,14 @@ import (
 //
 // skipOpenClawFlag is the explicit escape hatch for omitting a detected OpenClaw target.
 const (
-	yesFlag              = "yes"
-	nonInteractiveFlag   = "non-interactive"
-	profileFlag          = "profile"
-	skipOpenClawFlag     = "skip-openclaw"
-	codexModelFlag       = "codex-model"
-	openClawModelFlag    = "openclaw-model"
-	openClawFallbackFlag = "openclaw-fallback-model"
+	yesFlag                     = "yes"
+	nonInteractiveFlag          = "non-interactive"
+	profileFlag                 = "profile"
+	skipOpenClawFlag            = "skip-openclaw"
+	codexModelFlag              = "codex-model"
+	openClawModelFlag           = "openclaw-model"
+	openClawFallbackFlag        = "openclaw-fallback-model"
+	persistEngramCloudTokenFlag = "persist-engram-cloud-token"
 )
 
 func newInstallCommand() *cobra.Command {
@@ -47,6 +49,7 @@ func newInstallCommand() *cobra.Command {
 	cmd.Flags().String(codexModelFlag, "", "Referencia de modelo nativa de Codex, por ejemplo gpt-5.6")
 	cmd.Flags().String(openClawModelFlag, "", "Referencia provider/model nativa de OpenClaw")
 	cmd.Flags().StringSlice(openClawFallbackFlag, nil, "Referencias provider/model alternativas de OpenClaw")
+	cmd.Flags().Bool(persistEngramCloudTokenFlag, false, "Autorizar almacenamiento de ENGRAM_CLOUD_TOKEN en ~/.claude/settings.json con permisos 0600 (requiere consentimiento explícito)")
 	return cmd
 }
 
@@ -122,8 +125,8 @@ func runInstall(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	cloudConfigured := installer.EngramCloudConfigured(cfg, m)
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured || installer.EngramCloudPartiallyConfigured(cfg, m), CodexNativeModel: codexNativeModel, OpenClawNativeModel: openClawNativeModel})
+	cloudResolvable := installer.EngramCloudConfigured(cfg, m) || installer.EngramCloudPartiallyConfigured(cfg, m)
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel, OpenClawNativeModel: openClawNativeModel})
 	fmt.Fprintln(out, r.Info("Capacidades seleccionadas: "+plan.CapabilitiesSummary()))
 	fmt.Fprintln(out, r.Info("Resumen final de instalación: "+strings.Join(plan.StepLabels(), " → ")+nativeSummary(native)))
 
@@ -131,13 +134,41 @@ func runInstall(cmd *cobra.Command) error {
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE step 1 below (the first external `claude` subprocess invocation). A
 	// decline here means zero writes: nothing below this point has run yet.
-	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, plan, nonInteractive, installWriteStepsForSelection(cfg, cloudConfigured, selection, codexNativeModel, openClawNativeModel))
+	proceed, sharedReader, err := confirmAndSnapshot(cmd, out, r, cfg, plan, nonInteractive, installWriteStepsForSelection(cfg, cloudResolvable, selection, codexNativeModel, openClawNativeModel))
 	if err != nil {
 		return err
 	}
 	if !proceed {
 		fmt.Fprintln(out, r.Info("Instalación cancelada."))
 		return nil
+	}
+
+	// Engram Cloud token persistence consent: if cloud server and project are resolvable
+	// and a token is available in the environment, prompt the user for consent to store the
+	// token in settings.json. The shared reader from confirmAndSnapshot is used so that the
+	// consent prompt consumes the next input in order.
+	persistFlag, _ := cmd.Flags().GetBool(persistEngramCloudTokenFlag)
+	token := os.Getenv("ENGRAM_CLOUD_TOKEN")
+	server := os.Getenv("CLICK_ENGRAM_CLOUD_SERVER")
+	project := os.Getenv("CLICK_ENGRAM_CLOUD_PROJECT")
+	// D40 enrollment only runs when the token was actually persisted: without it the session-sync
+	// hook cannot authenticate on later sessions, so enrolling the current run alone is pointless
+	// (ECS-3.3). The consent block below records that decision; the StepActionSyncEngramCloud case
+	// in the dispatch loop consults cloudEnrollmentAllowed.
+	cloudEnrollmentAllowed := false
+	if server != "" && project != "" && token != "" {
+		emitConsentPrompt(out)
+		persistenceMode, readErr := resolveCloudTokenPersistence(nonInteractive, persistFlag, sharedReader)
+		if readErr != nil {
+			fmt.Fprintln(out, r.Warn(consentSkippedWarning))
+		}
+		if persistenceMode == installer.CloudTokenPersistenceDecline {
+			fmt.Fprintln(out, r.Warn(autosyncDisabledWarning))
+		}
+		cloudEnrollmentAllowed = persistenceMode == installer.CloudTokenPersistencePersist
+		if configureErr := installer.ConfigureEngramCloudSessionSync(cfg, m, persistenceMode, token); configureErr != nil {
+			fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo configurar Engram Cloud Session Sync: %v. La instalación local continúa.", configureErr)))
+		}
 	}
 
 	// Arm deferred post-run snapshot recording (only when proceed=true)
@@ -184,6 +215,12 @@ func runInstall(cmd *cobra.Command) error {
 		case installer.StepActionSyncEngramCloud:
 			if installer.EngramCloudPartiallyConfigured(cfg, m) {
 				reportSkippedCloudEnrollment(out, r)
+				continue
+			}
+			if !cloudEnrollmentAllowed {
+				// Token is present but persistence was declined (or not opted into): the session-sync
+				// hook has no token to authenticate future sessions, so skip D40 enrollment. The
+				// autosync-disabled warning was already printed by the consent block.
 				continue
 			}
 			fmt.Fprintln(out, r.Step("Enrolando Engram Cloud…"))

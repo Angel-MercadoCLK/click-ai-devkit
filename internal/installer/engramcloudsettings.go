@@ -10,6 +10,14 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
 
+var configureEngramCloudSessionSyncFunc = configureEngramCloudSessionSyncImpl
+
+func SetConfigureEngramCloudSessionSyncFuncForTests(fn func(Config, *manifest.Manifest, CloudTokenPersistence, string) error) func() {
+	old := configureEngramCloudSessionSyncFunc
+	configureEngramCloudSessionSyncFunc = fn
+	return func() { configureEngramCloudSessionSyncFunc = old }
+}
+
 // CloudTokenPersistence represents whether the token should be persisted to settings.json
 // based on user consent.
 type CloudTokenPersistence int
@@ -27,6 +35,12 @@ const (
 // to Claude Code's settings.json. It performs one read/merge/write through the secured
 // writeSettingsFile, preserving all foreign entries.
 func ConfigureEngramCloudSessionSync(cfg Config, m *manifest.Manifest, mode CloudTokenPersistence, token string) error {
+	return configureEngramCloudSessionSyncFunc(cfg, m, mode, token)
+}
+
+// configureEngramCloudSessionSyncImpl is the actual implementation of ConfigureEngramCloudSessionSync.
+// This is called through the seam variable for testability.
+func configureEngramCloudSessionSyncImpl(cfg Config, m *manifest.Manifest, mode CloudTokenPersistence, token string) error {
 	settings, err := readSettingsFile(cfg.SettingsPath())
 	if err != nil {
 		return fmt.Errorf("installer: read settings: %w", err)

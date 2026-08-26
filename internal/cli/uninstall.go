@@ -160,12 +160,12 @@ func runUninstall(cmd *cobra.Command) error {
 			return err
 		}
 	}
-	// CloudConfigured is resolved from the enrollment record ON DISK, not from
+	// CloudResolvable is resolved from the enrollment record ON DISK, not from
 	// installer.EngramCloudConfigured like install/update do. That helper requires ENGRAM_CLOUD_TOKEN
 	// to still be exported, which a developer tearing down their setup has almost never kept — keying
 	// the teardown off it would drop the engram-cloud step from the plan and orphan engram-cloud.json
 	// on exactly the machines that have one. Presence of the record is the accurate teardown signal.
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: installer.EngramCloudStatePresent(cfg)})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: installer.EngramCloudStatePresent(cfg)})
 	if err := installer.SnapshotTargetPlan(cfg, plan); err != nil {
 		return err
 	}

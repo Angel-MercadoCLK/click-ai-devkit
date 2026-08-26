@@ -29,7 +29,7 @@ type TargetPlan struct {
 }
 
 type PlanOptions struct {
-	CloudConfigured bool
+	CloudResolvable bool
 	// CodexNativeModel / OpenClawNativeModel are set ONLY when the developer explicitly opted into a
 	// native-model mutation via --codex-model / --openclaw-model. When false (the normal case), the
 	// corresponding native-model write action is omitted from the plan entirely, so a plain install
@@ -42,40 +42,41 @@ type PlanOptions struct {
 type StepActionKind string
 
 const (
-	StepActionSyncMarketplacePlugins       StepActionKind = "sync-marketplace-plugins"
-	StepActionSyncEngram                   StepActionKind = "sync-engram"
-	StepActionSyncEngramCloud              StepActionKind = "sync-engram-cloud"
-	StepActionSyncContext7                 StepActionKind = "sync-context7"
-	StepActionWriteClaudeManagedBlock      StepActionKind = "write-claude-managed-block"
-	StepActionRegisterMemoryGuard          StepActionKind = "register-memory-guard"
-	StepActionSaveModels                   StepActionKind = "save-models"
-	StepActionSyncCodexGuidance            StepActionKind = "sync-codex-guidance"
-	StepActionSyncCodexMCP                 StepActionKind = "sync-codex-mcp"
-	StepActionConfigureCodexNativeModel    StepActionKind = "configure-codex-native-model"
-	StepActionSyncOpenClawWorkspace        StepActionKind = "sync-openclaw-workspace"
-	StepActionSyncOpenClawMCP              StepActionKind = "sync-openclaw-mcp"
-	StepActionRegisterOpenClawMCP          StepActionKind = "register-openclaw-mcp"
-	StepActionUnregisterOpenClawMCP        StepActionKind = "unregister-openclaw-mcp"
-	StepActionSyncOpenClawPlugin           StepActionKind = "sync-openclaw-plugin"
-	StepActionSyncOpenClawSkills           StepActionKind = "sync-openclaw-skills"
-	StepActionSyncOpenClawModelProfile     StepActionKind = "sync-openclaw-model-profile"
-	StepActionConfigureOpenClawNativeModel StepActionKind = "configure-openclaw-native-model"
-	StepActionRemoveModels                 StepActionKind = "remove-models"
-	StepActionRemoveEngramCloudState       StepActionKind = "remove-engram-cloud-state"
-	StepActionRemoveMarketplacePlugins     StepActionKind = "remove-marketplace-plugins"
-	StepActionStripClaudeManagedBlock      StepActionKind = "strip-claude-managed-block"
-	StepActionUnregisterMemoryGuard        StepActionKind = "unregister-memory-guard"
-	StepActionRemoveEngram                 StepActionKind = "remove-engram"
-	StepActionRemoveContext7               StepActionKind = "remove-context7"
-	StepActionRemoveOpenClawPlugin         StepActionKind = "remove-openclaw-plugin"
-	StepActionRemoveOpenClawSkills         StepActionKind = "remove-openclaw-skills"
-	StepActionStripOpenClawWorkspace       StepActionKind = "strip-openclaw-workspace"
-	StepActionRemoveOpenClawModelProfile   StepActionKind = "remove-openclaw-model-profile"
-	StepActionSaveCodexModelProfile        StepActionKind = "save-codex-model-profile"
-	StepActionRemoveCodexModelProfile      StepActionKind = "remove-codex-model-profile"
-	StepActionStripCodexGuidance           StepActionKind = "strip-codex-guidance"
-	StepActionRemoveCodexMCP               StepActionKind = "remove-codex-mcp"
-	StepActionRemoveTargetSelection        StepActionKind = "remove-target-selection"
+	StepActionSyncMarketplacePlugins          StepActionKind = "sync-marketplace-plugins"
+	StepActionSyncEngram                      StepActionKind = "sync-engram"
+	StepActionConfigureEngramCloudSessionSync StepActionKind = "configure-engram-cloud-session-sync"
+	StepActionSyncEngramCloud                 StepActionKind = "sync-engram-cloud"
+	StepActionSyncContext7                    StepActionKind = "sync-context7"
+	StepActionWriteClaudeManagedBlock         StepActionKind = "write-claude-managed-block"
+	StepActionRegisterMemoryGuard             StepActionKind = "register-memory-guard"
+	StepActionSaveModels                      StepActionKind = "save-models"
+	StepActionSyncCodexGuidance               StepActionKind = "sync-codex-guidance"
+	StepActionSyncCodexMCP                    StepActionKind = "sync-codex-mcp"
+	StepActionConfigureCodexNativeModel       StepActionKind = "configure-codex-native-model"
+	StepActionSyncOpenClawWorkspace           StepActionKind = "sync-openclaw-workspace"
+	StepActionSyncOpenClawMCP                 StepActionKind = "sync-openclaw-mcp"
+	StepActionRegisterOpenClawMCP             StepActionKind = "register-openclaw-mcp"
+	StepActionUnregisterOpenClawMCP           StepActionKind = "unregister-openclaw-mcp"
+	StepActionSyncOpenClawPlugin              StepActionKind = "sync-openclaw-plugin"
+	StepActionSyncOpenClawSkills              StepActionKind = "sync-openclaw-skills"
+	StepActionSyncOpenClawModelProfile        StepActionKind = "sync-openclaw-model-profile"
+	StepActionConfigureOpenClawNativeModel    StepActionKind = "configure-openclaw-native-model"
+	StepActionRemoveModels                    StepActionKind = "remove-models"
+	StepActionRemoveEngramCloudState          StepActionKind = "remove-engram-cloud-state"
+	StepActionRemoveMarketplacePlugins        StepActionKind = "remove-marketplace-plugins"
+	StepActionStripClaudeManagedBlock         StepActionKind = "strip-claude-managed-block"
+	StepActionUnregisterMemoryGuard           StepActionKind = "unregister-memory-guard"
+	StepActionRemoveEngram                    StepActionKind = "remove-engram"
+	StepActionRemoveContext7                  StepActionKind = "remove-context7"
+	StepActionRemoveOpenClawPlugin            StepActionKind = "remove-openclaw-plugin"
+	StepActionRemoveOpenClawSkills            StepActionKind = "remove-openclaw-skills"
+	StepActionStripOpenClawWorkspace          StepActionKind = "strip-openclaw-workspace"
+	StepActionRemoveOpenClawModelProfile      StepActionKind = "remove-openclaw-model-profile"
+	StepActionSaveCodexModelProfile           StepActionKind = "save-codex-model-profile"
+	StepActionRemoveCodexModelProfile         StepActionKind = "remove-codex-model-profile"
+	StepActionStripCodexGuidance              StepActionKind = "strip-codex-guidance"
+	StepActionRemoveCodexMCP                  StepActionKind = "remove-codex-mcp"
+	StepActionRemoveTargetSelection           StepActionKind = "remove-target-selection"
 )
 
 type DoctorCheckKind string
@@ -319,12 +320,16 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 	if selection.Claude || selection.OpenClaw {
 		steps = append(steps, Step{ID: "engram", Target: PlanTargetShared, Label: "Engram", Snapshot: []SnapshotDecl{snapshot(cfg.EngramStatePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSyncEngram}, UpdateActions: []StepActionKind{StepActionSyncEngram}, UninstallActions: []StepActionKind{StepActionRemoveEngram}, DoctorChecks: []DoctorCheckKind{DoctorCheckEngramPlugin, DoctorCheckEngramSubagentVisibility, DoctorCheckEngramBinary, DoctorCheckEngramPath}})
 	}
-	if options.CloudConfigured && selection.Claude {
+	if options.CloudResolvable && selection.Claude {
 		// StepActionRemoveEngramCloudState is StepActionSyncEngramCloud's reversal. RemoveEngramCloudState
 		// already existed but was reachable only from the zero-caller legacy installer.Uninstall, so
 		// engram-cloud.json survived `click uninstall`. It stays offline: it deletes click's own local
 		// enrollment record and never un-enrolls the shared cloud project other machines still use.
-		steps = append(steps, Step{ID: "engram-cloud", Target: PlanTargetShared, Label: "Engram Cloud", Snapshot: []SnapshotDecl{snapshot(cfg.EngramCloudStatePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSyncEngramCloud}, UpdateActions: []StepActionKind{StepActionSyncEngramCloud}, UninstallActions: []StepActionKind{StepActionRemoveEngramCloudState}, DoctorChecks: []DoctorCheckKind{DoctorCheckEngramCloud}})
+		//
+		// With CloudResolvable (server and project known, token optional), we always include
+		// StepActionConfigureEngramCloudSessionSync to write env block and hook, while
+		// StepActionSyncEngramCloud remains exclusively for D40 enrollment when token is present.
+		steps = append(steps, Step{ID: "engram-cloud", Target: PlanTargetShared, Label: "Engram Cloud", Snapshot: []SnapshotDecl{snapshot(cfg.EngramCloudStatePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionConfigureEngramCloudSessionSync, StepActionSyncEngramCloud}, UpdateActions: []StepActionKind{StepActionConfigureEngramCloudSessionSync, StepActionSyncEngramCloud}, UninstallActions: []StepActionKind{StepActionRemoveEngramCloudState}, DoctorChecks: []DoctorCheckKind{DoctorCheckEngramCloud}})
 	}
 	if selection.Claude {
 		steps = append(steps,
