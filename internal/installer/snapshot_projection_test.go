@@ -425,7 +425,7 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 		// Settings with a token value
 		settingsWithToken := map[string]any{
 			"env": map[string]any{
-				"ENGRAM_CLOUD_TOKEN": "secret-token-value-123",
+				"ENGRAM_CLOUD_TOKEN":  "secret-token-value-123",
 				"ENGRAM_CLOUD_SERVER": "https://engram.example.com",
 			},
 			"hooks": map[string]any{
@@ -436,7 +436,7 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 		// Same settings structure but with a different token value
 		settingsWithDifferentToken := map[string]any{
 			"env": map[string]any{
-				"ENGRAM_CLOUD_TOKEN": "different-secret-token-456",
+				"ENGRAM_CLOUD_TOKEN":  "different-secret-token-456",
 				"ENGRAM_CLOUD_SERVER": "https://engram.example.com",
 			},
 			"hooks": map[string]any{

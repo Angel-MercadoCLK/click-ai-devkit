@@ -956,15 +956,15 @@ func TestRedactEngramCloudToken_ByteIdenticalPassthroughWhenNoToken(t *testing.T
 // the token value is completely removed and other content is preserved.
 func TestRedactEngramCloudToken_TokenValueRemovedWhenPresent(t *testing.T) {
 	testCases := []struct {
-		name         string
-		input        []byte
-		mustContain  []string  // These strings must appear in output
+		name           string
+		input          []byte
+		mustContain    []string // These strings must appear in output
 		mustNotContain []string // These strings must NOT appear in output
 	}{
 		{
-			name: "token present with compact JSON",
-			input: []byte(`{"env":{"ENGRAM_CLOUD_TOKEN":"secret-value","OTHER_KEY":"other"},"hooks":{}}`),
-			mustContain: []string{`"OTHER_KEY"`, `"other"`, `"hooks"`, `{}`},
+			name:           "token present with compact JSON",
+			input:          []byte(`{"env":{"ENGRAM_CLOUD_TOKEN":"secret-value","OTHER_KEY":"other"},"hooks":{}}`),
+			mustContain:    []string{`"OTHER_KEY"`, `"other"`, `"hooks"`, `{}`},
 			mustNotContain: []string{`"secret-value"`},
 		},
 		{
@@ -976,7 +976,7 @@ func TestRedactEngramCloudToken_TokenValueRemovedWhenPresent(t *testing.T) {
   },
   "hooks": {}
 }`),
-			mustContain: []string{`"ENGRAM_CLOUD_AUTOSYNC"`, `"1"`, `"hooks"`},
+			mustContain:    []string{`"ENGRAM_CLOUD_AUTOSYNC"`, `"1"`, `"hooks"`},
 			mustNotContain: []string{`"my-secret-token"`},
 		},
 	}
