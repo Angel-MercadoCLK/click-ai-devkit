@@ -437,4 +437,33 @@ func TestBuildTargetPlan_CloudResolvableConfiguresSessionSync(t *testing.T) {
 	if !hasUninstallAction {
 		t.Fatalf("UninstallActions = %v, want to contain remove-engram-cloud-state", cloudStep.UninstallActions)
 	}
+
+	// The ordered action kinds must carry the configure action BEFORE the D40 enrollment action,
+	// mirroring DD-4's "configure session sync, then enroll/sync" ordering.
+	installKinds := plan.InstallActionKinds()
+	updateKinds := plan.UpdateActionKinds()
+	assertConfigureBeforeSync := func(name string, kinds []StepActionKind) {
+		t.Helper()
+		configureIdx := -1
+		syncIdx := -1
+		for i, k := range kinds {
+			if k == StepActionConfigureEngramCloudSessionSync {
+				configureIdx = i
+			}
+			if k == StepActionSyncEngramCloud {
+				syncIdx = i
+			}
+		}
+		if configureIdx == -1 {
+			t.Fatalf("%s = %v, want to contain configure-engram-cloud-session-sync", name, kinds)
+		}
+		if syncIdx == -1 {
+			t.Fatalf("%s = %v, want to contain sync-engram-cloud", name, kinds)
+		}
+		if configureIdx >= syncIdx {
+			t.Fatalf("%s = %v, want configure-engram-cloud-session-sync (idx %d) before sync-engram-cloud (idx %d)", name, kinds, configureIdx, syncIdx)
+		}
+	}
+	assertConfigureBeforeSync("InstallActionKinds", installKinds)
+	assertConfigureBeforeSync("UpdateActionKinds", updateKinds)
 }

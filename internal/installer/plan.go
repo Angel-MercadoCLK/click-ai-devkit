@@ -208,6 +208,7 @@ func collectOrderedActionKinds(steps []Step, order []StepActionKind, actionsFor 
 var installActionOrder = []StepActionKind{
 	StepActionSyncMarketplacePlugins,
 	StepActionSyncEngram,
+	StepActionConfigureEngramCloudSessionSync,
 	StepActionSyncEngramCloud,
 	StepActionSyncContext7,
 	StepActionWriteClaudeManagedBlock,
@@ -232,6 +233,7 @@ var updateActionOrder = []StepActionKind{
 	StepActionWriteClaudeManagedBlock,
 	StepActionRegisterMemoryGuard,
 	StepActionSyncEngram,
+	StepActionConfigureEngramCloudSessionSync,
 	StepActionSyncEngramCloud,
 	StepActionSyncContext7,
 	StepActionSyncOpenClawWorkspace,

@@ -74,6 +74,8 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 			return fmt.Sprintf("Sincronizando Engram (pin %s)…", options.engramVersion)
 		}
 		return "Instalando Engram (memoria persistente)…"
+	case installer.StepActionConfigureEngramCloudSessionSync:
+		return "Configurando Engram Cloud Session Sync en settings.json…"
 	case installer.StepActionSyncEngramCloud:
 		if options.engramVersion != "" {
 			return "Sincronizando Engram Cloud…"
