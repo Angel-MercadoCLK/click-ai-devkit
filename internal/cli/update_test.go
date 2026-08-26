@@ -314,7 +314,8 @@ func TestUpdate_ConfigureFailureWarnsAndContinues(t *testing.T) {
 
 // TestUpdate_DeclineWarnsAutosyncDisabled is task 5.17's RED test: a declined persistence decision
 // (non-interactive without the dedicated opt-in) prints the Spanish autosync-disabled warning and
-// still exits 0 (ECS-3.3, ECS-3.4).
+// still exits 0 (ECS-3.3, ECS-3.4). Per D40, the consent decision governs ONLY token persistence:
+// enrollment/re-sync still runs when ENGRAM_CLOUD_TOKEN is present in the environment.
 func TestUpdate_DeclineWarnsAutosyncDisabled(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLICK_CLAUDE_HOME", home)
@@ -329,13 +330,6 @@ func TestUpdate_DeclineWarnsAutosyncDisabled(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
 	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
 
-	cloudCalls := 0
-	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
-		cloudCalls++
-		return nil
-	})
-	defer restoreCloud()
-
 	root := NewRootCommand()
 	var out bytes.Buffer
 	root.SetOut(&out)
@@ -348,9 +342,6 @@ func TestUpdate_DeclineWarnsAutosyncDisabled(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "autosync desactivado") {
 		t.Fatalf("update output missing the Spanish autosync-disabled warning (ECS-3.3)")
-	}
-	if cloudCalls != 0 {
-		t.Fatalf("SyncEngramCloud called %d times, want 0 (decline without --persist-engram-cloud-token skips enrollment)", cloudCalls)
 	}
 	if !strings.Contains(out.String(), "Update completo.") {
 		t.Fatalf("update output missing the completion message")

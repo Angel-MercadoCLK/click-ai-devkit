@@ -152,12 +152,12 @@ func runInstall(cmd *cobra.Command) error {
 	server := os.Getenv("CLICK_ENGRAM_CLOUD_SERVER")
 	project := os.Getenv("CLICK_ENGRAM_CLOUD_PROJECT")
 	// persistenceMode is default-deny: only the dedicated --persist-engram-cloud-token flag or an
-	// interactive affirmative answer upgrades it to Persist (DD-3, ECS-3.5/3.6). The dispatch loop's
-	// StepActionConfigureEngramCloudSessionSync case consumes it to write the env block and hook
-	// exactly once — token present or not, since CloudResolvable makes the token optional — and the
-	// StepActionSyncEngramCloud case only enrolls when the token was actually persisted (ECS-3.3).
+	// interactive affirmative answer upgrades it to Persist (DD-3, ECS-3.5/3.6). It governs ONLY
+	// whether ENGRAM_CLOUD_TOKEN is written into settings.json, consumed by the dispatch loop's
+	// StepActionConfigureEngramCloudSessionSync case. D40 enrollment (StepActionSyncEngramCloud) is
+	// independent: it runs whenever server, project and the ENGRAM_CLOUD_TOKEN environment variable
+	// are present, regardless of this consent decision.
 	persistenceMode := installer.CloudTokenPersistenceDecline
-	cloudEnrollmentAllowed := false
 	if server != "" && project != "" && token != "" {
 		emitConsentPrompt(out)
 		var readErr error
@@ -168,7 +168,6 @@ func runInstall(cmd *cobra.Command) error {
 		if persistenceMode == installer.CloudTokenPersistenceDecline {
 			fmt.Fprintln(out, r.Warn(autosyncDisabledWarning))
 		}
-		cloudEnrollmentAllowed = persistenceMode == installer.CloudTokenPersistencePersist
 	}
 
 	// Arm deferred post-run snapshot recording (only when proceed=true)
@@ -223,12 +222,6 @@ func runInstall(cmd *cobra.Command) error {
 		case installer.StepActionSyncEngramCloud:
 			if installer.EngramCloudPartiallyConfigured(cfg, m) {
 				reportSkippedCloudEnrollment(out, r)
-				continue
-			}
-			if !cloudEnrollmentAllowed {
-				// Token is present but persistence was declined (or not opted into): the session-sync
-				// hook has no token to authenticate future sessions, so skip D40 enrollment. The
-				// autosync-disabled warning was already printed by the consent block.
 				continue
 			}
 			fmt.Fprintln(out, r.Step("Enrolando Engram Cloud…"))
