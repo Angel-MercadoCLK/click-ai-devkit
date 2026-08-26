@@ -59,12 +59,24 @@ func managedMarkdownProjectionHash(content string) string {
 // manifest never carries click-owned content in plaintext.
 // Owned hooks are identified by matching both MemoryGuardToolMatcher and MemoryGuardCommand.
 // The projection is order-independent to tolerate writeSettingsFile's key-order normalization.
+//
+// The projection also encodes token presence (boolean) in env.ENGRAM_CLOUD_TOKEN, never the token
+// value itself (NFR-6). This ensures the manifest records whether a token was present without
+// leaking its value.
 func managedSettingsProjectionHash(content string) string {
 	var settings map[string]any
 	if err := json.Unmarshal([]byte(content), &settings); err != nil {
 		// Invalid JSON - treat as absent
 		projection := "absent"
 		return "absent:" + CanonicalContentHash(projection)
+	}
+
+	// Check for token presence (encode boolean, never the value)
+	tokenPresent := false
+	if env, ok := settings["env"].(map[string]any); ok {
+		if _, hasToken := env["ENGRAM_CLOUD_TOKEN"]; hasToken {
+			tokenPresent = true
+		}
 	}
 
 	entries := getPreToolUseEntries(settings)
@@ -101,15 +113,26 @@ func managedSettingsProjectionHash(content string) string {
 		}
 	}
 
-	// Case: no owned hook
-	if len(ownedHooks) == 0 {
+	// Case: no owned hook and no token
+	if len(ownedHooks) == 0 && !tokenPresent {
 		return "absent:" + CanonicalContentHash("absent")
 	}
 
-	// Case: owned hooks exist. Sorting first removes dependence on position among foreign entries
-	// AND on writeSettingsFile's key-order re-normalization; only the resulting hash is returned —
-	// never the owned hooks' own JSON, which is click-owned content, not a descriptor.
+	// Case: owned hooks exist and/or token present. Sorting first removes dependence on position
+	// among foreign entries AND on writeSettingsFile's key-order re-normalization; only the
+	// resulting hash is returned — never the owned hooks' own JSON, which is click-owned content,
+	// not a descriptor.
 	sort.Strings(ownedHooks)
-	projection := "present:" + strings.Join(ownedHooks, ":")
+
+	// Build projection: token presence (as boolean string) + owned hooks
+	var projectionParts []string
+	if tokenPresent {
+		projectionParts = append(projectionParts, "token:true")
+	} else {
+		projectionParts = append(projectionParts, "token:false")
+	}
+	projectionParts = append(projectionParts, ownedHooks...)
+
+	projection := "present:" + strings.Join(projectionParts, ":")
 	return "present:" + CanonicalContentHash(projection)
 }
