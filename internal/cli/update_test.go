@@ -85,7 +85,7 @@ func TestUpdateCommand_CloudConfigured_RunsCloudStepAfterEngram(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
 
-	out, err := execRoot(t, home, "update", "--"+persistEngramCloudTokenFlag)
+	out, err := execRoot(t, home, "update")
 	if err != nil {
 		t.Fatalf("update command error = %v, output:\n%s", err, out)
 	}
@@ -184,7 +184,7 @@ func TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
 
-	out, err := execRoot(t, home, "update", "--"+persistEngramCloudTokenFlag)
+	out, err := execRoot(t, home, "update")
 	if err != nil {
 		t.Fatalf("update command error = %v, want nil (cloud failure must be non-fatal), output:\n%s", err, out)
 	}
