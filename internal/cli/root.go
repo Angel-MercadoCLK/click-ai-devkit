@@ -63,6 +63,7 @@ func NewRootCommand() *cobra.Command {
 		newConfigureOpenClawModelCommand(),
 		newUninstallCommand(),
 		newMemoryGuardCommand(),
+		newEngramCloudImportCommand(),
 		newConfigureModelsCommand(),
 		newAgentBuilderCommand(),
 		newManageBackupsCommand(),
