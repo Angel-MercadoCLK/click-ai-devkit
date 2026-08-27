@@ -501,8 +501,6 @@ func TestInstall_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 		t.Fatalf("read settings.json: %v", err)
 	}
 
-	t.Logf("settings.json content:\n%s", string(data))
-
 	var settings map[string]any
 	if err := json.Unmarshal(data, &settings); err != nil {
 		t.Fatalf("parse settings.json: %v", err)
