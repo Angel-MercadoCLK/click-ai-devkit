@@ -5,6 +5,7 @@ package installer
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // managedEngramCloudHookCommand returns a POSIX shell command that performs a bounded
@@ -20,13 +21,19 @@ func managedEngramCloudHookCommand(project string) (string, error) {
 	// Otherwise, leave unquoted for readability.
 	var projectArg string
 	if needsQuoting(project) {
-		projectArg = fmt.Sprintf("'%s'", project)
+		projectArg = fmt.Sprintf("'%s'", escapePOSIXSingleQuotes(project))
 	} else {
 		projectArg = project
 	}
 
 	cmd := fmt.Sprintf("timeout 5 engram sync --cloud --import --project %s || true", projectArg)
 	return cmd, nil
+}
+
+// escapePOSIXSingleQuotes replaces each apostrophe with '\'' (close quote, escaped literal quote, reopen quote)
+// This is the standard POSIX shell escaping mechanism for single-quoted strings.
+func escapePOSIXSingleQuotes(s string) string {
+	return strings.ReplaceAll(s, "'", "'\\''")
 }
 
 // needsQuoting returns true if the string contains characters that require

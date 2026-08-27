@@ -3,6 +3,7 @@
 package installer
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -85,5 +86,36 @@ func TestManagedEngramCloudHookCommand_POSIXShellQuoting(t *testing.T) {
 				t.Errorf("managedEngramCloudHookCommand(%q) result %q contains unexpected substring %q", tt.project, result, tt.absent)
 			}
 		})
+	}
+}
+
+func TestManagedEngramCloudHookCommand_POSIXEscapesApostrophes(t *testing.T) {
+	project := "team'oops; touch /tmp/pwned; echo '"
+	result, err := managedEngramCloudHookCommand(project)
+	if err != nil {
+		t.Fatalf("managedEngramCloudHookCommand(%q) returned error: %v", project, err)
+	}
+
+	// The escaped form: replace each ' with '\'' (close quote, escaped literal quote, reopen quote)
+	// "team'oops; touch /tmp/pwned; echo '" becomes "team'\''oops; touch /tmp/pwned; echo '\''"
+	expectedEscaped := "team'\\''oops; touch /tmp/pwned; echo '\\''"
+	escapedProjectArg := fmt.Sprintf("'%s'", expectedEscaped)
+	expectedCmd := fmt.Sprintf("timeout 5 engram sync --cloud --import --project %s || true", escapedProjectArg)
+
+	if result != expectedCmd {
+		t.Errorf("managedEngramCloudHookCommand(%q) = %q, want %q", project, result, expectedCmd)
+	}
+
+	// Verify the apostrophe is escaped and the project name appears as a single inert argument
+	// The command should contain '\'' sequences for each apostrophe
+	if !strings.Contains(result, `'\''`) {
+		t.Errorf("managedEngramCloudHookCommand(%q) result %q does not contain escaped apostrophe sequence '\\''", project, result)
+	}
+
+	// The raw unescaped apostrophe should NOT appear (except as part of the escape sequence)
+	// Count raw apostrophes that are NOT part of the escape sequence '\'' or ''
+	rawApostropheCount := strings.Count(result, "'") - strings.Count(result, `'\''`)*2 - strings.Count(result, `''`)
+	if rawApostropheCount != 0 {
+		t.Errorf("managedEngramCloudHookCommand(%q) result %q contains %d raw unescaped apostrophes (should be 0)", project, result, rawApostropheCount)
 	}
 }
