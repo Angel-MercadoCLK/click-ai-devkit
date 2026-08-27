@@ -119,12 +119,69 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	report := Run(cfg)
 
-	// 13 base checks now that the Claude plugin registries check joins the foundational checks,
+	// 14 base checks now that the Claude plugin registries check joins the foundational checks,
 	// standalone PATH-based detection check (openclaw-target-support PR-A).
 	const wantChecks = 14 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (git, claude, openclaw, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, click binary, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, engram cloud enrollment, context7 MCP)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d (git, openclaw, openclaw native model action, click binary, claude, click plugin registries, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, models.json schema, click-sdd applied plugin config, engram plugin, engram subagent visibility, engram binary, engram PATH persistence, engram cloud enrollment, engram cloud session sync, context7 MCP, memory-guard hook)", len(report.Checks), wantChecks)
 	}
+}
+
+func TestRun_CheckCountIncludesEngramCloudSessionSync(t *testing.T) {
+	report := Run(installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()})
+	const wantChecks = 14 + EngramChecksCount + Context7ChecksCount
+	if got := len(report.Checks); got != wantChecks {
+		t.Fatalf("Run() check count = %d, want %d including engram cloud session sync", got, wantChecks)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_HealthyWhenCompleteOrNotConfigured(t *testing.T) {
+	complete := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+	m.EngramCloud.Project = "team-hive"
+	if err := installer.ConfigureEngramCloudSessionSync(complete, m, installer.CloudTokenPersistencePersist, "test-token"); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+	}
+
+	if got := checkEngramCloudSessionSync(complete); !got.Healthy {
+		t.Fatalf("complete session sync check = %+v, want healthy", got)
+	}
+	if got := checkEngramCloudSessionSync(installer.Config{ClaudeHome: t.TempDir()}); !got.Healthy || !strings.Contains(got.Detail, "sin configurar") {
+		t.Fatalf("unconfigured session sync check = %+v, want healthy not configured", got)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_NamesMissingKeyAlteredHookAndInsecurePerms(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	settings := []byte(`{
+  "env": {"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "https://cloud.example"},
+  "hooks": {"SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "timeout 5 engram sync --cloud --project team || true"}]}]}
+}
+`)
+	if err := os.WriteFile(cfg.SettingsPath(), settings, 0o644); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy {
+		t.Fatalf("defective session sync check = %+v, want unhealthy", got)
+	}
+	for _, want := range []string{"ENGRAM_CLOUD_TOKEN", "--import", "permisos"} {
+		if !strings.Contains(got.Detail, want) {
+			t.Fatalf("check detail = %q, want %q", got.Detail, want)
+		}
+	}
+}
+
+func TestCheckEngramCloudSessionSync_PerformsNoSubprocessOrNetwork(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	restore := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return panicCommandRunner{} })
+	defer restore()
+
+	_ = checkEngramCloudSessionSync(cfg)
 }
 
 // --- Engram Cloud enrollment check (PR2) ---

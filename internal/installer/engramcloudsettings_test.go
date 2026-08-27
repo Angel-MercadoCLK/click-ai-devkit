@@ -1007,3 +1007,29 @@ func TestRedactEngramCloudToken_TokenValueRemovedWhenPresent(t *testing.T) {
 		})
 	}
 }
+
+func TestInspectEngramCloudSessionSync_ReportsManagedFootprint(t *testing.T) {
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{
+  "env": {"ENGRAM_CLOUD_AUTOSYNC": "1"},
+  "hooks": {"SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "timeout 5 engram sync --cloud --project team-hive || true"}]}]}
+}
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+
+	status, err := InspectEngramCloudSessionSync(Config{ClaudeHome: filepath.Dir(settingsPath)})
+	if err != nil {
+		t.Fatalf("InspectEngramCloudSessionSync() error = %v", err)
+	}
+	if !status.AutosyncPresent || status.ServerPresent || status.TokenPresent {
+		t.Fatalf("InspectEngramCloudSessionSync() env presence = %+v, want autosync only", status)
+	}
+	if !status.ManagedHookPresent || status.ManagedHookValid {
+		t.Fatalf("InspectEngramCloudSessionSync() hook status = %+v, want altered managed hook", status)
+	}
+	if status.OwnerOnly {
+		t.Fatal("InspectEngramCloudSessionSync() OwnerOnly = true, want false for mode 0644")
+	}
+}

@@ -174,6 +174,7 @@ func TestBuildTargetPlan_ClaudeExposesModelsAndCloudTeardown(t *testing.T) {
 		StepActionRemoveMarketplacePlugins,
 		StepActionRemoveModels,
 		StepActionRemoveEngram,
+		StepActionRemoveEngramCloudSessionSync,
 		StepActionRemoveEngramCloudState,
 		StepActionRemoveContext7,
 		StepActionStripClaudeManagedBlock,
@@ -210,6 +211,28 @@ func TestEngramCloudStatePresent(t *testing.T) {
 	}
 	if EngramCloudStatePresent(Config{}) {
 		t.Fatal("EngramCloudStatePresent() = true with no ClaudeHome, want false")
+	}
+}
+
+func TestBuildTargetPlan_UninstallAlwaysRemovesSessionSync(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	selection := TargetSelection{Configured: true, Claude: true}
+
+	for _, options := range []PlanOptions{{}, {CloudResolvable: true}} {
+		actions := BuildTargetPlan(cfg, selection, options).UninstallActionKinds()
+		index := -1
+		for i, action := range actions {
+			if action == StepActionRemoveEngramCloudSessionSync {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			t.Fatalf("UninstallActionKinds() = %#v, want session-sync removal", actions)
+		}
+		if index+1 >= len(actions) || actions[index+1] != StepActionRemoveEngramCloudState {
+			t.Fatalf("UninstallActionKinds() = %#v, want session-sync removal immediately before cloud state removal", actions)
+		}
 	}
 }
 

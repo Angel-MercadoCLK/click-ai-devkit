@@ -22,7 +22,7 @@ import (
 // EngramChecksCount is the number of doctor checks contributed by Engram, kept as an exported
 // constant so other packages/tests documenting Run()'s total check count don't have to hardcode a
 // magic number that silently drifts if a check is added or removed here.
-const EngramChecksCount = 5
+const EngramChecksCount = 6
 
 // Context7ChecksCount is the number of doctor checks contributed by Context7, kept as an exported
 // constant for the same reason as EngramChecksCount.
@@ -60,7 +60,7 @@ func Run(cfg installer.Config) Report {
 		checks = append(checks, doctorCheckResult(cfg, kind))
 	}
 	if selection.Claude {
-		checks = append(checks, checkEngramCloud(cfg))
+		checks = append(checks, checkEngramCloud(cfg), checkEngramCloudSessionSync(cfg))
 	}
 	return Report{Checks: checks}
 }
@@ -101,6 +101,8 @@ func doctorCheckResult(cfg installer.Config, kind installer.DoctorCheckKind) Che
 		return checkEngramPath(cfg)
 	case installer.DoctorCheckEngramCloud:
 		return checkEngramCloud(cfg)
+	case installer.DoctorCheckEngramCloudSessionSync:
+		return checkEngramCloudSessionSync(cfg)
 	case installer.DoctorCheckContext7:
 		return checkContext7(cfg)
 	case installer.DoctorCheckCodexGuidance:
@@ -685,6 +687,40 @@ func checkEngramCloud(cfg installer.Config) CheckResult {
 		Healthy: true,
 		Detail:  "inscrito en " + state.Project + " @ " + state.Server,
 	}
+}
+
+// checkEngramCloudSessionSync verifies only local settings and ACL metadata. It deliberately
+// invokes neither a subprocess nor a network operation so doctor remains read-only and offline.
+func checkEngramCloudSessionSync(cfg installer.Config) CheckResult {
+	const name = "sincronización de sesión de Engram Cloud"
+	status, err := installer.InspectEngramCloudSessionSync(cfg)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo inspeccionar la configuración de sesión de Engram Cloud: " + err.Error()}
+	}
+	if !status.HasManagedFootprint() {
+		return CheckResult{Name: name, Healthy: true, Detail: "sin configurar para sincronización de sesión"}
+	}
+
+	var problems []string
+	if !status.AutosyncPresent {
+		problems = append(problems, "ENGRAM_CLOUD_AUTOSYNC")
+	}
+	if !status.ServerPresent {
+		problems = append(problems, "ENGRAM_CLOUD_SERVER")
+	}
+	if !status.TokenPresent {
+		problems = append(problems, "ENGRAM_CLOUD_TOKEN")
+	}
+	if !status.ManagedHookValid {
+		problems = append(problems, "hook SessionStart con --import")
+	}
+	if !status.OwnerOnly {
+		problems = append(problems, "permisos owner-only de settings.json")
+	}
+	if len(problems) > 0 {
+		return CheckResult{Name: name, Healthy: false, Detail: "configuración de sincronización incompleta o alterada: falta o es inválido " + strings.Join(problems, ", ")}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: "sincronización de sesión de Engram Cloud configurada"}
 }
 
 // checkContext7 reports whether Context7 is registered as a user-scope MCP server, read directly

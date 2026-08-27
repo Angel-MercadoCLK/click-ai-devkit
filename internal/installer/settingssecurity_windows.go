@@ -3,7 +3,6 @@
 package installer
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"unsafe"
@@ -72,7 +71,15 @@ func OwnerOnly(path string) (bool, error) {
 		return false, os.NewSyscallError("GetNamedSecurityInfo", err)
 	}
 	if sd == nil {
-		return false, errors.New("no security descriptor")
+		return false, fmt.Errorf("no security descriptor")
+	}
+
+	control, _, err := sd.Control()
+	if err != nil {
+		return false, err
+	}
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		return false, nil
 	}
 
 	// Get current user SID
@@ -90,16 +97,16 @@ func OwnerOnly(path string) (bool, error) {
 		return false, err
 	}
 	if dacl == nil || defaulted {
-		return false, errors.New("no DACL or defaulted DACL")
+		return false, nil
 	}
 
 	// Count ACEs
 	aceCount := dacl.AceCount
 	if aceCount == 0 {
-		return false, errors.New("no ACEs in DACL")
+		return false, nil
 	}
 
-	// Check that at least one ACE grants full control (GENERIC_ALL or FILE_ALL_ACCESS equivalent) to the current user
+	hasFullControl := false
 	for i := uint32(0); i < uint32(aceCount); i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		err = windows.GetAce(dacl, i, &ace)
@@ -108,15 +115,17 @@ func OwnerOnly(path string) (bool, error) {
 		}
 
 		aceSid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !windows.EqualSid(aceSid, currentSid) {
+			return false, nil
+		}
 
 		// Check if the ACE grants full control (GENERIC_ALL or FILE_ALL_ACCESS)
 		// GENERIC_ALL gets mapped to specific rights for files, so we check for either
 		isFullControl := ace.Mask == windows.GENERIC_ALL || ace.Mask == 0x001F01FF
-
-		if windows.EqualSid(aceSid, currentSid) && isFullControl {
-			return true, nil
+		if isFullControl {
+			hasFullControl = true
 		}
 	}
 
-	return false, errors.New("no ACE granting full control to current user found")
+	return hasFullControl, nil
 }

@@ -62,6 +62,7 @@ const (
 	StepActionSyncOpenClawModelProfile        StepActionKind = "sync-openclaw-model-profile"
 	StepActionConfigureOpenClawNativeModel    StepActionKind = "configure-openclaw-native-model"
 	StepActionRemoveModels                    StepActionKind = "remove-models"
+	StepActionRemoveEngramCloudSessionSync    StepActionKind = "remove-engram-cloud-session-sync"
 	StepActionRemoveEngramCloudState          StepActionKind = "remove-engram-cloud-state"
 	StepActionRemoveMarketplacePlugins        StepActionKind = "remove-marketplace-plugins"
 	StepActionStripClaudeManagedBlock         StepActionKind = "strip-claude-managed-block"
@@ -99,6 +100,7 @@ const (
 	DoctorCheckEngramBinary             DoctorCheckKind = "engram-binary"
 	DoctorCheckEngramPath               DoctorCheckKind = "engram-path"
 	DoctorCheckEngramCloud              DoctorCheckKind = "engram-cloud"
+	DoctorCheckEngramCloudSessionSync   DoctorCheckKind = "engram-cloud-session-sync"
 	DoctorCheckContext7                 DoctorCheckKind = "context7"
 	DoctorCheckCodexGuidance            DoctorCheckKind = "codex-guidance"
 )
@@ -253,8 +255,12 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 	steps := make([]Step, 0, 12)
 	capabilities := make([]string, 0, 3)
 	if selection.Claude {
+		claudeRuntime := Step{ID: "claude-runtime", Target: PlanTargetClaude, Label: "Claude Code", Snapshot: []SnapshotDecl{snapshot(cfg.ClaudeMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.SettingsPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UpdateActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UninstallActions: []StepActionKind{StepActionRemoveMarketplacePlugins}, DoctorChecks: []DoctorCheckKind{DoctorCheckClaude, DoctorCheckClickPluginRegistries, DoctorCheckClickSDDPlugin, DoctorCheckClickMemoryPlugin, DoctorCheckClickReviewPlugin, DoctorCheckClickSkillsPlugin, DoctorCheckClaudeManagedBlock}}
+		if !options.CloudResolvable {
+			claudeRuntime.UninstallActions = append(claudeRuntime.UninstallActions, StepActionRemoveEngramCloudSessionSync, StepActionRemoveEngramCloudState)
+		}
 		steps = append(steps,
-			Step{ID: "claude-runtime", Target: PlanTargetClaude, Label: "Claude Code", Snapshot: []SnapshotDecl{snapshot(cfg.ClaudeMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.SettingsPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UpdateActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UninstallActions: []StepActionKind{StepActionRemoveMarketplacePlugins}, DoctorChecks: []DoctorCheckKind{DoctorCheckClaude, DoctorCheckClickPluginRegistries, DoctorCheckClickSDDPlugin, DoctorCheckClickMemoryPlugin, DoctorCheckClickReviewPlugin, DoctorCheckClickSkillsPlugin, DoctorCheckClaudeManagedBlock}},
+			claudeRuntime,
 			// StepActionRemoveModels is StepActionSaveModels' reversal: without it, click's own
 			// models.json (the active profile + per-phase model selection) survived `click uninstall`
 			// forever, so a later reinstall silently inherited the previous run's choices.
@@ -328,10 +334,8 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		// engram-cloud.json survived `click uninstall`. It stays offline: it deletes click's own local
 		// enrollment record and never un-enrolls the shared cloud project other machines still use.
 		//
-		// With CloudResolvable (server and project known, token optional), we always include
-		// StepActionConfigureEngramCloudSessionSync to write env block and hook, while
-		// StepActionSyncEngramCloud remains exclusively for D40 enrollment when token is present.
-		steps = append(steps, Step{ID: "engram-cloud", Target: PlanTargetShared, Label: "Engram Cloud", Snapshot: []SnapshotDecl{snapshot(cfg.EngramCloudStatePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionConfigureEngramCloudSessionSync, StepActionSyncEngramCloud}, UpdateActions: []StepActionKind{StepActionConfigureEngramCloudSessionSync, StepActionSyncEngramCloud}, UninstallActions: []StepActionKind{StepActionRemoveEngramCloudState}, DoctorChecks: []DoctorCheckKind{DoctorCheckEngramCloud}})
+		cloudStep := Step{ID: "engram-cloud", Target: PlanTargetShared, Label: "Engram Cloud", Snapshot: []SnapshotDecl{snapshot(cfg.EngramCloudStatePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionConfigureEngramCloudSessionSync, StepActionSyncEngramCloud}, UpdateActions: []StepActionKind{StepActionConfigureEngramCloudSessionSync, StepActionSyncEngramCloud}, UninstallActions: []StepActionKind{StepActionRemoveEngramCloudSessionSync, StepActionRemoveEngramCloudState}, DoctorChecks: []DoctorCheckKind{DoctorCheckEngramCloud, DoctorCheckEngramCloudSessionSync}}
+		steps = append(steps, cloudStep)
 	}
 	if selection.Claude {
 		steps = append(steps,

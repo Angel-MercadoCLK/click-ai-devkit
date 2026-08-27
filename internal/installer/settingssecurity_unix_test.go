@@ -8,6 +8,21 @@ import (
 	"testing"
 )
 
+func TestOwnerOnly_UnsecuredFileReportsFalse(t *testing.T) {
+	testFile := filepath.Join(t.TempDir(), "test-settings.json")
+	if err := os.WriteFile(testFile, []byte(`{"test": "data"}`), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	only, err := OwnerOnly(testFile)
+	if err != nil {
+		t.Fatalf("OwnerOnly() returned an error for an unsecured file: %v", err)
+	}
+	if only {
+		t.Error("OwnerOnly() reported true for an unsecured file, want false")
+	}
+}
+
 func TestApplyOwnerOnlySecurity_PosixMode0600(t *testing.T) {
 	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
 

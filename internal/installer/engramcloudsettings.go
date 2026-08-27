@@ -31,6 +31,85 @@ const (
 	CloudTokenPersistenceNoOp
 )
 
+// CloudSessionSyncStatus is the local managed-session-sync footprint observed in settings.json.
+// It is intentionally limited to presence and integrity metadata; it never exposes secret values.
+type CloudSessionSyncStatus struct {
+	AutosyncPresent    bool
+	ServerPresent      bool
+	TokenPresent       bool
+	ManagedHookPresent bool
+	ManagedHookValid   bool
+	OwnerOnly          bool
+}
+
+// HasManagedFootprint reports whether Click's cloud session-sync configuration is present at all.
+func (s CloudSessionSyncStatus) HasManagedFootprint() bool {
+	return s.AutosyncPresent || s.ServerPresent || s.TokenPresent || s.ManagedHookPresent
+}
+
+// InspectEngramCloudSessionSync reads settings.json and its local permissions without mutating
+// settings or invoking any external process.
+func InspectEngramCloudSessionSync(cfg Config) (CloudSessionSyncStatus, error) {
+	path := cfg.SettingsPath()
+	settings, err := readSettingsFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return CloudSessionSyncStatus{}, nil
+		}
+		return CloudSessionSyncStatus{}, fmt.Errorf("installer: read settings: %w", err)
+	}
+
+	status := CloudSessionSyncStatus{}
+	if env, ok := settings["env"].(map[string]any); ok {
+		_, status.AutosyncPresent = env["ENGRAM_CLOUD_AUTOSYNC"]
+		_, status.ServerPresent = env["ENGRAM_CLOUD_SERVER"]
+		_, status.TokenPresent = env["ENGRAM_CLOUD_TOKEN"]
+	}
+	if hooks, ok := settings["hooks"].(map[string]any); ok {
+		if sessionStart, ok := hooks["SessionStart"].([]any); ok {
+			for _, rawEntry := range sessionStart {
+				entry, ok := rawEntry.(map[string]any)
+				if !ok || entry["matcher"] != "" {
+					continue
+				}
+				entryHooks, _ := entry["hooks"].([]any)
+				for _, rawHook := range entryHooks {
+					hook, ok := rawHook.(map[string]any)
+					if !ok || hook["type"] != "command" {
+						continue
+					}
+					command, _ := hook["command"].(string)
+					if isManagedEngramCloudHookCandidate(command) {
+						status.ManagedHookPresent = true
+						if isManagedEngramCloudHookCommand(command) {
+							status.ManagedHookValid = true
+						}
+					}
+				}
+			}
+		}
+	}
+	ownerOnly, err := OwnerOnly(path)
+	if err != nil {
+		// OwnerOnly reports an explanatory error for an insecure Windows DACL. The
+		// inspector represents that as an unhealthy permission result rather than
+		// failing the otherwise read-only diagnostic.
+		return status, nil
+	}
+	status.OwnerOnly = ownerOnly
+	return status, nil
+}
+
+func isManagedEngramCloudHookCandidate(command string) bool {
+	return (strings.HasPrefix(command, "timeout 5 engram sync --cloud ") && strings.HasSuffix(command, " || true")) ||
+		(strings.HasPrefix(command, "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 ") && strings.HasSuffix(command, " & exit /b 0\""))
+}
+
+func isManagedEngramCloudHookCommand(command string) bool {
+	return (strings.HasPrefix(command, "timeout 5 engram sync --cloud --import --project ") && strings.HasSuffix(command, " || true")) ||
+		(strings.HasPrefix(command, "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 ") && strings.HasSuffix(command, " & exit /b 0\""))
+}
+
 // ConfigureEngramCloudSessionSync writes the Engram Cloud environment and SessionStart hook
 // to Claude Code's settings.json. It performs one read/merge/write through the secured
 // writeSettingsFile, preserving all foreign entries.
@@ -226,9 +305,7 @@ func RemoveEngramCloudSessionSync(cfg Config) error {
 						}
 						if hook["type"] == "command" {
 							cmd, _ := hook["command"].(string)
-							// Check if this is our managed command (contains click engram-cloud-import or timeout engram sync)
-							if cmd != "" && (strings.Contains(cmd, "click engram-cloud-import") ||
-								strings.Contains(cmd, "timeout 5 engram sync --cloud --import")) {
+							if isManagedEngramCloudHookCommand(cmd) {
 								isManaged = true
 								break
 							}
