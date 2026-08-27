@@ -141,6 +141,7 @@ func TestCheckEngramCloudSessionSync_HealthyWhenCompleteOrNotConfigured(t *testi
 	if err != nil {
 		t.Fatalf("manifest.Load() error = %v", err)
 	}
+	m.EngramCloud.Server = "https://cloud.example.com"
 	m.EngramCloud.Project = "team-hive"
 	if err := installer.ConfigureEngramCloudSessionSync(complete, m, installer.CloudTokenPersistencePersist, "test-token"); err != nil {
 		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
