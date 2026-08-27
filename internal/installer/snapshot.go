@@ -232,48 +232,97 @@ func SnapshotTargetPlan(cfg Config, plan TargetPlan) error {
 // or backup, they won't leak the token.
 //
 // Byte-fidelity contract: When no ENGRAM_CLOUD_TOKEN is present, this function
-// returns the input bytes completely unchanged — no reformatting, no reordering,
-// no added or removed whitespace. This preserves the snapshot subsystem's
-// byte-for-byte backup fidelity contract.
-func redactEngramCloudToken(data []byte) []byte {
+// redactEngramCloudToken performs byte-level redaction of the ENSRAM_CLOUD_TOKEN value,
+// preserving every other byte exactly as-is (no reformatting, no reordering, no added
+// or removed whitespace). This preserves the snapshot subsystem's byte-for-byte backup
+// fidelity contract. Returns an error when the token is present but its extent cannot be
+// determined with confidence (genuinely malformed input), allowing the caller to fail closed.
+func redactEngramCloudToken(data []byte) ([]byte, error) {
 	// Fast path: check if the token key exists without full parsing
 	// This preserves byte-fidelity when no token is present
 	tokenKey := []byte(`"ENGRAM_CLOUD_TOKEN"`)
 	if !bytes.Contains(data, tokenKey) {
 		// No token present, return bytes unchanged
-		return data
+		return data, nil
 	}
 
-	// Token key exists, parse to confirm it's actually in the env section
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		// If parsing fails, return the original bytes unchanged
-		// (ECS-10.3/10.4: preserve original on parse failure)
-		return data
+	// Token key is present - locate and replace the token value with byte-level replacement
+	// We need to find the pattern: "ENGRAM_CLOUD_TOKEN":"<value>" or "ENGRAM_CLOUD_TOKEN": "<value>"
+	// and replace only the <value> portion
+	
+	tokenPattern := []byte(`"ENGRAM_CLOUD_TOKEN":`)
+	result := data
+	found := false
+	searchPos := 0
+	
+	for {
+		idx := bytes.Index(result[searchPos:], tokenPattern)
+		if idx == -1 {
+			break
+		}
+		idx += searchPos // Convert to absolute position
+		
+		// Found "ENGRAM_CLOUD_TOKEN:" - now find the value
+		valueStart := idx + len(tokenPattern)
+		if valueStart >= len(result) {
+			// Malformed - key at end of input
+			return nil, fmt.Errorf("malformed JSON: ENSRAM_CLOUD_TOKEN key at end of input")
+		}
+		
+		// Skip whitespace after the colon
+		for valueStart < len(result) && (result[valueStart] == ' ' || result[valueStart] == '\t') {
+			valueStart++
+		}
+		if valueStart >= len(result) {
+			return nil, fmt.Errorf("malformed JSON: ENSRAM_CLOUD_TOKEN key at end of input")
+		}
+		
+		// The value should start with a quote (string value in JSON)
+		if result[valueStart] != '"' {
+			// Not a string value - malformed
+			return nil, fmt.Errorf("malformed JSON: ENSRAM_CLOUD_TOKEN value is not a string")
+		}
+		
+		// Find the closing quote
+		valueEnd := valueStart + 1
+		escaped := false
+		for valueEnd < len(result) {
+			c := result[valueEnd]
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				valueEnd++
+				break
+			}
+			valueEnd++
+		}
+		
+		if valueEnd >= len(result) {
+			// Malformed - unterminated string
+			return nil, fmt.Errorf("malformed JSON: unterminated string in ENSRAM_CLOUD_TOKEN value")
+		}
+		
+		// Replace the token value with [REDACTED]
+		beforeValue := result[:valueStart+1] // Include the opening quote
+		afterValue := result[valueEnd:]
+		replacement := []byte(`[REDACTED]"`)
+		result = bytes.Join([][]byte{beforeValue, replacement, afterValue}, nil)
+		found = true
+		
+		// Move search position past this replacement to avoid infinite loops
+		searchPos = valueStart + len(replacement)
+		
+		// Continue searching in case there are duplicates (shouldn't happen, but be defensive)
 	}
-
-	// Check if token is actually in env.ENGRAM_CLOUD_TOKEN
-	env, ok := settings["env"].(map[string]any)
-	if !ok {
-		// No env section, return bytes unchanged
-		return data
+	
+	if !found {
+		// Token key found but no valid value structure
+		return nil, fmt.Errorf("malformed JSON: ENSRAM_CLOUD_TOKEN key found but value is malformed")
 	}
-	if _, present := env["ENGRAM_CLOUD_TOKEN"]; !present {
-		// Token key found but not in env (false positive), return bytes unchanged
-		return data
-	}
-
-	// Token is present, redact it
-	env["ENGRAM_CLOUD_TOKEN"] = "[REDACTED]"
-
-	// Marshal back to JSON with consistent formatting
-	redacted, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		// If marshaling fails, return the original bytes unchanged
-		return data
-	}
-	redacted = append(redacted, '\n')
-	return redacted
+	
+	return result, nil
 }
 
 func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
@@ -317,7 +366,13 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 
 		// Redact env.ENGRAM_CLOUD_TOKEN from settings.json backups (NFR-6)
 		if filepath.Base(src.originalPath) == "settings.json" {
-			data = redactEngramCloudToken(data)
+			redacted, err := redactEngramCloudToken(data)
+			if err != nil {
+				// Fail closed: if we can't redact safely, don't write the backup
+				// A missing backup is recoverable; a leaked credential is not
+				return fmt.Errorf("installer: redact token from %s: %w", src.originalPath, err)
+			}
+			data = redacted
 		}
 
 		backupPath := filepath.Join(tmpDir, src.backupFile)

@@ -1,11 +1,13 @@
 package installer
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -1388,5 +1390,71 @@ func TestSnapshotDecl_RequiredArguments(t *testing.T) {
 	}
 	if decl.Policy != DriftPolicyNonVeto {
 		t.Fatalf("snapshot().Policy = %q, want %q", decl.Policy, DriftPolicyNonVeto)
+	}
+}
+
+func TestRedactEngramCloudToken_MalformedWithTokenNeverLeaksSecret(t *testing.T) {
+	// Malformed JSON containing the literal token - unterminated string
+	// This should fail closed (return error) rather than leaking the secret into the backup
+	malformedWithToken := []byte(`{"env":{"ENGRAM_CLOUD_TOKEN":"secret-token-12345"`)
+	
+	redacted, err := redactEngramCloudToken(malformedWithToken)
+	if err == nil {
+		t.Fatalf("redactEngramCloudToken(malformed JSON with token) should return error, got nil")
+	}
+	if redacted != nil {
+		t.Fatalf("redactEngramCloudToken(malformed JSON with token) should return nil output on error, got %v bytes", len(redacted))
+	}
+	
+	// Ensure the secret token does not appear in any error messages
+	if err != nil && strings.Contains(err.Error(), "secret-token-12345") {
+		t.Fatalf("Error message contains secret token: %v", err)
+	}
+}
+
+func TestRedactEngramCloudToken_ValidTokenDocumentPreservesUnrelatedBytes(t *testing.T) {
+	// Valid JSON with unusual but legal formatting (compact, non-alphabetical key order, no trailing newline)
+	compact := []byte(`{"z":1,"env":{"ENGRAM_CLOUD_TOKEN":"my-secret","ENGRAM_CLOUD_SERVER":"https://example.com"}}`)
+	
+	redacted, err := redactEngramCloudToken(compact)
+	if err != nil {
+		t.Fatalf("redactEngramCloudToken(valid compact JSON) error = %v", err)
+	}
+	
+	// Token value should be gone
+	if bytes.Contains(redacted, []byte("my-secret")) {
+		t.Fatalf("Token value should not appear in redacted output")
+	}
+	
+	// Every other byte should be preserved - check specific markers
+	if !bytes.Contains(redacted, []byte(`"z":1`)) {
+		t.Fatalf("Unrelated key 'z' should be preserved")
+	}
+	if !bytes.Contains(redacted, []byte(`"ENGRAM_CLOUD_SERVER":"https://example.com"`)) {
+		t.Fatalf("Server key should be preserved")
+	}
+	
+	// Should still be compact (no extra whitespace added)
+	if bytes.Contains(redacted, []byte("  ")) {
+		t.Fatalf("Should preserve compact formatting without adding spaces")
+	}
+	
+	// Should not add trailing newline
+	if len(redacted) > 0 && redacted[len(redacted)-1] == '\n' {
+		t.Fatalf("Should not add trailing newline to compact input")
+	}
+}
+
+func TestRedactEngramCloudToken_NoTokenReturnsInputUnchanged(t *testing.T) {
+	// Input without token should return exactly the same bytes
+	input := []byte(`{"env":{"ENGRAM_CLOUD_SERVER":"https://example.com"}}\n`)
+	
+	redacted, err := redactEngramCloudToken(input)
+	if err != nil {
+		t.Fatalf("redactEngramCloudToken(no token) error = %v", err)
+	}
+	
+	if !bytes.Equal(redacted, input) {
+		t.Fatalf("No-token case should return input unchanged")
 	}
 }

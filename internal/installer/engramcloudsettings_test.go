@@ -1156,7 +1156,10 @@ func TestRedactEngramCloudToken_ByteIdenticalPassthroughWhenNoToken(t *testing.T
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := redactEngramCloudToken(tc.input)
+			got, err := redactEngramCloudToken(tc.input)
+			if err != nil {
+				t.Fatalf("redactEngramCloudToken() error = %v", err)
+			}
 
 			// Byte-identical comparison - must be exactly the same
 			if !bytes.Equal(got, tc.input) {
@@ -1199,7 +1202,10 @@ func TestRedactEngramCloudToken_TokenValueRemovedWhenPresent(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := redactEngramCloudToken(tc.input)
+			got, err := redactEngramCloudToken(tc.input)
+			if err != nil {
+				t.Fatalf("redactEngramCloudToken() error = %v", err)
+			}
 			gotStr := string(got)
 
 			// Verify must-contain strings
