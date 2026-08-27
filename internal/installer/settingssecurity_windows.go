@@ -42,7 +42,9 @@ func Apply(path string) error {
 	if err != nil {
 		return err
 	}
-	// Don't LocalFree - SetNamedSecurityInfo takes ownership
+	// ACLFromEntries returns Go-managed memory; no explicit free is required here.
+	// Calling LocalFree on this DACL would be a double free and cause STATUS_HEAP_CORRUPTION.
+	// SetNamedSecurityInfo copies the DACL; it does not take ownership of the pointer we pass.
 
 	// Set the protected DACL directly on the file
 	err = windows.SetNamedSecurityInfo(
