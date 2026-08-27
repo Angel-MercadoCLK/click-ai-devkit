@@ -5,10 +5,34 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
+
+// isManagedEngramCloudHookCommand reports whether a command matches click's canonical
+// Engram Cloud managed hook signature, regardless of the project name it contains.
+// Per DD-2, identity is by signature (shape), not exact string equality.
+func isManagedEngramCloudHookCommand(cmd string) bool {
+	if cmd == "" {
+		return false
+	}
+
+	// POSIX signature: timeout 5 engram sync --cloud --import --project <project> || true
+	posixPattern := regexp.MustCompile(`^timeout 5 engram sync --cloud --import --project [^ ]+ \|\| true$`)
+	if posixPattern.MatchString(cmd) {
+		return true
+	}
+
+	// Windows signature: cmd.exe /d /s /c "click engram-cloud-import --project-b64 <b64-project> & exit /b 0"
+	windowsPattern := regexp.MustCompile(`^cmd\.exe /d /s /c "click engram-cloud-import --project-b64 [^ ]+ & exit /b 0"$`)
+	if windowsPattern.MatchString(cmd) {
+		return true
+	}
+
+	return false
+}
 
 var configureEngramCloudSessionSyncFunc = configureEngramCloudSessionSyncImpl
 
@@ -105,13 +129,27 @@ func isManagedEngramCloudHookCandidate(command string) bool {
 		(strings.HasPrefix(command, "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 ") && strings.HasSuffix(command, " & exit /b 0\""))
 }
 
-func IsManagedEngramCloudHookCommand(command string) bool {
-	return (strings.HasPrefix(command, "timeout 5 engram sync --cloud --import --project ") && strings.HasSuffix(command, " || true")) ||
-		(strings.HasPrefix(command, "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 ") && strings.HasSuffix(command, " & exit /b 0\""))
-}
+// IsManagedEngramCloudHookCommand reports whether a command matches click's canonical
+// Engram Cloud managed hook signature, regardless of the project name it contains.
+// Per DD-2, identity is by signature (shape), not exact string equality.
+func IsManagedEngramCloudHookCommand(cmd string) bool {
+	if cmd == "" {
+		return false
+	}
 
-func isManagedEngramCloudHookCommand(command string) bool {
-	return IsManagedEngramCloudHookCommand(command)
+	// POSIX signature: timeout 5 engram sync --cloud --import --project <project> || true
+	posixPattern := regexp.MustCompile(`^timeout 5 engram sync --cloud --import --project [^ ]+ \|\| true$`)
+	if posixPattern.MatchString(cmd) {
+		return true
+	}
+
+	// Windows signature: cmd.exe /d /s /c "click engram-cloud-import --project-b64 <b64-project> & exit /b 0"
+	windowsPattern := regexp.MustCompile(`^cmd\.exe /d /s /c "click engram-cloud-import --project-b64 [^ ]+ & exit /b 0"$`)
+	if windowsPattern.MatchString(cmd) {
+		return true
+	}
+
+	return false
 }
 
 // ConfigureEngramCloudSessionSync writes the Engram Cloud environment and SessionStart hook
@@ -184,7 +222,7 @@ func configureEngramCloudSessionSyncImpl(cfg Config, m *manifest.Manifest, mode 
 		sessionStart = []any{}
 	}
 
-	// Remove any existing managed hooks (matcher "" with our command)
+	// Remove any existing managed hooks by signature, operating at nested command granularity
 	filteredSessionStart := make([]any, 0, len(sessionStart))
 	for _, rawEntry := range sessionStart {
 		entry, ok := rawEntry.(map[string]any)
@@ -200,32 +238,36 @@ func configureEngramCloudSessionSyncImpl(cfg Config, m *manifest.Manifest, mode 
 			continue
 		}
 
-		// This is a managed hook - check if it has our command
+		// This is a managed hook entry - remove only click's command, preserve foreign commands
 		hooksList, ok := entry["hooks"].([]any)
 		if !ok {
 			filteredSessionStart = append(filteredSessionStart, rawEntry)
 			continue
 		}
 
-		hasManagedCmd := false
+		filteredHooks := make([]any, 0, len(hooksList))
 		for _, rawHook := range hooksList {
 			hook, ok := rawHook.(map[string]any)
 			if !ok {
+				filteredHooks = append(filteredHooks, rawHook)
 				continue
 			}
 			hookType, _ := hook["type"].(string)
 			hookCmd, _ := hook["command"].(string)
-			if hookType == "command" && hookCmd == managedHookCmd {
-				hasManagedCmd = true
-				break
+			
+			// Remove only click's managed hook by signature
+			if hookType == "command" && isManagedEngramCloudHookCommand(hookCmd) {
+				continue // Skip this hook (remove it)
 			}
+			filteredHooks = append(filteredHooks, rawHook)
 		}
 
-		if !hasManagedCmd {
-			// Different managed hook (old command) - preserve it as foreign
-			filteredSessionStart = append(filteredSessionStart, rawEntry)
+		// Only preserve the entry if it still has hooks (including foreign commands)
+		if len(filteredHooks) > 0 {
+			entry["hooks"] = filteredHooks
+			filteredSessionStart = append(filteredSessionStart, entry)
 		}
-		// If hasManagedCmd, we skip this entry (we'll add a fresh one)
+		// If entry becomes empty, we drop it entirely
 	}
 
 	// Append exactly one new managed hook entry
@@ -292,7 +334,7 @@ func RemoveEngramCloudSessionSync(cfg Config) error {
 		}
 	}
 
-	// Remove managed SessionStart hooks
+	// Remove managed SessionStart hooks by signature, operating at nested command granularity
 	hooks, ok := settings["hooks"].(map[string]any)
 	if ok {
 		sessionStart, ok := hooks["SessionStart"].([]any)
@@ -307,33 +349,37 @@ func RemoveEngramCloudSessionSync(cfg Config) error {
 
 				matcher, _ := entry["matcher"].(string)
 				if matcher == "" {
-					// This is a managed hook - remove it (check command to be sure)
+					// This is a managed hook entry - remove only click's command, preserve foreign commands
 					entryHooks, _ := entry["hooks"].([]any)
-					isManaged := false
+					filteredHooks := make([]any, 0, len(entryHooks))
 					for _, hookRaw := range entryHooks {
 						hook, ok := hookRaw.(map[string]any)
 						if !ok {
+							filteredHooks = append(filteredHooks, hookRaw)
 							continue
 						}
 						if hook["type"] == "command" {
 							cmd, _ := hook["command"].(string)
 							if isManagedEngramCloudHookCommand(cmd) {
-								isManaged = true
-								break
+								continue // Skip this hook (remove it)
 							}
 						}
+						filteredHooks = append(filteredHooks, hookRaw)
 					}
-					if isManaged {
-						changed = true
-						continue // Skip this entry (remove it)
-					}
-				}
 
-				// Foreign hook - preserve it
-				filteredSessionStart = append(filteredSessionStart, rawEntry)
+					if len(filteredHooks) > 0 {
+						entry["hooks"] = filteredHooks
+						filteredSessionStart = append(filteredSessionStart, entry)
+					}
+					// If entry becomes empty, we drop it entirely
+					changed = true
+				} else {
+					// Foreign hook - preserve it
+					filteredSessionStart = append(filteredSessionStart, rawEntry)
+				}
 			}
 
-			if len(filteredSessionStart) != len(sessionStart) {
+			if len(filteredSessionStart) != len(sessionStart) || changed {
 				hooks["SessionStart"] = filteredSessionStart
 			}
 

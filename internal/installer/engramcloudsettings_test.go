@@ -5,10 +5,226 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
+
+func TestConfigureEngramCloudSessionSync_ProjectChangeReplacesStaleHook(t *testing.T) {
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+
+	cfg := Config{
+		ClaudeHome: dir,
+	}
+
+	mOld := &manifest.Manifest{
+		EngramCloud: manifest.EngramCloud{
+			Server:  "https://engram.example.com",
+			Project: "team-old",
+		},
+	}
+
+	mNew := &manifest.Manifest{
+		EngramCloud: manifest.EngramCloud{
+			Server:  "https://engram.example.com",
+			Project: "team-new",
+		},
+	}
+
+	token := "consented-token-value"
+	mode := CloudTokenPersistencePersist
+
+	// First registration with team-old
+	if err := ConfigureEngramCloudSessionSync(cfg, mOld, mode, token); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync(team-old) error = %v", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	// Verify team-old hook was registered
+	if !strings.Contains(string(data), "dGVhbS1vbGQ") {
+		t.Fatalf("Expected team-old hook to be present, got: %s", string(data))
+	}
+
+	// Second registration with team-new
+	if err := ConfigureEngramCloudSessionSync(cfg, mNew, mode, token); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync(team-new) error = %v", err)
+	}
+
+	data, err = os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	// Verify team-new hook is registered
+	if !strings.Contains(string(data), "dGVhbS1uZXc") {
+		t.Fatalf("Expected team-new hook to be present, got: %s", string(data))
+	}
+
+	// Verify team-old hook is NOT present (should be replaced)
+	if strings.Contains(string(data), "dGVhbS1vbGQ") {
+		t.Fatalf("Expected team-old hook to be removed (replaced by team-new), got: %s", string(data))
+	}
+
+	// Verify exactly ONE managed hook entry
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("Expected hooks to be present")
+	}
+
+	sessionStart, ok := hooks["SessionStart"].([]any)
+	if !ok {
+		t.Fatalf("Expected SessionStart to be present")
+	}
+
+	managedCount := 0
+	for _, rawEntry := range sessionStart {
+		entry, ok := rawEntry.(map[string]any)
+		if !ok {
+			continue
+		}
+		matcher, _ := entry["matcher"].(string)
+		if matcher == "" {
+			managedCount++
+			entryHooks, _ := entry["hooks"].([]any)
+			for _, hookRaw := range entryHooks {
+				hook, ok := hookRaw.(map[string]any)
+				if !ok {
+					continue
+				}
+				if hook["type"] == "command" {
+					cmd, _ := hook["command"].(string)
+					if !strings.Contains(cmd, "dGVhbS1uZXc") {
+						t.Fatalf("Expected managed hook to contain team-new project, got: %s", cmd)
+					}
+				}
+			}
+		}
+	}
+
+	if managedCount != 1 {
+		t.Fatalf("Expected exactly 1 managed hook entry, got %d", managedCount)
+	}
+}
+
+func TestRemoveEngramCloudSessionSync_PreservesForeignCommandInSameEntry(t *testing.T) {
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+
+	// Create settings with BOTH a foreign command and click's managed command in the SAME entry
+		settings := map[string]any{
+			"hooks": map[string]any{
+				"SessionStart": []any{
+					map[string]any{
+						"matcher": "",
+						"hooks": []any{
+							map[string]any{
+								"type":    "command",
+								"command": "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 dGVhbS1oaXZl & exit /b 0\"",
+							},
+							map[string]any{
+								"type":    "command",
+								"command": "echo 'foreign command'",
+							},
+						},
+					},
+				},
+			},
+		}
+
+	settingsBytes, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatalf("json.MarshalIndent() error = %v", err)
+	}
+	settingsBytes = append(settingsBytes, '\n')
+
+	if err := os.WriteFile(settingsPath, settingsBytes, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg := Config{
+		ClaudeHome: dir,
+	}
+
+	// RemoveEngramCloudSessionSync should remove only click's managed command
+	if err := RemoveEngramCloudSessionSync(cfg); err != nil {
+		t.Fatalf("RemoveEngramCloudSessionSync() error = %v", err)
+	}
+
+	// Read back and verify foreign command is preserved
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	// Verify foreign command is still present
+	if !strings.Contains(string(data), "echo 'foreign command'") {
+		t.Fatalf("Expected foreign command to be preserved, got: %s", string(data))
+	}
+
+	// Verify click's managed command is removed
+	if strings.Contains(string(data), "dGVhbS1oaXZl") {
+		t.Fatalf("Expected click's managed command to be removed, got: %s", string(data))
+	}
+
+	// Verify the entry still exists (with just the foreign command)
+	var resultSettings map[string]any
+	if err := json.Unmarshal(data, &resultSettings); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	hooks, ok := resultSettings["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("Expected hooks to be present after removal")
+	}
+
+	sessionStart, ok := hooks["SessionStart"].([]any)
+	if !ok {
+		t.Fatalf("Expected SessionStart to be present after removal")
+	}
+
+	if len(sessionStart) != 1 {
+		t.Fatalf("Expected exactly 1 SessionStart entry, got %d", len(sessionStart))
+	}
+
+	entry, ok := sessionStart[0].(map[string]any)
+	if !ok {
+		t.Fatalf("Expected entry to be a map")
+	}
+
+	entryHooks, ok := entry["hooks"].([]any)
+	if !ok {
+		t.Fatalf("Expected entry hooks to be present")
+	}
+
+	if len(entryHooks) != 1 {
+		t.Fatalf("Expected exactly 1 hook in entry (the foreign one), got %d", len(entryHooks))
+	}
+
+	hook, ok := entryHooks[0].(map[string]any)
+	if !ok {
+		t.Fatalf("Expected hook to be a map")
+	}
+
+	cmd, _ := hook["command"].(string)
+	if cmd != "echo 'foreign command'" {
+		t.Fatalf("Expected foreign command, got: %s", cmd)
+	}
+}
 
 // TestConfigureEngramCloudSessionSync_WritesFullEnvBlock is the RED test for task 4.1:
 // with consent mode persist, the top-level `env` object gains `ENGRAM_CLOUD_AUTOSYNC: "1"`,
