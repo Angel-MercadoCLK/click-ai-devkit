@@ -249,26 +249,26 @@ func redactEngramCloudToken(data []byte) ([]byte, error) {
 	// Token key is present - locate and replace the token value with byte-level replacement
 	// We need to find the pattern: "ENGRAM_CLOUD_TOKEN":"<value>" or "ENGRAM_CLOUD_TOKEN": "<value>"
 	// and replace only the <value> portion
-	
+
 	tokenPattern := []byte(`"ENGRAM_CLOUD_TOKEN":`)
 	result := data
 	found := false
 	searchPos := 0
-	
+
 	for {
 		idx := bytes.Index(result[searchPos:], tokenPattern)
 		if idx == -1 {
 			break
 		}
 		idx += searchPos // Convert to absolute position
-		
+
 		// Found "ENGRAM_CLOUD_TOKEN:" - now find the value
 		valueStart := idx + len(tokenPattern)
 		if valueStart >= len(result) {
 			// Malformed - key at end of input
 			return nil, fmt.Errorf("malformed JSON: ENSRAM_CLOUD_TOKEN key at end of input")
 		}
-		
+
 		// Skip whitespace after the colon
 		for valueStart < len(result) && (result[valueStart] == ' ' || result[valueStart] == '\t') {
 			valueStart++
@@ -276,13 +276,13 @@ func redactEngramCloudToken(data []byte) ([]byte, error) {
 		if valueStart >= len(result) {
 			return nil, fmt.Errorf("malformed JSON: ENSRAM_CLOUD_TOKEN key at end of input")
 		}
-		
+
 		// The value should start with a quote (string value in JSON)
 		if result[valueStart] != '"' {
 			// Not a string value - malformed
 			return nil, fmt.Errorf("malformed JSON: ENSRAM_CLOUD_TOKEN value is not a string")
 		}
-		
+
 		// Find the closing quote
 		valueEnd := valueStart + 1
 		escaped := false
@@ -298,30 +298,30 @@ func redactEngramCloudToken(data []byte) ([]byte, error) {
 			}
 			valueEnd++
 		}
-		
+
 		if valueEnd >= len(result) {
 			// Malformed - unterminated string
 			return nil, fmt.Errorf("malformed JSON: unterminated string in ENSRAM_CLOUD_TOKEN value")
 		}
-		
+
 		// Replace the token value with [REDACTED]
 		beforeValue := result[:valueStart+1] // Include the opening quote
 		afterValue := result[valueEnd:]
 		replacement := []byte(`[REDACTED]"`)
 		result = bytes.Join([][]byte{beforeValue, replacement, afterValue}, nil)
 		found = true
-		
+
 		// Move search position past this replacement to avoid infinite loops
 		searchPos = valueStart + len(replacement)
-		
+
 		// Continue searching in case there are duplicates (shouldn't happen, but be defensive)
 	}
-	
+
 	if !found {
 		// Token key found but no valid value structure
 		return nil, fmt.Errorf("malformed JSON: ENSRAM_CLOUD_TOKEN key found but value is malformed")
 	}
-	
+
 	return result, nil
 }
 

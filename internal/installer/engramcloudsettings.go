@@ -97,16 +97,16 @@ const (
 // CloudSessionSyncStatus is the local managed-session-sync footprint observed in settings.json.
 // It is intentionally limited to presence and integrity metadata; it never exposes secret values.
 type CloudSessionSyncStatus struct {
-	AutosyncPresent    bool
-	AutosyncValid      bool
-	ServerPresent      bool
-	ServerValid        bool
-	TokenPresent       bool
-	TokenValid         bool
-	ManagedHookPresent bool
-	ManagedHookValid   bool
+	AutosyncPresent     bool
+	AutosyncValid       bool
+	ServerPresent       bool
+	ServerValid         bool
+	TokenPresent        bool
+	TokenValid          bool
+	ManagedHookPresent  bool
+	ManagedHookValid    bool
 	HookProjectMismatch bool
-	OwnerOnly          bool
+	OwnerOnly           bool
 }
 
 // HasManagedFootprint reports whether Click's cloud session-sync configuration is present at all.
@@ -134,14 +134,14 @@ func InspectEngramCloudSessionSync(cfg Config) (CloudSessionSyncStatus, error) {
 				status.AutosyncValid = true
 			}
 		}
-		
+
 		_, status.ServerPresent = env["ENGRAM_CLOUD_SERVER"]
 		if status.ServerPresent {
 			if server, ok := env["ENGRAM_CLOUD_SERVER"].(string); ok && server != "" && strings.Contains(server, "://") {
 				status.ServerValid = true
 			}
 		}
-		
+
 		_, status.TokenPresent = env["ENGRAM_CLOUD_TOKEN"]
 		if status.TokenPresent {
 			if token, ok := env["ENGRAM_CLOUD_TOKEN"].(string); ok && token != "" && token != "[REDACTED]" {
@@ -149,7 +149,7 @@ func InspectEngramCloudSessionSync(cfg Config) (CloudSessionSyncStatus, error) {
 			}
 		}
 	}
-	
+
 	// Check hook project mismatch - but only if we have a manifest to resolve from
 	var resolvedProject string
 	manifestPath := filepath.Join(cfg.ClaudeHome, "AGENTS.md")
@@ -163,7 +163,7 @@ func InspectEngramCloudSessionSync(cfg Config) (CloudSessionSyncStatus, error) {
 			}
 		}
 	}
-	
+
 	if resolvedProject != "" {
 		if hooks, ok := settings["hooks"].(map[string]any); ok {
 			if sessionStart, ok := hooks["SessionStart"].([]any); ok {
@@ -190,7 +190,7 @@ func InspectEngramCloudSessionSync(cfg Config) (CloudSessionSyncStatus, error) {
 			}
 		}
 	}
-	
+
 	if hooks, ok := settings["hooks"].(map[string]any); ok {
 		if sessionStart, ok := hooks["SessionStart"].([]any); ok {
 			for _, rawEntry := range sessionStart {
@@ -234,24 +234,11 @@ func isManagedEngramCloudHookCandidate(command string) bool {
 // IsManagedEngramCloudHookCommand reports whether a command matches click's canonical
 // Engram Cloud managed hook signature, regardless of the project name it contains.
 // Per DD-2, identity is by signature (shape), not exact string equality.
+// It delegates to the unexported implementation deliberately: this predicate decides which
+// SessionStart entries click owns, and two independent copies would drift the first time the
+// canonical hook shape changes — production would enforce one rule while tests validated another.
 func IsManagedEngramCloudHookCommand(cmd string) bool {
-	if cmd == "" {
-		return false
-	}
-
-	// POSIX signature: timeout 5 engram sync --cloud --import --project <project> || true
-	posixPattern := regexp.MustCompile(`^timeout 5 engram sync --cloud --import --project [^ ]+ \|\| true$`)
-	if posixPattern.MatchString(cmd) {
-		return true
-	}
-
-	// Windows signature: cmd.exe /d /s /c "click engram-cloud-import --project-b64 <b64-project> & exit /b 0"
-	windowsPattern := regexp.MustCompile(`^cmd\.exe /d /s /c "click engram-cloud-import --project-b64 [^ ]+ & exit /b 0"$`)
-	if windowsPattern.MatchString(cmd) {
-		return true
-	}
-
-	return false
+	return isManagedEngramCloudHookCommand(cmd)
 }
 
 // ConfigureEngramCloudSessionSync writes the Engram Cloud environment and SessionStart hook
@@ -356,7 +343,7 @@ func configureEngramCloudSessionSyncImpl(cfg Config, m *manifest.Manifest, mode 
 			}
 			hookType, _ := hook["type"].(string)
 			hookCmd, _ := hook["command"].(string)
-			
+
 			// Remove only click's managed hook by signature
 			if hookType == "command" && isManagedEngramCloudHookCommand(hookCmd) {
 				continue // Skip this hook (remove it)

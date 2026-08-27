@@ -30,7 +30,7 @@ func managedEngramCloudHookCommand(project string) (string, error) {
 	return cmd, nil
 }
 
-// escapePOSIXSingleQuotes replaces each apostrophe with '\'' (close quote, escaped literal quote, reopen quote)
+// escapePOSIXSingleQuotes replaces each apostrophe with '\” (close quote, escaped literal quote, reopen quote)
 // This is the standard POSIX shell escaping mechanism for single-quoted strings.
 func escapePOSIXSingleQuotes(s string) string {
 	return strings.ReplaceAll(s, "'", "'\\''")
