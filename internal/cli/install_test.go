@@ -575,3 +575,82 @@ func TestInstall_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 		t.Fatalf("managed SessionStart hook not found in settings.json")
 	}
 }
+
+// TestInstall_NonInteractiveDoesNotPrintConsentPrompt validates that when --yes is passed,
+// the consent prompt is NOT printed to output, even when cloud server/project/token are all present.
+// This is F7: emitConsentPrompt was called before the noninteractive check, causing the prompt
+// to appear in non-interactive runs (CI, scripts, --yes, --non-interactive, non-TTY).
+func TestInstall_NonInteractiveDoesNotPrintConsentPrompt(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableEngram(t)
+
+	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+		return nil
+	})
+	defer restoreCloud()
+
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+
+	out, err := execRoot(t, home, "install", "--yes")
+	if err != nil {
+		t.Fatalf("install --yes error = %v, output:\n%s", err, out)
+	}
+
+	if strings.Contains(out, consentPrompt) {
+		t.Fatalf("install --yes output contains consent prompt when it should not: %q", out)
+	}
+}
+
+// TestInstall_PersistFlagDoesNotPrintConsentPrompt validates that when --persist-engram-cloud-token
+// is passed, the consent prompt is NOT printed, but the token IS persisted to settings.json.
+// This is F7: the persist flag should bypass prompting entirely, not print the prompt and ignore it.
+func TestInstall_PersistFlagDoesNotPrintConsentPrompt(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableEngram(t)
+
+	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+		return nil
+	})
+	defer restoreCloud()
+
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+
+	out, err := execRoot(t, home, "install", "--"+persistEngramCloudTokenFlag)
+	if err != nil {
+		t.Fatalf("install --persist-engram-cloud-token error = %v, output:\n%s", err, out)
+	}
+
+	if strings.Contains(out, consentPrompt) {
+		t.Fatalf("install --persist-engram-cloud-token output contains consent prompt when it should not: %q", out)
+	}
+
+	settingsPath := filepath.Join(home, "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
+	}
+
+	env, ok := settings["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings[\"env\"] not present or not a map")
+	}
+
+	if got := env["ENGRAM_CLOUD_TOKEN"]; got != "test-token" {
+		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] = %v, want %q (token should be persisted with persist flag)", got, "test-token")
+	}
+}

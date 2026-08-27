@@ -34,7 +34,7 @@ func SetReadCloudTokenConsentFuncForTests(fn func(*bufio.Reader) (bool, error)) 
 	return func() { readCloudTokenConsentFunc = old }
 }
 
-func resolveCloudTokenPersistence(isNonInteractive bool, persistFlag bool, reader *bufio.Reader) (installer.CloudTokenPersistence, error) {
+func resolveCloudTokenPersistence(isNonInteractive bool, persistFlag bool, reader *bufio.Reader, out io.Writer) (installer.CloudTokenPersistence, error) {
 	if persistFlag {
 		return installer.CloudTokenPersistencePersist, nil
 	}
@@ -44,6 +44,7 @@ func resolveCloudTokenPersistence(isNonInteractive bool, persistFlag bool, reade
 	if reader == nil {
 		return installer.CloudTokenPersistenceDecline, nil
 	}
+	emitConsentPrompt(out)
 	affirmative, err := readCloudTokenConsentFunc(reader)
 	if err != nil {
 		return installer.CloudTokenPersistenceDecline, err

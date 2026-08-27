@@ -27,7 +27,7 @@ func TestResolveCloudTokenPersistence_YesFlagNeverPersistsToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mode, err := resolveCloudTokenPersistence(tt.yesFlag, tt.persistFlag, nil)
+			mode, err := resolveCloudTokenPersistence(tt.yesFlag, tt.persistFlag, nil, &bytes.Buffer{})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -55,7 +55,7 @@ func TestResolveCloudTokenPersistence_DedicatedFlagPersistsToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mode, err := resolveCloudTokenPersistence(tt.yesFlag, tt.persistFlag, nil)
+			mode, err := resolveCloudTokenPersistence(tt.yesFlag, tt.persistFlag, nil, &bytes.Buffer{})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -70,12 +70,11 @@ func TestResolveCloudTokenPersistence_PromptStatesDestinationAndPermissions(t *t
 	var buf bytes.Buffer
 	reader := bufio.NewReader(strings.NewReader("y\n"))
 	restore := SetReadCloudTokenConsentFuncForTests(func(r *bufio.Reader) (bool, error) {
-		buf.WriteString(consentPrompt)
 		return true, nil
 	})
 	defer restore()
 
-	mode, err := resolveCloudTokenPersistence(false, false, reader)
+	mode, err := resolveCloudTokenPersistence(false, false, reader, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -122,7 +121,8 @@ func TestResolveCloudTokenPersistence_NonAffirmativeOmitsToken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reader := bufio.NewReader(strings.NewReader(tt.input))
-			mode, err := resolveCloudTokenPersistence(false, false, reader)
+			var buf bytes.Buffer
+			mode, err := resolveCloudTokenPersistence(false, false, reader, &buf)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -140,7 +140,8 @@ func TestResolveCloudTokenPersistence_ReaderErrorSkipsTokenAndWarns(t *testing.T
 	})
 	defer restore()
 
-	mode, err := resolveCloudTokenPersistence(false, false, reader)
+	var buf bytes.Buffer
+	mode, err := resolveCloudTokenPersistence(false, false, reader, &buf)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

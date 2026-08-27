@@ -122,9 +122,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	persistenceMode := installer.CloudTokenPersistenceNoOp
 	if server != "" && project != "" && token != "" {
 		persistenceMode = installer.CloudTokenPersistenceDecline
-		emitConsentPrompt(out)
 		var readErr error
-		persistenceMode, readErr = resolveCloudTokenPersistence(isNonInteractiveInstall(cmd, out), persistFlag, sharedReader)
+		persistenceMode, readErr = resolveCloudTokenPersistence(isNonInteractiveInstall(cmd, out), persistFlag, sharedReader, out)
 		if readErr != nil {
 			fmt.Fprintln(out, r.Warn(consentSkippedWarning))
 		}
