@@ -2,6 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -345,5 +349,253 @@ func TestUpdate_DeclineWarnsAutosyncDisabled(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Update completo.") {
 		t.Fatalf("update output missing the completion message")
+	}
+}
+
+// TestUpdate_EnvOverridesWriteEnvBlockAndHook is the F1 regression guard for update: when CLICK_ENGRAM_CLOUD_SERVER,
+// CLICK_ENGRAM_CLOUD_PROJECT and ENGRAM_CLOUD_TOKEN are set via environment overrides with an empty manifest,
+// and consent is given, the real settings file on disk must contain the env block with all three keys and the
+// managed SessionStart hook with the resolved project. This test does NOT mock ConfigureEngramCloudSessionSync.
+func TestUpdate_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableGit(t)
+
+	// Set env overrides - the manifest is deliberately empty
+	serverOverride := "http://127.0.0.1:18080"
+	projectOverride := "click-ai-devkit"
+	tokenOverride := "consented-token-123"
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
+	t.Setenv("ENGRAM_CLOUD_TOKEN", tokenOverride)
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+
+	// Run update with --persist-engram-cloud-token to give consent
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"update", "--persist-engram-cloud-token"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("update command error = %v, output:\n%s", err, out.String())
+	}
+
+	// Read the actual settings.json file on disk
+	settingsPath := filepath.Join(home, "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
+	}
+
+	// Assert the env block exists with all three keys
+	env, ok := settings["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings[\"env\"] not present or not a map")
+	}
+
+	// Check ENGRAM_CLOUD_AUTOSYNC
+	if got, want := env["ENGRAM_CLOUD_AUTOSYNC"], "1"; got != want {
+		t.Fatalf("env[\"ENGRAM_CLOUD_AUTOSYNC\"] = %v, want %q", got, want)
+	}
+
+	// Check ENGRAM_CLOUD_SERVER (must use override, not empty manifest)
+	if got := env["ENGRAM_CLOUD_SERVER"]; got != serverOverride {
+		t.Fatalf("env[\"ENGRAM_CLOUD_SERVER\"] = %v, want %q (from override, not manifest)", got, serverOverride)
+	}
+
+	// Check ENGRAM_CLOUD_TOKEN (persisted via consent)
+	if got := env["ENGRAM_CLOUD_TOKEN"]; got != tokenOverride {
+		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] = %v, want %q", got, tokenOverride)
+	}
+
+	// Assert the managed SessionStart hook exists with the resolved project
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings[\"hooks\"] not present or not a map")
+	}
+
+	sessionStart, ok := hooks["SessionStart"].([]any)
+	if !ok {
+		t.Fatalf("hooks[\"SessionStart\"] not present or not an array")
+	}
+
+	// Find the managed hook entry (matcher "" with our command)
+	foundManagedHook := false
+	for _, rawEntry := range sessionStart {
+		entry, ok := rawEntry.(map[string]any)
+		if !ok {
+			continue
+		}
+		matcher, _ := entry["matcher"].(string)
+		if matcher != "" {
+			continue
+		}
+		entryHooks, _ := entry["hooks"].([]any)
+		for _, rawHook := range entryHooks {
+			hook, ok := rawHook.(map[string]any)
+			if !ok {
+				continue
+			}
+			hookType, _ := hook["type"].(string)
+			if hookType != "command" {
+				continue
+			}
+			command, _ := hook["command"].(string)
+			// Use the installer's hook validation function
+			if installer.IsManagedEngramCloudHookCommand(command) {
+				foundManagedHook = true
+				break
+			}
+		}
+		if foundManagedHook {
+			break
+		}
+	}
+
+	if !foundManagedHook {
+		t.Fatalf("managed SessionStart hook not found in settings.json")
+	}
+}
+
+// TestUpdate_NoProcessTokenPreservesStoredToken is the F2 regression guard: when settings.json already
+// contains a click-owned ENGRAM_CLOUD_TOKEN and update runs without a token in the environment, the
+// stored token must remain present and unchanged (NoOp mode - never delete).
+func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableGit(t)
+
+	// Seed settings.json with a previously-consented token
+	storedToken := "previously-consented-token-456"
+	settingsPath := filepath.Join(home, "settings.json")
+	initialSettings := fmt.Sprintf(`{
+  "env": {
+    "ENGRAM_CLOUD_TOKEN": "%s"
+  }
+}
+`, storedToken)
+	if err := os.WriteFile(settingsPath, []byte(initialSettings), 0o600); err != nil {
+		t.Fatalf("seed settings.json: %v", err)
+	}
+
+	// Set server/project overrides but NO token in environment
+	serverOverride := "http://127.0.0.1:18080"
+	projectOverride := "click-ai-devkit"
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
+	// ENGRAM_CLOUD_TOKEN intentionally absent
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+
+	// Run update (non-interactive, no consent needed since no token present)
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"update", "--yes"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("update command error = %v, output:\n%s", err, out.String())
+	}
+
+	// Read the actual settings.json file on disk
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
+	}
+
+	// Assert the stored token is still present and unchanged
+	env, ok := settings["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings[\"env\"] not present or not a map")
+	}
+
+	if got := env["ENGRAM_CLOUD_TOKEN"]; got != storedToken {
+		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] = %v, want %q (stored token must be preserved when no process token exists)", got, storedToken)
+	}
+}
+
+// TestUpdate_DeclineWithProcessTokenRemovesStoredToken pins the F2 distinction: when a token is present
+// in the environment and persistence is declined, the stored token must be removed (Decline mode).
+// This ensures a future change cannot collapse the two states again.
+func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableGit(t)
+
+	// Seed settings.json with a previously-consented token
+	storedToken := "previously-consented-token-789"
+	settingsPath := filepath.Join(home, "settings.json")
+	initialSettings := fmt.Sprintf(`{
+  "env": {
+    "ENGRAM_CLOUD_TOKEN": "%s"
+  }
+}
+`, storedToken)
+	if err := os.WriteFile(settingsPath, []byte(initialSettings), 0o600); err != nil {
+		t.Fatalf("seed settings.json: %v", err)
+	}
+
+	// Set server/project overrides AND a NEW token in environment (simulating consent decline)
+	serverOverride := "http://127.0.0.1:18080"
+	projectOverride := "click-ai-devkit"
+	processToken := "new-process-token-123"
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
+	t.Setenv("ENGRAM_CLOUD_TOKEN", processToken)
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+
+	// Run update WITHOUT --persist-engram-cloud-token (decline persistence)
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"update", "--yes"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("update command error = %v, output:\n%s", err, out.String())
+	}
+
+	// Read the actual settings.json file on disk
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
+	}
+
+	// Assert the stored token was removed (Decline mode deletes it)
+	env, ok := settings["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings[\"env\"] not present or not a map")
+	}
+
+	if _, present := env["ENGRAM_CLOUD_TOKEN"]; present {
+		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] present, want absent (declined persistence must remove stored token)")
 	}
 }

@@ -105,9 +105,13 @@ func isManagedEngramCloudHookCandidate(command string) bool {
 		(strings.HasPrefix(command, "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 ") && strings.HasSuffix(command, " & exit /b 0\""))
 }
 
-func isManagedEngramCloudHookCommand(command string) bool {
+func IsManagedEngramCloudHookCommand(command string) bool {
 	return (strings.HasPrefix(command, "timeout 5 engram sync --cloud --import --project ") && strings.HasSuffix(command, " || true")) ||
 		(strings.HasPrefix(command, "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 ") && strings.HasSuffix(command, " & exit /b 0\""))
+}
+
+func isManagedEngramCloudHookCommand(command string) bool {
+	return IsManagedEngramCloudHookCommand(command)
 }
 
 // ConfigureEngramCloudSessionSync writes the Engram Cloud environment and SessionStart hook
@@ -132,6 +136,14 @@ func configureEngramCloudSessionSyncImpl(cfg Config, m *manifest.Manifest, mode 
 	}
 	originalBytes = append(originalBytes, '\n')
 
+	// Resolve server and project, honoring env overrides
+	server, project, _ := resolveEngramCloudConfig(cfg, m)
+
+	// Fail loudly if server or project is empty - this is a bug, not a runtime condition
+	if server == "" || project == "" {
+		return fmt.Errorf("installer: cloud configuration incomplete: server=%q, project=%q", server, project)
+	}
+
 	// Ensure env block exists
 	env, ok := settings["env"].(map[string]any)
 	if !ok || env == nil {
@@ -140,7 +152,7 @@ func configureEngramCloudSessionSyncImpl(cfg Config, m *manifest.Manifest, mode 
 
 	// Merge click-owned env keys (selective per-entry, not whole-key like PruneEmptyClickSettingsKeys)
 	env["ENGRAM_CLOUD_AUTOSYNC"] = "1"
-	env["ENGRAM_CLOUD_SERVER"] = m.EngramCloud.Server
+	env["ENGRAM_CLOUD_SERVER"] = server
 
 	// Handle token based on persistence mode
 	if mode == CloudTokenPersistencePersist {
@@ -154,7 +166,7 @@ func configureEngramCloudSessionSyncImpl(cfg Config, m *manifest.Manifest, mode 
 	settings["env"] = env
 
 	// Register managed SessionStart hook
-	managedHookCmd, err := managedEngramCloudHookCommand(m.EngramCloud.Project)
+	managedHookCmd, err := managedEngramCloudHookCommand(project)
 	if err != nil {
 		return fmt.Errorf("installer: generate managed hook command: %w", err)
 	}
