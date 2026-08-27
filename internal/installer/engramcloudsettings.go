@@ -2,9 +2,11 @@ package installer
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -34,6 +36,43 @@ func isManagedEngramCloudHookCommand(cmd string) bool {
 	return false
 }
 
+// extractProjectFromHookCommand extracts the project name from a hook command.
+// Returns empty string if extraction fails.
+func extractProjectFromHookCommand(cmd string) string {
+	// POSIX: timeout 5 engram sync --cloud --import --project <project> || true
+	if strings.HasPrefix(cmd, "timeout 5 engram sync --cloud --import --project ") {
+		parts := strings.Split(cmd, " ")
+		for i, part := range parts {
+			if part == "--project" && i+1 < len(parts) {
+				return parts[i+1]
+			}
+		}
+	}
+
+	// Windows: cmd.exe /d /s /c "click engram-cloud-import --project-b64 <b64-project> & exit /b 0"
+	if strings.HasPrefix(cmd, "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 ") {
+		// Extract the base64 project
+		start := strings.Index(cmd, "--project-b64 ")
+		if start == -1 {
+			return ""
+		}
+		start += len("--project-b64 ")
+		end := strings.Index(cmd[start:], " ")
+		if end == -1 {
+			return ""
+		}
+		b64Project := cmd[start : start+end]
+		// Decode base64 to get the actual project name
+		decoded, err := base64.StdEncoding.DecodeString(b64Project)
+		if err != nil {
+			return ""
+		}
+		return string(decoded)
+	}
+
+	return ""
+}
+
 var configureEngramCloudSessionSyncFunc = configureEngramCloudSessionSyncImpl
 
 func SetConfigureEngramCloudSessionSyncFuncForTests(fn func(Config, *manifest.Manifest, CloudTokenPersistence, string) error) func() {
@@ -59,10 +98,14 @@ const (
 // It is intentionally limited to presence and integrity metadata; it never exposes secret values.
 type CloudSessionSyncStatus struct {
 	AutosyncPresent    bool
+	AutosyncValid      bool
 	ServerPresent      bool
+	ServerValid        bool
 	TokenPresent       bool
+	TokenValid         bool
 	ManagedHookPresent bool
 	ManagedHookValid   bool
+	HookProjectMismatch bool
 	OwnerOnly          bool
 }
 
@@ -86,9 +129,68 @@ func InspectEngramCloudSessionSync(cfg Config) (CloudSessionSyncStatus, error) {
 	status := CloudSessionSyncStatus{}
 	if env, ok := settings["env"].(map[string]any); ok {
 		_, status.AutosyncPresent = env["ENGRAM_CLOUD_AUTOSYNC"]
+		if status.AutosyncPresent {
+			if autosync, ok := env["ENGRAM_CLOUD_AUTOSYNC"].(string); ok && autosync == "1" {
+				status.AutosyncValid = true
+			}
+		}
+		
 		_, status.ServerPresent = env["ENGRAM_CLOUD_SERVER"]
+		if status.ServerPresent {
+			if server, ok := env["ENGRAM_CLOUD_SERVER"].(string); ok && server != "" && strings.Contains(server, "://") {
+				status.ServerValid = true
+			}
+		}
+		
 		_, status.TokenPresent = env["ENGRAM_CLOUD_TOKEN"]
+		if status.TokenPresent {
+			if token, ok := env["ENGRAM_CLOUD_TOKEN"].(string); ok && token != "" && token != "[REDACTED]" {
+				status.TokenValid = true
+			}
+		}
 	}
+	
+	// Check hook project mismatch - but only if we have a manifest to resolve from
+	var resolvedProject string
+	manifestPath := filepath.Join(cfg.ClaudeHome, "AGENTS.md")
+	if manifestBytes, err := os.ReadFile(manifestPath); err == nil {
+		var manifestData map[string]any
+		if err := json.Unmarshal(manifestBytes, &manifestData); err == nil {
+			if engramCloud, ok := manifestData["engramCloud"].(map[string]any); ok {
+				if project, ok := engramCloud["project"].(string); ok {
+					resolvedProject = project
+				}
+			}
+		}
+	}
+	
+	if resolvedProject != "" {
+		if hooks, ok := settings["hooks"].(map[string]any); ok {
+			if sessionStart, ok := hooks["SessionStart"].([]any); ok {
+				for _, rawEntry := range sessionStart {
+					entry, ok := rawEntry.(map[string]any)
+					if !ok || entry["matcher"] != "" {
+						continue
+					}
+					entryHooks, _ := entry["hooks"].([]any)
+					for _, rawHook := range entryHooks {
+						hook, ok := rawHook.(map[string]any)
+						if !ok || hook["type"] != "command" {
+							continue
+						}
+						command, _ := hook["command"].(string)
+						if isManagedEngramCloudHookCandidate(command) {
+							hookProject := extractProjectFromHookCommand(command)
+							if hookProject != "" && resolvedProject != "" && hookProject != resolvedProject {
+								status.HookProjectMismatch = true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
 	if hooks, ok := settings["hooks"].(map[string]any); ok {
 		if sessionStart, ok := hooks["SessionStart"].([]any); ok {
 			for _, rawEntry := range sessionStart {

@@ -126,25 +126,25 @@ func TestRemoveEngramCloudSessionSync_PreservesForeignCommandInSameEntry(t *test
 	settingsPath := filepath.Join(dir, "settings.json")
 
 	// Create settings with BOTH a foreign command and click's managed command in the SAME entry
-		settings := map[string]any{
-			"hooks": map[string]any{
-				"SessionStart": []any{
-					map[string]any{
-						"matcher": "",
-						"hooks": []any{
-							map[string]any{
-								"type":    "command",
-								"command": "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 dGVhbS1oaXZl & exit /b 0\"",
-							},
-							map[string]any{
-								"type":    "command",
-								"command": "echo 'foreign command'",
-							},
+	settings := map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []any{
+				map[string]any{
+					"matcher": "",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 dGVhbS1oaXZl & exit /b 0\"",
+						},
+						map[string]any{
+							"type":    "command",
+							"command": "echo 'foreign command'",
 						},
 					},
 				},
 			},
-		}
+		},
+	}
 
 	settingsBytes, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -226,10 +226,229 @@ func TestRemoveEngramCloudSessionSync_PreservesForeignCommandInSameEntry(t *test
 	}
 }
 
+func TestInspectEngramCloudSessionSync_RejectsInvalidValues(t *testing.T) {
+	testCases := []struct {
+		name             string
+		settings         map[string]any
+		expectedAutosync bool
+		expectedAutosyncValid bool
+		expectedServer  bool
+		expectedServerValid   bool
+		expectedToken   bool
+		expectedTokenValid    bool
+	}{
+		{
+			name:                  "empty server",
+			settings:              map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": ""}},
+			expectedAutosync:      true,
+			expectedAutosyncValid: true,
+			expectedServer:        true,
+			expectedServerValid:   false,
+		},
+		{
+			name:                  "redacted token placeholder",
+			settings:              map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "https://example.com", "ENGRAM_CLOUD_TOKEN": "[REDACTED]"}},
+			expectedAutosync:      true,
+			expectedAutosyncValid: true,
+			expectedServer:        true,
+			expectedServerValid:   true,
+			expectedToken:         true,
+			expectedTokenValid:    false,
+		},
+		{
+			name:                  "autosync disabled",
+			settings:              map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "0", "ENGRAM_CLOUD_SERVER": "https://example.com"}},
+			expectedAutosync:      true,
+			expectedAutosyncValid: false,
+			expectedServer:        true,
+			expectedServerValid:   true,
+		},
+		{
+			name:                  "invalid server URL",
+			settings:              map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "not-a-url"}},
+			expectedAutosync:      true,
+			expectedAutosyncValid: true,
+			expectedServer:        true,
+			expectedServerValid:   false,
+		},
+		{
+			name:                  "empty token",
+			settings:              map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "https://example.com", "ENGRAM_CLOUD_TOKEN": ""}},
+			expectedAutosync:      true,
+			expectedAutosyncValid: true,
+			expectedServer:        true,
+			expectedServerValid:   true,
+			expectedToken:         true,
+			expectedTokenValid:    false,
+		},
+		{
+			name:                  "valid configuration",
+			settings:              map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "https://example.com", "ENGRAM_CLOUD_TOKEN": "valid-token"}},
+			expectedAutosync:      true,
+			expectedAutosyncValid: true,
+			expectedServer:        true,
+			expectedServerValid:   true,
+			expectedToken:         true,
+			expectedTokenValid:    true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+
+			dir := t.TempDir()
+			settingsPath := filepath.Join(dir, "settings.json")
+
+			settingsBytes, err := json.MarshalIndent(tc.settings, "", "  ")
+			if err != nil {
+				t.Fatalf("json.MarshalIndent() error = %v", err)
+			}
+			settingsBytes = append(settingsBytes, '\n')
+
+			if err := os.WriteFile(settingsPath, settingsBytes, 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			cfg := Config{ClaudeHome: dir}
+
+			status, err := InspectEngramCloudSessionSync(cfg)
+			if err != nil {
+				t.Fatalf("InspectEngramCloudSessionSync() error = %v", err)
+			}
+
+			if status.AutosyncPresent != tc.expectedAutosync {
+				t.Errorf("AutosyncPresent = %v, want %v", status.AutosyncPresent, tc.expectedAutosync)
+			}
+			if status.AutosyncValid != tc.expectedAutosyncValid {
+				t.Errorf("AutosyncValid = %v, want %v", status.AutosyncValid, tc.expectedAutosyncValid)
+			}
+			if status.ServerPresent != tc.expectedServer {
+				t.Errorf("ServerPresent = %v, want %v", status.ServerPresent, tc.expectedServer)
+			}
+			if status.ServerValid != tc.expectedServerValid {
+				t.Errorf("ServerValid = %v, want %v", status.ServerValid, tc.expectedServerValid)
+			}
+			if status.TokenPresent != tc.expectedToken {
+				t.Errorf("TokenPresent = %v, want %v", status.TokenPresent, tc.expectedToken)
+			}
+			if status.TokenValid != tc.expectedTokenValid {
+				t.Errorf("TokenValid = %v, want %v", status.TokenValid, tc.expectedTokenValid)
+			}
+		})
+	}
+}
+
 // TestConfigureEngramCloudSessionSync_WritesFullEnvBlock is the RED test for task 4.1:
 // with consent mode persist, the top-level `env` object gains `ENGRAM_CLOUD_AUTOSYNC: "1"`,
 // the resolved `ENGRAM_CLOUD_SERVER`, and the supplied `ENGRAM_CLOUD_TOKEN`.
-func TestConfigureEngramCloudSessionSync_WritesFullEnvBlock(t *testing.T) {
+func TestCheckEngramCloudSessionSync_RejectsInvalidValues(t *testing.T) {
+	testCases := []struct {
+		name             string
+		settings         map[string]any
+		expectedHealthy  bool
+		shouldContain    []string
+		shouldNotContain []string
+	}{
+		{
+			name:            "empty server",
+			settings:        map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": ""}},
+			expectedHealthy: false,
+			shouldContain:   []string{"ENGRAM_CLOUD_SERVER con valor inválido"},
+		},
+		{
+			name:            "redacted token placeholder",
+			settings:        map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "https://example.com", "ENGRAM_CLOUD_TOKEN": "[REDACTED]"}},
+			expectedHealthy: false,
+			shouldContain:   []string{"ENGRAM_CLOUD_TOKEN con valor inválido"},
+		},
+		{
+			name:            "autosync disabled",
+			settings:        map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "0", "ENGRAM_CLOUD_SERVER": "https://example.com"}},
+			expectedHealthy: false,
+			shouldContain:   []string{"ENGRAM_CLOUD_AUTOSYNC con valor inválido"},
+		},
+		{
+			name: "hook with stale project",
+			settings: map[string]any{
+				"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "https://example.com"},
+				"hooks": map[string]any{
+					"SessionStart": []any{
+						map[string]any{
+							"matcher": "",
+							"hooks": []any{
+								map[string]any{
+									"type":    "command",
+									"command": "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 dGVhbS1vbGQ & exit /b 0\"",
+								},
+							},
+						},
+					},
+				},
+			},
+			// This should be healthy when not configured with a different project
+			expectedHealthy: true,
+		},
+		{
+			name:            "invalid server URL",
+			settings:        map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "not-a-url"}},
+			expectedHealthy: false,
+			shouldContain:   []string{"ENGRAM_CLOUD_SERVER con valor inválido"},
+		},
+		{
+			name:            "empty token",
+			settings:        map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "https://example.com", "ENGRAM_CLOUD_TOKEN": ""}},
+			expectedHealthy: false,
+			shouldContain:   []string{"ENGRAM_CLOUD_TOKEN con valor inválido"},
+		},
+		{
+			name:            "valid configuration",
+			settings:        map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "https://example.com", "ENGRAM_CLOUD_TOKEN": "valid-token"}},
+			expectedHealthy: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+
+			dir := t.TempDir()
+			settingsPath := filepath.Join(dir, "settings.json")
+
+			settingsBytes, err := json.MarshalIndent(tc.settings, "", "  ")
+			if err != nil {
+				t.Fatalf("json.MarshalIndent() error = %v", err)
+			}
+			settingsBytes = append(settingsBytes, '\n')
+
+			if err := os.WriteFile(settingsPath, settingsBytes, 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			cfg := Config{ClaudeHome: dir}
+
+			result := checkEngramCloudSessionSync(cfg)
+
+			if result.Healthy != tc.expectedHealthy {
+				t.Errorf("checkEngramCloudSessionSync() healthy = %v, want %v (detail: %s)", result.Healthy, tc.expectedHealthy, result.Detail)
+			}
+
+			for _, mustContain := range tc.shouldContain {
+				if !strings.Contains(result.Detail, mustContain) {
+					t.Errorf("Detail should contain %q, got: %s", mustContain, result.Detail)
+				}
+			}
+
+			for _, mustNotContain := range tc.shouldNotContain {
+				if strings.Contains(result.Detail, mustNotContain) {
+					t.Errorf("Detail should not contain %q, got: %s", mustNotContain, result.Detail)
+				}
+			}
+		})
+	}
+}
+
+func TestCheckEngramCloudSessionSync_WritesFullEnvBlock(t *testing.T) {
 	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
 
 	dir := t.TempDir()

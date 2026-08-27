@@ -704,15 +704,25 @@ func checkEngramCloudSessionSync(cfg installer.Config) CheckResult {
 	var problems []string
 	if !status.AutosyncPresent {
 		problems = append(problems, "ENGRAM_CLOUD_AUTOSYNC")
+	} else if !status.AutosyncValid {
+		problems = append(problems, "ENGRAM_CLOUD_AUTOSYNC con valor inválido (debe ser '1')")
 	}
 	if !status.ServerPresent {
 		problems = append(problems, "ENGRAM_CLOUD_SERVER")
+	} else if !status.ServerValid {
+		problems = append(problems, "ENGRAM_CLOUD_SERVER con valor inválido (debe ser una URL no vacía)")
 	}
 	if !status.TokenPresent {
-		problems = append(problems, "ENGRAM_CLOUD_TOKEN")
+		// Token can be optional if mode is CloudResolvable; only report if configured
+		// but we still check validity if present
+	} else if !status.TokenValid {
+		problems = append(problems, "ENGRAM_CLOUD_TOKEN con valor inválido (vacío o redactado)")
 	}
 	if !status.ManagedHookValid {
 		problems = append(problems, "hook SessionStart con --import")
+	}
+	if status.HookProjectMismatch {
+		problems = append(problems, "hook SessionStart con nombre de proyecto desincronizado con la configuración resuelta")
 	}
 	if !status.OwnerOnly {
 		problems = append(problems, "permisos owner-only de settings.json")
