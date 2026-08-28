@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"path/filepath"
 	"strings"
@@ -52,13 +53,14 @@ func TestInstallWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T
 }
 
 // TestInstallWriteSteps_CloudConfigured_AddsCloudStep is task 4.1's preview-plan RED test: when
-// server+project+token are all present, the plan must list the Engram Cloud enrollment step right
-// after the local Engram step.
+// server+project+token are all present, the plan must list the Engram Cloud session-sync configure
+// step followed by the enrollment step right after the local Engram step (DD-4 ordering).
 func TestInstallWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
 	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir()}, true)
 	want := []string{
 		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
 		"Instalando Engram (memoria persistente)…",
+		"Configurando Engram Cloud Session Sync en settings.json…",
 		"Enrolando Engram Cloud…",
 		"Registrando Context7 (documentación de librerías)…",
 		"Actualizando CLAUDE.md…",
@@ -87,20 +89,23 @@ func TestInstallWriteSteps_CloudNotConfigured_NoCloudStep(t *testing.T) {
 }
 
 // TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth is task 4.1's combined preview-plan
-// test: when both OpenClaw and Engram Cloud are configured, the cloud step appears right after
-// Engram and before Context7, and the OpenClaw steps remain last.
+// test: when both OpenClaw and Engram Cloud are configured, the cloud configure and enrollment steps
+// appear right after Engram and before Context7, and the OpenClaw steps remain last.
 func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := installWriteSteps(cfg, true)
-	if len(got) != 13 {
-		t.Fatalf("installWriteSteps() = %#v, want 13 steps (6 Claude + 1 Cloud + 6 OpenClaw)", got)
+	if len(got) != 14 {
+		t.Fatalf("installWriteSteps() = %#v, want 14 steps (6 Claude + 2 Cloud + 6 OpenClaw)", got)
 	}
-	if got[2] != "Enrolando Engram Cloud…" {
-		t.Fatalf("installWriteSteps()[2] = %q, want Engram Cloud step right after local Engram", got[2])
+	if got[2] != "Configurando Engram Cloud Session Sync en settings.json…" {
+		t.Fatalf("installWriteSteps()[2] = %q, want the cloud session-sync configure step right after local Engram", got[2])
 	}
-	for _, step := range got[7:] {
+	if got[3] != "Enrolando Engram Cloud…" {
+		t.Fatalf("installWriteSteps()[3] = %q, want the Engram Cloud enrollment step right after the configure step", got[3])
+	}
+	for _, step := range got[8:] {
 		if !strings.Contains(step, "OpenClaw") {
-			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[7:])
+			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[8:])
 		}
 	}
 }
@@ -130,8 +135,8 @@ func TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) 
 }
 
 // TestUpdateWriteSteps_CloudConfigured_AddsCloudStep is task 4.5's preview-plan RED test for update:
-// when cloud is fully configured, the plan must list the Engram Cloud re-sync step right after the
-// local Engram pin step.
+// when cloud is fully configured, the plan must list the Engram Cloud session-sync configure step
+// followed by the re-sync step right after the local Engram pin step (DD-4 ordering).
 func TestUpdateWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
 	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, true, false)
 	want := []string{
@@ -140,6 +145,7 @@ func TestUpdateWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
 		"Actualizando CLAUDE.md…",
 		"Re-registrando memory-guard…",
 		"Sincronizando Engram (pin 0.1.1)…",
+		"Configurando Engram Cloud Session Sync en settings.json…",
 		"Sincronizando Engram Cloud…",
 		"Sincronizando Context7 (documentación de librerías)…",
 	}
@@ -253,7 +259,7 @@ func TestRenderWritePlan_DifferentStepsProducesDifferentOutput(t *testing.T) {
 func TestConfirmProceed_LowercaseY_ReturnsTrue(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	proceed, err := confirmProceed(strings.NewReader("y\n"), &out, r)
+	proceed, err := confirmProceed(bufio.NewReader(strings.NewReader("y\n")), &out, r)
 	if err != nil {
 		t.Fatalf("confirmProceed() error = %v", err)
 	}
@@ -266,7 +272,7 @@ func TestConfirmProceed_LowercaseY_ReturnsTrue(t *testing.T) {
 func TestConfirmProceed_Yes_ReturnsTrue(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	proceed, err := confirmProceed(strings.NewReader("yes\n"), &out, r)
+	proceed, err := confirmProceed(bufio.NewReader(strings.NewReader("yes\n")), &out, r)
 	if err != nil {
 		t.Fatalf("confirmProceed() error = %v", err)
 	}
@@ -278,7 +284,7 @@ func TestConfirmProceed_Yes_ReturnsTrue(t *testing.T) {
 func TestConfirmProceed_UppercaseY_ReturnsTrue(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	proceed, err := confirmProceed(strings.NewReader("Y\n"), &out, r)
+	proceed, err := confirmProceed(bufio.NewReader(strings.NewReader("Y\n")), &out, r)
 	if err != nil {
 		t.Fatalf("confirmProceed() error = %v", err)
 	}
@@ -290,7 +296,7 @@ func TestConfirmProceed_UppercaseY_ReturnsTrue(t *testing.T) {
 func TestConfirmProceed_ExplicitNo_ReturnsFalse(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	proceed, err := confirmProceed(strings.NewReader("n\n"), &out, r)
+	proceed, err := confirmProceed(bufio.NewReader(strings.NewReader("n\n")), &out, r)
 	if err != nil {
 		t.Fatalf("confirmProceed() error = %v", err)
 	}
@@ -302,7 +308,7 @@ func TestConfirmProceed_ExplicitNo_ReturnsFalse(t *testing.T) {
 func TestConfirmProceed_EmptyInput_ReturnsFalseNoError(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	proceed, err := confirmProceed(strings.NewReader(""), &out, r)
+	proceed, err := confirmProceed(bufio.NewReader(strings.NewReader("")), &out, r)
 	if err != nil {
 		t.Fatalf("confirmProceed() error = %v, want nil on empty/EOF input (default-deny, not a failure)", err)
 	}
@@ -317,7 +323,7 @@ func TestConfirmProceed_EmptyInput_ReturnsFalseNoError(t *testing.T) {
 func TestConfirmProceed_YesWithoutTrailingNewline_ReturnsTrue(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	proceed, err := confirmProceed(strings.NewReader("y"), &out, r)
+	proceed, err := confirmProceed(bufio.NewReader(strings.NewReader("y")), &out, r)
 	if err != nil {
 		t.Fatalf("confirmProceed() error = %v, want nil (EOF is not an error here)", err)
 	}
@@ -329,7 +335,7 @@ func TestConfirmProceed_YesWithoutTrailingNewline_ReturnsTrue(t *testing.T) {
 func TestConfirmProceed_PrintsPrompt(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(NewRootCommand(), &out)
-	if _, err := confirmProceed(strings.NewReader("n\n"), &out, r); err != nil {
+	if _, err := confirmProceed(bufio.NewReader(strings.NewReader("n\n")), &out, r); err != nil {
 		t.Fatalf("confirmProceed() error = %v", err)
 	}
 	if !strings.Contains(out.String(), "¿Continuar?") {
@@ -348,7 +354,7 @@ func TestConfirmAndSnapshot_NonInteractive_SkipsPlanAndTakesSnapshotImmediately(
 	var out bytes.Buffer
 	r := rendererFor(cmd, &out)
 
-	proceed, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, true, []string{"Paso 1…"})
+	proceed, _, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, true, []string{"Paso 1…"})
 	if err != nil {
 		t.Fatalf("confirmAndSnapshot() error = %v", err)
 	}
@@ -378,7 +384,7 @@ func TestConfirmAndSnapshot_InteractiveConfirm_ShowsPlanAndTakesSnapshot(t *test
 	var out bytes.Buffer
 	r := rendererFor(cmd, &out)
 
-	proceed, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, false, []string{"Paso 1…"})
+	proceed, _, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, false, []string{"Paso 1…"})
 	if err != nil {
 		t.Fatalf("confirmAndSnapshot() error = %v", err)
 	}
@@ -408,7 +414,7 @@ func TestConfirmAndSnapshot_InteractiveDecline_NoSnapshotTaken(t *testing.T) {
 	var out bytes.Buffer
 	r := rendererFor(cmd, &out)
 
-	proceed, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, false, []string{"Paso 1…"})
+	proceed, _, err := confirmAndSnapshot(cmd, &out, r, cfg, plan, false, []string{"Paso 1…"})
 	if err != nil {
 		t.Fatalf("confirmAndSnapshot() error = %v", err)
 	}

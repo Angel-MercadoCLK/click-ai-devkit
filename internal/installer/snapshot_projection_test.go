@@ -419,4 +419,66 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 			t.Errorf("Expected hash to start with 'present:', got %s", hash)
 		}
 	})
+
+	// Test 10: token presence is encoded, never the token value (task 4.20)
+	t.Run("token presence encoded, never value", func(t *testing.T) {
+		// Settings with a token value
+		settingsWithToken := map[string]any{
+			"env": map[string]any{
+				"ENGRAM_CLOUD_TOKEN":  "secret-token-value-123",
+				"ENGRAM_CLOUD_SERVER": "https://engram.example.com",
+			},
+			"hooks": map[string]any{
+				"PreToolUse": []any{},
+			},
+		}
+
+		// Same settings structure but with a different token value
+		settingsWithDifferentToken := map[string]any{
+			"env": map[string]any{
+				"ENGRAM_CLOUD_TOKEN":  "different-secret-token-456",
+				"ENGRAM_CLOUD_SERVER": "https://engram.example.com",
+			},
+			"hooks": map[string]any{
+				"PreToolUse": []any{},
+			},
+		}
+
+		// Settings without a token
+		settingsWithoutToken := map[string]any{
+			"env": map[string]any{
+				"ENGRAM_CLOUD_SERVER": "https://engram.example.com",
+			},
+			"hooks": map[string]any{
+				"PreToolUse": []any{},
+			},
+		}
+
+		dataWithToken1, _ := json.Marshal(settingsWithToken)
+		dataWithToken2, _ := json.Marshal(settingsWithDifferentToken)
+		dataWithoutToken, _ := json.Marshal(settingsWithoutToken)
+
+		hashWithToken1 := managedSettingsProjectionHash(string(dataWithToken1))
+		hashWithToken2 := managedSettingsProjectionHash(string(dataWithToken2))
+		hashWithoutToken := managedSettingsProjectionHash(string(dataWithoutToken))
+
+		// Both settings with token (different values) should hash the same
+		// because only presence is encoded, not the value
+		if hashWithToken1 != hashWithToken2 {
+			t.Errorf("Settings with different token values should hash the same (only presence encoded), got %s vs %s", hashWithToken1, hashWithToken2)
+		}
+
+		// Settings with token should hash differently from settings without token
+		if hashWithToken1 == hashWithoutToken {
+			t.Errorf("Settings with token should hash differently from settings without token, got same hash %s", hashWithToken1)
+		}
+
+		// Verify the token value never appears in the hash
+		if strings.Contains(hashWithToken1, "secret-token-value-123") {
+			t.Errorf("Token value should not appear in hash, got %s", hashWithToken1)
+		}
+		if strings.Contains(hashWithToken2, "different-secret-token-456") {
+			t.Errorf("Token value should not appear in hash, got %s", hashWithToken2)
+		}
+	})
 }

@@ -13,20 +13,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func installWriteSteps(cfg installer.Config, cloudConfigured bool) []string {
+func installWriteSteps(cfg installer.Config, cloudResolvable bool) []string {
 	selection := installer.TargetSelection{Configured: true, Claude: cfg.ClaudeHome != "", OpenClaw: cfg.OpenClawHome != "", Codex: cfg.CodexHome != ""}
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable})
 	return actionLabels(plan.InstallActionKinds(), actionLabelOptions{})
 }
 
-func installWriteStepsForSelection(cfg installer.Config, cloudConfigured bool, selection installer.TargetSelection, codexNativeModel, openClawNativeModel bool) []string {
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured, CodexNativeModel: codexNativeModel, OpenClawNativeModel: openClawNativeModel})
+func installWriteStepsForSelection(cfg installer.Config, cloudResolvable bool, selection installer.TargetSelection, codexNativeModel, openClawNativeModel bool) []string {
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel, OpenClawNativeModel: openClawNativeModel})
 	return actionLabels(plan.InstallActionKinds(), actionLabelOptions{})
 }
 
-func updateWriteSteps(engramVersion string, cfg installer.Config, cloudConfigured, codexNativeModel bool) []string {
+func updateWriteSteps(engramVersion string, cfg installer.Config, cloudResolvable, codexNativeModel bool) []string {
 	selection := installer.TargetSelection{Configured: true, Claude: cfg.ClaudeHome != "", OpenClaw: cfg.OpenClawHome != "", Codex: cfg.CodexHome != ""}
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured, CodexNativeModel: codexNativeModel})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel})
 	return actionLabels(plan.UpdateActionKinds(), actionLabelOptions{engramVersion: engramVersion, updateMode: true})
 }
 
@@ -74,6 +74,8 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 			return fmt.Sprintf("Sincronizando Engram (pin %s)…", options.engramVersion)
 		}
 		return "Instalando Engram (memoria persistente)…"
+	case installer.StepActionConfigureEngramCloudSessionSync:
+		return "Configurando Engram Cloud Session Sync en settings.json…"
 	case installer.StepActionSyncEngramCloud:
 		if options.engramVersion != "" {
 			return "Sincronizando Engram Cloud…"
@@ -155,7 +157,7 @@ func renderWritePlan(out io.Writer, r *ui.Renderer, cfg installer.Config, plan i
 	}
 }
 
-// confirmProceed prints a y/n prompt to out and reads a single line from in. Default-deny: only an
+// confirmProceed prints a y/n prompt to out and reads a single line from reader. Default-deny: only an
 // explicit "y"/"yes" (case-insensitive, surrounding whitespace trimmed) proceeds — a bare newline,
 // anything else, or immediate EOF (empty input) all decline, matching this codebase's conservative
 // "never assume yes" posture (e.g. manageBackups' flag-gated destructive actions never default to
@@ -165,9 +167,11 @@ func renderWritePlan(out io.Writer, r *ui.Renderer, cfg installer.Config, plan i
 // read — both are valid answers here (a real terminal always sends the trailing newline; a piped
 // bytes.Buffer in tests may not), so io.EOF is deliberately NOT treated as an error, only as "no
 // more input after this line".
-func confirmProceed(in io.Reader, out io.Writer, r *ui.Renderer) (bool, error) {
+//
+// The shared reader is used so that multiple prompts (general confirmation and consent prompt) can
+// consume input in order from a single buffer, avoiding buffered input loss.
+func confirmProceed(reader *bufio.Reader, out io.Writer, r *ui.Renderer) (bool, error) {
 	fmt.Fprint(out, r.Info("¿Continuar? [y/N]: "))
-	reader := bufio.NewReader(in)
 	line, err := reader.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false, fmt.Errorf("cli: leer confirmación: %w", err)
@@ -188,19 +192,36 @@ func confirmProceed(in io.Reader, out io.Writer, r *ui.Renderer) (bool, error) {
 // very first write in the whole install/update write chain, so gating it behind proceed is
 // sufficient to guarantee zero writes on decline — the caller only needs to check proceed and
 // return before running any of its own write steps.
-func confirmAndSnapshot(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg installer.Config, plan installer.TargetPlan, nonInteractive bool, steps []string) (bool, error) {
+//
+// Returns a shared *bufio.Reader that can be used for subsequent prompts (like consent prompt) to
+// consume input in order from a single buffer, avoiding buffered input loss. When nonInteractive is
+// true, returns nil.
+func confirmAndSnapshot(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg installer.Config, plan installer.TargetPlan, nonInteractive bool, steps []string) (bool, *bufio.Reader, error) {
 	if !nonInteractive {
 		renderWritePlan(out, r, cfg, plan, steps)
-		proceed, err := confirmProceed(cmd.InOrStdin(), out, r)
+		reader := bufio.NewReader(cmd.InOrStdin())
+		proceed, err := confirmProceed(reader, out, r)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 		if !proceed {
-			return false, nil
+			return false, nil, nil
 		}
+		warnings, err := installer.SnapshotTargetPlanWithWarnings(cfg, plan)
+		if err != nil {
+			return false, nil, err
+		}
+		for _, path := range warnings {
+			fmt.Fprintln(out, r.Warn(fmt.Sprintf("Se omitió el respaldo de settings.json porque su contenido es inválido: %s. La instalación continúa.", path)))
+		}
+		return true, reader, nil
 	}
-	if err := installer.SnapshotTargetPlan(cfg, plan); err != nil {
-		return false, err
+	warnings, err := installer.SnapshotTargetPlanWithWarnings(cfg, plan)
+	if err != nil {
+		return false, nil, err
 	}
-	return true, nil
+	for _, path := range warnings {
+		fmt.Fprintln(out, r.Warn(fmt.Sprintf("Se omitió el respaldo de settings.json porque su contenido es inválido: %s. La instalación continúa.", path)))
+	}
+	return true, nil, nil
 }

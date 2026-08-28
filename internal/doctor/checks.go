@@ -13,16 +13,21 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
+const engramCloudImportOutcomeStaleAfter = 7 * 24 * time.Hour
+
+var engramCloudSessionSyncNow = time.Now
+
 // EngramChecksCount is the number of doctor checks contributed by Engram, kept as an exported
 // constant so other packages/tests documenting Run()'s total check count don't have to hardcode a
 // magic number that silently drifts if a check is added or removed here.
-const EngramChecksCount = 5
+const EngramChecksCount = 6
 
 // Context7ChecksCount is the number of doctor checks contributed by Context7, kept as an exported
 // constant for the same reason as EngramChecksCount.
@@ -60,7 +65,7 @@ func Run(cfg installer.Config) Report {
 		checks = append(checks, doctorCheckResult(cfg, kind))
 	}
 	if selection.Claude {
-		checks = append(checks, checkEngramCloud(cfg))
+		checks = append(checks, checkEngramCloud(cfg), checkEngramCloudSessionSync(cfg))
 	}
 	return Report{Checks: checks}
 }
@@ -101,6 +106,8 @@ func doctorCheckResult(cfg installer.Config, kind installer.DoctorCheckKind) Che
 		return checkEngramPath(cfg)
 	case installer.DoctorCheckEngramCloud:
 		return checkEngramCloud(cfg)
+	case installer.DoctorCheckEngramCloudSessionSync:
+		return checkEngramCloudSessionSync(cfg)
 	case installer.DoctorCheckContext7:
 		return checkContext7(cfg)
 	case installer.DoctorCheckCodexGuidance:
@@ -685,6 +692,75 @@ func checkEngramCloud(cfg installer.Config) CheckResult {
 		Healthy: true,
 		Detail:  "inscrito en " + state.Project + " @ " + state.Server,
 	}
+}
+
+// checkEngramCloudSessionSync verifies only local settings and ACL metadata. It deliberately
+// invokes neither a subprocess nor a network operation so doctor remains read-only and offline.
+func checkEngramCloudSessionSync(cfg installer.Config) CheckResult {
+	const name = "sincronización de sesión de Engram Cloud"
+	status, err := installer.InspectEngramCloudSessionSync(cfg)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo inspeccionar la configuración de sesión de Engram Cloud: " + err.Error()}
+	}
+	if !status.HasManagedFootprint() {
+		return CheckResult{Name: name, Healthy: true, Detail: "sin configurar para sincronización de sesión"}
+	}
+
+	var problems []string
+	if !status.AutosyncPresent {
+		problems = append(problems, "ENGRAM_CLOUD_AUTOSYNC")
+	} else if !status.AutosyncValid {
+		problems = append(problems, "ENGRAM_CLOUD_AUTOSYNC con valor inválido (debe ser '1')")
+	}
+	if !status.ServerPresent {
+		problems = append(problems, "ENGRAM_CLOUD_SERVER")
+	} else if !status.ServerValid {
+		problems = append(problems, "ENGRAM_CLOUD_SERVER con valor inválido (debe ser una URL no vacía)")
+	}
+	if !status.TokenPresent {
+		problems = append(problems, "ENGRAM_CLOUD_TOKEN ausente (autosync no puede autenticar)")
+	} else if !status.TokenValid {
+		problems = append(problems, "ENGRAM_CLOUD_TOKEN con valor inválido (vacío o redactado)")
+	}
+	if !status.ManagedHookValid {
+		problems = append(problems, "hook SessionStart con --import")
+	}
+	if status.HookPayloadInvalid {
+		problems = append(problems, "payload --project-b64 del hook SessionStart ilegible")
+	}
+	if status.HookProjectMismatch {
+		problems = append(problems, "hook SessionStart con nombre de proyecto desincronizado con la configuración resuelta")
+	}
+	if !status.OwnerOnly {
+		problems = append(problems, "permisos owner-only de settings.json")
+	}
+	if _, err := clickBinaryLookup("click"); err != nil {
+		problems = append(problems, "binario click no resoluble en PATH")
+	}
+	if len(problems) > 0 {
+		return CheckResult{Name: name, Healthy: false, Detail: "configuración de sincronización incompleta o alterada: falta o es inválido " + strings.Join(problems, ", ")}
+	}
+	outcome, found, err := installer.LoadEngramCloudImportOutcome(cfg)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo leer el último resultado de importación de Engram Cloud: " + err.Error()}
+	}
+	if !found {
+		return CheckResult{Name: name, Healthy: false, Detail: "el hook SessionStart no se observó ejecutarse todavía"}
+	}
+	switch outcome.Status {
+	case installer.EngramCloudImportOutcomeFailure:
+		return CheckResult{Name: name, Healthy: false, Detail: "la última importación de Engram Cloud falló: import command failed"}
+	case installer.EngramCloudImportOutcomeTimeout:
+		return CheckResult{Name: name, Healthy: false, Detail: "la última importación de Engram Cloud falló: import timed out"}
+	case installer.EngramCloudImportOutcomeSuccess:
+		// A week allows normal absences while still detecting a hook that stopped running between sessions.
+		if outcome.Timestamp.IsZero() || engramCloudSessionSyncNow().UTC().Sub(outcome.Timestamp) > engramCloudImportOutcomeStaleAfter {
+			return CheckResult{Name: name, Healthy: false, Detail: "la última importación exitosa de Engram Cloud está desactualizada"}
+		}
+	default:
+		return CheckResult{Name: name, Healthy: false, Detail: "el último resultado de importación de Engram Cloud es inválido"}
+	}
+	return CheckResult{Name: name, Healthy: true, Detail: "sincronización de sesión de Engram Cloud configurada"}
 }
 
 // checkContext7 reports whether Context7 is registered as a user-scope MCP server, read directly

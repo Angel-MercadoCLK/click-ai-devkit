@@ -1,11 +1,13 @@
 package installer
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -1232,7 +1234,7 @@ func TestBuildTargetPlan_AllSnapshotDeclarationsHaveKnownPolicy(t *testing.T) {
 		{
 			name:        "Claude-with-cloud",
 			selection:   TargetSelection{Claude: true},
-			options:     PlanOptions{CloudConfigured: true},
+			options:     PlanOptions{CloudResolvable: true},
 			description: "Claude target with cloud config",
 		},
 		{
@@ -1280,13 +1282,13 @@ func TestBuildTargetPlan_AllSnapshotDeclarationsHaveKnownPolicy(t *testing.T) {
 		{
 			name:        "All-targets",
 			selection:   TargetSelection{Claude: true, Codex: true, OpenClaw: true},
-			options:     PlanOptions{CloudConfigured: true},
+			options:     PlanOptions{CloudResolvable: true},
 			description: "All targets with cloud config",
 		},
 		{
 			name:        "All-targets-all-native-models",
 			selection:   TargetSelection{Claude: true, Codex: true, OpenClaw: true},
-			options:     PlanOptions{CloudConfigured: true, CodexNativeModel: true, OpenClawNativeModel: true},
+			options:     PlanOptions{CloudResolvable: true, CodexNativeModel: true, OpenClawNativeModel: true},
 			description: "All targets with cloud and all native models",
 		},
 	}
@@ -1388,5 +1390,108 @@ func TestSnapshotDecl_RequiredArguments(t *testing.T) {
 	}
 	if decl.Policy != DriftPolicyNonVeto {
 		t.Fatalf("snapshot().Policy = %q, want %q", decl.Policy, DriftPolicyNonVeto)
+	}
+}
+
+func TestRedactEngramCloudToken_MalformedWithTokenNeverLeaksSecret(t *testing.T) {
+	// Malformed JSON containing the literal token - unterminated string
+	// This should fail closed (return error) rather than leaking the secret into the backup
+	malformedWithToken := []byte(`{"env":{"ENGRAM_CLOUD_TOKEN":"secret-token-12345"`)
+
+	redacted, err := redactEngramCloudToken(malformedWithToken)
+	if err == nil {
+		t.Fatalf("redactEngramCloudToken(malformed JSON with token) should return error, got nil")
+	}
+	if redacted != nil {
+		t.Fatalf("redactEngramCloudToken(malformed JSON with token) should return nil output on error, got %v bytes", len(redacted))
+	}
+
+	// Ensure the secret token does not appear in any error messages
+	if err != nil && strings.Contains(err.Error(), "secret-token-12345") {
+		t.Fatal("Error message contains secret token")
+	}
+}
+
+func TestRedactEngramCloudToken_ValidTokenDocumentPreservesUnrelatedBytes(t *testing.T) {
+	// Valid JSON with unusual but legal formatting (compact, non-alphabetical key order, no trailing newline)
+	compact := []byte(`{"z":1,"env":{"ENGRAM_CLOUD_TOKEN":"my-secret","ENGRAM_CLOUD_SERVER":"https://example.com"}}`)
+
+	redacted, err := redactEngramCloudToken(compact)
+	if err != nil {
+		t.Fatalf("redactEngramCloudToken(valid compact JSON) error = %v", err)
+	}
+
+	// Token value should be gone
+	if bytes.Contains(redacted, []byte("my-secret")) {
+		t.Fatalf("Token value should not appear in redacted output")
+	}
+
+	// Every other byte should be preserved - check specific markers
+	if !bytes.Contains(redacted, []byte(`"z":1`)) {
+		t.Fatalf("Unrelated key 'z' should be preserved")
+	}
+	if !bytes.Contains(redacted, []byte(`"ENGRAM_CLOUD_SERVER":"https://example.com"`)) {
+		t.Fatalf("Server key should be preserved")
+	}
+
+	// Should still be compact (no extra whitespace added)
+	if bytes.Contains(redacted, []byte("  ")) {
+		t.Fatalf("Should preserve compact formatting without adding spaces")
+	}
+
+	// Should not add trailing newline
+	if len(redacted) > 0 && redacted[len(redacted)-1] == '\n' {
+		t.Fatalf("Should not add trailing newline to compact input")
+	}
+}
+
+func TestRedactEngramCloudToken_IgnoresNestedForeignEnvObjects(t *testing.T) {
+	input := []byte(`{"plugin":{"env":{"ENGRAM_CLOUD_TOKEN":"foreign-value"}}}`)
+	redacted, err := redactEngramCloudToken(input)
+	if err != nil {
+		t.Fatalf("redactEngramCloudToken() error = %v", err)
+	}
+	if !bytes.Equal(redacted, input) {
+		t.Fatal("nested foreign env object was altered")
+	}
+}
+
+func TestRedactEngramCloudToken_NoTokenReturnsInputUnchanged(t *testing.T) {
+	// Input without token should return exactly the same bytes
+	input := append([]byte(`{"env":{"ENGRAM_CLOUD_SERVER":"https://example.com"}}`), '\n')
+
+	redacted, err := redactEngramCloudToken(input)
+	if err != nil {
+		t.Fatalf("redactEngramCloudToken(no token) error = %v", err)
+	}
+
+	if !bytes.Equal(redacted, input) {
+		t.Fatalf("No-token case should return input unchanged")
+	}
+}
+
+func TestRedactEngramCloudToken_EscapedKeyStillRedacted(t *testing.T) {
+	secret := "escaped-key-secret"
+	input := []byte(`{"env":{"ENGRAM_CLOUD\u005fTOKEN":"` + secret + `"}}`)
+
+	redacted, err := redactEngramCloudToken(input)
+	if err != nil {
+		t.Fatalf("redactEngramCloudToken() error = %v", err)
+	}
+	if bytes.Contains(redacted, []byte(secret)) {
+		t.Fatal("redacted backup contains the token")
+	}
+}
+
+func TestRedactEngramCloudToken_EscapedValueStillRedacted(t *testing.T) {
+	secretFragment := "escaped-value-secret"
+	input := []byte(`{"env":{"ENGRAM_CLOUD_TOKEN":"escaped\\u002dvalue\\u002dsecret"}}`)
+
+	redacted, err := redactEngramCloudToken(input)
+	if err != nil {
+		t.Fatalf("redactEngramCloudToken() error = %v", err)
+	}
+	if bytes.Contains(redacted, []byte(secretFragment)) || bytes.Contains(redacted, []byte(`\\u002d`)) {
+		t.Fatal("redacted backup contains token value bytes")
 	}
 }

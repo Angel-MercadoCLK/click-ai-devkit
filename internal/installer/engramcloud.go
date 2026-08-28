@@ -12,6 +12,10 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
 
+type quietCommandRunner interface {
+	RunQuietly(name string, args ...string) error
+}
+
 const (
 	engramCloudServerEnvOverride  = "CLICK_ENGRAM_CLOUD_SERVER"
 	engramCloudProjectEnvOverride = "CLICK_ENGRAM_CLOUD_PROJECT"
@@ -122,8 +126,14 @@ func SyncEngramCloud(cfg Config, m *manifest.Manifest) error {
 // wrapped, human-readable error. It centralizes the "fail-stop on first error" behavior shared by
 // both the first-time enrollment chain and the idempotent re-sync path.
 func runEngramCloudStep(runner CommandRunner, stepName string, args ...string) error {
-	if err := runner.Run("engram", args...); err != nil {
-		return fmt.Errorf("installer: %s failed: %w", stepName, err)
+	var err error
+	if quietRunner, ok := runner.(quietCommandRunner); ok {
+		err = quietRunner.RunQuietly("engram", args...)
+	} else {
+		err = runner.Run("engram", args...)
+	}
+	if err != nil {
+		return fmt.Errorf("installer: %s failed; run `engram cloud status` for details", stepName)
 	}
 	return nil
 }

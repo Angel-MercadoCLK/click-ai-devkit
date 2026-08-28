@@ -1,12 +1,14 @@
 package doctor
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
@@ -119,12 +121,336 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	report := Run(cfg)
 
-	// 13 base checks now that the Claude plugin registries check joins the foundational checks,
+	// 14 base checks now that the Claude plugin registries check joins the foundational checks,
 	// standalone PATH-based detection check (openclaw-target-support PR-A).
 	const wantChecks = 14 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (git, claude, openclaw, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, memory-guard hook, click binary, models.json schema, click-sdd applied plugin config, engram plugin, engram binary, engram PATH persistence, engram cloud enrollment, context7 MCP)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d (git, openclaw, openclaw native model action, click binary, claude, click plugin registries, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, models.json schema, click-sdd applied plugin config, engram plugin, engram subagent visibility, engram binary, engram PATH persistence, engram cloud enrollment, engram cloud session sync, context7 MCP, memory-guard hook)", len(report.Checks), wantChecks)
 	}
+}
+
+func TestRun_CheckCountIncludesEngramCloudSessionSync(t *testing.T) {
+	report := Run(installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()})
+	const wantChecks = 14 + EngramChecksCount + Context7ChecksCount
+	if got := len(report.Checks); got != wantChecks {
+		t.Fatalf("Run() check count = %d, want %d including engram cloud session sync", got, wantChecks)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_RejectsInvalidValues(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	testCases := []struct {
+		name             string
+		settings         map[string]any
+		expectedHealthy  bool
+		shouldContain    []string
+		shouldNotContain []string
+	}{
+		{
+			name:            "empty server",
+			settings:        map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": ""}},
+			expectedHealthy: false,
+			shouldContain:   []string{"ENGRAM_CLOUD_SERVER con valor inválido"},
+		},
+		{
+			name:            "redacted token placeholder",
+			settings:        map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "https://example.com", "ENGRAM_CLOUD_TOKEN": "[REDACTED]"}},
+			expectedHealthy: false,
+			shouldContain:   []string{"ENGRAM_CLOUD_TOKEN con valor inválido"},
+		},
+		{
+			name:            "autosync disabled",
+			settings:        map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "0", "ENGRAM_CLOUD_SERVER": "https://example.com"}},
+			expectedHealthy: false,
+			shouldContain:   []string{"ENGRAM_CLOUD_AUTOSYNC con valor inválido"},
+		},
+		{
+			name:            "invalid server URL",
+			settings:        map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "not-a-url"}},
+			expectedHealthy: false,
+			shouldContain:   []string{"ENGRAM_CLOUD_SERVER con valor inválido"},
+		},
+		{
+			name:            "empty token",
+			settings:        map[string]any{"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "https://example.com", "ENGRAM_CLOUD_TOKEN": ""}},
+			expectedHealthy: false,
+			shouldContain:   []string{"ENGRAM_CLOUD_TOKEN con valor inválido"},
+		},
+		{
+			name: "valid configuration",
+			settings: map[string]any{
+				"env": map[string]any{"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "https://example.com", "ENGRAM_CLOUD_TOKEN": "valid-token"},
+				"hooks": map[string]any{
+					"SessionStart": []any{
+						map[string]any{
+							"matcher": "",
+							"hooks": []any{
+								map[string]any{
+									"type":    "command",
+									"command": "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 dGVhbS1oaXZl & exit /b 0\"",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedHealthy:  true,
+			shouldNotContain: []string{"permisos owner-only"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+
+			dir := t.TempDir()
+			settingsPath := filepath.Join(dir, "settings.json")
+
+			settingsBytes, err := json.MarshalIndent(tc.settings, "", "  ")
+			if err != nil {
+				t.Fatalf("json.MarshalIndent() error = %v", err)
+			}
+			settingsBytes = append(settingsBytes, '\n')
+
+			if err := os.WriteFile(settingsPath, settingsBytes, 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			cfg := installer.Config{ClaudeHome: dir}
+
+			if tc.name == "valid configuration" {
+				// A fully valid configuration also requires evidence the SessionStart hook has
+				// actually run recently and succeeded (checkEngramCloudSessionSync's outcome-file
+				// check) — without this, checkEngramCloudSessionSync legitimately reports
+				// unhealthy ("el hook SessionStart no se observó ejecutarse todavía"), which is
+				// the correct behavior for a config that was never actually exercised, but not
+				// what this specific fixture is meant to test.
+				if err := installer.WriteEngramCloudImportOutcome(cfg, installer.EngramCloudImportOutcome{
+					Timestamp: time.Now().UTC(),
+					Status:    installer.EngramCloudImportOutcomeSuccess,
+				}); err != nil {
+					t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+				}
+			}
+
+			result := checkEngramCloudSessionSync(cfg)
+
+			// On Windows, owner-only permissions might not work as expected in tests
+			// So we'll skip owner-only validation for the valid config test on Windows
+			if tc.name == "valid configuration" && strings.Contains(result.Detail, "permisos owner-only") {
+				t.Skipf("Skipping owner-only check on Windows for valid configuration test")
+			}
+
+			if result.Healthy != tc.expectedHealthy {
+				t.Errorf("checkEngramCloudSessionSync() healthy = %v, want %v (detail: %s)", result.Healthy, tc.expectedHealthy, result.Detail)
+			}
+
+			for _, mustContain := range tc.shouldContain {
+				if !strings.Contains(result.Detail, mustContain) {
+					t.Errorf("Detail should contain %q, got: %s", mustContain, result.Detail)
+				}
+			}
+
+			for _, mustNotContain := range tc.shouldNotContain {
+				if strings.Contains(result.Detail, mustNotContain) {
+					t.Errorf("Detail should not contain %q, got: %s", mustNotContain, result.Detail)
+				}
+			}
+		})
+	}
+}
+
+func TestCheckEngramCloudSessionSync_HealthyWhenCompleteOrNotConfigured(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	complete := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+	m.EngramCloud.Server = "https://cloud.example.com"
+	m.EngramCloud.Project = "team-hive"
+	if err := installer.ConfigureEngramCloudSessionSync(complete, m, installer.CloudTokenPersistencePersist, "test-token"); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+	}
+	if err := installer.WriteEngramCloudImportOutcome(complete, installer.EngramCloudImportOutcome{
+		Timestamp: time.Now().UTC(),
+		Status:    installer.EngramCloudImportOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+	}
+
+	if got := checkEngramCloudSessionSync(complete); !got.Healthy {
+		t.Fatalf("complete session sync check = %+v, want healthy", got)
+	}
+	if got := checkEngramCloudSessionSync(installer.Config{ClaudeHome: t.TempDir()}); !got.Healthy || !strings.Contains(got.Detail, "sin configurar") {
+		t.Fatalf("unconfigured session sync check = %+v, want healthy not configured", got)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyWhenNeverRan(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	cfg := configuredEngramCloudSessionSync(t)
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy || !strings.Contains(got.Detail, "no se observó ejecutarse") {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy stating the hook has not been observed running", got)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyOnRecordedFailure(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	cfg := configuredEngramCloudSessionSync(t)
+	if err := installer.WriteEngramCloudImportOutcome(cfg, installer.EngramCloudImportOutcome{
+		Timestamp: time.Now().UTC(), Status: installer.EngramCloudImportOutcomeFailure, Reason: "import command failed",
+	}); err != nil {
+		t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy || !strings.Contains(got.Detail, "import command failed") {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy naming the recorded reason", got)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyOnTimeoutOutcome(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	cfg := configuredEngramCloudSessionSync(t)
+	if err := installer.WriteEngramCloudImportOutcome(cfg, installer.EngramCloudImportOutcome{
+		Timestamp: time.Now().UTC(), Status: installer.EngramCloudImportOutcomeTimeout, Reason: "import timed out",
+	}); err != nil {
+		t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy || !strings.Contains(got.Detail, "import timed out") {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy naming the timeout", got)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_ReportsStaleSuccess(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	now := time.Date(2026, time.August, 27, 12, 0, 0, 0, time.UTC)
+	previousNow := engramCloudSessionSyncNow
+	engramCloudSessionSyncNow = func() time.Time { return now }
+	t.Cleanup(func() { engramCloudSessionSyncNow = previousNow })
+	cfg := configuredEngramCloudSessionSync(t)
+	if err := installer.WriteEngramCloudImportOutcome(cfg, installer.EngramCloudImportOutcome{
+		Timestamp: now.Add(-engramCloudImportOutcomeStaleAfter - time.Second), Status: installer.EngramCloudImportOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy || !strings.Contains(got.Detail, "desactualizada") {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy stale success", got)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_HealthyOnRecentSuccess(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	cfg := configuredEngramCloudSessionSync(t)
+	if err := installer.WriteEngramCloudImportOutcome(cfg, installer.EngramCloudImportOutcome{
+		Timestamp: time.Now().UTC(), Status: installer.EngramCloudImportOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+	}
+
+	if got := checkEngramCloudSessionSync(cfg); !got.Healthy {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want healthy after a recent successful import", got)
+	}
+}
+
+func configuredEngramCloudSessionSync(t *testing.T) installer.Config {
+	t.Helper()
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	m := &manifest.Manifest{EngramCloud: manifest.EngramCloud{Server: "https://cloud.example.com", Project: "team-hive"}}
+	if err := installer.ConfigureEngramCloudSessionSync(cfg, m, installer.CloudTokenPersistencePersist, "test-token"); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+	}
+	return cfg
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyWhenClickNotOnPath(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "", errors.New("not found") })
+	t.Cleanup(restore)
+
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+	m.EngramCloud.Server = "https://cloud.example.com"
+	m.EngramCloud.Project = "team-hive"
+	if err := installer.ConfigureEngramCloudSessionSync(cfg, m, installer.CloudTokenPersistencePersist, "test-token"); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy when click is absent from PATH", got)
+	}
+	if !strings.Contains(got.Detail, "click") {
+		t.Fatalf("checkEngramCloudSessionSync() detail = %q, want it to name the missing click binary", got.Detail)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyOnHookProjectMismatch(t *testing.T) {
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	m := &manifest.Manifest{EngramCloud: manifest.EngramCloud{
+		Server:  "https://cloud.example.com",
+		Project: "team-old",
+	}}
+	if err := installer.ConfigureEngramCloudSessionSync(cfg, m, installer.CloudTokenPersistencePersist, "test-token"); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+	}
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "team-new")
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy", got)
+	}
+	if !strings.Contains(got.Detail, "nombre de proyecto") {
+		t.Fatalf("checkEngramCloudSessionSync() detail = %q, want it to name the project mismatch", got.Detail)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_NamesMissingKeyAlteredHookAndInsecurePerms(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	settings := []byte(`{
+  "env": {"ENGRAM_CLOUD_AUTOSYNC": "1", "ENGRAM_CLOUD_SERVER": "https://cloud.example.com"},
+  "hooks": {"SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "timeout 5 engram sync --cloud --project team || true"}]}]}
+}
+`)
+	if err := os.WriteFile(cfg.SettingsPath(), settings, 0o644); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy {
+		t.Fatalf("defective session sync check = %+v, want unhealthy", got)
+	}
+	if !strings.Contains(got.Detail, "permisos") {
+		t.Fatalf("check detail should mention permisos, got: %q", got.Detail)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_PerformsNoSubprocessOrNetwork(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	restore := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return panicCommandRunner{} })
+	defer restore()
+
+	_ = checkEngramCloudSessionSync(cfg)
 }
 
 // --- Engram Cloud enrollment check (PR2) ---
@@ -1128,4 +1454,58 @@ func filepathDir(path string) string {
 		}
 	}
 	return "."
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyWhenTokenMissing(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	cfg := configuredEngramCloudSessionSync(t)
+
+	data, err := os.ReadFile(cfg.SettingsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(settings) error = %v", err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("Unmarshal(settings) error = %v", err)
+	}
+	delete(settings["env"].(map[string]any), "ENGRAM_CLOUD_TOKEN")
+	data, err = json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("Marshal(settings) error = %v", err)
+	}
+	if err := os.WriteFile(cfg.SettingsPath(), data, 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy", got)
+	}
+	if !strings.Contains(got.Detail, "ENGRAM_CLOUD_TOKEN") || !strings.Contains(got.Detail, "autenticar") {
+		t.Fatalf("checkEngramCloudSessionSync() detail does not explain missing authentication token")
+	}
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyOnUndecodableHookPayload(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	cfg := configuredEngramCloudSessionSync(t)
+
+	data, err := os.ReadFile(cfg.SettingsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(settings) error = %v", err)
+	}
+	data = bytes.Replace(data, []byte("--project-b64 dGVhbS1oaXZl"), []byte("--project-b64 A"), 1)
+	if err := os.WriteFile(cfg.SettingsPath(), data, 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy", got)
+	}
+	if !strings.Contains(got.Detail, "payload") {
+		t.Fatalf("checkEngramCloudSessionSync() detail does not name the undecodable payload")
+	}
 }

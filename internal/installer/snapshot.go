@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -213,25 +214,240 @@ func SnapshotRun(cfg Config) error {
 }
 
 func SnapshotTargetPlan(cfg Config, plan TargetPlan) error {
+	_, err := SnapshotTargetPlanWithWarnings(cfg, plan)
+	return err
+}
+
+// SnapshotTargetPlanWithWarnings snapshots a target plan and reports entries skipped because their
+// malformed settings document cannot be safely redacted. The rest of the plan remains protected.
+func SnapshotTargetPlanWithWarnings(cfg Config, plan TargetPlan) ([]string, error) {
 	sources := make([]snapshotSource, 0, len(plan.SnapshotPaths()))
 	for i, decl := range plan.SnapshotSpecs() {
 		sources = append(sources, snapshotSource{originalPath: decl.Path, backupFile: fmt.Sprintf("plan-%03d%s", i+1, filepath.Ext(decl.Path)), policy: decl.Policy})
 	}
-	return snapshotRunWithSources(cfg, sources)
+	return snapshotRunWithSourcesWithWarnings(cfg, sources)
+}
+
+// redactEngramCloudToken removes the value of env.ENGRAM_CLOUD_TOKEN from settings.json
+// backups, replacing it with a redacted placeholder.
+//
+// IMPORTANT: Rollback cannot restore a prior token because this redaction permanently
+// removes the token value from the backup. The next install/update must re-consent
+// or receive the token externally (NFR-6, DD-7 consequence acknowledgement).
+//
+// This ensures that if a developer syncs their ~/.claude directory into a dotfiles repo
+// or backup, they won't leak the token.
+//
+// Byte-fidelity contract: when ENGRAM_CLOUD_TOKEN IS present, this function performs
+// byte-level redaction of only its value, preserving every other byte exactly as-is (no
+// reformatting, no reordering, no added or removed whitespace) — this preserves the snapshot
+// subsystem's byte-for-byte backup fidelity contract. When no token is present, the input is
+// returned unchanged. Returns an error when the token is present but its extent cannot be
+// determined with confidence (genuinely malformed input), allowing the caller to fail closed.
+func redactEngramCloudToken(data []byte) ([]byte, error) {
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("malformed JSON settings document")
+	}
+	ranges, err := findEngramCloudTokenValueRanges(data)
+	if err != nil || len(ranges) == 0 {
+		return data, err
+	}
+	result := make([]byte, 0, len(data))
+	last := 0
+	for _, r := range ranges {
+		result = append(result, data[last:r.start]...)
+		result = append(result, `"[REDACTED]"`...)
+		last = r.end
+	}
+	return append(result, data[last:]...), nil
+}
+
+type jsonByteRange struct{ start, end int }
+
+func findEngramCloudTokenValueRanges(data []byte) ([]jsonByteRange, error) {
+	p := jsonTokenRangeParser{data: data}
+	if _, err := p.value(); err != nil {
+		return nil, err
+	}
+	return p.ranges, nil
+}
+
+type jsonTokenRangeParser struct {
+	data   []byte
+	pos    int
+	ranges []jsonByteRange
+	// path tracks the exact JSON keys at each level (its length IS the depth — there is no
+	// separate depth counter). For example:
+	// {"env":{"ENGRAM_CLOUD_TOKEN":"x"}} would have path=["env","ENGRAM_CLOUD_TOKEN"] (len 2)
+	// {"plugin":{"env":{"ENGRAM_CLOUD_TOKEN":"x"}}} would have path=["plugin","env","ENGRAM_CLOUD_TOKEN"] (len 3)
+	path []string
+}
+
+func (p *jsonTokenRangeParser) value() (jsonByteRange, error) {
+	p.ws()
+	start := p.pos
+	if start >= len(p.data) {
+		return jsonByteRange{}, fmt.Errorf("missing JSON value")
+	}
+	switch p.data[p.pos] {
+	case '{':
+		return p.object()
+	case '[':
+		return p.array()
+	case '"':
+		return p.string()
+	default:
+		for p.pos < len(p.data) && !bytes.ContainsRune([]byte(" \t\r\n,]}"), rune(p.data[p.pos])) {
+			p.pos++
+		}
+		if p.pos == start {
+			return jsonByteRange{}, fmt.Errorf("invalid JSON value")
+		}
+		return jsonByteRange{start, p.pos}, nil
+	}
+}
+
+func (p *jsonTokenRangeParser) object() (jsonByteRange, error) {
+	start := p.pos
+	p.pos++
+	p.ws()
+	if p.pos < len(p.data) && p.data[p.pos] == '}' {
+		p.pos++
+		return jsonByteRange{start, p.pos}, nil
+	}
+	for {
+		p.ws()
+		kr, err := p.string()
+		if err != nil {
+			return jsonByteRange{}, err
+		}
+		var key string
+		if err := json.Unmarshal(p.data[kr.start:kr.end], &key); err != nil {
+			return jsonByteRange{}, err
+		}
+
+		// Push this key onto the path stack
+		p.path = append(p.path, key)
+
+		p.ws()
+		if p.pos >= len(p.data) || p.data[p.pos] != ':' {
+			return jsonByteRange{}, fmt.Errorf("missing colon after object key")
+		}
+		p.pos++
+		vr, err := p.value()
+		if err != nil {
+			return jsonByteRange{}, err
+		}
+
+		// REDACTION: Only redact when the exact path is ["env", "ENGRAM_CLOUD_TOKEN"]
+		// This matches the DD-7 design specification: redact ONLY the top-level env.ENGRAM_CLOUD_TOKEN
+		// path, not any nested occurrence of ENGRAM_CLOUD_TOKEN inside foreign objects.
+		//
+		// The path length check ensures we're at depth 2 (top level is depth 1, env is depth 2)
+		// Path[0] == "env" ensures we're inside the top-level env object
+		// Path[1] == "ENGRAM_CLOUD_TOKEN" ensures we're processing the exact key to redact
+		if len(p.path) == 2 && p.path[0] == "env" && p.path[1] == "ENGRAM_CLOUD_TOKEN" {
+			if p.data[vr.start] != '"' {
+				return jsonByteRange{}, fmt.Errorf("ENGRAM_CLOUD_TOKEN value is not a string")
+			}
+			p.ranges = append(p.ranges, vr)
+		}
+
+		// Pop the key from the path after processing this key-value pair
+		if len(p.path) > 0 {
+			p.path = p.path[:len(p.path)-1]
+		}
+
+		p.ws()
+		if p.pos >= len(p.data) {
+			return jsonByteRange{}, fmt.Errorf("unterminated object")
+		}
+		if p.data[p.pos] == '}' {
+			p.pos++
+			return jsonByteRange{start, p.pos}, nil
+		}
+		if p.data[p.pos] != ',' {
+			return jsonByteRange{}, fmt.Errorf("missing object delimiter")
+		}
+		p.pos++
+	}
+}
+
+func (p *jsonTokenRangeParser) array() (jsonByteRange, error) {
+	start := p.pos
+	p.pos++
+	p.ws()
+	if p.pos < len(p.data) && p.data[p.pos] == ']' {
+		p.pos++
+		return jsonByteRange{start, p.pos}, nil
+	}
+	for {
+		if _, err := p.value(); err != nil {
+			return jsonByteRange{}, err
+		}
+		p.ws()
+		if p.pos >= len(p.data) {
+			return jsonByteRange{}, fmt.Errorf("unterminated array")
+		}
+		if p.data[p.pos] == ']' {
+			p.pos++
+			return jsonByteRange{start, p.pos}, nil
+		}
+		if p.data[p.pos] != ',' {
+			return jsonByteRange{}, fmt.Errorf("missing array delimiter")
+		}
+		p.pos++
+	}
+}
+
+func (p *jsonTokenRangeParser) string() (jsonByteRange, error) {
+	start := p.pos
+	if p.pos >= len(p.data) || p.data[p.pos] != '"' {
+		return jsonByteRange{}, fmt.Errorf("expected JSON string")
+	}
+	p.pos++
+	escaped := false
+	for p.pos < len(p.data) {
+		c := p.data[p.pos]
+		p.pos++
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			return jsonByteRange{start, p.pos}, nil
+		}
+	}
+	return jsonByteRange{}, fmt.Errorf("unterminated JSON string")
+}
+
+func (p *jsonTokenRangeParser) ws() {
+	for p.pos < len(p.data) && bytes.ContainsRune([]byte(" \t\r\n"), rune(p.data[p.pos])) {
+		p.pos++
+	}
 }
 
 func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
+	_, err := snapshotRunWithSourcesWithWarnings(cfg, sources)
+	return err
+}
+
+func snapshotRunWithSourcesWithWarnings(cfg Config, sources []snapshotSource) ([]string, error) {
 	backupDir := cfg.BackupDir()
 	if backupDir == "" {
-		return fmt.Errorf("installer: cannot snapshot: no click state home configured")
+		return nil, fmt.Errorf("installer: cannot snapshot: no click state home configured")
 	}
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
-		return fmt.Errorf("installer: create backup dir %s: %w", backupDir, err)
+		return nil, fmt.Errorf("installer: create backup dir %s: %w", backupDir, err)
 	}
 
 	tmpDir, err := os.MkdirTemp(backupDir, ".latest-tmp-*")
 	if err != nil {
-		return fmt.Errorf("installer: create temporary snapshot dir: %w", err)
+		return nil, fmt.Errorf("installer: create temporary snapshot dir: %w", err)
 	}
 	swapped := false
 	defer func() {
@@ -244,6 +460,7 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 	}()
 
 	manifest := runManifest{}
+	warnings := []string{}
 	for _, src := range sources {
 		data, readErr := os.ReadFile(src.originalPath)
 		if readErr != nil {
@@ -256,12 +473,27 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 				})
 				continue
 			}
-			return fmt.Errorf("installer: read %s for snapshot: %w", src.originalPath, readErr)
+			return nil, fmt.Errorf("installer: read %s for snapshot: %w", src.originalPath, readErr)
+		}
+
+		// Redact env.ENGRAM_CLOUD_TOKEN from settings.json backups (NFR-6)
+		if filepath.Base(src.originalPath) == "settings.json" {
+			redacted, err := redactEngramCloudToken(data)
+			if err != nil {
+				// Fail closed: if we can't redact safely, don't write the backup
+				// A missing backup is recoverable; a leaked credential is not
+				if !json.Valid(data) {
+					warnings = append(warnings, src.originalPath)
+					continue
+				}
+				return nil, fmt.Errorf("installer: redact token from %s: %w", src.originalPath, err)
+			}
+			data = redacted
 		}
 
 		backupPath := filepath.Join(tmpDir, src.backupFile)
 		if writeErr := atomicWriteFile(backupPath, data, 0o600); writeErr != nil {
-			return fmt.Errorf("installer: write snapshot backup for %s: %w", src.originalPath, writeErr)
+			return nil, fmt.Errorf("installer: write snapshot backup for %s: %w", src.originalPath, writeErr)
 		}
 		manifest.Entries = append(manifest.Entries, manifestEntry{
 			OriginalPath: src.originalPath,
@@ -273,11 +505,11 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return fmt.Errorf("installer: marshal snapshot manifest: %w", err)
+		return nil, fmt.Errorf("installer: marshal snapshot manifest: %w", err)
 	}
 	manifestData = append(manifestData, '\n')
 	if err := atomicWriteFile(filepath.Join(tmpDir, snapshotManifestName), manifestData, 0o600); err != nil {
-		return fmt.Errorf("installer: write snapshot manifest: %w", err)
+		return nil, fmt.Errorf("installer: write snapshot manifest: %w", err)
 	}
 
 	// Every file copy and the manifest itself are now safely on disk under tmpDir. Only now do we
@@ -285,13 +517,13 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 	// affected, and it only runs after full success above.
 	latestDir := snapshotLatestDir(cfg)
 	if err := os.RemoveAll(latestDir); err != nil {
-		return fmt.Errorf("installer: remove previous snapshot %s: %w", latestDir, err)
+		return nil, fmt.Errorf("installer: remove previous snapshot %s: %w", latestDir, err)
 	}
 	if err := os.Rename(tmpDir, latestDir); err != nil {
-		return fmt.Errorf("installer: activate new snapshot at %s: %w", latestDir, err)
+		return nil, fmt.Errorf("installer: activate new snapshot at %s: %w", latestDir, err)
 	}
 	swapped = true
-	return nil
+	return warnings, nil
 }
 
 // RestoreRun restores every snapshotted file to its last run-start snapshot (spec Requirement:

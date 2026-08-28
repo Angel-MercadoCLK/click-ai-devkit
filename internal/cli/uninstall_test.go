@@ -162,6 +162,34 @@ func TestUninstallCommand_ContinuesEveryStepAfterAnEarlierOneFails(t *testing.T)
 	}
 }
 
+func TestUninstall_SessionSyncRemovalOfflineAndResilient(t *testing.T) {
+	home := t.TempDir()
+	stateHome := t.TempDir()
+	if err := installer.SaveTargetSelection(installer.Config{ClaudeHome: home, ClickStateHome: stateHome}, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	restoreRemove := SetRemoveEngramCloudSessionSyncFuncForTests(func(installer.Config) error {
+		return errors.New("settings unavailable")
+	})
+	defer restoreRemove()
+
+	out, err := execRootWithLookupAndState(t, home, stateHome, cliFakeBinaryLookup{resolved: map[string]string{"claude": "/usr/bin/claude", "git": "/usr/bin/git"}}, "uninstall")
+	if err == nil {
+		t.Fatal("uninstall error = nil, want session-sync removal failure in outcome summary")
+	}
+	if !strings.Contains(out, "settings unavailable") {
+		t.Fatalf("uninstall output = %q, want session-sync removal failure", out)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "engram") {
+			t.Fatalf("uninstall invoked Engram command %q, want offline removal", command)
+		}
+	}
+}
+
 // TestUninstallCommand_ClaudeMissing_StillRunsEveryStepAndReportsFriendlyMessage is Finding 2(a)'s
 // regression test: unlike install.go/update.go (which abort BEFORE issuing any command when claude
 // is missing), `click uninstall` must still run every cleanup step when claude is missing — and the
@@ -425,7 +453,7 @@ func TestUninstallCommand_RemovesModelsAndEngramCloudState(t *testing.T) {
 // never enrolled in Engram Cloud has no engram-cloud.json, so the cloud teardown step must not even
 // be listed — while models.json is still removed. This pins the presence-based gate: uninstall must
 // NOT key the cloud step off EngramCloudConfigured, which needs ENGRAM_CLOUD_TOKEN still exported.
-func TestUninstallCommand_NoEngramCloudEnrollment_SkipsCloudTeardown(t *testing.T) {
+func TestUninstallCommand_NoEngramCloudEnrollment_RemovesSessionSync(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 
@@ -449,8 +477,8 @@ func TestUninstallCommand_NoEngramCloudEnrollment_SkipsCloudTeardown(t *testing.
 	if _, statErr := os.Stat(cfg.ModelsPath()); !os.IsNotExist(statErr) {
 		t.Fatalf("Stat(models.json) error = %v, want models.json removed even with no cloud enrollment", statErr)
 	}
-	if strings.Contains(out, "Engram Cloud") {
-		t.Fatalf("uninstall output = %q, want no Engram Cloud teardown step when no enrollment record exists", out)
+	if !strings.Contains(out, "Sincroniz") {
+		t.Fatalf("uninstall output = %q, want session-sync removal even with no enrollment record", out)
 	}
 }
 

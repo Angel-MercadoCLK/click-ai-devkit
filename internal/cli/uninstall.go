@@ -22,6 +22,14 @@ import (
 // PATH mutation happen in its own tests (see seedResolvableEngram's doc comment).
 var removeEngramPluginFunc = installer.RemoveEngramPlugin
 
+var removeEngramCloudSessionSyncFunc = installer.RemoveEngramCloudSessionSync
+
+func SetRemoveEngramCloudSessionSyncFuncForTests(fn func(installer.Config) error) func() {
+	old := removeEngramCloudSessionSyncFunc
+	removeEngramCloudSessionSyncFunc = fn
+	return func() { removeEngramCloudSessionSyncFunc = old }
+}
+
 // SetRemoveEngramPluginFuncForTests overrides removeEngramPluginFunc for tests and returns a
 // restore function.
 func SetRemoveEngramPluginFuncForTests(fn func(installer.Config) (string, error)) func() {
@@ -160,12 +168,12 @@ func runUninstall(cmd *cobra.Command) error {
 			return err
 		}
 	}
-	// CloudConfigured is resolved from the enrollment record ON DISK, not from
+	// CloudResolvable is resolved from the enrollment record ON DISK, not from
 	// installer.EngramCloudConfigured like install/update do. That helper requires ENGRAM_CLOUD_TOKEN
 	// to still be exported, which a developer tearing down their setup has almost never kept — keying
 	// the teardown off it would drop the engram-cloud step from the plan and orphan engram-cloud.json
 	// on exactly the machines that have one. Presence of the record is the accurate teardown signal.
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: installer.EngramCloudStatePresent(cfg)})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: installer.EngramCloudStatePresent(cfg)})
 	if err := installer.SnapshotTargetPlan(cfg, plan); err != nil {
 		return err
 	}
@@ -257,6 +265,10 @@ func runUninstall(cmd *cobra.Command) error {
 		case installer.StepActionRemoveModels:
 			runStep("modelos por fase", "Quitando modelos por fase de click-sdd…", "Modelos por fase eliminados", false, func() error {
 				return installer.RemoveModels(cfg)
+			})
+		case installer.StepActionRemoveEngramCloudSessionSync:
+			runStep("sincronización de sesión de Engram Cloud", "Quitando sincronización de sesión de Engram Cloud…", "Sincronización de sesión de Engram Cloud eliminada", false, func() error {
+				return removeEngramCloudSessionSyncFunc(cfg)
 			})
 		case installer.StepActionRemoveEngramCloudState:
 			// Offline by design (see RemoveEngramCloudState): this deletes click's own local enrollment

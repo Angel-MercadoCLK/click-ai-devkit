@@ -182,6 +182,15 @@ func (c Config) EngramCloudStatePath() string {
 	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "engram-cloud.json")
 }
 
+// EngramCloudImportOutcomePath stores the last non-secret result from the managed
+// SessionStart import hook. Like the enrollment state, it is Click-owned bookkeeping.
+func (c Config) EngramCloudImportOutcomePath() string {
+	if c.ClaudeHome == "" {
+		return ""
+	}
+	return filepath.Join(c.ClaudeHome, "click-ai-devkit", "engram-cloud-import-outcome.json")
+}
+
 // ModelsPath stores the per-phase click-sdd model selection (D25) so `click update` can re-apply
 // the same choices and `click doctor` can report them.
 func (c Config) ModelsPath() string {

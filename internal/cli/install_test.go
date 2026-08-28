@@ -1,11 +1,18 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
+	"github.com/spf13/cobra"
 )
 
 // TestInstallCommand_CloudConfigured_RunsCloudStepAfterEngram is task 4.3's RED test: when cloud
@@ -41,6 +48,30 @@ func TestInstallCommand_CloudConfigured_RunsCloudStepAfterEngram(t *testing.T) {
 	}
 	if !strings.Contains(out, "Engram Cloud enrolado") {
 		t.Fatalf("install output = %q, want it to contain the Engram Cloud success label", out)
+	}
+}
+
+func TestInstall_MalformedSettingsDoesNotAbortRun(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte("{not valid json"), 0o600); err != nil {
+		t.Fatalf("seed malformed settings.json: %v", err)
+	}
+
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableEngram(t)
+
+	out, err := execRoot(t, home, "install")
+	if err != nil {
+		t.Fatalf("install command error = %v, want nil; output:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Se omitió el respaldo de settings.json") || !strings.Contains(out, settingsPath) {
+		t.Fatalf("install output = %q, want malformed-settings backup warning naming %q", out, settingsPath)
+	}
+	if !strings.Contains(out, "CLAUDE.md actualizado") {
+		t.Fatalf("install output = %q, want a later configured step to run", out)
 	}
 }
 
@@ -160,6 +191,143 @@ type cloudError struct{ msg string }
 
 func (e *cloudError) Error() string { return e.msg }
 
+// TestInstall_ConfigureFailureWarnsAndContinues is task 5.15's RED test: a failing
+// configureEngramCloudSessionSyncFunc must leave install exiting 0 with a Spanish warning (ECS-10.1,
+// ECS-10.2), and a recording order assertion shows configure runs before enrollment (DD-4 ordering).
+// It covers both the CloudResolvable-without-token dispatch path (the env block and hook must still
+// be written so a later token export activates everything — the whole point of the rename) and the
+// persisted-token path (configure before enroll).
+func TestInstall_ConfigureFailureWarnsAndContinues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	seedResolvableGit(t)
+
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	configureCalls := 0
+	restoreConfigure := installer.SetConfigureEngramCloudSessionSyncFuncForTests(func(cfg installer.Config, m *manifest.Manifest, mode installer.CloudTokenPersistence, token string) error {
+		configureCalls++
+		return errTestCloudSettings
+	})
+	defer restoreConfigure()
+
+	cloudCalls := 0
+	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+		cloudCalls++
+		return nil
+	})
+	defer restoreCloud()
+
+	t.Run("token-absent-still-writes-session-sync-via-dispatch", func(t *testing.T) {
+		configureCalls = 0
+		cloudCalls = 0
+		t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+		t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+		// ENGRAM_CLOUD_TOKEN intentionally absent.
+		root := NewRootCommand()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetIn(&bytes.Buffer{})
+		root.SetArgs([]string{"install"})
+
+		if err := root.Execute(); err != nil {
+			t.Fatalf("install command error = %v, want nil (cloud settings failure must be non-fatal), output:\n%s", err, out.String())
+		}
+		if configureCalls != 1 {
+			t.Fatalf("ConfigureEngramCloudSessionSync called %d times, want 1 (CloudResolvable without token must still write env block and hook)", configureCalls)
+		}
+		if !strings.Contains(out.String(), errTestCloudSettings.Error()) {
+			t.Fatalf("install output = %q, want the warning to include the underlying error %q", out.String(), errTestCloudSettings.Error())
+		}
+		if !strings.Contains(out.String(), "Instalación completa.") {
+			t.Fatalf("install output = %q, want the command to continue to completion after the configure failure", out.String())
+		}
+	})
+
+	t.Run("persist-order-configure-before-enrollment", func(t *testing.T) {
+		configureCalls = 0
+		cloudCalls = 0
+		t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+		t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+		t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+
+		var order []string
+		restoreConfigure2 := installer.SetConfigureEngramCloudSessionSyncFuncForTests(func(cfg installer.Config, m *manifest.Manifest, mode installer.CloudTokenPersistence, token string) error {
+			configureCalls++
+			order = append(order, "configure")
+			return errTestCloudSettings
+		})
+		defer restoreConfigure2()
+		restoreCloud2 := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+			cloudCalls++
+			order = append(order, "enrollment")
+			return nil
+		})
+		defer restoreCloud2()
+
+		root := NewRootCommand()
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetIn(&bytes.Buffer{})
+		root.SetArgs([]string{"install", "--" + persistEngramCloudTokenFlag})
+
+		if err := root.Execute(); err != nil {
+			t.Fatalf("install command error = %v, want nil (cloud settings failure must be non-fatal)", err)
+		}
+		if len(order) != 2 || order[0] != "configure" || order[1] != "enrollment" {
+			t.Fatalf("recorded order = %v, want [configure enrollment]", order)
+		}
+		if configureCalls != 1 {
+			t.Fatalf("ConfigureEngramCloudSessionSync called %d times, want exactly 1", configureCalls)
+		}
+		if !strings.Contains(out.String(), "No se pudo configurar Engram Cloud Session Sync") {
+			t.Fatalf("install output missing the Spanish cloud-settings warning")
+		}
+	})
+}
+
+var errTestCloudSettings = &cloudSettingsError{msg: "cloud settings write failed"}
+
+type cloudSettingsError struct{ msg string }
+
+func (e *cloudSettingsError) Error() string { return e.msg }
+
+// TestInstall_EnrollmentRunnerFailureStillExitZero is task 5.17's ECS-10.7 proof: an Engram Cloud
+// enrollment runner error leaves install exiting 0 with the Spanish warning and the local install
+// complete. The dedicated opt-in authorizes the enrollment to run (DD-3).
+func TestInstall_EnrollmentRunnerFailureStillExitZero(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableEngram(t)
+
+	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+		return errTestEngramCloud
+	})
+	defer restoreCloud()
+
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "cloud-token")
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+
+	out, err := execRoot(t, home, "install", "--"+persistEngramCloudTokenFlag)
+	if err != nil {
+		t.Fatalf("install command error = %v, want nil (enrollment runner failure must be non-fatal), output:\n%s", err, out)
+	}
+	if !strings.Contains(out, "No se pudo sincronizar Engram Cloud") {
+		t.Fatalf("install output = %q, want it to contain the Spanish enrollment-failure warning", out)
+	}
+	if !strings.Contains(out, "Instalación completa.") {
+		t.Fatalf("install output = %q, want the command to continue to completion after the enrollment failure", out)
+	}
+}
+
 // TestInstallCommand_CodexMCPFailureIsNonFatal is FIX 2's non-fatal contract, mirroring
 // TestInstallCommand_CloudConfigured_EnrollmentFailureIsNonFatal for Codex's Engram MCP
 // registration (D45 "supplementary integrations are non-fatal" pattern): a failure registering
@@ -210,3 +378,381 @@ var errTestCodexMCP = &codexMCPError{msg: "codex mcp add failed"}
 type codexMCPError struct{ msg string }
 
 func (e *codexMCPError) Error() string { return e.msg }
+
+func TestInstall_SharedReaderConsentBeforeTokenWrite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token-for-consent-ordering")
+	seedResolvableEngram(t)
+	restoreLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return cliFakeBinaryLookup{resolved: map[string]string{"claude": "/usr/bin/claude", "git": "/usr/bin/git"}}
+	})
+	defer restoreLookup()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	forceTerminalDetection(t, true, true)
+	previousTargetSelector := runInstallTargetSelectTUI
+	runInstallTargetSelectTUI = func(_ *cobra.Command, _ bool, _ bool, _ bool, selection installer.TargetSelection) (installer.TargetSelection, bool, error) {
+		return selection, false, nil
+	}
+	t.Cleanup(func() { runInstallTargetSelectTUI = previousTargetSelector })
+	previousModelSelector := runInstallSelectTUI
+	runInstallSelectTUI = func(_ *cobra.Command, _ modelconfig.ProfileName) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+		resolved := modelconfig.ResolveProfile("")
+		return resolved.Name, resolved.Models, false, nil
+	}
+	t.Cleanup(func() { runInstallSelectTUI = previousModelSelector })
+
+	consentCalled := false
+	restoreConsent := SetReadCloudTokenConsentFuncForTests(func(reader *bufio.Reader) (bool, error) {
+		consentCalled = true
+
+		settingsPath := filepath.Join(home, "settings.json")
+		settings, err := os.ReadFile(settingsPath)
+		if err != nil && !os.IsNotExist(err) {
+			return false, err
+		}
+
+		if bytes.Contains(settings, []byte("ENGRAM_CLOUD_TOKEN")) {
+			t.Fatal("settings.json contained the token before affirmative consent was read")
+		}
+
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return false, err
+		}
+		return strings.EqualFold(strings.TrimSpace(line), "y"), nil
+	})
+	defer restoreConsent()
+
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(strings.NewReader("y\ny\n"))
+	root.SetArgs([]string{"install"})
+	if err := root.Execute(); err != nil {
+		// SECURITY (DD-7): Do NOT interpolate out.String() in the failure message.
+		// If a regression causes this test to fail and out contains the token,
+		// printing it would leak the secret into CI logs.
+		t.Fatalf("install command failed unexpectedly; see test setup for expected consent flow")
+	}
+	if !consentCalled {
+		t.Fatal("consent reader was not called by runInstall")
+	}
+
+	settingsPath := filepath.Join(home, "settings.json")
+	settings, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("ReadFile(settings.json) error = %v", err)
+	}
+
+	var settingsJSON map[string]any
+	if err := json.Unmarshal(settings, &settingsJSON); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
+	}
+
+	env, ok := settingsJSON["env"].(map[string]any)
+	if !ok {
+		t.Fatal("settings[\"env\"] not present or not a map")
+	}
+
+	if _, hasToken := env["ENGRAM_CLOUD_TOKEN"]; !hasToken {
+		t.Fatal("settings.json did not contain ENGRAM_CLOUD_TOKEN after affirmative consent")
+	}
+}
+
+func TestInstall_ManifestOnlyConfigPersistsTokenWithFlag(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "")
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+	seedResolvableGit(t)
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+	m.EngramCloud.Server, m.EngramCloud.Project = "https://cloud.example.com", "team-hive"
+	t.Cleanup(manifest.SetManifestForTests(*m))
+
+	root := NewRootCommand()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"install", "--persist-engram-cloud-token"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("install error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "settings.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(settings.json) error = %v", err)
+	}
+	if !bytes.Contains(data, []byte("ENGRAM_CLOUD_TOKEN")) {
+		t.Fatal("settings.json did not contain persisted token")
+	}
+}
+
+// TestInstall_DeclinedPersistenceStillEnrolls is the slice-5 correction's RED test: D40 enrollment
+// and token persistence are independent concerns. When server, project and ENGRAM_CLOUD_TOKEN are all
+// present in the environment and token persistence is DECLINED (non-interactive, no
+// --persist-engram-cloud-token), SyncEngramCloud must still run exactly once — the token is right
+// there in the process environment for the engram subprocess to inherit — while
+// ConfigureEngramCloudSessionSync receives CloudTokenPersistenceDecline so the token is never written
+// to settings.json. The process exits 0.
+func TestInstall_DeclinedPersistenceStillEnrolls(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	seedResolvableGit(t)
+
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	configureModes := []installer.CloudTokenPersistence{}
+	restoreConfigure := installer.SetConfigureEngramCloudSessionSyncFuncForTests(func(cfg installer.Config, m *manifest.Manifest, mode installer.CloudTokenPersistence, token string) error {
+		configureModes = append(configureModes, mode)
+		return nil
+	})
+	defer restoreConfigure()
+
+	cloudCalls := 0
+	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+		cloudCalls++
+		return nil
+	})
+	defer restoreCloud()
+
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"install"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("install command error = %v, want nil (declined persistence still exits 0)", err)
+	}
+
+	if cloudCalls != 1 {
+		t.Fatalf("SyncEngramCloud called %d times, want 1 (D40 enrollment must run with the token present in the environment, even when persistence is declined)", cloudCalls)
+	}
+	if len(configureModes) != 1 {
+		t.Fatalf("ConfigureEngramCloudSessionSync called %d times, want 1", len(configureModes))
+	}
+	if configureModes[0] != installer.CloudTokenPersistenceDecline {
+		t.Fatalf("ConfigureEngramCloudSessionSync mode = %v, want CloudTokenPersistenceDecline", configureModes[0])
+	}
+	if !strings.Contains(out.String(), "Instalación completa.") {
+		t.Fatalf("install output missing the completion message")
+	}
+}
+
+// TestInstall_EnvOverridesWriteEnvBlockAndHook is the F1 regression guard: when CLICK_ENGRAM_CLOUD_SERVER,
+// CLICK_ENGRAM_CLOUD_PROJECT and ENGRAM_CLOUD_TOKEN are set via environment overrides with an empty manifest,
+// and consent is given, the real settings file on disk must contain the env block with all three keys and the
+// managed SessionStart hook with the resolved project. This test does NOT mock ConfigureEngramCloudSessionSync.
+func TestInstall_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableEngram(t)
+	seedResolvableGit(t)
+
+	// Set env overrides - the manifest is deliberately empty
+	serverOverride := "http://127.0.0.1:18080"
+	projectOverride := "click-ai-devkit"
+	tokenOverride := "consented-token-123"
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
+	t.Setenv("ENGRAM_CLOUD_TOKEN", tokenOverride)
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
+
+	// Run install with --persist-engram-cloud-token to give consent
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"install", "--persist-engram-cloud-token"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("install command error = %v, output:\n%s", err, out.String())
+	}
+
+	// Read the actual settings.json file on disk
+	settingsPath := filepath.Join(home, "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
+	}
+
+	// Assert the env block exists with all three keys
+	env, ok := settings["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings[\"env\"] not present or not a map")
+	}
+
+	// Check ENGRAM_CLOUD_AUTOSYNC
+	if got, want := env["ENGRAM_CLOUD_AUTOSYNC"], "1"; got != want {
+		t.Fatalf("env[\"ENGRAM_CLOUD_AUTOSYNC\"] = %v, want %q", got, want)
+	}
+
+	// Check ENGRAM_CLOUD_SERVER (must use override, not empty manifest)
+	if got := env["ENGRAM_CLOUD_SERVER"]; got != serverOverride {
+		t.Fatalf("env[\"ENGRAM_CLOUD_SERVER\"] = %v, want %q (from override, not manifest)", got, serverOverride)
+	}
+
+	// Check ENGRAM_CLOUD_TOKEN (persisted via consent)
+	if got := env["ENGRAM_CLOUD_TOKEN"]; got != tokenOverride {
+		t.Fatal("persisted cloud token does not match the supplied token")
+	}
+
+	// Assert the managed SessionStart hook exists
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings[\"hooks\"] not present or not a map")
+	}
+
+	sessionStart, ok := hooks["SessionStart"].([]any)
+	if !ok {
+		t.Fatalf("hooks[\"SessionStart\"] not present or not an array")
+	}
+
+	// Find the managed hook entry (matcher "" with our command)
+	foundManagedHook := false
+	for _, rawEntry := range sessionStart {
+		entry, ok := rawEntry.(map[string]any)
+		if !ok {
+			continue
+		}
+		matcher, _ := entry["matcher"].(string)
+		if matcher != "" {
+			continue
+		}
+		entryHooks, _ := entry["hooks"].([]any)
+		for _, rawHook := range entryHooks {
+			hook, ok := rawHook.(map[string]any)
+			if !ok {
+				continue
+			}
+			hookType, _ := hook["type"].(string)
+			if hookType != "command" {
+				continue
+			}
+			command, _ := hook["command"].(string)
+			// Use the installer's hook validation function
+			if installer.IsManagedEngramCloudHookCommand(command) {
+				foundManagedHook = true
+				break
+			}
+		}
+		if foundManagedHook {
+			break
+		}
+	}
+
+	if !foundManagedHook {
+		t.Fatalf("managed SessionStart hook not found in settings.json")
+	}
+}
+
+// TestInstall_NonInteractiveDoesNotPrintConsentPrompt validates that when --yes is passed,
+// the consent prompt is NOT printed to output, even when cloud server/project/token are all present.
+// This is F7: emitConsentPrompt was called before the noninteractive check, causing the prompt
+// to appear in non-interactive runs (CI, scripts, --yes, --non-interactive, non-TTY).
+func TestInstall_NonInteractiveDoesNotPrintConsentPrompt(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableEngram(t)
+
+	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+		return nil
+	})
+	defer restoreCloud()
+
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+
+	out, err := execRoot(t, home, "install", "--yes")
+	if err != nil {
+		t.Fatalf("install --yes error = %v, output:\n%s", err, out)
+	}
+
+	if strings.Contains(out, consentPrompt) {
+		t.Fatalf("install --yes output contains consent prompt when it should not: %q", out)
+	}
+}
+
+// TestInstall_PersistFlagDoesNotPrintConsentPrompt validates that when --persist-engram-cloud-token
+// is passed, the consent prompt is NOT printed, but the token IS persisted to settings.json.
+// This is F7: the persist flag should bypass prompting entirely, not print the prompt and ignore it.
+func TestInstall_PersistFlagDoesNotPrintConsentPrompt(t *testing.T) {
+	home := t.TempDir()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableEngram(t)
+
+	restoreCloud := SetSyncEngramCloudFuncForTests(func(cfg installer.Config, m *manifest.Manifest) error {
+		return nil
+	})
+	defer restoreCloud()
+
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+
+	out, err := execRoot(t, home, "install", "--"+persistEngramCloudTokenFlag)
+	if err != nil {
+		t.Fatalf("install --persist-engram-cloud-token error = %v, output:\n%s", err, out)
+	}
+
+	if strings.Contains(out, consentPrompt) {
+		t.Fatalf("install --persist-engram-cloud-token output contains consent prompt when it should not: %q", out)
+	}
+
+	settingsPath := filepath.Join(home, "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
+	}
+
+	env, ok := settings["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings[\"env\"] not present or not a map")
+	}
+
+	if got := env["ENGRAM_CLOUD_TOKEN"]; got != "test-token" {
+		t.Fatal("cloud token should be persisted with persist flag")
+	}
+}

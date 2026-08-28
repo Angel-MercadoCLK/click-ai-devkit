@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
@@ -27,6 +28,7 @@ func newUpdateCommand() *cobra.Command {
 	cmd.Flags().Bool(nonInteractiveFlag, false, "Alias de --yes")
 	cmd.Flags().Bool(skipOpenClawFlag, false, "Omitir la integración con OpenClaw aunque se detecte openclaw en este equipo")
 	cmd.Flags().String(codexModelFlag, "", "Referencia de modelo nativa de Codex, por ejemplo gpt-5.6")
+	cmd.Flags().Bool(persistEngramCloudTokenFlag, false, "Autorizar almacenamiento de ENGRAM_CLOUD_TOKEN en ~/.claude/settings.json con permisos 0600 (requiere consentimiento explícito)")
 	return cmd
 }
 
@@ -89,20 +91,45 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	cloudConfigured := installer.EngramCloudConfigured(cfg, m)
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudConfigured: cloudConfigured || installer.EngramCloudPartiallyConfigured(cfg, m), CodexNativeModel: codexNativeModel})
+	cloudResolvable := installer.EngramCloudConfigured(cfg, m) || installer.EngramCloudPartiallyConfigured(cfg, m)
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel})
 
 	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE MigrateIfStale/step 1 below (the first external `claude` subprocess
 	// invocation). A decline here means zero writes: nothing below this point has run yet.
-	proceed, err := confirmAndSnapshot(cmd, out, r, cfg, plan, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg, cloudConfigured, codexNativeModel))
+	proceed, sharedReader, err := confirmAndSnapshot(cmd, out, r, cfg, plan, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg, cloudResolvable, codexNativeModel))
 	if err != nil {
 		return err
 	}
 	if !proceed {
 		fmt.Fprintln(out, r.Info("Actualización cancelada."))
 		return nil
+	}
+
+	// Engram Cloud token persistence consent: if cloud server and project are resolvable
+	// and a token is available in the environment, prompt the user for consent to store the
+	// token in settings.json. The shared reader from confirmAndSnapshot is used so that the
+	// consent prompt consumes the next input in order.
+	persistFlag, _ := cmd.Flags().GetBool(persistEngramCloudTokenFlag)
+	token := os.Getenv("ENGRAM_CLOUD_TOKEN")
+	// persistenceMode distinguishes three states:
+	// - No process token → NoOp: never prompt, never write, never delete an existing stored token
+	// - Process token present, consent declined → Decline: do not write, remove any previously stored click-owned token
+	// - Process token present, consent given → Persist
+	persistenceMode := installer.CloudTokenPersistenceNoOp
+	if installer.EngramCloudConfigured(cfg, m) && token != "" {
+		// resolveCloudTokenPersistence is exhaustive (every branch returns Persist or Decline
+		// explicitly), so persistenceMode is fully determined by its return value alone — no
+		// intermediate default assignment is needed here.
+		var readErr error
+		persistenceMode, readErr = resolveCloudTokenPersistence(isNonInteractiveInstall(cmd, out), persistFlag, sharedReader, out)
+		if readErr != nil {
+			fmt.Fprintln(out, r.Warn(consentSkippedWarning))
+		}
+		if persistenceMode == installer.CloudTokenPersistenceDecline {
+			fmt.Fprintln(out, r.Warn(autosyncDisabledWarning))
+		}
 	}
 
 	// Arm deferred post-run snapshot recording (only when proceed=true)
@@ -189,6 +216,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				return err
 			} else if !resolvable {
 				fmt.Fprintln(out, r.Info(installer.EngramBinaryRemediationMessage(m.Engram.Version)))
+			}
+		case installer.StepActionConfigureEngramCloudSessionSync:
+			// Writes the click-owned env block and SessionStart hook. With a token the consent block
+			// above already resolved persistenceMode; without one (CloudResolvable) the env block and
+			// hook are still written so a later token export activates everything with no reinstall
+			// (DD-4). Non-fatal with a Spanish warning (ECS-10.1/10.2).
+			if configureErr := installer.ConfigureEngramCloudSessionSync(cfg, m, persistenceMode, token); configureErr != nil {
+				fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo configurar Engram Cloud Session Sync: %v. La actualización local continúa.", configureErr)))
 			}
 		case installer.StepActionSyncEngramCloud:
 			if installer.EngramCloudPartiallyConfigured(cfg, m) {

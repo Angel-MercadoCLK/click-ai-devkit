@@ -10,7 +10,7 @@ func TestBuildTargetPlan_TargetFirstOrderAndSharedProjections(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	selection := TargetSelection{Configured: true, Claude: true, Codex: true, OpenClaw: true}
 
-	plan := BuildTargetPlan(cfg, selection, PlanOptions{CloudConfigured: true})
+	plan := BuildTargetPlan(cfg, selection, PlanOptions{CloudResolvable: true})
 
 	if got, want := plan.Selection, selection; got != want {
 		t.Fatalf("Selection = %+v, want %+v", got, want)
@@ -168,12 +168,13 @@ func TestBuildTargetPlan_ClaudeExposesModelsAndCloudTeardown(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	selection := TargetSelection{Configured: true, Claude: true}
 
-	plan := BuildTargetPlan(cfg, selection, PlanOptions{CloudConfigured: true})
+	plan := BuildTargetPlan(cfg, selection, PlanOptions{CloudResolvable: true})
 
 	want := []StepActionKind{
 		StepActionRemoveMarketplacePlugins,
 		StepActionRemoveModels,
 		StepActionRemoveEngram,
+		StepActionRemoveEngramCloudSessionSync,
 		StepActionRemoveEngramCloudState,
 		StepActionRemoveContext7,
 		StepActionStripClaudeManagedBlock,
@@ -210,6 +211,28 @@ func TestEngramCloudStatePresent(t *testing.T) {
 	}
 	if EngramCloudStatePresent(Config{}) {
 		t.Fatal("EngramCloudStatePresent() = true with no ClaudeHome, want false")
+	}
+}
+
+func TestBuildTargetPlan_UninstallAlwaysRemovesSessionSync(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	selection := TargetSelection{Configured: true, Claude: true}
+
+	for _, options := range []PlanOptions{{}, {CloudResolvable: true}} {
+		actions := BuildTargetPlan(cfg, selection, options).UninstallActionKinds()
+		index := -1
+		for i, action := range actions {
+			if action == StepActionRemoveEngramCloudSessionSync {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			t.Fatalf("UninstallActionKinds() = %#v, want session-sync removal", actions)
+		}
+		if index+1 >= len(actions) || actions[index+1] != StepActionRemoveEngramCloudState {
+			t.Fatalf("UninstallActionKinds() = %#v, want session-sync removal immediately before cloud state removal", actions)
+		}
 	}
 }
 
@@ -306,7 +329,7 @@ func TestBuildTargetPlan_MatrixAssertions(t *testing.T) {
 		{
 			name:      "Claude with cloud configured",
 			selection: TargetSelection{Claude: true},
-			options:   PlanOptions{CloudConfigured: true},
+			options:   PlanOptions{CloudResolvable: true},
 			setupFunc: func(t *testing.T) Config {
 				return Config{
 					ClaudeHome:     t.TempDir(),
@@ -373,4 +396,97 @@ func TestBuildTargetPlan_MatrixAssertions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildTargetPlan_CloudResolvableConfiguresSessionSync(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	selection := TargetSelection{Configured: true, Claude: true}
+
+	// CloudResolvable means server and project are known, token optional — the Claude plan must
+	// carry the session-sync configure action in install/update plus the cloud doctor and uninstall
+	// actions even when no token is present (DD-4).
+	plan := BuildTargetPlan(cfg, selection, PlanOptions{CloudResolvable: true})
+
+	// Find the engram-cloud step (PlanTargetShared, added when CloudResolvable && Claude).
+	var cloudStep *Step
+	for i := range plan.Steps {
+		if plan.Steps[i].ID == "engram-cloud" {
+			cloudStep = &plan.Steps[i]
+			break
+		}
+	}
+	if cloudStep == nil {
+		t.Fatalf("engram-cloud step not found in plan")
+	}
+
+	// Verify StepActionConfigureEngramCloudSessionSync is in install/update actions
+	hasConfigureInstall := false
+	hasConfigureUpdate := false
+	for _, action := range cloudStep.InstallActions {
+		if action == "configure-engram-cloud-session-sync" {
+			hasConfigureInstall = true
+			break
+		}
+	}
+	for _, action := range cloudStep.UpdateActions {
+		if action == "configure-engram-cloud-session-sync" {
+			hasConfigureUpdate = true
+			break
+		}
+	}
+	if !hasConfigureInstall {
+		t.Fatalf("InstallActions = %v, want to contain configure-engram-cloud-session-sync", cloudStep.InstallActions)
+	}
+	if !hasConfigureUpdate {
+		t.Fatalf("UpdateActions = %v, want to contain configure-engram-cloud-session-sync", cloudStep.UpdateActions)
+	}
+
+	// Verify cloud doctor and uninstall actions are present
+	hasDoctorAction := false
+	hasUninstallAction := false
+	for _, action := range cloudStep.DoctorChecks {
+		if action == "engram-cloud" {
+			hasDoctorAction = true
+		}
+	}
+	for _, action := range cloudStep.UninstallActions {
+		if action == "remove-engram-cloud-state" {
+			hasUninstallAction = true
+		}
+	}
+	if !hasDoctorAction {
+		t.Fatalf("DoctorChecks = %v, want to contain engram-cloud", cloudStep.DoctorChecks)
+	}
+	if !hasUninstallAction {
+		t.Fatalf("UninstallActions = %v, want to contain remove-engram-cloud-state", cloudStep.UninstallActions)
+	}
+
+	// The ordered action kinds must carry the configure action BEFORE the D40 enrollment action,
+	// mirroring DD-4's "configure session sync, then enroll/sync" ordering.
+	installKinds := plan.InstallActionKinds()
+	updateKinds := plan.UpdateActionKinds()
+	assertConfigureBeforeSync := func(name string, kinds []StepActionKind) {
+		t.Helper()
+		configureIdx := -1
+		syncIdx := -1
+		for i, k := range kinds {
+			if k == StepActionConfigureEngramCloudSessionSync {
+				configureIdx = i
+			}
+			if k == StepActionSyncEngramCloud {
+				syncIdx = i
+			}
+		}
+		if configureIdx == -1 {
+			t.Fatalf("%s = %v, want to contain configure-engram-cloud-session-sync", name, kinds)
+		}
+		if syncIdx == -1 {
+			t.Fatalf("%s = %v, want to contain sync-engram-cloud", name, kinds)
+		}
+		if configureIdx >= syncIdx {
+			t.Fatalf("%s = %v, want configure-engram-cloud-session-sync (idx %d) before sync-engram-cloud (idx %d)", name, kinds, configureIdx, syncIdx)
+		}
+	}
+	assertConfigureBeforeSync("InstallActionKinds", installKinds)
+	assertConfigureBeforeSync("UpdateActionKinds", updateKinds)
 }

@@ -54,6 +54,24 @@ func SetPathStoreFactoryForTests(factory func() pathStore) func() {
 	return func() { pathStoreFactory = old }
 }
 
+// settingsSecurityFactory is the injectable factory for owner-only file security. It applies
+// security to a file path, typically after atomic writes to temp files. Tests can override this
+// to inject failures or verify behavior.
+var settingsSecurityFactory func(path string) error
+
+// init wires the default settingsSecurityFactory to the Apply function.
+func init() {
+	settingsSecurityFactory = Apply
+}
+
+// SetSettingsSecurityFactoryForTests overrides the settings security factory for tests and
+// returns a restore function.
+func SetSettingsSecurityFactoryForTests(factory func(path string) error) func() {
+	old := settingsSecurityFactory
+	settingsSecurityFactory = factory
+	return func() { settingsSecurityFactory = old }
+}
+
 // GoBinDir resolves the Go bin directory `go install` places provisioned binaries into: the
 // toolchain's own resolved GOBIN if set, otherwise GOPATH/bin. It shells out via the same
 // injectable CommandRunner ("go env ...") this package already uses for `claude plugin ...`
@@ -250,6 +268,21 @@ var createTempFile = func(dir, pattern string) (tempFileWriter, error) {
 // content at that real location. A non-symlink path is unaffected: resolveWriteTarget returns it
 // unchanged.
 func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
+	return atomicWriteFileInternal(path, content, mode, nil)
+}
+
+// atomicWriteFileOwnerOnly is atomicWriteFile with owner-only security applied to the temp file
+// before the rename. Use this for security-sensitive files like ~/.claude/settings.json that must
+// not be world-readable even momentarily.
+func atomicWriteFileOwnerOnly(path string, content []byte) error {
+	return atomicWriteFileInternal(path, content, 0o600, settingsSecurityFactory)
+}
+
+// atomicWriteFileInternal is the shared implementation for both atomicWriteFile (plain) and
+// atomicWriteFileOwnerOnly (secured). If securityFn is non-nil, it is applied to the temp file
+// after chmod and before rename; otherwise only chmod is applied, preserving the caller's
+// requested mode.
+func atomicWriteFileInternal(path string, content []byte, mode os.FileMode, securityFn func(string) error) error {
 	target, err := resolveWriteTarget(path)
 	if err != nil {
 		return fmt.Errorf("installer: resolve write target for %s: %w", path, err)
@@ -282,6 +315,14 @@ func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
 	if err := os.Chmod(tmpName, mode); err != nil {
 		return fmt.Errorf("installer: chmod temp file for %s: %w", target, err)
 	}
+
+	// Apply security function if provided (e.g., owner-only security for settings files)
+	if securityFn != nil {
+		if err := securityFn(tmpName); err != nil {
+			return fmt.Errorf("installer: apply security to %s: %w", target, err)
+		}
+	}
+
 	if err := os.Rename(tmpName, target); err != nil {
 		return fmt.Errorf("installer: rename temp file to %s: %w", target, err)
 	}

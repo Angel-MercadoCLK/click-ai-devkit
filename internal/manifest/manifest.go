@@ -19,6 +19,8 @@ import (
 //go:embed manifest.yaml
 var embeddedManifest []byte
 
+var manifestContents = embeddedManifest
+
 // Plugin describes one of click-ai-devkit's three plugins as pinned by a release.
 type Plugin struct {
 	Version string `yaml:"version"`
@@ -51,8 +53,19 @@ type Manifest struct {
 // Load parses the manifest embedded into the binary at build time.
 func Load() (*Manifest, error) {
 	var m Manifest
-	if err := yaml.Unmarshal(embeddedManifest, &m); err != nil {
+	if err := yaml.Unmarshal(manifestContents, &m); err != nil {
 		return nil, fmt.Errorf("manifest: parse embedded manifest.yaml: %w", err)
 	}
 	return &m, nil
+}
+
+// SetManifestForTests replaces the embedded manifest for a test and returns a restore function.
+func SetManifestForTests(m Manifest) func() {
+	previous := manifestContents
+	encoded, err := yaml.Marshal(m)
+	if err != nil {
+		panic(err)
+	}
+	manifestContents = encoded
+	return func() { manifestContents = previous }
 }

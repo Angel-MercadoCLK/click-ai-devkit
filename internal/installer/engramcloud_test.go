@@ -32,6 +32,18 @@ func (f *fakeEngramCloudRunner) Run(name string, args ...string) error {
 	return nil
 }
 
+// RunQuietly executes a command without streaming its stdout/stderr.
+// This method is used by the Engram cloud enrollment step (runEngramCloudStep)
+// to prevent token leakage into CI logs or subprocess output.
+func (f *fakeEngramCloudRunner) RunQuietly(name string, args ...string) error {
+	f.commands = append(f.commands, commandInvocation{Name: name, Args: append([]string(nil), args...)})
+	defer func() { f.calls++ }()
+	if f.failAt >= 0 && f.calls == f.failAt {
+		return f.failWith
+	}
+	return nil
+}
+
 func (f *fakeEngramCloudRunner) Output(name string, args ...string) ([]byte, error) {
 	f.commands = append(f.commands, commandInvocation{Name: name, Args: append([]string(nil), args...)})
 	defer func() { f.calls++ }()
@@ -298,7 +310,7 @@ func TestSyncEngramCloud_TokenNotInArgvOrState(t *testing.T) {
 	for _, inv := range runner.commands {
 		for _, arg := range inv.Args {
 			if strings.Contains(arg, "do-not-leak-me") {
-				t.Fatalf("token leaked into argv: %q", arg)
+				t.Fatal("token leaked into argv")
 			}
 		}
 	}
@@ -308,7 +320,59 @@ func TestSyncEngramCloud_TokenNotInArgvOrState(t *testing.T) {
 		t.Fatalf("ReadFile(state) error = %v", err)
 	}
 	if strings.Contains(string(data), "do-not-leak-me") {
-		t.Fatalf("token leaked into state file: %s", string(data))
+		t.Fatal("token leaked into state file")
+	}
+}
+
+func TestSyncEngramCloud_SubprocessOutputNeverSurfaced(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "subprocess-output-sentinel")
+
+	runner := newFakeEngramCloudRunner()
+	runner.failAt = 0
+	runner.failWith = errors.New("engram output: subprocess-output-sentinel")
+	restore := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restore()
+
+	m := &manifest.Manifest{EngramCloud: manifest.EngramCloud{Server: "http://127.0.0.1:18080", Project: "click-ai-devkit"}}
+	err := SyncEngramCloud(cfg, m)
+	if err == nil {
+		t.Fatal("SyncEngramCloud() error = nil, want failure")
+	}
+	if strings.Contains(err.Error(), "subprocess-output-sentinel") {
+		t.Fatal("SyncEngramCloud() surfaced subprocess output")
+	}
+}
+
+// TestFakeEngramCloudRunner_ImplementsRunQuietly verifies that the fake runner
+// implements RunQuietly, allowing tests to detect regressions in the quiet execution path.
+// Without this, a regression that streams child output would go undetected.
+func TestFakeEngramCloudRunner_ImplementsRunQuietly(t *testing.T) {
+	runner := newFakeEngramCloudRunner()
+
+	// This type assertion must succeed for the test to pass
+	quietRunner, ok := interface{}(runner).(interface {
+		RunQuietly(name string, args ...string) error
+	})
+	if !ok {
+		t.Fatal("fakeEngramCloudRunner does not implement RunQuietly - cannot test for regression")
+	}
+
+	// Verify RunQuietly actually works
+	runner.failAt = 0
+	runner.failWith = errors.New("quiet-failure-message")
+	err := quietRunner.RunQuietly("engram", "sync", "--cloud")
+	if err == nil {
+		t.Fatal("RunQuietly() error = nil, want failure")
+	}
+	if !strings.Contains(err.Error(), "quiet-failure-message") {
+		t.Fatalf("RunQuietly() error = %v, want to contain 'quiet-failure-message'", err)
+	}
+
+	// Verify that RunQuietly does NOT surface the failure message through the public error
+	// (the real implementation wraps errors without including child output)
+	if strings.Contains(err.Error(), "engram output:") {
+		t.Fatal("RunQuietly() leaked subprocess output into wrapped error")
 	}
 }
 
