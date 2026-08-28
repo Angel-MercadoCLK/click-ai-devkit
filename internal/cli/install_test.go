@@ -571,6 +571,7 @@ func TestInstall_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 	seedResolvableEngram(t)
+	seedResolvableGit(t)
 
 	// Set env overrides - the manifest is deliberately empty
 	serverOverride := "http://127.0.0.1:18080"

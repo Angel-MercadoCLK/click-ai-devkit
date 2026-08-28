@@ -219,6 +219,21 @@ func TestCheckEngramCloudSessionSync_RejectsInvalidValues(t *testing.T) {
 
 			cfg := installer.Config{ClaudeHome: dir}
 
+			if tc.name == "valid configuration" {
+				// A fully valid configuration also requires evidence the SessionStart hook has
+				// actually run recently and succeeded (checkEngramCloudSessionSync's outcome-file
+				// check) — without this, checkEngramCloudSessionSync legitimately reports
+				// unhealthy ("el hook SessionStart no se observó ejecutarse todavía"), which is
+				// the correct behavior for a config that was never actually exercised, but not
+				// what this specific fixture is meant to test.
+				if err := installer.WriteEngramCloudImportOutcome(cfg, installer.EngramCloudImportOutcome{
+					Timestamp: time.Now().UTC(),
+					Status:    installer.EngramCloudImportOutcomeSuccess,
+				}); err != nil {
+					t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+				}
+			}
+
 			result := checkEngramCloudSessionSync(cfg)
 
 			// On Windows, owner-only permissions might not work as expected in tests
