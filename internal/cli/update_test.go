@@ -47,6 +47,30 @@ func TestUpdate_ManifestOnlyConfigPersistsTokenWithFlag(t *testing.T) {
 	}
 }
 
+func TestUpdate_MalformedSettingsDoesNotAbortRun(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte("{not valid json"), 0o600); err != nil {
+		t.Fatalf("seed malformed settings.json: %v", err)
+	}
+
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableEngram(t)
+
+	out, err := execRoot(t, home, "update")
+	if err != nil {
+		t.Fatalf("update command error = %v, want nil; output:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Se omitió el respaldo de settings.json") || !strings.Contains(out, settingsPath) {
+		t.Fatalf("update output = %q, want malformed-settings backup warning naming %q", out, settingsPath)
+	}
+	if !strings.Contains(out, "CLAUDE.md sincronizado") {
+		t.Fatalf("update output = %q, want a later configured step to run", out)
+	}
+}
+
 // TestUpdateCommand_YesAndNonInteractiveFlags_Parse is the regression for the "unknown flag" bug:
 // runUpdate has always routed its confirm gate through isNonInteractiveInstall (install.go), which
 // reads --yes/--non-interactive, but `click update` never DECLARED those flags — so the documented

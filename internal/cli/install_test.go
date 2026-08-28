@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +11,8 @@ import (
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
+	"github.com/spf13/cobra"
 )
 
 // TestInstallCommand_CloudConfigured_RunsCloudStepAfterEngram is task 4.3's RED test: when cloud
@@ -47,6 +48,30 @@ func TestInstallCommand_CloudConfigured_RunsCloudStepAfterEngram(t *testing.T) {
 	}
 	if !strings.Contains(out, "Engram Cloud enrolado") {
 		t.Fatalf("install output = %q, want it to contain the Engram Cloud success label", out)
+	}
+}
+
+func TestInstall_MalformedSettingsDoesNotAbortRun(t *testing.T) {
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte("{not valid json"), 0o600); err != nil {
+		t.Fatalf("seed malformed settings.json: %v", err)
+	}
+
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	seedResolvableEngram(t)
+
+	out, err := execRoot(t, home, "install")
+	if err != nil {
+		t.Fatalf("install command error = %v, want nil; output:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Se omitió el respaldo de settings.json") || !strings.Contains(out, settingsPath) {
+		t.Fatalf("install output = %q, want malformed-settings backup warning naming %q", out, settingsPath)
+	}
+	if !strings.Contains(out, "CLAUDE.md actualizado") {
+		t.Fatalf("install output = %q, want a later configured step to run", out)
 	}
 }
 
@@ -358,9 +383,30 @@ func TestInstall_SharedReaderConsentBeforeTokenWrite(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLICK_CLAUDE_HOME", home)
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
 
-	token := "test-token-for-consent-ordering"
-	t.Setenv("ENGRAM_CLOUD_TOKEN", token)
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token-for-consent-ordering")
+	seedResolvableEngram(t)
+	restoreLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return cliFakeBinaryLookup{resolved: map[string]string{"claude": "/usr/bin/claude", "git": "/usr/bin/git"}}
+	})
+	defer restoreLookup()
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	forceTerminalDetection(t, true, true)
+	previousTargetSelector := runInstallTargetSelectTUI
+	runInstallTargetSelectTUI = func(_ *cobra.Command, _ bool, _ bool, _ bool, selection installer.TargetSelection) (installer.TargetSelection, bool, error) {
+		return selection, false, nil
+	}
+	t.Cleanup(func() { runInstallTargetSelectTUI = previousTargetSelector })
+	previousModelSelector := runInstallSelectTUI
+	runInstallSelectTUI = func(_ *cobra.Command, _ modelconfig.ProfileName) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+		resolved := modelconfig.ResolveProfile("")
+		return resolved.Name, resolved.Models, false, nil
+	}
+	t.Cleanup(func() { runInstallSelectTUI = previousModelSelector })
 
 	consentCalled := false
 	restoreConsent := SetReadCloudTokenConsentFuncForTests(func(reader *bufio.Reader) (bool, error) {
@@ -384,28 +430,17 @@ func TestInstall_SharedReaderConsentBeforeTokenWrite(t *testing.T) {
 	})
 	defer restoreConsent()
 
-	sharedReader := bufio.NewReader(strings.NewReader("y\n"))
-	mode, err := resolveCloudTokenPersistence(false, false, sharedReader, io.Discard)
-	if err != nil {
-		t.Fatalf("resolveCloudTokenPersistence() error = %v", err)
+	root := NewRootCommand()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetIn(strings.NewReader("y\ny\n"))
+	root.SetArgs([]string{"install"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("install command error = %v; output:\n%s", err, out.String())
 	}
-	if mode != installer.CloudTokenPersistencePersist {
-		t.Fatalf("persistence mode = %v, want affirmative persistence", mode)
-	}
-
 	if !consentCalled {
-		t.Fatal("consent reader was not called")
-	}
-
-	m, err := manifest.Load()
-	if err != nil {
-		t.Fatalf("manifest.Load() error = %v", err)
-	}
-	m.EngramCloud.Server = "http://127.0.0.1:18080"
-	m.EngramCloud.Project = "click-ai-devkit"
-
-	if err := installer.ConfigureEngramCloudSessionSync(installer.Config{ClaudeHome: home}, m, mode, token); err != nil {
-		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+		t.Fatal("consent reader was not called by runInstall")
 	}
 
 	settingsPath := filepath.Join(home, "settings.json")

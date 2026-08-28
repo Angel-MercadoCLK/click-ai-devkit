@@ -424,21 +424,28 @@ func resolveInstallTargetSelection(cmd *cobra.Command, skipOpenClaw bool, out io
 		fmt.Fprintln(out, r.Info("Modo no interactivo: se seleccionan únicamente los runtimes detectados; no se inicia ninguna TUI."))
 		return selection, nil
 	}
-	model := ui.NewTargetSelectModel(claudeFound, openClawFound, selection.Claude, selection.OpenClaw, codexFound, selection.Codex)
-	program := tea.NewProgram(model, tea.WithInput(cmd.InOrStdin()), tea.WithOutput(out))
-	final, err := program.Run()
+	selected, cancelled, err := runInstallTargetSelectTUI(cmd, claudeFound, openClawFound, codexFound, selection)
 	if err != nil {
 		return installer.TargetSelection{}, fmt.Errorf("cli: ejecutar selección de runtimes: %w", err)
 	}
+	if cancelled {
+		return installer.TargetSelection{}, nil
+	}
+	return selected, nil
+}
+
+var runInstallTargetSelectTUI = func(cmd *cobra.Command, claudeFound, openClawFound, codexFound bool, selection installer.TargetSelection) (installer.TargetSelection, bool, error) {
+	model := ui.NewTargetSelectModel(claudeFound, openClawFound, selection.Claude, selection.OpenClaw, codexFound, selection.Codex)
+	program := tea.NewProgram(model, tea.WithInput(cmd.InOrStdin()), tea.WithOutput(cmd.OutOrStdout()))
+	final, err := program.Run()
+	if err != nil {
+		return installer.TargetSelection{}, false, err
+	}
 	result := final.(ui.TargetSelectModel)
-	if result.Cancelled {
-		return installer.TargetSelection{}, nil
+	if result.Cancelled || !result.Confirmed {
+		return installer.TargetSelection{}, true, nil
 	}
-	if !result.Confirmed {
-		return installer.TargetSelection{}, nil
-	}
-	selection = installer.TargetSelection{Configured: true, Claude: result.Claude, OpenClaw: result.OpenClaw, Codex: result.Codex}
-	return selection, nil
+	return installer.TargetSelection{Configured: true, Claude: result.Claude, OpenClaw: result.OpenClaw, Codex: result.Codex}, false, nil
 }
 
 // nativeModelSelection captures an explicit native-model choice for a portable target. Both fields
@@ -584,7 +591,7 @@ func runModelSelectTUI(cmd *cobra.Command) (map[modelconfig.Phase]string, bool, 
 // This function's signature and external contract (installSelector) are unchanged: only what runs
 // INSIDE it changed, so resolveInstallModels' cancel-means-zero-changes and profile-label logic
 // above keeps working exactly as before.
-func runInstallSelectTUI(cmd *cobra.Command, initialProfile modelconfig.ProfileName) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
+var runInstallSelectTUI = func(cmd *cobra.Command, initialProfile modelconfig.ProfileName) (modelconfig.ProfileName, map[modelconfig.Phase]string, bool, error) {
 	program := tea.NewProgram(ui.NewInstallWizardModel(initialProfile),
 		tea.WithAltScreen(),
 		tea.WithInput(cmd.InOrStdin()),
