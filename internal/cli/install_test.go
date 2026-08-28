@@ -358,15 +358,24 @@ func TestInstall_SharedReaderConsentBeforeTokenWrite(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLICK_CLAUDE_HOME", home)
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
-	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+
+	token := "test-token-for-consent-ordering"
+	t.Setenv("ENGRAM_CLOUD_TOKEN", token)
+
+	consentCalled := false
 	restoreConsent := SetReadCloudTokenConsentFuncForTests(func(reader *bufio.Reader) (bool, error) {
-		settings, err := os.ReadFile(filepath.Join(home, "settings.json"))
+		consentCalled = true
+
+		settingsPath := filepath.Join(home, "settings.json")
+		settings, err := os.ReadFile(settingsPath)
 		if err != nil && !os.IsNotExist(err) {
 			return false, err
 		}
+
 		if bytes.Contains(settings, []byte("ENGRAM_CLOUD_TOKEN")) {
 			t.Fatal("settings.json contained the token before affirmative consent was read")
 		}
+
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			return false, err
@@ -375,31 +384,49 @@ func TestInstall_SharedReaderConsentBeforeTokenWrite(t *testing.T) {
 	})
 	defer restoreConsent()
 
-	mode, err := resolveCloudTokenPersistence(false, false, bufio.NewReader(strings.NewReader("y\n")), io.Discard)
+	sharedReader := bufio.NewReader(strings.NewReader("y\n"))
+	mode, err := resolveCloudTokenPersistence(false, false, sharedReader, io.Discard)
 	if err != nil {
 		t.Fatalf("resolveCloudTokenPersistence() error = %v", err)
 	}
 	if mode != installer.CloudTokenPersistencePersist {
 		t.Fatalf("persistence mode = %v, want affirmative persistence", mode)
 	}
+
+	if !consentCalled {
+		t.Fatal("consent reader was not called")
+	}
+
 	m, err := manifest.Load()
 	if err != nil {
 		t.Fatalf("manifest.Load() error = %v", err)
 	}
 	m.EngramCloud.Server = "http://127.0.0.1:18080"
 	m.EngramCloud.Project = "click-ai-devkit"
-	if err := installer.ConfigureEngramCloudSessionSync(installer.Config{ClaudeHome: home}, m, mode, os.Getenv("ENGRAM_CLOUD_TOKEN")); err != nil {
+
+	if err := installer.ConfigureEngramCloudSessionSync(installer.Config{ClaudeHome: home}, m, mode, token); err != nil {
 		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
 	}
 
-	settings, err := os.ReadFile(filepath.Join(home, "settings.json"))
+	settingsPath := filepath.Join(home, "settings.json")
+	settings, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatalf("ReadFile(settings.json) error = %v", err)
 	}
-	if !bytes.Contains(settings, []byte("ENGRAM_CLOUD_TOKEN")) {
-		t.Fatal("settings.json did not contain the token after affirmative consent")
+
+	var settingsJSON map[string]any
+	if err := json.Unmarshal(settings, &settingsJSON); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
 	}
 
+	env, ok := settingsJSON["env"].(map[string]any)
+	if !ok {
+		t.Fatal("settings[\"env\"] not present or not a map")
+	}
+
+	if _, hasToken := env["ENGRAM_CLOUD_TOKEN"]; !hasToken {
+		t.Fatal("settings.json did not contain ENGRAM_CLOUD_TOKEN after affirmative consent")
+	}
 }
 
 func TestInstall_ManifestOnlyConfigPersistsTokenWithFlag(t *testing.T) {
