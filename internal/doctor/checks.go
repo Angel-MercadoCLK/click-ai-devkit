@@ -727,6 +727,9 @@ func checkEngramCloudSessionSync(cfg installer.Config) CheckResult {
 	if !status.OwnerOnly {
 		problems = append(problems, "permisos owner-only de settings.json")
 	}
+	if _, err := clickBinaryLookup("click"); err != nil {
+		problems = append(problems, "binario click no resoluble en PATH")
+	}
 	if len(problems) > 0 {
 		return CheckResult{Name: name, Healthy: false, Detail: "configuración de sincronización incompleta o alterada: falta o es inválido " + strings.Join(problems, ", ")}
 	}

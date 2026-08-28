@@ -481,6 +481,8 @@ func TestInstall_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
 	t.Setenv("ENGRAM_CLOUD_TOKEN", tokenOverride)
 	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
 
 	// Run install with --persist-engram-cloud-token to give consent
 	root := NewRootCommand()

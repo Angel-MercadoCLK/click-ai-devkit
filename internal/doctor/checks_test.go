@@ -136,6 +136,8 @@ func TestRun_CheckCountIncludesEngramCloudSessionSync(t *testing.T) {
 }
 
 func TestCheckEngramCloudSessionSync_RejectsInvalidValues(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
 	testCases := []struct {
 		name             string
 		settings         map[string]any
@@ -243,6 +245,8 @@ func TestCheckEngramCloudSessionSync_RejectsInvalidValues(t *testing.T) {
 }
 
 func TestCheckEngramCloudSessionSync_HealthyWhenCompleteOrNotConfigured(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
 	complete := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	m, err := manifest.Load()
 	if err != nil {
@@ -259,6 +263,54 @@ func TestCheckEngramCloudSessionSync_HealthyWhenCompleteOrNotConfigured(t *testi
 	}
 	if got := checkEngramCloudSessionSync(installer.Config{ClaudeHome: t.TempDir()}); !got.Healthy || !strings.Contains(got.Detail, "sin configurar") {
 		t.Fatalf("unconfigured session sync check = %+v, want healthy not configured", got)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyWhenClickNotOnPath(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "", errors.New("not found") })
+	t.Cleanup(restore)
+
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+	m.EngramCloud.Server = "https://cloud.example.com"
+	m.EngramCloud.Project = "team-hive"
+	if err := installer.ConfigureEngramCloudSessionSync(cfg, m, installer.CloudTokenPersistencePersist, "test-token"); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy when click is absent from PATH", got)
+	}
+	if !strings.Contains(got.Detail, "click") {
+		t.Fatalf("checkEngramCloudSessionSync() detail = %q, want it to name the missing click binary", got.Detail)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyOnHookProjectMismatch(t *testing.T) {
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	m := &manifest.Manifest{EngramCloud: manifest.EngramCloud{
+		Server:  "https://cloud.example.com",
+		Project: "team-old",
+	}}
+	if err := installer.ConfigureEngramCloudSessionSync(cfg, m, installer.CloudTokenPersistencePersist, "test-token"); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+	}
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "team-new")
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy", got)
+	}
+	if !strings.Contains(got.Detail, "nombre de proyecto") {
+		t.Fatalf("checkEngramCloudSessionSync() detail = %q, want it to name the project mismatch", got.Detail)
 	}
 }
 

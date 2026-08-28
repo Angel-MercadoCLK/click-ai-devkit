@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -21,14 +20,21 @@ func isManagedEngramCloudHookCommand(cmd string) bool {
 		return false
 	}
 
-	// POSIX signature: timeout 5 engram sync --cloud --import --project <project> || true
-	posixPattern := regexp.MustCompile(`^timeout 5 engram sync --cloud --import --project [^ ]+ \|\| true$`)
+	// Legacy POSIX signature retained for migration; remove it once no installed
+	// Click client can still carry the timeout-based hook.
+	legacyPOSIXPattern := regexp.MustCompile(`^timeout 5 engram sync --cloud --import --project [^ ]+ \|\| true$`)
+	if legacyPOSIXPattern.MatchString(cmd) {
+		return true
+	}
+
+	// Unified POSIX signature: click engram-cloud-import --project-b64 <base64url> || true.
+	posixPattern := regexp.MustCompile(`^click engram-cloud-import --project-b64 [A-Za-z0-9_-]+ \|\| true$`)
 	if posixPattern.MatchString(cmd) {
 		return true
 	}
 
-	// Windows signature: cmd.exe /d /s /c "click engram-cloud-import --project-b64 <b64-project> & exit /b 0"
-	windowsPattern := regexp.MustCompile(`^cmd\.exe /d /s /c "click engram-cloud-import --project-b64 [^ ]+ & exit /b 0"$`)
+	// Unified Windows signature: cmd.exe /d /s /c "click engram-cloud-import --project-b64 <base64url> & exit /b 0".
+	windowsPattern := regexp.MustCompile(`^cmd\.exe /d /s /c "click engram-cloud-import --project-b64 [A-Za-z0-9_-]+ & exit /b 0"$`)
 	if windowsPattern.MatchString(cmd) {
 		return true
 	}
@@ -49,8 +55,8 @@ func extractProjectFromHookCommand(cmd string) string {
 		}
 	}
 
-	// Windows: cmd.exe /d /s /c "click engram-cloud-import --project-b64 <b64-project> & exit /b 0"
-	if strings.HasPrefix(cmd, "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 ") {
+	// POSIX and Windows unified wrappers carry the project in the same base64url argument.
+	if strings.HasPrefix(cmd, "click engram-cloud-import --project-b64 ") || strings.HasPrefix(cmd, "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 ") {
 		// Extract the base64 project
 		start := strings.Index(cmd, "--project-b64 ")
 		if start == -1 {
@@ -63,7 +69,7 @@ func extractProjectFromHookCommand(cmd string) string {
 		}
 		b64Project := cmd[start : start+end]
 		// Decode base64 to get the actual project name
-		decoded, err := base64.StdEncoding.DecodeString(b64Project)
+		decoded, err := base64.RawURLEncoding.DecodeString(b64Project)
 		if err != nil {
 			return ""
 		}
@@ -150,19 +156,11 @@ func InspectEngramCloudSessionSync(cfg Config) (CloudSessionSyncStatus, error) {
 		}
 	}
 
-	// Check hook project mismatch - but only if we have a manifest to resolve from
-	var resolvedProject string
-	manifestPath := filepath.Join(cfg.ClaudeHome, "AGENTS.md")
-	if manifestBytes, err := os.ReadFile(manifestPath); err == nil {
-		var manifestData map[string]any
-		if err := json.Unmarshal(manifestBytes, &manifestData); err == nil {
-			if engramCloud, ok := manifestData["engramCloud"].(map[string]any); ok {
-				if project, ok := engramCloud["project"].(string); ok {
-					resolvedProject = project
-				}
-			}
-		}
+	m, err := manifest.Load()
+	if err != nil {
+		return CloudSessionSyncStatus{}, fmt.Errorf("installer: load manifest: %w", err)
 	}
+	_, resolvedProject, _ := resolveEngramCloudConfig(cfg, m)
 
 	if resolvedProject != "" {
 		if hooks, ok := settings["hooks"].(map[string]any); ok {
@@ -228,6 +226,7 @@ func InspectEngramCloudSessionSync(cfg Config) (CloudSessionSyncStatus, error) {
 
 func isManagedEngramCloudHookCandidate(command string) bool {
 	return (strings.HasPrefix(command, "timeout 5 engram sync --cloud ") && strings.HasSuffix(command, " || true")) ||
+		(strings.HasPrefix(command, "click engram-cloud-import --project-b64 ") && strings.HasSuffix(command, " || true")) ||
 		(strings.HasPrefix(command, "cmd.exe /d /s /c \"click engram-cloud-import --project-b64 ") && strings.HasSuffix(command, " & exit /b 0\""))
 }
 

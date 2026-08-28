@@ -1252,3 +1252,47 @@ func TestInspectEngramCloudSessionSync_ReportsManagedFootprint(t *testing.T) {
 		t.Fatal("InspectEngramCloudSessionSync() OwnerOnly = true, want false for mode 0644")
 	}
 }
+
+func TestInspectEngramCloudSessionSync_DetectsHookProjectMismatch(t *testing.T) {
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+
+	cfg := Config{ClaudeHome: t.TempDir()}
+	m := &manifest.Manifest{EngramCloud: manifest.EngramCloud{
+		Server:  "https://cloud.example.com",
+		Project: "team-old",
+	}}
+	if err := ConfigureEngramCloudSessionSync(cfg, m, CloudTokenPersistencePersist, "test-token"); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+	}
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "team-new")
+
+	status, err := InspectEngramCloudSessionSync(cfg)
+	if err != nil {
+		t.Fatalf("InspectEngramCloudSessionSync() error = %v", err)
+	}
+	if !status.HookProjectMismatch {
+		t.Fatalf("InspectEngramCloudSessionSync() status = %+v, want HookProjectMismatch true", status)
+	}
+}
+
+func TestInspectEngramCloudSessionSync_NoMismatchWhenProjectsAgree(t *testing.T) {
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+
+	cfg := Config{ClaudeHome: t.TempDir()}
+	m := &manifest.Manifest{EngramCloud: manifest.EngramCloud{
+		Server:  "https://cloud.example.com",
+		Project: "team-new",
+	}}
+	if err := ConfigureEngramCloudSessionSync(cfg, m, CloudTokenPersistencePersist, "test-token"); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+	}
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "team-new")
+
+	status, err := InspectEngramCloudSessionSync(cfg)
+	if err != nil {
+		t.Fatalf("InspectEngramCloudSessionSync() error = %v", err)
+	}
+	if status.HookProjectMismatch {
+		t.Fatalf("InspectEngramCloudSessionSync() status = %+v, want HookProjectMismatch false", status)
+	}
+}

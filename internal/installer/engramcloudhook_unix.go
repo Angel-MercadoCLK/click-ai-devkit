@@ -3,9 +3,8 @@
 package installer
 
 import (
+	"encoding/base64"
 	"fmt"
-	"regexp"
-	"strings"
 )
 
 // managedEngramCloudHookCommand returns a POSIX shell command that performs a bounded
@@ -17,29 +16,8 @@ func managedEngramCloudHookCommand(project string) (string, error) {
 		return "", fmt.Errorf("project name cannot be empty")
 	}
 
-	// POSIX shell quoting: single-quote escape if project contains characters outside [A-Za-z0-9._-]+
-	// Otherwise, leave unquoted for readability.
-	var projectArg string
-	if needsQuoting(project) {
-		projectArg = fmt.Sprintf("'%s'", escapePOSIXSingleQuotes(project))
-	} else {
-		projectArg = project
-	}
-
-	cmd := fmt.Sprintf("timeout 5 engram sync --cloud --import --project %s || true", projectArg)
-	return cmd, nil
-}
-
-// escapePOSIXSingleQuotes replaces each apostrophe with '\” (close quote, escaped literal quote, reopen quote)
-// This is the standard POSIX shell escaping mechanism for single-quoted strings.
-func escapePOSIXSingleQuotes(s string) string {
-	return strings.ReplaceAll(s, "'", "'\\''")
-}
-
-// needsQuoting returns true if the string contains characters that require
-// shell quoting for safe use in a POSIX shell.
-func needsQuoting(s string) bool {
-	// Characters that are safe without quotes in POSIX shell: alphanumeric, dot, underscore, hyphen
-	safePattern := regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-	return !safePattern.MatchString(s)
+	// base64url keeps the project inert in the shell; the hidden click command owns
+	// the timeout and always reports success to the SessionStart hook.
+	projectB64 := base64.RawURLEncoding.EncodeToString([]byte(project))
+	return fmt.Sprintf("click engram-cloud-import --project-b64 %s || true", projectB64), nil
 }
