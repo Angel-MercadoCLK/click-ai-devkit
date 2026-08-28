@@ -113,14 +113,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// consent prompt consumes the next input in order.
 	persistFlag, _ := cmd.Flags().GetBool(persistEngramCloudTokenFlag)
 	token := os.Getenv("ENGRAM_CLOUD_TOKEN")
-	server := os.Getenv("CLICK_ENGRAM_CLOUD_SERVER")
-	project := os.Getenv("CLICK_ENGRAM_CLOUD_PROJECT")
 	// persistenceMode distinguishes three states:
 	// - No process token → NoOp: never prompt, never write, never delete an existing stored token
 	// - Process token present, consent declined → Decline: do not write, remove any previously stored click-owned token
 	// - Process token present, consent given → Persist
 	persistenceMode := installer.CloudTokenPersistenceNoOp
-	if server != "" && project != "" && token != "" {
+	if installer.EngramCloudConfigured(cfg, m) && token != "" {
 		persistenceMode = installer.CloudTokenPersistenceDecline
 		var readErr error
 		persistenceMode, readErr = resolveCloudTokenPersistence(isNonInteractiveInstall(cmd, out), persistFlag, sharedReader, out)

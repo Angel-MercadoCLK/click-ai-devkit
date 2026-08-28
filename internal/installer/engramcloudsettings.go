@@ -22,7 +22,7 @@ func isManagedEngramCloudHookCommand(cmd string) bool {
 
 	// Legacy POSIX signature retained for migration; remove it once no installed
 	// Click client can still carry the timeout-based hook.
-	legacyPOSIXPattern := regexp.MustCompile(`^timeout 5 engram sync --cloud --import --project [^ ]+ \|\| true$`)
+	legacyPOSIXPattern := regexp.MustCompile(`^timeout 5 engram sync --cloud --import --project (?:[^ ]+|'(?:[^']|'\\'')*') \|\| true$`)
 	if legacyPOSIXPattern.MatchString(cmd) {
 		return true
 	}
@@ -47,12 +47,11 @@ func isManagedEngramCloudHookCommand(cmd string) bool {
 func extractProjectFromHookCommand(cmd string) string {
 	// POSIX: timeout 5 engram sync --cloud --import --project <project> || true
 	if strings.HasPrefix(cmd, "timeout 5 engram sync --cloud --import --project ") {
-		parts := strings.Split(cmd, " ")
-		for i, part := range parts {
-			if part == "--project" && i+1 < len(parts) {
-				return parts[i+1]
-			}
+		project := strings.TrimSuffix(strings.TrimPrefix(cmd, "timeout 5 engram sync --cloud --import --project "), " || true")
+		if strings.HasPrefix(project, "'") && strings.HasSuffix(project, "'") {
+			return strings.ReplaceAll(project[1:len(project)-1], "'\\''", "'")
 		}
+		return project
 	}
 
 	// POSIX and Windows unified wrappers carry the project in the same base64url argument.
@@ -111,6 +110,7 @@ type CloudSessionSyncStatus struct {
 	TokenValid          bool
 	ManagedHookPresent  bool
 	ManagedHookValid    bool
+	HookPayloadInvalid  bool
 	HookProjectMismatch bool
 	OwnerOnly           bool
 }
@@ -162,26 +162,27 @@ func InspectEngramCloudSessionSync(cfg Config) (CloudSessionSyncStatus, error) {
 	}
 	_, resolvedProject, _ := resolveEngramCloudConfig(cfg, m)
 
-	if resolvedProject != "" {
-		if hooks, ok := settings["hooks"].(map[string]any); ok {
-			if sessionStart, ok := hooks["SessionStart"].([]any); ok {
-				for _, rawEntry := range sessionStart {
-					entry, ok := rawEntry.(map[string]any)
-					if !ok || entry["matcher"] != "" {
+	if hooks, ok := settings["hooks"].(map[string]any); ok {
+		if sessionStart, ok := hooks["SessionStart"].([]any); ok {
+			for _, rawEntry := range sessionStart {
+				entry, ok := rawEntry.(map[string]any)
+				if !ok || entry["matcher"] != "" {
+					continue
+				}
+				entryHooks, _ := entry["hooks"].([]any)
+				for _, rawHook := range entryHooks {
+					hook, ok := rawHook.(map[string]any)
+					if !ok || hook["type"] != "command" {
 						continue
 					}
-					entryHooks, _ := entry["hooks"].([]any)
-					for _, rawHook := range entryHooks {
-						hook, ok := rawHook.(map[string]any)
-						if !ok || hook["type"] != "command" {
-							continue
+					command, _ := hook["command"].(string)
+					if isManagedEngramCloudHookCandidate(command) {
+						hookProject := extractProjectFromHookCommand(command)
+						if hookProject == "" {
+							status.HookPayloadInvalid = true
 						}
-						command, _ := hook["command"].(string)
-						if isManagedEngramCloudHookCandidate(command) {
-							hookProject := extractProjectFromHookCommand(command)
-							if hookProject != "" && resolvedProject != "" && hookProject != resolvedProject {
-								status.HookProjectMismatch = true
-							}
+						if resolvedProject != "" && hookProject != resolvedProject {
+							status.HookProjectMismatch = true
 						}
 					}
 				}

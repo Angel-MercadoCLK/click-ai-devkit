@@ -526,7 +526,7 @@ func TestInstall_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 
 	// Check ENGRAM_CLOUD_TOKEN (persisted via consent)
 	if got := env["ENGRAM_CLOUD_TOKEN"]; got != tokenOverride {
-		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] = %v, want %q", got, tokenOverride)
+		t.Fatal("persisted cloud token does not match the supplied token")
 	}
 
 	// Assert the managed SessionStart hook exists
@@ -653,6 +653,6 @@ func TestInstall_PersistFlagDoesNotPrintConsentPrompt(t *testing.T) {
 	}
 
 	if got := env["ENGRAM_CLOUD_TOKEN"]; got != "test-token" {
-		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] = %v, want %q (token should be persisted with persist flag)", got, "test-token")
+		t.Fatal("cloud token should be persisted with persist flag")
 	}
 }

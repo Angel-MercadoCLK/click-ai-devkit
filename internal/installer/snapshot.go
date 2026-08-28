@@ -238,91 +238,167 @@ func SnapshotTargetPlan(cfg Config, plan TargetPlan) error {
 // fidelity contract. Returns an error when the token is present but its extent cannot be
 // determined with confidence (genuinely malformed input), allowing the caller to fail closed.
 func redactEngramCloudToken(data []byte) ([]byte, error) {
-	// Fast path: check if the token key exists without full parsing
-	// This preserves byte-fidelity when no token is present
-	tokenKey := []byte(`"ENGRAM_CLOUD_TOKEN"`)
-	if !bytes.Contains(data, tokenKey) {
-		// No token present, return bytes unchanged
-		return data, nil
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("malformed JSON settings document")
 	}
+	ranges, err := findEngramCloudTokenValueRanges(data)
+	if err != nil || len(ranges) == 0 {
+		return data, err
+	}
+	result := make([]byte, 0, len(data))
+	last := 0
+	for _, r := range ranges {
+		result = append(result, data[last:r.start]...)
+		result = append(result, `"[REDACTED]"`...)
+		last = r.end
+	}
+	return append(result, data[last:]...), nil
+}
 
-	// Token key is present - locate and replace the token value with byte-level replacement
-	// We need to find the pattern: "ENGRAM_CLOUD_TOKEN":"<value>" or "ENGRAM_CLOUD_TOKEN": "<value>"
-	// and replace only the <value> portion
+type jsonByteRange struct{ start, end int }
 
-	tokenPattern := []byte(`"ENGRAM_CLOUD_TOKEN":`)
-	result := data
-	found := false
-	searchPos := 0
+func findEngramCloudTokenValueRanges(data []byte) ([]jsonByteRange, error) {
+	p := jsonTokenRangeParser{data: data}
+	if _, err := p.value(false); err != nil {
+		return nil, err
+	}
+	return p.ranges, nil
+}
 
+type jsonTokenRangeParser struct {
+	data   []byte
+	pos    int
+	ranges []jsonByteRange
+}
+
+func (p *jsonTokenRangeParser) value(inEnv bool) (jsonByteRange, error) {
+	p.ws()
+	start := p.pos
+	if start >= len(p.data) {
+		return jsonByteRange{}, fmt.Errorf("missing JSON value")
+	}
+	switch p.data[p.pos] {
+	case '{':
+		return p.object(inEnv)
+	case '[':
+		return p.array(inEnv)
+	case '"':
+		return p.string()
+	default:
+		for p.pos < len(p.data) && !bytes.ContainsRune([]byte(" \t\r\n,]}"), rune(p.data[p.pos])) {
+			p.pos++
+		}
+		if p.pos == start {
+			return jsonByteRange{}, fmt.Errorf("invalid JSON value")
+		}
+		return jsonByteRange{start, p.pos}, nil
+	}
+}
+
+func (p *jsonTokenRangeParser) object(inEnv bool) (jsonByteRange, error) {
+	start := p.pos
+	p.pos++
+	p.ws()
+	if p.pos < len(p.data) && p.data[p.pos] == '}' {
+		p.pos++
+		return jsonByteRange{start, p.pos}, nil
+	}
 	for {
-		idx := bytes.Index(result[searchPos:], tokenPattern)
-		if idx == -1 {
-			break
+		p.ws()
+		kr, err := p.string()
+		if err != nil {
+			return jsonByteRange{}, err
 		}
-		idx += searchPos // Convert to absolute position
-
-		// Found "ENGRAM_CLOUD_TOKEN:" - now find the value
-		valueStart := idx + len(tokenPattern)
-		if valueStart >= len(result) {
-			// Malformed - key at end of input
-			return nil, fmt.Errorf("malformed JSON: ENSRAM_CLOUD_TOKEN key at end of input")
+		var key string
+		if err := json.Unmarshal(p.data[kr.start:kr.end], &key); err != nil {
+			return jsonByteRange{}, err
 		}
-
-		// Skip whitespace after the colon
-		for valueStart < len(result) && (result[valueStart] == ' ' || result[valueStart] == '\t') {
-			valueStart++
+		p.ws()
+		if p.pos >= len(p.data) || p.data[p.pos] != ':' {
+			return jsonByteRange{}, fmt.Errorf("missing colon after object key")
 		}
-		if valueStart >= len(result) {
-			return nil, fmt.Errorf("malformed JSON: ENSRAM_CLOUD_TOKEN key at end of input")
+		p.pos++
+		vr, err := p.value(inEnv || key == "env")
+		if err != nil {
+			return jsonByteRange{}, err
 		}
-
-		// The value should start with a quote (string value in JSON)
-		if result[valueStart] != '"' {
-			// Not a string value - malformed
-			return nil, fmt.Errorf("malformed JSON: ENSRAM_CLOUD_TOKEN value is not a string")
-		}
-
-		// Find the closing quote
-		valueEnd := valueStart + 1
-		escaped := false
-		for valueEnd < len(result) {
-			c := result[valueEnd]
-			if escaped {
-				escaped = false
-			} else if c == '\\' {
-				escaped = true
-			} else if c == '"' {
-				valueEnd++
-				break
+		if inEnv && key == "ENGRAM_CLOUD_TOKEN" {
+			if p.data[vr.start] != '"' {
+				return jsonByteRange{}, fmt.Errorf("ENGRAM_CLOUD_TOKEN value is not a string")
 			}
-			valueEnd++
+			p.ranges = append(p.ranges, vr)
 		}
-
-		if valueEnd >= len(result) {
-			// Malformed - unterminated string
-			return nil, fmt.Errorf("malformed JSON: unterminated string in ENSRAM_CLOUD_TOKEN value")
+		p.ws()
+		if p.pos >= len(p.data) {
+			return jsonByteRange{}, fmt.Errorf("unterminated object")
 		}
-
-		// Replace the token value with [REDACTED]
-		beforeValue := result[:valueStart+1] // Include the opening quote
-		afterValue := result[valueEnd:]
-		replacement := []byte(`[REDACTED]"`)
-		result = bytes.Join([][]byte{beforeValue, replacement, afterValue}, nil)
-		found = true
-
-		// Move search position past this replacement to avoid infinite loops
-		searchPos = valueStart + len(replacement)
-
-		// Continue searching in case there are duplicates (shouldn't happen, but be defensive)
+		if p.data[p.pos] == '}' {
+			p.pos++
+			return jsonByteRange{start, p.pos}, nil
+		}
+		if p.data[p.pos] != ',' {
+			return jsonByteRange{}, fmt.Errorf("missing object delimiter")
+		}
+		p.pos++
 	}
+}
 
-	if !found {
-		// Token key found but no valid value structure
-		return nil, fmt.Errorf("malformed JSON: ENSRAM_CLOUD_TOKEN key found but value is malformed")
+func (p *jsonTokenRangeParser) array(inEnv bool) (jsonByteRange, error) {
+	start := p.pos
+	p.pos++
+	p.ws()
+	if p.pos < len(p.data) && p.data[p.pos] == ']' {
+		p.pos++
+		return jsonByteRange{start, p.pos}, nil
 	}
+	for {
+		if _, err := p.value(inEnv); err != nil {
+			return jsonByteRange{}, err
+		}
+		p.ws()
+		if p.pos >= len(p.data) {
+			return jsonByteRange{}, fmt.Errorf("unterminated array")
+		}
+		if p.data[p.pos] == ']' {
+			p.pos++
+			return jsonByteRange{start, p.pos}, nil
+		}
+		if p.data[p.pos] != ',' {
+			return jsonByteRange{}, fmt.Errorf("missing array delimiter")
+		}
+		p.pos++
+	}
+}
 
-	return result, nil
+func (p *jsonTokenRangeParser) string() (jsonByteRange, error) {
+	start := p.pos
+	if p.pos >= len(p.data) || p.data[p.pos] != '"' {
+		return jsonByteRange{}, fmt.Errorf("expected JSON string")
+	}
+	p.pos++
+	escaped := false
+	for p.pos < len(p.data) {
+		c := p.data[p.pos]
+		p.pos++
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			return jsonByteRange{start, p.pos}, nil
+		}
+	}
+	return jsonByteRange{}, fmt.Errorf("unterminated JSON string")
+}
+
+func (p *jsonTokenRangeParser) ws() {
+	for p.pos < len(p.data) && bytes.ContainsRune([]byte(" \t\r\n"), rune(p.data[p.pos])) {
+		p.pos++
+	}
 }
 
 func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {

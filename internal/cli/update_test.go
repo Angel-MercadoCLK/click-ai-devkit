@@ -415,7 +415,7 @@ func TestUpdate_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 
 	// Check ENGRAM_CLOUD_TOKEN (persisted via consent)
 	if got := env["ENGRAM_CLOUD_TOKEN"]; got != tokenOverride {
-		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] = %v, want %q", got, tokenOverride)
+		t.Fatal("persisted cloud token does not match the supplied token")
 	}
 
 	// Assert the managed SessionStart hook exists with the resolved project
@@ -529,7 +529,7 @@ func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 	}
 
 	if got := env["ENGRAM_CLOUD_TOKEN"]; got != storedToken {
-		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] = %v, want %q (stored token must be preserved when no process token exists)", got, storedToken)
+		t.Fatal("stored cloud token must be preserved when no process token exists")
 	}
 }
 

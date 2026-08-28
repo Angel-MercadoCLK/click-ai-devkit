@@ -68,7 +68,7 @@ func TestConfigureEngramCloudSessionSync_ProjectChangeReplacesStaleHook(t *testi
 
 	// Verify team-old hook was registered
 	if !strings.Contains(string(data), "dGVhbS1vbGQ") {
-		t.Fatalf("Expected team-old hook to be present, got: %s", string(data))
+		t.Fatal("expected team-old hook to be present")
 	}
 
 	// Second registration with team-new
@@ -83,12 +83,12 @@ func TestConfigureEngramCloudSessionSync_ProjectChangeReplacesStaleHook(t *testi
 
 	// Verify team-new hook is registered
 	if !strings.Contains(string(data), "dGVhbS1uZXc") {
-		t.Fatalf("Expected team-new hook to be present, got: %s", string(data))
+		t.Fatal("expected team-new hook to be present")
 	}
 
 	// Verify team-old hook is NOT present (should be replaced)
 	if strings.Contains(string(data), "dGVhbS1vbGQ") {
-		t.Fatalf("Expected team-old hook to be removed (replaced by team-new), got: %s", string(data))
+		t.Fatal("expected team-old hook to be removed")
 	}
 
 	// Verify exactly ONE managed hook entry
@@ -299,7 +299,7 @@ func TestCheckEngramCloudSessionSync_WritesFullEnvBlock(t *testing.T) {
 	}
 
 	if got, want := env["ENGRAM_CLOUD_TOKEN"], token; got != want {
-		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] = %v, want %q", got, want)
+		t.Fatal("persisted cloud token does not match the supplied token")
 	}
 
 	// Verify foreign entry is preserved
@@ -381,7 +381,7 @@ func TestConfigureEngramCloudSessionSync_PreservesForeignEnvEntries(t *testing.T
 	}
 
 	if got, want := env["ENGRAM_CLOUD_TOKEN"], token; got != want {
-		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] = %v, want %q", got, want)
+		t.Fatal("persisted cloud token does not match the supplied token")
 	}
 }
 
@@ -710,8 +710,8 @@ func TestConfigureEngramCloudSessionSync_DeclineWritesOnlyNonSecretKeys(t *testi
 	}
 
 	// Verify TOKEN is absent
-	if tokenVal, present := env["ENGRAM_CLOUD_TOKEN"]; present {
-		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] should be absent in decline mode, got = %v", tokenVal)
+	if _, present := env["ENGRAM_CLOUD_TOKEN"]; present {
+		t.Fatal("cloud token should be absent in decline mode")
 	}
 }
 
@@ -781,8 +781,8 @@ func TestConfigureEngramCloudSessionSync_DeclineRemovesPersistedToken(t *testing
 	}
 
 	// Verify TOKEN is absent
-	if tokenVal, present := env["ENGRAM_CLOUD_TOKEN"]; present {
-		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] should be absent in decline mode, got = %v", tokenVal)
+	if _, present := env["ENGRAM_CLOUD_TOKEN"]; present {
+		t.Fatal("cloud token should be absent in decline mode")
 	}
 
 	// Verify foreign env entry is preserved
@@ -918,7 +918,7 @@ func TestRemoveEngramCloudSessionSync_RemovesOnlyClickOwnedEntries(t *testing.T)
 		t.Fatalf("env[\"ENGRAM_CLOUD_SERVER\"] should be removed, got = %v", env["ENGRAM_CLOUD_SERVER"])
 	}
 	if _, present := env["ENGRAM_CLOUD_TOKEN"]; present {
-		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] should be removed, got = %v", env["ENGRAM_CLOUD_TOKEN"])
+		t.Fatal("cloud token should be removed")
 	}
 
 	// Verify foreign env entry is preserved
@@ -1221,25 +1221,23 @@ func TestRedactEngramCloudToken_TokenValueRemovedWhenPresent(t *testing.T) {
 			if err != nil {
 				t.Fatalf("redactEngramCloudToken() error = %v", err)
 			}
-			gotStr := string(got)
-
 			// Verify must-contain strings
 			for _, must := range tc.mustContain {
 				if !bytes.Contains(got, []byte(must)) {
-					t.Fatalf("redacted output missing expected content %q\ngot: %s", must, gotStr)
+					t.Fatalf("redacted output missing expected content %q", must)
 				}
 			}
 
 			// Verify must-not-contain strings (especially the token value)
 			for _, mustNot := range tc.mustNotContain {
 				if bytes.Contains(got, []byte(mustNot)) {
-					t.Fatalf("redacted output contains forbidden content %q\ngot: %s", mustNot, gotStr)
+					t.Fatalf("redacted output contains forbidden content %q", mustNot)
 				}
 			}
 
 			// Verify the redacted placeholder is present
 			if !bytes.Contains(got, []byte(`"ENGRAM_CLOUD_TOKEN"`)) {
-				t.Fatalf("redacted output missing token key entirely\ngot: %s", gotStr)
+				t.Fatal("redacted output missing token key entirely")
 			}
 		})
 	}
@@ -1312,5 +1310,28 @@ func TestInspectEngramCloudSessionSync_NoMismatchWhenProjectsAgree(t *testing.T)
 	}
 	if status.HookProjectMismatch {
 		t.Fatalf("InspectEngramCloudSessionSync() status = %+v, want HookProjectMismatch false", status)
+	}
+}
+
+func TestConfigureEngramCloudSessionSync_MigratesQuotedLegacyHook(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{ClaudeHome: dir}
+	settings := `{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"timeout 5 engram sync --cloud --import --project 'team hive' || true"}]}]}}`
+	if err := os.WriteFile(cfg.SettingsPath(), []byte(settings), 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+	m := &manifest.Manifest{EngramCloud: manifest.EngramCloud{Server: "https://cloud.example.com", Project: "team hive"}}
+	if err := ConfigureEngramCloudSessionSync(cfg, m, CloudTokenPersistenceDecline, ""); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+	}
+	data, err := os.ReadFile(cfg.SettingsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(settings) error = %v", err)
+	}
+	if bytes.Contains(data, []byte("timeout 5 engram sync")) {
+		t.Fatal("legacy quoted hook was not removed")
+	}
+	if !bytes.Contains(data, []byte("engram-cloud-import")) {
+		t.Fatal("unified hook was not added")
 	}
 }

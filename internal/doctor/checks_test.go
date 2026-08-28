@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -1402,4 +1403,58 @@ func filepathDir(path string) string {
 		}
 	}
 	return "."
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyWhenTokenMissing(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	cfg := configuredEngramCloudSessionSync(t)
+
+	data, err := os.ReadFile(cfg.SettingsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(settings) error = %v", err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("Unmarshal(settings) error = %v", err)
+	}
+	delete(settings["env"].(map[string]any), "ENGRAM_CLOUD_TOKEN")
+	data, err = json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("Marshal(settings) error = %v", err)
+	}
+	if err := os.WriteFile(cfg.SettingsPath(), data, 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy", got)
+	}
+	if !strings.Contains(got.Detail, "ENGRAM_CLOUD_TOKEN") || !strings.Contains(got.Detail, "autenticar") {
+		t.Fatalf("checkEngramCloudSessionSync() detail does not explain missing authentication token")
+	}
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyOnUndecodableHookPayload(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	cfg := configuredEngramCloudSessionSync(t)
+
+	data, err := os.ReadFile(cfg.SettingsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(settings) error = %v", err)
+	}
+	data = bytes.Replace(data, []byte("--project-b64 dGVhbS1oaXZl"), []byte("--project-b64 A"), 1)
+	if err := os.WriteFile(cfg.SettingsPath(), data, 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy", got)
+	}
+	if !strings.Contains(got.Detail, "payload") {
+		t.Fatalf("checkEngramCloudSessionSync() detail does not name the undecodable payload")
+	}
 }

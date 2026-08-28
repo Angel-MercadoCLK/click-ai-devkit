@@ -1447,7 +1447,7 @@ func TestRedactEngramCloudToken_ValidTokenDocumentPreservesUnrelatedBytes(t *tes
 
 func TestRedactEngramCloudToken_NoTokenReturnsInputUnchanged(t *testing.T) {
 	// Input without token should return exactly the same bytes
-	input := []byte(`{"env":{"ENGRAM_CLOUD_SERVER":"https://example.com"}}\n`)
+	input := append([]byte(`{"env":{"ENGRAM_CLOUD_SERVER":"https://example.com"}}`), '\n')
 
 	redacted, err := redactEngramCloudToken(input)
 	if err != nil {
@@ -1456,5 +1456,31 @@ func TestRedactEngramCloudToken_NoTokenReturnsInputUnchanged(t *testing.T) {
 
 	if !bytes.Equal(redacted, input) {
 		t.Fatalf("No-token case should return input unchanged")
+	}
+}
+
+func TestRedactEngramCloudToken_EscapedKeyStillRedacted(t *testing.T) {
+	secret := "escaped-key-secret"
+	input := []byte(`{"env":{"ENGRAM_CLOUD\u005fTOKEN":"` + secret + `"}}`)
+
+	redacted, err := redactEngramCloudToken(input)
+	if err != nil {
+		t.Fatalf("redactEngramCloudToken() error = %v", err)
+	}
+	if bytes.Contains(redacted, []byte(secret)) {
+		t.Fatal("redacted backup contains the token")
+	}
+}
+
+func TestRedactEngramCloudToken_EscapedValueStillRedacted(t *testing.T) {
+	secretFragment := "escaped-value-secret"
+	input := []byte(`{"env":{"ENGRAM_CLOUD_TOKEN":"escaped\\u002dvalue\\u002dsecret"}}`)
+
+	redacted, err := redactEngramCloudToken(input)
+	if err != nil {
+		t.Fatalf("redactEngramCloudToken() error = %v", err)
+	}
+	if bytes.Contains(redacted, []byte(secretFragment)) || bytes.Contains(redacted, []byte(`\\u002d`)) {
+		t.Fatal("redacted backup contains token value bytes")
 	}
 }
