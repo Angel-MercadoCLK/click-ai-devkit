@@ -13,11 +13,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
+
+const engramCloudImportOutcomeStaleAfter = 7 * 24 * time.Hour
+
+var engramCloudSessionSyncNow = time.Now
 
 // EngramChecksCount is the number of doctor checks contributed by Engram, kept as an exported
 // constant so other packages/tests documenting Run()'s total check count don't have to hardcode a
@@ -732,6 +737,26 @@ func checkEngramCloudSessionSync(cfg installer.Config) CheckResult {
 	}
 	if len(problems) > 0 {
 		return CheckResult{Name: name, Healthy: false, Detail: "configuración de sincronización incompleta o alterada: falta o es inválido " + strings.Join(problems, ", ")}
+	}
+	outcome, found, err := installer.LoadEngramCloudImportOutcome(cfg)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo leer el último resultado de importación de Engram Cloud: " + err.Error()}
+	}
+	if !found {
+		return CheckResult{Name: name, Healthy: false, Detail: "el hook SessionStart no se observó ejecutarse todavía"}
+	}
+	switch outcome.Status {
+	case installer.EngramCloudImportOutcomeFailure:
+		return CheckResult{Name: name, Healthy: false, Detail: "la última importación de Engram Cloud falló: import command failed"}
+	case installer.EngramCloudImportOutcomeTimeout:
+		return CheckResult{Name: name, Healthy: false, Detail: "la última importación de Engram Cloud falló: import timed out"}
+	case installer.EngramCloudImportOutcomeSuccess:
+		// A week allows normal absences while still detecting a hook that stopped running between sessions.
+		if outcome.Timestamp.IsZero() || engramCloudSessionSyncNow().UTC().Sub(outcome.Timestamp) > engramCloudImportOutcomeStaleAfter {
+			return CheckResult{Name: name, Healthy: false, Detail: "la última importación exitosa de Engram Cloud está desactualizada"}
+		}
+	default:
+		return CheckResult{Name: name, Healthy: false, Detail: "el último resultado de importación de Engram Cloud es inválido"}
 	}
 	return CheckResult{Name: name, Healthy: true, Detail: "sincronización de sesión de Engram Cloud configurada"}
 }

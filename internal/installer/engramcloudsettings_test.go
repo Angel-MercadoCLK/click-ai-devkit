@@ -7,9 +7,27 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
+
+func TestRemoveEngramCloudSessionSync_RemovesOutcomeRecord(t *testing.T) {
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+	cfg := Config{ClaudeHome: t.TempDir()}
+	if err := WriteEngramCloudImportOutcome(cfg, EngramCloudImportOutcome{
+		Timestamp: time.Now().UTC(), Status: EngramCloudImportOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+	}
+
+	if err := RemoveEngramCloudSessionSync(cfg); err != nil {
+		t.Fatalf("RemoveEngramCloudSessionSync() error = %v", err)
+	}
+	if _, err := os.Stat(cfg.EngramCloudImportOutcomePath()); !os.IsNotExist(err) {
+		t.Fatalf("outcome record remains after removal: stat error = %v", err)
+	}
+}
 
 func TestConfigureEngramCloudSessionSync_ProjectChangeReplacesStaleHook(t *testing.T) {
 	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())

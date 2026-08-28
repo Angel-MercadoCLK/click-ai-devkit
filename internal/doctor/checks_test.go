@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
@@ -257,6 +258,12 @@ func TestCheckEngramCloudSessionSync_HealthyWhenCompleteOrNotConfigured(t *testi
 	if err := installer.ConfigureEngramCloudSessionSync(complete, m, installer.CloudTokenPersistencePersist, "test-token"); err != nil {
 		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
 	}
+	if err := installer.WriteEngramCloudImportOutcome(complete, installer.EngramCloudImportOutcome{
+		Timestamp: time.Now().UTC(),
+		Status:    installer.EngramCloudImportOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+	}
 
 	if got := checkEngramCloudSessionSync(complete); !got.Healthy {
 		t.Fatalf("complete session sync check = %+v, want healthy", got)
@@ -264,6 +271,58 @@ func TestCheckEngramCloudSessionSync_HealthyWhenCompleteOrNotConfigured(t *testi
 	if got := checkEngramCloudSessionSync(installer.Config{ClaudeHome: t.TempDir()}); !got.Healthy || !strings.Contains(got.Detail, "sin configurar") {
 		t.Fatalf("unconfigured session sync check = %+v, want healthy not configured", got)
 	}
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyWhenNeverRan(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	cfg := configuredEngramCloudSessionSync(t)
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy || !strings.Contains(got.Detail, "no se observó ejecutarse") {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy stating the hook has not been observed running", got)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_UnhealthyOnRecordedFailure(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	cfg := configuredEngramCloudSessionSync(t)
+	if err := installer.WriteEngramCloudImportOutcome(cfg, installer.EngramCloudImportOutcome{
+		Timestamp: time.Now().UTC(), Status: installer.EngramCloudImportOutcomeFailure, Reason: "import command failed",
+	}); err != nil {
+		t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy || !strings.Contains(got.Detail, "import command failed") {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy naming the recorded reason", got)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_HealthyOnRecentSuccess(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	cfg := configuredEngramCloudSessionSync(t)
+	if err := installer.WriteEngramCloudImportOutcome(cfg, installer.EngramCloudImportOutcome{
+		Timestamp: time.Now().UTC(), Status: installer.EngramCloudImportOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+	}
+
+	if got := checkEngramCloudSessionSync(cfg); !got.Healthy {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want healthy after a recent successful import", got)
+	}
+}
+
+func configuredEngramCloudSessionSync(t *testing.T) installer.Config {
+	t.Helper()
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	m := &manifest.Manifest{EngramCloud: manifest.EngramCloud{Server: "https://cloud.example.com", Project: "team-hive"}}
+	if err := installer.ConfigureEngramCloudSessionSync(cfg, m, installer.CloudTokenPersistencePersist, "test-token"); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+	}
+	return cfg
 }
 
 func TestCheckEngramCloudSessionSync_UnhealthyWhenClickNotOnPath(t *testing.T) {

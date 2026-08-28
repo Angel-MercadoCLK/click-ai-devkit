@@ -2,9 +2,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"testing"
 	"time"
+
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 )
 
 // TestEngramCloudImportCommand_ExactEngramArgv verifies that running the hidden
@@ -108,5 +111,72 @@ func TestEngramCloudImportCommand_BoundedAndAlwaysSucceeds(t *testing.T) {
 	// (the sleep duration we injected), proving the process was killed by the timeout
 	if elapsed > time.Minute {
 		t.Errorf("Execute() took %v, but the child command sleeps for 1000s; the timeout must have killed it", elapsed)
+	}
+}
+
+func TestEngramCloudImportCommand_RecordsSuccessOutcome(t *testing.T) {
+	claudeHome := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	fixedNow := time.Date(2026, time.August, 27, 12, 0, 0, 0, time.UTC)
+	restoreNow := setEngramCloudImportNowForTests(func() time.Time { return fixedNow })
+	t.Cleanup(restoreNow)
+	restoreCommand := setEngramCloudCommandContextForTests(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "true")
+	})
+	t.Cleanup(restoreCommand)
+
+	cmd := newEngramCloudImportCommand()
+	cmd.SetArgs([]string{"--project-b64", "dGVhbS1oaXZl"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	outcome, found, err := installer.LoadEngramCloudImportOutcome(installer.Config{ClaudeHome: claudeHome})
+	if err != nil || !found {
+		t.Fatalf("LoadEngramCloudImportOutcome() = (%+v, %v, %v), want a record", outcome, found, err)
+	}
+	if outcome.Status != installer.EngramCloudImportOutcomeSuccess || !outcome.Timestamp.Equal(fixedNow) {
+		t.Fatalf("outcome = %+v, want success at %s", outcome, fixedNow)
+	}
+}
+
+func TestEngramCloudImportCommand_RecordsFailureAndStillReturnsNil(t *testing.T) {
+	claudeHome := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	restoreCommand := setEngramCloudCommandContextForTests(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "cmd", "/c", "exit 1")
+	})
+	t.Cleanup(restoreCommand)
+
+	cmd := newEngramCloudImportCommand()
+	cmd.SetArgs([]string{"--project-b64", "dGVhbS1oaXZl"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	outcome, found, err := installer.LoadEngramCloudImportOutcome(installer.Config{ClaudeHome: claudeHome})
+	if err != nil || !found {
+		t.Fatalf("LoadEngramCloudImportOutcome() = (%+v, %v, %v), want a record", outcome, found, err)
+	}
+	if outcome.Status != installer.EngramCloudImportOutcomeFailure || outcome.Reason == "" {
+		t.Fatalf("outcome = %+v, want recorded failure with a reason", outcome)
+	}
+}
+
+func TestEngramCloudImportCommand_RecordWriteFailureIsSwallowed(t *testing.T) {
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+	restoreWrite := setEngramCloudImportOutcomeWriterForTests(func(installer.Config, installer.EngramCloudImportOutcome) error {
+		return errors.New("record write failed")
+	})
+	t.Cleanup(restoreWrite)
+	restoreCommand := setEngramCloudCommandContextForTests(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "true")
+	})
+	t.Cleanup(restoreCommand)
+
+	cmd := newEngramCloudImportCommand()
+	cmd.SetArgs([]string{"--project-b64", "dGVhbS1oaXZl"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v, want nil when recording fails", err)
 	}
 }

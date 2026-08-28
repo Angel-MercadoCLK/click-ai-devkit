@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/spf13/cobra"
 )
 
@@ -14,6 +15,29 @@ var engramCloudCommandContext = exec.CommandContext
 
 // engramCloudImportTimeout is a package-level var seam for testing, following this repo's convention.
 var engramCloudImportTimeout = 5 * time.Second
+
+var (
+	engramCloudImportNow           = time.Now
+	engramCloudImportOutcomeWriter = installer.WriteEngramCloudImportOutcome
+)
+
+func setEngramCloudCommandContextForTests(commandContext func(context.Context, string, ...string) *exec.Cmd) func() {
+	previous := engramCloudCommandContext
+	engramCloudCommandContext = commandContext
+	return func() { engramCloudCommandContext = previous }
+}
+
+func setEngramCloudImportNowForTests(now func() time.Time) func() {
+	previous := engramCloudImportNow
+	engramCloudImportNow = now
+	return func() { engramCloudImportNow = previous }
+}
+
+func setEngramCloudImportOutcomeWriterForTests(writer func(installer.Config, installer.EngramCloudImportOutcome) error) func() {
+	previous := engramCloudImportOutcomeWriter
+	engramCloudImportOutcomeWriter = writer
+	return func() { engramCloudImportOutcomeWriter = previous }
+}
 
 // newEngramCloudImportCommand creates the hidden subcommand that performs a bounded
 // one-shot import of Engram memories from the cloud.
@@ -29,10 +53,23 @@ func newEngramCloudImportCommand() *cobra.Command {
 		Short:  "Internal command: bounded one-shot Engram cloud import",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			recordOutcome := func(status, reason string) {
+				claudeHome, err := installer.ResolveClaudeHome()
+				if err != nil {
+					return
+				}
+				_ = engramCloudImportOutcomeWriter(installer.Config{ClaudeHome: claudeHome}, installer.EngramCloudImportOutcome{
+					Timestamp: engramCloudImportNow().UTC(),
+					Status:    status,
+					Reason:    reason,
+				})
+			}
+
 			// Decode the base64url-encoded project name
 			projectBytes, err := base64.RawURLEncoding.DecodeString(projectB64)
 			if err != nil {
 				// Decoding errors are silently suppressed - the command must never fail
+				recordOutcome(installer.EngramCloudImportOutcomeFailure, "invalid project encoding")
 				return nil
 			}
 			project := string(projectBytes)
@@ -52,9 +89,15 @@ func newEngramCloudImportCommand() *cobra.Command {
 				// - Unenrolled project (exit code 1 with message)
 				// - Unreachable server (network error)
 				// The SessionStart hook must never surface these as session errors
+				if ctx.Err() == context.DeadlineExceeded {
+					recordOutcome(installer.EngramCloudImportOutcomeTimeout, "import timed out")
+				} else {
+					recordOutcome(installer.EngramCloudImportOutcomeFailure, "import command failed")
+				}
 				return nil
 			}
 
+			recordOutcome(installer.EngramCloudImportOutcomeSuccess, "")
 			return nil
 		},
 	}

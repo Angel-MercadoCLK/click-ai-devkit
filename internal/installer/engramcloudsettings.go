@@ -390,6 +390,9 @@ func configureEngramCloudSessionSyncImpl(cfg Config, m *manifest.Manifest, mode 
 // from Claude Code's settings.json. It performs one selective atomic rewrite, preserving all
 // foreign entries and pruning empty containers.
 func RemoveEngramCloudSessionSync(cfg Config) error {
+	if err := RemoveEngramCloudImportOutcome(cfg); err != nil {
+		return err
+	}
 	settings, err := readSettingsFile(cfg.SettingsPath())
 	if err != nil {
 		if os.IsNotExist(err) {
