@@ -1408,7 +1408,7 @@ func TestRedactEngramCloudToken_MalformedWithTokenNeverLeaksSecret(t *testing.T)
 
 	// Ensure the secret token does not appear in any error messages
 	if err != nil && strings.Contains(err.Error(), "secret-token-12345") {
-		t.Fatalf("Error message contains secret token: %v", err)
+		t.Fatal("Error message contains secret token")
 	}
 }
 
@@ -1442,6 +1442,17 @@ func TestRedactEngramCloudToken_ValidTokenDocumentPreservesUnrelatedBytes(t *tes
 	// Should not add trailing newline
 	if len(redacted) > 0 && redacted[len(redacted)-1] == '\n' {
 		t.Fatalf("Should not add trailing newline to compact input")
+	}
+}
+
+func TestRedactEngramCloudToken_IgnoresNestedForeignEnvObjects(t *testing.T) {
+	input := []byte(`{"plugin":{"env":{"ENGRAM_CLOUD_TOKEN":"foreign-value"}}}`)
+	redacted, err := redactEngramCloudToken(input)
+	if err != nil {
+		t.Fatalf("redactEngramCloudToken() error = %v", err)
+	}
+	if !bytes.Equal(redacted, input) {
+		t.Fatal("nested foreign env object was altered")
 	}
 }
 

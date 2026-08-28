@@ -214,11 +214,18 @@ func SnapshotRun(cfg Config) error {
 }
 
 func SnapshotTargetPlan(cfg Config, plan TargetPlan) error {
+	_, err := SnapshotTargetPlanWithWarnings(cfg, plan)
+	return err
+}
+
+// SnapshotTargetPlanWithWarnings snapshots a target plan and reports entries skipped because their
+// malformed settings document cannot be safely redacted. The rest of the plan remains protected.
+func SnapshotTargetPlanWithWarnings(cfg Config, plan TargetPlan) ([]string, error) {
 	sources := make([]snapshotSource, 0, len(plan.SnapshotPaths()))
 	for i, decl := range plan.SnapshotSpecs() {
 		sources = append(sources, snapshotSource{originalPath: decl.Path, backupFile: fmt.Sprintf("plan-%03d%s", i+1, filepath.Ext(decl.Path)), policy: decl.Policy})
 	}
-	return snapshotRunWithSources(cfg, sources)
+	return snapshotRunWithSourcesWithWarnings(cfg, sources)
 }
 
 // redactEngramCloudToken removes the value of env.ENGRAM_CLOUD_TOKEN from settings.json
@@ -269,6 +276,7 @@ type jsonTokenRangeParser struct {
 	data   []byte
 	pos    int
 	ranges []jsonByteRange
+	depth  int
 }
 
 func (p *jsonTokenRangeParser) value(inEnv bool) (jsonByteRange, error) {
@@ -297,6 +305,8 @@ func (p *jsonTokenRangeParser) value(inEnv bool) (jsonByteRange, error) {
 
 func (p *jsonTokenRangeParser) object(inEnv bool) (jsonByteRange, error) {
 	start := p.pos
+	p.depth++
+	defer func() { p.depth-- }()
 	p.pos++
 	p.ws()
 	if p.pos < len(p.data) && p.data[p.pos] == '}' {
@@ -318,7 +328,7 @@ func (p *jsonTokenRangeParser) object(inEnv bool) (jsonByteRange, error) {
 			return jsonByteRange{}, fmt.Errorf("missing colon after object key")
 		}
 		p.pos++
-		vr, err := p.value(inEnv || key == "env")
+		vr, err := p.value(inEnv || (p.depth == 1 && key == "env"))
 		if err != nil {
 			return jsonByteRange{}, err
 		}
@@ -402,17 +412,22 @@ func (p *jsonTokenRangeParser) ws() {
 }
 
 func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
+	_, err := snapshotRunWithSourcesWithWarnings(cfg, sources)
+	return err
+}
+
+func snapshotRunWithSourcesWithWarnings(cfg Config, sources []snapshotSource) ([]string, error) {
 	backupDir := cfg.BackupDir()
 	if backupDir == "" {
-		return fmt.Errorf("installer: cannot snapshot: no click state home configured")
+		return nil, fmt.Errorf("installer: cannot snapshot: no click state home configured")
 	}
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
-		return fmt.Errorf("installer: create backup dir %s: %w", backupDir, err)
+		return nil, fmt.Errorf("installer: create backup dir %s: %w", backupDir, err)
 	}
 
 	tmpDir, err := os.MkdirTemp(backupDir, ".latest-tmp-*")
 	if err != nil {
-		return fmt.Errorf("installer: create temporary snapshot dir: %w", err)
+		return nil, fmt.Errorf("installer: create temporary snapshot dir: %w", err)
 	}
 	swapped := false
 	defer func() {
@@ -425,6 +440,7 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 	}()
 
 	manifest := runManifest{}
+	warnings := []string{}
 	for _, src := range sources {
 		data, readErr := os.ReadFile(src.originalPath)
 		if readErr != nil {
@@ -437,7 +453,7 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 				})
 				continue
 			}
-			return fmt.Errorf("installer: read %s for snapshot: %w", src.originalPath, readErr)
+			return nil, fmt.Errorf("installer: read %s for snapshot: %w", src.originalPath, readErr)
 		}
 
 		// Redact env.ENGRAM_CLOUD_TOKEN from settings.json backups (NFR-6)
@@ -446,14 +462,18 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 			if err != nil {
 				// Fail closed: if we can't redact safely, don't write the backup
 				// A missing backup is recoverable; a leaked credential is not
-				return fmt.Errorf("installer: redact token from %s: %w", src.originalPath, err)
+				if !json.Valid(data) {
+					warnings = append(warnings, src.originalPath)
+					continue
+				}
+				return nil, fmt.Errorf("installer: redact token from %s: %w", src.originalPath, err)
 			}
 			data = redacted
 		}
 
 		backupPath := filepath.Join(tmpDir, src.backupFile)
 		if writeErr := atomicWriteFile(backupPath, data, 0o600); writeErr != nil {
-			return fmt.Errorf("installer: write snapshot backup for %s: %w", src.originalPath, writeErr)
+			return nil, fmt.Errorf("installer: write snapshot backup for %s: %w", src.originalPath, writeErr)
 		}
 		manifest.Entries = append(manifest.Entries, manifestEntry{
 			OriginalPath: src.originalPath,
@@ -465,11 +485,11 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return fmt.Errorf("installer: marshal snapshot manifest: %w", err)
+		return nil, fmt.Errorf("installer: marshal snapshot manifest: %w", err)
 	}
 	manifestData = append(manifestData, '\n')
 	if err := atomicWriteFile(filepath.Join(tmpDir, snapshotManifestName), manifestData, 0o600); err != nil {
-		return fmt.Errorf("installer: write snapshot manifest: %w", err)
+		return nil, fmt.Errorf("installer: write snapshot manifest: %w", err)
 	}
 
 	// Every file copy and the manifest itself are now safely on disk under tmpDir. Only now do we
@@ -477,13 +497,13 @@ func snapshotRunWithSources(cfg Config, sources []snapshotSource) error {
 	// affected, and it only runs after full success above.
 	latestDir := snapshotLatestDir(cfg)
 	if err := os.RemoveAll(latestDir); err != nil {
-		return fmt.Errorf("installer: remove previous snapshot %s: %w", latestDir, err)
+		return nil, fmt.Errorf("installer: remove previous snapshot %s: %w", latestDir, err)
 	}
 	if err := os.Rename(tmpDir, latestDir); err != nil {
-		return fmt.Errorf("installer: activate new snapshot at %s: %w", latestDir, err)
+		return nil, fmt.Errorf("installer: activate new snapshot at %s: %w", latestDir, err)
 	}
 	swapped = true
-	return nil
+	return warnings, nil
 }
 
 // RestoreRun restores every snapshotted file to its last run-start snapshot (spec Requirement:

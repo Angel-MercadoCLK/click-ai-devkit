@@ -438,7 +438,7 @@ func TestConfigureEngramCloudSessionSync_IdempotentSecondRun(t *testing.T) {
 
 	// The serialized bytes must be identical
 	if !bytes.Equal(firstBytes, secondBytes) {
-		t.Fatalf("second run changed settings: first=%q, second=%q", firstBytes, secondBytes)
+		t.Fatal("second run changed settings")
 	}
 
 	// The file should not have been rewritten (no change in modification time)

@@ -129,12 +129,12 @@ func TestConfigureEngramCloudSessionSync_ReplacesLegacyTimeoutHook(t *testing.T)
 
 	// Verify the old timeout hook is NOT present
 	if strings.Contains(string(data), "timeout 5 engram sync --cloud --import --project") {
-		t.Fatalf("Old timeout hook should be replaced, but it's still present in settings: %s", string(data))
+		t.Fatal("old timeout hook should be replaced")
 	}
 
 	// Verify the new unified hook IS present
 	if !strings.Contains(string(data), "click engram-cloud-import") {
-		t.Fatalf("New unified hook should be present, but it's not in settings: %s", string(data))
+		t.Fatal("new unified hook should be present")
 	}
 
 	// Verify exactly ONE managed hook entry

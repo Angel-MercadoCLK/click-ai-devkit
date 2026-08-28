@@ -207,13 +207,21 @@ func confirmAndSnapshot(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg i
 		if !proceed {
 			return false, nil, nil
 		}
-		if err := installer.SnapshotTargetPlan(cfg, plan); err != nil {
+		warnings, err := installer.SnapshotTargetPlanWithWarnings(cfg, plan)
+		if err != nil {
 			return false, nil, err
+		}
+		for _, path := range warnings {
+			fmt.Fprintln(out, r.Warn(fmt.Sprintf("Se omitió el respaldo de settings.json porque su contenido es inválido: %s. La instalación continúa.", path)))
 		}
 		return true, reader, nil
 	}
-	if err := installer.SnapshotTargetPlan(cfg, plan); err != nil {
+	warnings, err := installer.SnapshotTargetPlanWithWarnings(cfg, plan)
+	if err != nil {
 		return false, nil, err
+	}
+	for _, path := range warnings {
+		fmt.Fprintln(out, r.Warn(fmt.Sprintf("Se omitió el respaldo de settings.json porque su contenido es inválido: %s. La instalación continúa.", path)))
 	}
 	return true, nil, nil
 }

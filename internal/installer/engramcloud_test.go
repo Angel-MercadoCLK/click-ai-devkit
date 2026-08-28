@@ -298,7 +298,7 @@ func TestSyncEngramCloud_TokenNotInArgvOrState(t *testing.T) {
 	for _, inv := range runner.commands {
 		for _, arg := range inv.Args {
 			if strings.Contains(arg, "do-not-leak-me") {
-				t.Fatalf("token leaked into argv: %q", arg)
+				t.Fatal("token leaked into argv")
 			}
 		}
 	}
@@ -308,7 +308,27 @@ func TestSyncEngramCloud_TokenNotInArgvOrState(t *testing.T) {
 		t.Fatalf("ReadFile(state) error = %v", err)
 	}
 	if strings.Contains(string(data), "do-not-leak-me") {
-		t.Fatalf("token leaked into state file: %s", string(data))
+		t.Fatal("token leaked into state file")
+	}
+}
+
+func TestSyncEngramCloud_SubprocessOutputNeverSurfaced(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "subprocess-output-sentinel")
+
+	runner := newFakeEngramCloudRunner()
+	runner.failAt = 0
+	runner.failWith = errors.New("engram output: subprocess-output-sentinel")
+	restore := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restore()
+
+	m := &manifest.Manifest{EngramCloud: manifest.EngramCloud{Server: "http://127.0.0.1:18080", Project: "click-ai-devkit"}}
+	err := SyncEngramCloud(cfg, m)
+	if err == nil {
+		t.Fatal("SyncEngramCloud() error = nil, want failure")
+	}
+	if strings.Contains(err.Error(), "subprocess-output-sentinel") {
+		t.Fatal("SyncEngramCloud() surfaced subprocess output")
 	}
 }
 

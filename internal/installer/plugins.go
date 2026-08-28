@@ -396,6 +396,26 @@ func (r execCommandRunner) Run(name string, args ...string) error {
 	return err
 }
 
+// RunQuietly executes a command without forwarding or returning its output. It is reserved for
+// commands that inherit secrets and whose diagnostic output cannot be trusted for display.
+func (r execCommandRunner) RunQuietly(name string, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), commandRunTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	gitCtx, err := resolveGitExecutionContext()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = gitCtx.Cleanup(err == nil) }()
+	cmd.Dir = gitCtx.WorkingDir
+	cmd.Env = r.commandEnv()
+	err = cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return context.DeadlineExceeded
+	}
+	return err
+}
+
 var (
 	commandRunnerFactory = func() CommandRunner {
 		// Only the EXPLICIT override redirects the claude subprocess; a real run leaves
