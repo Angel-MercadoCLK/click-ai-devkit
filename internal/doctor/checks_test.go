@@ -301,6 +301,42 @@ func TestCheckEngramCloudSessionSync_UnhealthyOnRecordedFailure(t *testing.T) {
 	}
 }
 
+func TestCheckEngramCloudSessionSync_UnhealthyOnTimeoutOutcome(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	cfg := configuredEngramCloudSessionSync(t)
+	if err := installer.WriteEngramCloudImportOutcome(cfg, installer.EngramCloudImportOutcome{
+		Timestamp: time.Now().UTC(), Status: installer.EngramCloudImportOutcomeTimeout, Reason: "import timed out",
+	}); err != nil {
+		t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy || !strings.Contains(got.Detail, "import timed out") {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy naming the timeout", got)
+	}
+}
+
+func TestCheckEngramCloudSessionSync_ReportsStaleSuccess(t *testing.T) {
+	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
+	t.Cleanup(restore)
+	now := time.Date(2026, time.August, 27, 12, 0, 0, 0, time.UTC)
+	previousNow := engramCloudSessionSyncNow
+	engramCloudSessionSyncNow = func() time.Time { return now }
+	t.Cleanup(func() { engramCloudSessionSyncNow = previousNow })
+	cfg := configuredEngramCloudSessionSync(t)
+	if err := installer.WriteEngramCloudImportOutcome(cfg, installer.EngramCloudImportOutcome{
+		Timestamp: now.Add(-engramCloudImportOutcomeStaleAfter - time.Second), Status: installer.EngramCloudImportOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("WriteEngramCloudImportOutcome() error = %v", err)
+	}
+
+	got := checkEngramCloudSessionSync(cfg)
+	if got.Healthy || !strings.Contains(got.Detail, "desactualizada") {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy stale success", got)
+	}
+}
+
 func TestCheckEngramCloudSessionSync_HealthyOnRecentSuccess(t *testing.T) {
 	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
 	t.Cleanup(restore)

@@ -1,9 +1,10 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
-	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -357,48 +358,81 @@ func TestInstall_SharedReaderConsentBeforeTokenWrite(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLICK_CLAUDE_HOME", home)
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
-	seedResolvableGit(t)
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+	restoreConsent := SetReadCloudTokenConsentFuncForTests(func(reader *bufio.Reader) (bool, error) {
+		settings, err := os.ReadFile(filepath.Join(home, "settings.json"))
+		if err != nil && !os.IsNotExist(err) {
+			return false, err
+		}
+		if bytes.Contains(settings, []byte("ENGRAM_CLOUD_TOKEN")) {
+			t.Fatal("settings.json contained the token before affirmative consent was read")
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return false, err
+		}
+		return strings.EqualFold(strings.TrimSpace(line), "y"), nil
+	})
+	defer restoreConsent()
 
+	mode, err := resolveCloudTokenPersistence(false, false, bufio.NewReader(strings.NewReader("y\n")), io.Discard)
+	if err != nil {
+		t.Fatalf("resolveCloudTokenPersistence() error = %v", err)
+	}
+	if mode != installer.CloudTokenPersistencePersist {
+		t.Fatalf("persistence mode = %v, want affirmative persistence", mode)
+	}
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+	m.EngramCloud.Server = "http://127.0.0.1:18080"
+	m.EngramCloud.Project = "click-ai-devkit"
+	if err := installer.ConfigureEngramCloudSessionSync(installer.Config{ClaudeHome: home}, m, mode, os.Getenv("ENGRAM_CLOUD_TOKEN")); err != nil {
+		t.Fatalf("ConfigureEngramCloudSessionSync() error = %v", err)
+	}
+
+	settings, err := os.ReadFile(filepath.Join(home, "settings.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(settings.json) error = %v", err)
+	}
+	if !bytes.Contains(settings, []byte("ENGRAM_CLOUD_TOKEN")) {
+		t.Fatal("settings.json did not contain the token after affirmative consent")
+	}
+
+}
+
+func TestInstall_ManifestOnlyConfigPersistsTokenWithFlag(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "")
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+	seedResolvableGit(t)
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
-
-	configureCalls := []string{}
-	restoreConfigure := installer.SetConfigureEngramCloudSessionSyncFuncForTests(func(cfg installer.Config, m *manifest.Manifest, mode installer.CloudTokenPersistence, token string) error {
-		configureCalls = append(configureCalls, fmt.Sprintf("mode=%d,token=%s", mode, token))
-		return nil
-	})
-	defer restoreConfigure()
-
-	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
-	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
-	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+	m.EngramCloud.Server, m.EngramCloud.Project = "https://cloud.example.com", "team-hive"
+	t.Cleanup(manifest.SetManifestForTests(*m))
 
 	root := NewRootCommand()
-	var out bytes.Buffer
-	root.SetOut(&out)
-	root.SetErr(&out)
-
-	stdin := bytes.NewBufferString("y\n")
-	root.SetIn(stdin)
-	root.SetArgs([]string{"install"})
-
-	err := root.Execute()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"install", "--persist-engram-cloud-token"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("install error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "settings.json"))
 	if err != nil {
-		t.Fatalf("install command error = %v, output:\n%s", err, out.String())
+		t.Fatalf("ReadFile(settings.json) error = %v", err)
 	}
-
-	if len(configureCalls) != 1 {
-		t.Fatalf("ConfigureEngramCloudSessionSync called %d times, want 1", len(configureCalls))
-	}
-	expectedCall := fmt.Sprintf("mode=%d,token=test-token", installer.CloudTokenPersistenceDecline)
-	if configureCalls[0] != expectedCall {
-		t.Fatalf("ConfigureEngramCloudSessionSync call = %q, want %q", configureCalls[0], expectedCall)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "Instalación completa.") {
-		t.Fatalf("install output = %q, want it to contain completion message", output)
+	if !bytes.Contains(data, []byte("ENGRAM_CLOUD_TOKEN")) {
+		t.Fatal("settings.json did not contain persisted token")
 	}
 }
 

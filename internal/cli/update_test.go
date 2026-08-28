@@ -13,6 +13,40 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 )
 
+func TestUpdate_ManifestOnlyConfigPersistsTokenWithFlag(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CLICK_STATE_HOME", t.TempDir())
+	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "")
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "")
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "test-token")
+	seedResolvableGit(t)
+	runner := newTestCommandRunner(home)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatalf("manifest.Load() error = %v", err)
+	}
+	m.EngramCloud.Server, m.EngramCloud.Project = "https://cloud.example.com", "team-hive"
+	t.Cleanup(manifest.SetManifestForTests(*m))
+
+	root := NewRootCommand()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"update", "--persist-engram-cloud-token"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("update error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "settings.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(settings.json) error = %v", err)
+	}
+	if !bytes.Contains(data, []byte("ENGRAM_CLOUD_TOKEN")) {
+		t.Fatal("settings.json did not contain persisted token")
+	}
+}
+
 // TestUpdateCommand_YesAndNonInteractiveFlags_Parse is the regression for the "unknown flag" bug:
 // runUpdate has always routed its confirm gate through isNonInteractiveInstall (install.go), which
 // reads --yes/--non-interactive, but `click update` never DECLARED those flags — so the documented

@@ -3,12 +3,20 @@ package cli
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"testing"
 	"time"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 )
+
+func TestHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
+		return
+	}
+	select {}
+}
 
 // TestEngramCloudImportCommand_ExactEngramArgv verifies that running the hidden
 // command with an injected fake engramCloudCommandContext records argv EXACTLY:
@@ -83,8 +91,10 @@ func TestEngramCloudImportCommand_BoundedAndAlwaysSucceeds(t *testing.T) {
 		engramCloudCommandContext = originalCtx
 	})
 	engramCloudCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		// Create a command that blocks until ctx is done
-		return exec.CommandContext(ctx, "sleep", "1000") // 1000 seconds, will be killed by timeout
+		// Re-execute this test binary as a portable child that blocks until canceled.
+		command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperProcess$", "--")
+		command.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+		return command
 	}
 
 	// Run the hidden command
@@ -100,17 +110,11 @@ func TestEngramCloudImportCommand_BoundedAndAlwaysSucceeds(t *testing.T) {
 		t.Fatalf("Execute() returned error (must always succeed): %v", err)
 	}
 
-	// Verify the command terminated quickly (well under 5 seconds, closer to our 10ms timeout)
-	// The actual elapsed time should be roughly the 10ms timeout plus process cleanup overhead
-	if elapsed > 5*time.Second {
-		t.Errorf("Execute() took %v, expected it to be bounded by timeout (well under 5s)", elapsed)
-	}
-
-	// Add a helper-process test proving the child actually exits
-	// We do this by checking that the elapsed time is significantly less than 1000 seconds
-	// (the sleep duration we injected), proving the process was killed by the timeout
-	if elapsed > time.Minute {
-		t.Errorf("Execute() took %v, but the child command sleeps for 1000s; the timeout must have killed it", elapsed)
+	// The bound follows the injected timeout, with Windows process-start/teardown allowance;
+	// it remains well below the five-second production timeout.
+	maxElapsed := engramCloudImportTimeout + 2*time.Second
+	if elapsed > maxElapsed {
+		t.Errorf("Execute() took %v, want cancellation bounded by injected timeout plus process cleanup (%v)", elapsed, maxElapsed)
 	}
 }
 
