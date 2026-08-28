@@ -119,7 +119,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// - Process token present, consent given → Persist
 	persistenceMode := installer.CloudTokenPersistenceNoOp
 	if installer.EngramCloudConfigured(cfg, m) && token != "" {
-		persistenceMode = installer.CloudTokenPersistenceDecline
+		// resolveCloudTokenPersistence is exhaustive (every branch returns Persist or Decline
+		// explicitly), so persistenceMode is fully determined by its return value alone — no
+		// intermediate default assignment is needed here.
 		var readErr error
 		persistenceMode, readErr = resolveCloudTokenPersistence(isNonInteractiveInstall(cmd, out), persistFlag, sharedReader, out)
 		if readErr != nil {

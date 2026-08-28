@@ -238,11 +238,11 @@ func SnapshotTargetPlanWithWarnings(cfg Config, plan TargetPlan) ([]string, erro
 // This ensures that if a developer syncs their ~/.claude directory into a dotfiles repo
 // or backup, they won't leak the token.
 //
-// Byte-fidelity contract: When no ENGRAM_CLOUD_TOKEN is present, this function
-// redactEngramCloudToken performs byte-level redaction of the ENGRAM_CLOUD_TOKEN value,
-// preserving every other byte exactly as-is (no reformatting, no reordering, no added
-// or removed whitespace). This preserves the snapshot subsystem's byte-for-byte backup
-// fidelity contract. Returns an error when the token is present but its extent cannot be
+// Byte-fidelity contract: when ENGRAM_CLOUD_TOKEN IS present, this function performs
+// byte-level redaction of only its value, preserving every other byte exactly as-is (no
+// reformatting, no reordering, no added or removed whitespace) — this preserves the snapshot
+// subsystem's byte-for-byte backup fidelity contract. When no token is present, the input is
+// returned unchanged. Returns an error when the token is present but its extent cannot be
 // determined with confidence (genuinely malformed input), allowing the caller to fail closed.
 func redactEngramCloudToken(data []byte) ([]byte, error) {
 	if !json.Valid(data) {

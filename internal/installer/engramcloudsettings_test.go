@@ -250,6 +250,14 @@ func TestRemoveEngramCloudSessionSync_PreservesForeignCommandInSameEntry(t *test
 // even though nothing click-owned was ever present. This contradicts the function's own
 // idempotency contract (a no-op run must not rewrite the file) and its sibling
 // ConfigureEngramCloudSessionSync's stricter byte-comparison idempotency check.
+//
+// A second, independent review then found that the byte-comparison alone is vacuous here: since
+// nothing in this scenario is ever actually filtered, re-serializing via json.MarshalIndent
+// reproduces byte-identical content whether a write happened or not (encoding/json sorts map keys
+// deterministically) — so a byte check alone would stay green even if the guard this test exists
+// to protect were removed. The ModTime check below (matching
+// TestConfigureEngramCloudSessionSync_IdempotentSecondRun's technique) is what actually proves no
+// write occurred.
 func TestRemoveEngramCloudSessionSync_ForeignOnlyEmptyMatcherEntryIsNoOp(t *testing.T) {
 	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
 
@@ -286,6 +294,10 @@ func TestRemoveEngramCloudSessionSync_ForeignOnlyEmptyMatcherEntryIsNoOp(t *test
 	if err != nil {
 		t.Fatalf("ReadFile() before = %v", err)
 	}
+	infoBefore, err := os.Stat(settingsPath)
+	if err != nil {
+		t.Fatalf("Stat() before = %v", err)
+	}
 
 	cfg := Config{ClaudeHome: dir}
 	if err := removeEngramCloudSettingsFootprint(cfg); err != nil {
@@ -298,6 +310,18 @@ func TestRemoveEngramCloudSessionSync_ForeignOnlyEmptyMatcherEntryIsNoOp(t *test
 	}
 	if string(before) != string(after) {
 		t.Fatalf("settings.json was rewritten even though it contained no click-owned content;\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+
+	// The byte comparison above is necessary but NOT sufficient: re-serializing structurally
+	// unchanged content reproduces identical bytes whether or not a write actually happened. The
+	// modification time is what proves no write occurred at all.
+	infoAfter, err := os.Stat(settingsPath)
+	if err != nil {
+		t.Fatalf("Stat() after = %v", err)
+	}
+	if !infoBefore.ModTime().Equal(infoAfter.ModTime()) {
+		t.Fatalf("settings.json was rewritten (modification time changed) even though it contained no click-owned content: before=%v, after=%v",
+			infoBefore.ModTime(), infoAfter.ModTime())
 	}
 }
 
