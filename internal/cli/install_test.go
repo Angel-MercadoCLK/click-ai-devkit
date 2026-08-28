@@ -437,7 +437,10 @@ func TestInstall_SharedReaderConsentBeforeTokenWrite(t *testing.T) {
 	root.SetIn(strings.NewReader("y\ny\n"))
 	root.SetArgs([]string{"install"})
 	if err := root.Execute(); err != nil {
-		t.Fatalf("install command error = %v; output:\n%s", err, out.String())
+		// SECURITY (DD-7): Do NOT interpolate out.String() in the failure message.
+		// If a regression causes this test to fail and out contains the token,
+		// printing it would leak the secret into CI logs.
+		t.Fatalf("install command failed unexpectedly; see test setup for expected consent flow")
 	}
 	if !consentCalled {
 		t.Fatal("consent reader was not called by runInstall")

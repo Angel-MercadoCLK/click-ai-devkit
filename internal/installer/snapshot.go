@@ -266,7 +266,7 @@ type jsonByteRange struct{ start, end int }
 
 func findEngramCloudTokenValueRanges(data []byte) ([]jsonByteRange, error) {
 	p := jsonTokenRangeParser{data: data}
-	if _, err := p.value(false); err != nil {
+	if _, err := p.value(); err != nil {
 		return nil, err
 	}
 	return p.ranges, nil
@@ -277,9 +277,13 @@ type jsonTokenRangeParser struct {
 	pos    int
 	ranges []jsonByteRange
 	depth  int
+	// path tracks the exact JSON keys at each level. For example:
+	// {"env":{"ENGRAM_CLOUD_TOKEN":"x"}} would have path=["env","ENGRAM_CLOUD_TOKEN"] at depth 2
+	// {"plugin":{"env":{"ENGRAM_CLOUD_TOKEN":"x"}}} would have path=["plugin","env","ENGRAM_CLOUD_TOKEN"] at depth 3
+	path []string
 }
 
-func (p *jsonTokenRangeParser) value(inEnv bool) (jsonByteRange, error) {
+func (p *jsonTokenRangeParser) value() (jsonByteRange, error) {
 	p.ws()
 	start := p.pos
 	if start >= len(p.data) {
@@ -287,9 +291,9 @@ func (p *jsonTokenRangeParser) value(inEnv bool) (jsonByteRange, error) {
 	}
 	switch p.data[p.pos] {
 	case '{':
-		return p.object(inEnv)
+		return p.object()
 	case '[':
-		return p.array(inEnv)
+		return p.array()
 	case '"':
 		return p.string()
 	default:
@@ -303,7 +307,7 @@ func (p *jsonTokenRangeParser) value(inEnv bool) (jsonByteRange, error) {
 	}
 }
 
-func (p *jsonTokenRangeParser) object(inEnv bool) (jsonByteRange, error) {
+func (p *jsonTokenRangeParser) object() (jsonByteRange, error) {
 	start := p.pos
 	p.depth++
 	defer func() { p.depth-- }()
@@ -323,21 +327,39 @@ func (p *jsonTokenRangeParser) object(inEnv bool) (jsonByteRange, error) {
 		if err := json.Unmarshal(p.data[kr.start:kr.end], &key); err != nil {
 			return jsonByteRange{}, err
 		}
+
+		// Push this key onto the path stack
+		p.path = append(p.path, key)
+
 		p.ws()
 		if p.pos >= len(p.data) || p.data[p.pos] != ':' {
 			return jsonByteRange{}, fmt.Errorf("missing colon after object key")
 		}
 		p.pos++
-		vr, err := p.value(inEnv || (p.depth == 1 && key == "env"))
+		vr, err := p.value()
 		if err != nil {
 			return jsonByteRange{}, err
 		}
-		if inEnv && key == "ENGRAM_CLOUD_TOKEN" {
+
+		// REDACTION: Only redact when the exact path is ["env", "ENGRAM_CLOUD_TOKEN"]
+		// This matches the DD-7 design specification: redact ONLY the top-level env.ENGRAM_CLOUD_TOKEN
+		// path, not any nested occurrence of ENGRAM_CLOUD_TOKEN inside foreign objects.
+		//
+		// The path length check ensures we're at depth 2 (top level is depth 1, env is depth 2)
+		// Path[0] == "env" ensures we're inside the top-level env object
+		// Path[1] == "ENGRAM_CLOUD_TOKEN" ensures we're processing the exact key to redact
+		if len(p.path) == 2 && p.path[0] == "env" && p.path[1] == "ENGRAM_CLOUD_TOKEN" {
 			if p.data[vr.start] != '"' {
 				return jsonByteRange{}, fmt.Errorf("ENGRAM_CLOUD_TOKEN value is not a string")
 			}
 			p.ranges = append(p.ranges, vr)
 		}
+
+		// Pop the key from the path after processing this key-value pair
+		if len(p.path) > 0 {
+			p.path = p.path[:len(p.path)-1]
+		}
+
 		p.ws()
 		if p.pos >= len(p.data) {
 			return jsonByteRange{}, fmt.Errorf("unterminated object")
@@ -353,7 +375,7 @@ func (p *jsonTokenRangeParser) object(inEnv bool) (jsonByteRange, error) {
 	}
 }
 
-func (p *jsonTokenRangeParser) array(inEnv bool) (jsonByteRange, error) {
+func (p *jsonTokenRangeParser) array() (jsonByteRange, error) {
 	start := p.pos
 	p.pos++
 	p.ws()
@@ -362,7 +384,7 @@ func (p *jsonTokenRangeParser) array(inEnv bool) (jsonByteRange, error) {
 		return jsonByteRange{start, p.pos}, nil
 	}
 	for {
-		if _, err := p.value(inEnv); err != nil {
+		if _, err := p.value(); err != nil {
 			return jsonByteRange{}, err
 		}
 		p.ws()

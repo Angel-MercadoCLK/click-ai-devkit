@@ -301,11 +301,37 @@ func (r execCommandRunner) commandDir() (string, error) {
 // <home>/.claude.json (home root), NOT <config-dir>/.claude.json — so forcing CLAUDE_CONFIG_DIR=~/.claude
 // would make `claude mcp add` (Context7) land where a normal Claude Code session never reads it.
 // Plugins live in <config-dir>/plugins either way, so they were and remain unaffected.
+// SECURITY: This method filters ENGRAM_CLOUD_TOKEN from the environment to prevent it from leaking
+// into generic subprocess command output or CI logs. The Engram cloud enrollment step uses RunQuietly
+// and legitimately needs the token; this filtering only applies to generic subprocesses.
 func (r execCommandRunner) commandEnv() []string {
 	if r.claudeConfigDirOverride == "" {
-		return nil // real case: let claude resolve its own default config locations
+		// Real case: return nil so claude uses its own defaults (not forcing CLAUDE_CONFIG_DIR).
+		// TestExecRunnerRealRunLeavesClaudeConfigDirUnset pins this exact nil return — callers
+		// (Run, RunQuietly) are responsible for filtering ENGRAM_CLOUD_TOKEN out of os.Environ()
+		// themselves via filteredProcessEnv() when they see a nil result from this method.
+		return nil
 	}
-	return append(os.Environ(), "CLAUDE_CONFIG_DIR="+r.claudeConfigDirOverride)
+
+	// Override case: construct the environment with CLAUDE_CONFIG_DIR AND filter the token.
+	return append(filteredProcessEnv(), "CLAUDE_CONFIG_DIR="+r.claudeConfigDirOverride)
+}
+
+// filteredProcessEnv returns a copy of the current process environment with ENGRAM_CLOUD_TOKEN
+// removed. It exists so every subprocess this package spawns — not only the Engram cloud
+// enrollment step, which already avoided this via RunQuietly's suppressed output — gets the same
+// guarantee: the token never reaches a child process's environment unless that child is the one
+// legitimate Engram cloud call that needs it.
+func filteredProcessEnv() []string {
+	baseEnv := os.Environ()
+	filtered := make([]string, 0, len(baseEnv))
+	for _, kv := range baseEnv {
+		if strings.HasPrefix(kv, "ENGRAM_CLOUD_TOKEN=") {
+			continue
+		}
+		filtered = append(filtered, kv)
+	}
+	return filtered
 }
 
 // commandOutputTimeout bounds execCommandRunner.Output so a query subprocess can never hang the
@@ -332,7 +358,11 @@ func (r execCommandRunner) Output(name string, args ...string) ([]byte, error) {
 	}
 	defer func() { _ = gitCtx.Cleanup(err == nil) }()
 	cmd.Dir = gitCtx.WorkingDir
-	cmd.Env = r.commandEnv()
+	if env := r.commandEnv(); env != nil {
+		cmd.Env = env
+	} else {
+		cmd.Env = filteredProcessEnv()
+	}
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return out, fmt.Errorf("installer: command %q timed out after %s", name, commandOutputTimeout)
@@ -374,7 +404,12 @@ func (r execCommandRunner) Run(name string, args ...string) error {
 	var output bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
-	cmd.Env = r.commandEnv()
+
+	if env := r.commandEnv(); env != nil {
+		cmd.Env = env
+	} else {
+		cmd.Env = filteredProcessEnv()
+	}
 	err = cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
 		full := strings.TrimSpace(name + " " + strings.Join(args, " "))
@@ -408,7 +443,12 @@ func (r execCommandRunner) RunQuietly(name string, args ...string) error {
 	}
 	defer func() { _ = gitCtx.Cleanup(err == nil) }()
 	cmd.Dir = gitCtx.WorkingDir
-	cmd.Env = r.commandEnv()
+
+	if env := r.commandEnv(); env != nil {
+		cmd.Env = env
+	} else {
+		cmd.Env = filteredProcessEnv()
+	}
 	err = cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
 		return context.DeadlineExceeded

@@ -440,7 +440,10 @@ func TestUpdate_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 	root.SetArgs([]string{"update", "--persist-engram-cloud-token"})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("update command error = %v, output:\n%s", err, out.String())
+		// SECURITY (DD-7): Do NOT interpolate out.String() in the failure message.
+		// If a regression causes this test to fail and out contains the token,
+		// printing it would leak the secret into CI logs.
+		t.Fatalf("update command failed unexpectedly; see test setup for expected consent flow")
 	}
 
 	// Read the actual settings.json file on disk
@@ -566,7 +569,10 @@ func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 	root.SetArgs([]string{"update", "--yes"})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("update command error = %v, output:\n%s", err, out.String())
+		// SECURITY (DD-7): Do NOT interpolate out.String() in the failure message.
+		// If a regression causes this test to fail and out contains the token,
+		// printing it would leak the secret into CI logs.
+		t.Fatalf("update command failed unexpectedly; see test setup for expected update flow")
 	}
 
 	// Read the actual settings.json file on disk
@@ -633,7 +639,10 @@ func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
 	root.SetArgs([]string{"update", "--yes"})
 
 	if err := root.Execute(); err != nil {
-		t.Fatalf("update command error = %v, output:\n%s", err, out.String())
+		// SECURITY (DD-7): Do NOT interpolate out.String() in the failure message.
+		// If a regression causes this test to fail and out contains the token,
+		// printing it would leak the secret into CI logs.
+		t.Fatalf("update command failed unexpectedly; see test setup for expected decline flow")
 	}
 
 	// Read the actual settings.json file on disk
