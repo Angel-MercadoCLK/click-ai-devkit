@@ -126,5 +126,16 @@ func runRollback(cmd *cobra.Command) error {
 		return err
 	}
 	fmt.Fprintln(out, r.Success("Archivos gestionados por click restaurados desde el último respaldo."))
+
+	// A restored settings.json backup has ENGRAM_CLOUD_TOKEN's value permanently redacted (NFR-6):
+	// left as-is, the literal placeholder would sit in the live file as a garbage token, silently
+	// breaking every subsequent Engram Cloud sync. Fix it up now, non-fatally: rollback's main job
+	// already succeeded above.
+	repaired, repairErr := installer.RepairRedactedEngramCloudTokenAfterRestore(cfg)
+	if repairErr != nil {
+		fmt.Fprintln(out, r.Warn("No se pudo limpiar el token de Engram Cloud redactado tras la restauración: "+repairErr.Error()))
+	} else if repaired {
+		fmt.Fprintln(out, r.Warn("El respaldo restaurado no conservaba el token de Engram Cloud (no se puede recuperar tras un rollback); vuelva a ejecutar `click install`/`click update` para reconsentir el token si desea reactivar la sincronización en la nube."))
+	}
 	return nil
 }

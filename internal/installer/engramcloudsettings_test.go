@@ -244,6 +244,63 @@ func TestRemoveEngramCloudSessionSync_PreservesForeignCommandInSameEntry(t *test
 	}
 }
 
+// TestRemoveEngramCloudSessionSync_ForeignOnlyEmptyMatcherEntryIsNoOp guards an idempotency defect
+// a fresh review found: a SessionStart entry with matcher=="" containing ONLY foreign (non-click)
+// hooks was being unconditionally marked "changed", causing an unnecessary settings.json rewrite
+// even though nothing click-owned was ever present. This contradicts the function's own
+// idempotency contract (a no-op run must not rewrite the file) and its sibling
+// ConfigureEngramCloudSessionSync's stricter byte-comparison idempotency check.
+func TestRemoveEngramCloudSessionSync_ForeignOnlyEmptyMatcherEntryIsNoOp(t *testing.T) {
+	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+
+	// A matcher=="" entry containing ONLY a foreign hook — no click-managed command anywhere.
+	settings := map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []any{
+				map[string]any{
+					"matcher": "",
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "echo 'purely foreign, unrelated to click'",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	settingsBytes, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatalf("json.MarshalIndent() error = %v", err)
+	}
+	settingsBytes = append(settingsBytes, '\n')
+	if err := os.WriteFile(settingsPath, settingsBytes, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	before, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("ReadFile() before = %v", err)
+	}
+
+	cfg := Config{ClaudeHome: dir}
+	if err := removeEngramCloudSettingsFootprint(cfg); err != nil {
+		t.Fatalf("removeEngramCloudSettingsFootprint() error = %v", err)
+	}
+
+	after, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("ReadFile() after = %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("settings.json was rewritten even though it contained no click-owned content;\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
 func TestCheckEngramCloudSessionSync_WritesFullEnvBlock(t *testing.T) {
 	t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
 

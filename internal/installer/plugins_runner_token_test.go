@@ -11,9 +11,12 @@ import (
 // (TestExecRunnerRealRunLeavesClaudeConfigDirUnset pins this exact behavior, and must not be
 // touched), so calling commandEnv() directly here would prove nothing: a nil result vacuously
 // satisfies any "no leak" check regardless of whether real subprocess launches actually filter the
-// token. The real guarantee lives in Run()/RunQuietly(), which fall back to filteredProcessEnv()
-// precisely when commandEnv() returns nil — so this test goes through the real production entry
-// point, Run(), with a genuine child process, using the standard Go helper-process re-exec pattern
+// token. The real guarantee lives in Run()/Output(), which fall back to filteredProcessEnv()
+// precisely when commandEnv() returns nil. RunQuietly is DELIBERATELY excluded from this
+// guarantee: it is the one call path (the Engram cloud step) that needs the unfiltered token, via
+// its own separate quietCommandEnv() — see TestExecCommandRunner_RunQuietlyForwardsEngramCloudToken
+// for that path's regression test. So this test goes through the real production entry point,
+// Run(), with a genuine child process, using the standard Go helper-process re-exec pattern
 // (as used throughout the standard library's own os/exec tests) to observe what the child actually
 // sees in its own environment.
 func TestExecCommandRunner_DoesNotLeakEngramCloudTokenToGenericSubprocess(t *testing.T) {

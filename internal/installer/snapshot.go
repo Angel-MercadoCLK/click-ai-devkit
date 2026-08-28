@@ -239,7 +239,7 @@ func SnapshotTargetPlanWithWarnings(cfg Config, plan TargetPlan) ([]string, erro
 // or backup, they won't leak the token.
 //
 // Byte-fidelity contract: When no ENGRAM_CLOUD_TOKEN is present, this function
-// redactEngramCloudToken performs byte-level redaction of the ENSRAM_CLOUD_TOKEN value,
+// redactEngramCloudToken performs byte-level redaction of the ENGRAM_CLOUD_TOKEN value,
 // preserving every other byte exactly as-is (no reformatting, no reordering, no added
 // or removed whitespace). This preserves the snapshot subsystem's byte-for-byte backup
 // fidelity contract. Returns an error when the token is present but its extent cannot be
@@ -276,10 +276,10 @@ type jsonTokenRangeParser struct {
 	data   []byte
 	pos    int
 	ranges []jsonByteRange
-	depth  int
-	// path tracks the exact JSON keys at each level. For example:
-	// {"env":{"ENGRAM_CLOUD_TOKEN":"x"}} would have path=["env","ENGRAM_CLOUD_TOKEN"] at depth 2
-	// {"plugin":{"env":{"ENGRAM_CLOUD_TOKEN":"x"}}} would have path=["plugin","env","ENGRAM_CLOUD_TOKEN"] at depth 3
+	// path tracks the exact JSON keys at each level (its length IS the depth — there is no
+	// separate depth counter). For example:
+	// {"env":{"ENGRAM_CLOUD_TOKEN":"x"}} would have path=["env","ENGRAM_CLOUD_TOKEN"] (len 2)
+	// {"plugin":{"env":{"ENGRAM_CLOUD_TOKEN":"x"}}} would have path=["plugin","env","ENGRAM_CLOUD_TOKEN"] (len 3)
 	path []string
 }
 
@@ -309,8 +309,6 @@ func (p *jsonTokenRangeParser) value() (jsonByteRange, error) {
 
 func (p *jsonTokenRangeParser) object() (jsonByteRange, error) {
 	start := p.pos
-	p.depth++
-	defer func() { p.depth-- }()
 	p.pos++
 	p.ws()
 	if p.pos < len(p.data) && p.data[p.pos] == '}' {

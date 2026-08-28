@@ -390,10 +390,21 @@ func configureEngramCloudSessionSyncImpl(cfg Config, m *manifest.Manifest, mode 
 // RemoveEngramCloudSessionSync removes click-owned Engram Cloud environment and managed hooks
 // from Claude Code's settings.json. It performs one selective atomic rewrite, preserving all
 // foreign entries and pruning empty containers.
+//
+// The security-relevant settings.json cleanup (the persisted token, server, autosync flag, and
+// managed hook) runs BEFORE the local import-outcome bookkeeping file removal, deliberately: the
+// outcome file is a low-value diagnostic record, while settings.json holds the actual secret. If
+// the outcome file fails to delete for some unrelated reason (a file lock, a permissions anomaly),
+// that must never prevent the token from being removed from settings.json during uninstall.
 func RemoveEngramCloudSessionSync(cfg Config) error {
-	if err := RemoveEngramCloudImportOutcome(cfg); err != nil {
+	if err := removeEngramCloudSettingsFootprint(cfg); err != nil {
 		return err
 	}
+	return RemoveEngramCloudImportOutcome(cfg)
+}
+
+// removeEngramCloudSettingsFootprint does the settings.json half of RemoveEngramCloudSessionSync.
+func removeEngramCloudSettingsFootprint(cfg Config) error {
 	settings, err := readSettingsFile(cfg.SettingsPath())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -459,6 +470,15 @@ func RemoveEngramCloudSessionSync(cfg Config) error {
 						filteredHooks = append(filteredHooks, hookRaw)
 					}
 
+					if len(filteredHooks) == len(entryHooks) {
+						// Nothing click-owned was in this matcher=="" entry (e.g. a foreign,
+						// non-click hook that happens to share the empty matcher) — preserve it
+						// unchanged and do NOT mark the settings as changed, or every removal run
+						// against a settings.json with such an entry would rewrite the file for no
+						// reason, violating this function's own idempotency contract.
+						filteredSessionStart = append(filteredSessionStart, rawEntry)
+						continue
+					}
 					if len(filteredHooks) > 0 {
 						entry["hooks"] = filteredHooks
 						filteredSessionStart = append(filteredSessionStart, entry)
@@ -493,4 +513,54 @@ func RemoveEngramCloudSessionSync(cfg Config) error {
 	}
 
 	return writeSettingsFile(cfg.SettingsPath(), settings)
+}
+
+// engramCloudTokenRedactedPlaceholder is the exact literal snapshot.go's redactEngramCloudToken
+// writes into a settings.json backup in place of a real token value. It is never a value a real
+// ENGRAM_CLOUD_TOKEN could legitimately hold (tokens are opaque server-issued strings), so its
+// presence after a restore unambiguously means "this came from a redacted backup", not "a
+// developer genuinely set their token to this string".
+const engramCloudTokenRedactedPlaceholder = "[REDACTED]"
+
+// RepairRedactedEngramCloudTokenAfterRestore fixes a specific rollback hazard: settings.json
+// backups have env.ENGRAM_CLOUD_TOKEN's value permanently replaced with a redacted placeholder
+// (snapshot.go's redactEngramCloudToken, NFR-6/DD-7's documented "rollback cannot restore a prior
+// token" consequence). ApplyPreparedRestore writes that backup back to disk byte-for-byte, which
+// is correct for every other field but would otherwise leave the LITERAL placeholder string sitting
+// in the live settings.json as if it were a real, usable token — Claude Code would then export it
+// into every SessionStart hook's environment, and every subsequent `engram sync --cloud` call would
+// authenticate with garbage and fail (silently: the hook always returns success).
+//
+// This must run AFTER ApplyPreparedRestore, only against the live settings.json, and only removes
+// the token key — it does not touch ENGRAM_CLOUD_AUTOSYNC, ENGRAM_CLOUD_SERVER, or the managed hook,
+// none of which the redaction ever touches. A no-op (nil, no write) when the token key is absent or
+// holds anything other than the exact placeholder, so a rollback that restores a settings.json which
+// never had a token, or a settings.json restored before this fix existed, does nothing surprising.
+func RepairRedactedEngramCloudTokenAfterRestore(cfg Config) (repaired bool, err error) {
+	settings, err := readSettingsFile(cfg.SettingsPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("installer: read settings: %w", err)
+	}
+
+	env, ok := settings["env"].(map[string]any)
+	if !ok {
+		return false, nil
+	}
+	token, ok := env["ENGRAM_CLOUD_TOKEN"].(string)
+	if !ok || token != engramCloudTokenRedactedPlaceholder {
+		return false, nil
+	}
+
+	delete(env, "ENGRAM_CLOUD_TOKEN")
+	if len(env) == 0 {
+		delete(settings, "env")
+	}
+
+	if err := writeSettingsFile(cfg.SettingsPath(), settings); err != nil {
+		return false, err
+	}
+	return true, nil
 }
