@@ -198,9 +198,13 @@ func TestSyncEngramCloud_FirstTimeEnrollment(t *testing.T) {
 	want := []commandInvocation{
 		{Name: "engram", Args: []string{"cloud", "config", "--server", "http://127.0.0.1:18080"}},
 		{Name: "engram", Args: []string{"cloud", "enroll", "click-ai-devkit"}},
-		{Name: "engram", Args: []string{"cloud", "upgrade", "doctor"}},
-		{Name: "engram", Args: []string{"cloud", "upgrade", "repair"}},
-		{Name: "engram", Args: []string{"cloud", "upgrade", "bootstrap"}},
+		// --project is REQUIRED by all three real engram upgrade subcommands (confirmed against a
+		// real deployed server during manual rollout validation, task 6.13 — each one exits 1 with
+		// "error: --project is required" without it, which is a real bug this exact test previously
+		// encoded as correct). --apply on repair so a real inconsistency actually gets fixed.
+		{Name: "engram", Args: []string{"cloud", "upgrade", "doctor", "--project", "click-ai-devkit"}},
+		{Name: "engram", Args: []string{"cloud", "upgrade", "repair", "--project", "click-ai-devkit", "--apply"}},
+		{Name: "engram", Args: []string{"cloud", "upgrade", "bootstrap", "--project", "click-ai-devkit"}},
 		{Name: "engram", Args: []string{"sync", "--cloud", "--project", "click-ai-devkit"}},
 	}
 	assertCommands(t, runner.commands, want)

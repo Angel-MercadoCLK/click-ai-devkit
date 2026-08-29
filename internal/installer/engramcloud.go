@@ -89,9 +89,16 @@ func SyncEngramCloud(cfg Config, m *manifest.Manifest) error {
 		}{
 			{"engram cloud config", []string{"cloud", "config", "--server", server}},
 			{"engram cloud enroll", []string{"cloud", "enroll", project}},
-			{"engram cloud upgrade doctor", []string{"cloud", "upgrade", "doctor"}},
-			{"engram cloud upgrade repair", []string{"cloud", "upgrade", "repair"}},
-			{"engram cloud upgrade bootstrap", []string{"cloud", "upgrade", "bootstrap"}},
+			// --project is REQUIRED by engram for all three upgrade subcommands (confirmed against
+			// a real deployed server during manual rollout validation, task 6.13: each one exits 1
+			// with "error: --project is required" when it's omitted, which is exactly what made
+			// this step fail — silently, since the CLI layer only surfaces the generic wrapped
+			// error, never engram's own stderr). --apply on repair so a real inconsistency actually
+			// gets fixed here rather than only reported (repair defaults to a dry-run-style report
+			// without it).
+			{"engram cloud upgrade doctor", []string{"cloud", "upgrade", "doctor", "--project", project}},
+			{"engram cloud upgrade repair", []string{"cloud", "upgrade", "repair", "--project", project, "--apply"}},
+			{"engram cloud upgrade bootstrap", []string{"cloud", "upgrade", "bootstrap", "--project", project}},
 			{"engram sync", []string{"sync", "--cloud", "--project", project}},
 		}
 		for _, step := range steps {
