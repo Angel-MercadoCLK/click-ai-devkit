@@ -717,9 +717,12 @@ func checkEngramCloudSessionSync(cfg installer.Config) CheckResult {
 	} else if !status.ServerValid {
 		problems = append(problems, "ENGRAM_CLOUD_SERVER con valor inválido (debe ser una URL no vacía)")
 	}
-	if !status.TokenPresent {
-		problems = append(problems, "ENGRAM_CLOUD_TOKEN ausente (autosync no puede autenticar)")
-	} else if !status.TokenValid {
+	// A token that is genuinely absent is an expected, healthy pending state — the developer
+	// simply hasn't set up their shared ENGRAM_CLOUD_TOKEN yet (e.g. right after a plain `click
+	// install` with the shipped server/project defaults, before onboarding). It is reported
+	// separately below as an informational note, not as a health-check failure. A token that IS
+	// present but broken (empty or a redacted placeholder) is a real problem and stays here.
+	if status.TokenPresent && !status.TokenValid {
 		problems = append(problems, "ENGRAM_CLOUD_TOKEN con valor inválido (vacío o redactado)")
 	}
 	if !status.ManagedHookValid {
@@ -739,6 +742,11 @@ func checkEngramCloudSessionSync(cfg installer.Config) CheckResult {
 	}
 	if len(problems) > 0 {
 		return CheckResult{Name: name, Healthy: false, Detail: "configuración de sincronización incompleta o alterada: falta o es inválido " + strings.Join(problems, ", ")}
+	}
+	if !status.TokenPresent {
+		// Nothing is broken; the sync simply cannot authenticate yet without a token, so checking
+		// the hook's run history below would be misleading (it could never have succeeded).
+		return CheckResult{Name: name, Healthy: true, Detail: "configuración lista salvo ENGRAM_CLOUD_TOKEN; agréguelo para activar la sincronización en la nube"}
 	}
 	outcome, found, err := installer.LoadEngramCloudImportOutcome(cfg)
 	if err != nil {

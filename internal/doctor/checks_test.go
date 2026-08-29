@@ -264,6 +264,9 @@ func TestCheckEngramCloudSessionSync_RejectsInvalidValues(t *testing.T) {
 func TestCheckEngramCloudSessionSync_HealthyWhenCompleteOrNotConfigured(t *testing.T) {
 	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
 	t.Cleanup(restore)
+	// checkEngramCloudSessionSync resolves its own "expected" project via a fresh manifest.Load()
+	// internally, independent of the *m below — keep it consistent with "team-hive" via override.
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "team-hive")
 	complete := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	m, err := manifest.Load()
 	if err != nil {
@@ -369,6 +372,12 @@ func TestCheckEngramCloudSessionSync_HealthyOnRecentSuccess(t *testing.T) {
 
 func configuredEngramCloudSessionSync(t *testing.T) installer.Config {
 	t.Helper()
+	// checkEngramCloudSessionSync (via InspectEngramCloudSessionSync) resolves ITS OWN "expected"
+	// project by calling manifest.Load() again internally, independent of the *manifest.Manifest
+	// this helper passes to ConfigureEngramCloudSessionSync below. The shipped manifest.yaml now
+	// bakes in a real, non-test project default, so this override keeps the fixture's "team-hive"
+	// hook payload consistent with what the check will independently resolve and compare against.
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "team-hive")
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	m := &manifest.Manifest{EngramCloud: manifest.EngramCloud{Server: "https://cloud.example.com", Project: "team-hive"}}
 	if err := installer.ConfigureEngramCloudSessionSync(cfg, m, installer.CloudTokenPersistencePersist, "test-token"); err != nil {
@@ -380,6 +389,9 @@ func configuredEngramCloudSessionSync(t *testing.T) installer.Config {
 func TestCheckEngramCloudSessionSync_UnhealthyWhenClickNotOnPath(t *testing.T) {
 	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "", errors.New("not found") })
 	t.Cleanup(restore)
+	// Keep the check's internally re-resolved project consistent with this fixture's "team-hive"
+	// hook payload — see the identical note on configuredEngramCloudSessionSync above.
+	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "team-hive")
 
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	m, err := manifest.Load()
@@ -1456,7 +1468,12 @@ func filepathDir(path string) string {
 	return "."
 }
 
-func TestCheckEngramCloudSessionSync_UnhealthyWhenTokenMissing(t *testing.T) {
+// TestCheckEngramCloudSessionSync_HealthyWithNoteWhenTokenMissing pins a deliberate product
+// decision: a genuinely ABSENT token (as opposed to one present-but-broken/redacted) is an
+// expected, healthy pending state — e.g. right after a plain `click install` using the shipped
+// server/project defaults, before the developer has set up their shared ENGRAM_CLOUD_TOKEN. It
+// must be reported as healthy with an informational note, never as a doctor failure.
+func TestCheckEngramCloudSessionSync_HealthyWithNoteWhenTokenMissing(t *testing.T) {
 	restore := SetClickBinaryLookupForTests(func(string) (string, error) { return "C:/tools/click", nil })
 	t.Cleanup(restore)
 	cfg := configuredEngramCloudSessionSync(t)
@@ -1479,11 +1496,11 @@ func TestCheckEngramCloudSessionSync_UnhealthyWhenTokenMissing(t *testing.T) {
 	}
 
 	got := checkEngramCloudSessionSync(cfg)
-	if got.Healthy {
-		t.Fatalf("checkEngramCloudSessionSync() = %+v, want unhealthy", got)
+	if !got.Healthy {
+		t.Fatalf("checkEngramCloudSessionSync() = %+v, want healthy (token absent is a pending state, not a failure)", got)
 	}
-	if !strings.Contains(got.Detail, "ENGRAM_CLOUD_TOKEN") || !strings.Contains(got.Detail, "autenticar") {
-		t.Fatalf("checkEngramCloudSessionSync() detail does not explain missing authentication token")
+	if !strings.Contains(got.Detail, "ENGRAM_CLOUD_TOKEN") {
+		t.Fatalf("checkEngramCloudSessionSync() detail = %q, want it to name ENGRAM_CLOUD_TOKEN as the pending item", got.Detail)
 	}
 }
 

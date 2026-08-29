@@ -78,6 +78,11 @@ func TestInstall_MalformedSettingsDoesNotAbortRun(t *testing.T) {
 // TestInstallCommand_CloudNotConfigured_SkipsCloudStep is task 4.3's no-config backward-compat test:
 // when cloud config is incomplete, `click install` must not call SyncEngramCloud and must not add
 // any cloud-related preview or runtime step.
+// The shipped manifest.yaml bakes in the real (non-secret) engram_cloud.server/project defaults
+// (manifest.EngramCloud{}), so "not configured" can no longer mean "click has no idea a cloud
+// exists" for a normal build — it means the token specifically is absent, which is exactly
+// TestInstallCommand_CloudConfigured_PartialTokenMissing_SkipsCloudStep's scenario below: an
+// informative Spanish skip message is expected now, not total silence about cloud.
 func TestInstallCommand_CloudNotConfigured_SkipsCloudStep(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
@@ -96,10 +101,13 @@ func TestInstallCommand_CloudNotConfigured_SkipsCloudStep(t *testing.T) {
 		t.Fatalf("install command error = %v, output:\n%s", err, out)
 	}
 	if cloudCalls != 0 {
-		t.Fatalf("SyncEngramCloud called %d times, want 0 when cloud config is absent", cloudCalls)
+		t.Fatalf("SyncEngramCloud called %d times, want 0 when the token is absent", cloudCalls)
 	}
-	if strings.Contains(out, "Cloud") {
-		t.Fatalf("install output contains cloud-related text when not configured: %q", out)
+	if !strings.Contains(out, "falta ENGRAM_CLOUD_TOKEN") {
+		t.Fatalf("install output = %q, want it to report missing ENGRAM_CLOUD_TOKEN (shipped manifest defaults now supply server/project)", out)
+	}
+	if strings.Contains(out, "Enrolando Engram Cloud") || strings.Contains(out, "Engram Cloud enrolado") {
+		t.Fatalf("install output = %q, must not show cloud enrollment step labels when token is missing", out)
 	}
 }
 

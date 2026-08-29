@@ -163,6 +163,10 @@ func TestUpdateCommand_CloudConfigured_RunsCloudStepAfterEngram(t *testing.T) {
 }
 
 // TestUpdateCommand_CloudNotConfigured_SkipsCloudStep is task 4.5's no-config backward-compat test.
+// The shipped manifest.yaml bakes in the real (non-secret) engram_cloud.server/project defaults,
+// so "not configured" can no longer mean "click has no idea a cloud exists" for a normal build —
+// it means the token specifically is absent, which now produces an informative Spanish skip
+// message rather than total silence about cloud.
 func TestUpdateCommand_CloudNotConfigured_SkipsCloudStep(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
@@ -181,10 +185,13 @@ func TestUpdateCommand_CloudNotConfigured_SkipsCloudStep(t *testing.T) {
 		t.Fatalf("update command error = %v, output:\n%s", err, out)
 	}
 	if cloudCalls != 0 {
-		t.Fatalf("SyncEngramCloud called %d times, want 0 when cloud config is absent", cloudCalls)
+		t.Fatalf("SyncEngramCloud called %d times, want 0 when the token is absent", cloudCalls)
 	}
-	if strings.Contains(out, "Cloud") {
-		t.Fatalf("update output contains cloud-related text when not configured: %q", out)
+	if !strings.Contains(out, "falta ENGRAM_CLOUD_TOKEN") {
+		t.Fatalf("update output = %q, want it to report missing ENGRAM_CLOUD_TOKEN (shipped manifest defaults now supply server/project)", out)
+	}
+	if strings.Contains(out, "Enrolando Engram Cloud") || strings.Contains(out, "Engram Cloud enrolado") {
+		t.Fatalf("update output = %q, must not show cloud enrollment step labels when token is missing", out)
 	}
 }
 
