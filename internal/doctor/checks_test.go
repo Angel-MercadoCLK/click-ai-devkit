@@ -220,6 +220,12 @@ func TestCheckEngramCloudSessionSync_RejectsInvalidValues(t *testing.T) {
 			cfg := installer.Config{ClaudeHome: dir}
 
 			if tc.name == "valid configuration" {
+				// checkEngramCloudSessionSync resolves ITS OWN "expected" project via a fresh
+				// manifest.Load() internally (shipped manifest.yaml now bakes in a real default),
+				// independent of this fixture's hardcoded hook payload ("team-hive", base64
+				// dGVhbS1oaXZl above) — keep them consistent or HookProjectMismatch fires.
+				t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "team-hive")
+
 				// A fully valid configuration also requires evidence the SessionStart hook has
 				// actually run recently and succeeded (checkEngramCloudSessionSync's outcome-file
 				// check) — without this, checkEngramCloudSessionSync legitimately reports
