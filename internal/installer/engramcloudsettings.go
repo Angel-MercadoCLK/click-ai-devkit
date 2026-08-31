@@ -379,8 +379,23 @@ func configureEngramCloudSessionSyncImpl(cfg Config, m *manifest.Manifest, mode 
 	}
 	newBytes = append(newBytes, '\n')
 
-	// Short-circuit: no write when the document is already canonical
+	// Short-circuit: no write when the document is already canonical — but only if the file's
+	// owner-only protection is also still intact. click is NOT settings.json's only writer:
+	// Claude Code rewrites it whenever the developer changes any of its own settings (/model,
+	// /effort, ...), and that writer does not preserve the protected DACL / 0600 mode click
+	// applies. Without this repair, the file silently stays world-readable for good — a plain
+	// content comparison would keep short-circuiting forever, since the CONTENT is fine and only
+	// the permissions drifted. Re-securing here is the only path back: doctor is read-only by
+	// design and cannot fix it, and the developer has no way to know it happened.
 	if bytes.Equal(originalBytes, newBytes) {
+		ownerOnly, err := OwnerOnly(cfg.SettingsPath())
+		if err != nil || !ownerOnly {
+			// Rewrite through the secured writer purely to re-apply the file's protection. Content
+			// is byte-identical, so this is invisible to every other consumer. An OwnerOnly error
+			// (unreadable/odd security descriptor) is treated as drift too: re-applying is safe and
+			// idempotent, whereas skipping would leave a possibly-insecure file untouched.
+			return writeSettingsFile(cfg.SettingsPath(), settings)
+		}
 		return nil
 	}
 
