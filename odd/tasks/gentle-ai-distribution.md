@@ -48,6 +48,7 @@ None at present.
 - [x] T01 — Record distribution/ownership decision; supersede D1/D8/D9/D12/D25, revisit D36/D38. Files: `documentacion/00-decisions-and-open-questions.md`, `documentacion/vision.md`. Route: inline-eligible docs; delegated to Sol per model-team instruction. Evidence: D48 added; Astra xhigh review CHANGES_REQUIRED (1 blocker: pin drift left open; 2 warnings: chain strategy missing, historical vision bullets rewritten) → all fixed by Sol; parent spot check of D48 text and restored bullets. Docs only, no Go tests.
 - [x] T02 — Qualified upstream pin: `GENTLE_AI_VERSION`, `internal/installer/gentleai.go` (+test), `internal/manifest/{manifest.go,manifest.yaml,release_qualification_test.go}`, `.github/workflows/release.yml`. Tests: checksum/version rejection, self-update suppression. Route: delegated (writer trigger). Evidence: Astra xhigh CHANGES_REQUIRED (2 blockers: saved Go config/GOFLAGS bypass of checksum DB and build — parent reproduced with GOENV file; 4 warnings: toolchain gate order, HTTPS redirect downgrade, RC version parsing, decompression budget) → all fixed by Sol with RED→GREEN tests; controlled Go env GOENV=off, GOFLAGS cleared, GOSUMDB=sum.golang.org, GONOSUMDB/GOPRIVATE/GONOPROXY=none, GOPROXY=https://proxy.golang.org, GOTOOLCHAIN=local. Outside sandbox: build/vet OK, `go test ./...` only known env failure. CI release.yml not touched (deferred).
 - [x] T03 — Upstream install selection/orchestration: `internal/installer/{plan.go,installer.go}`, `internal/cli/{install.go,update.go}` (+tests). Tests: exact argv, selected-agent scope, failures, idempotency. Route: delegated. Evidence: argv `install --agents <active> --preset full-gentleman --components skills,permissions,persona --persona neutral --scope global` + GENTLE_AI_NO_SELF_UPDATE=1, validated against real gentle-ai 4.0.0 `--dry-run` in an isolated HOME (exit 0). Order: snapshot → deferred bookkeeping → gentle-ai → targets/models. Astra xhigh CHANGES_REQUIRED (3 warnings: Windows-unsafe stat in tests, failure after models/targets mutation, matching pin skipped PATH repair; 1 suggestion: explicit preset) → all fixed RED→GREEN. D49 (selection, explicit preset, staged T04 rollout), D50 (Engram Cloud layer kept). Outside sandbox: build/vet OK, `go test ./...` only known env failure.
+- [ ] T03a — Fix review findings on T03: `click update` must narrow persisted target intent by availability (`selection.X && home != ""`), never widen it; correct the comment; keep a sanitized failure cause for gentle-ai provisioning/install errors (no raw subprocess output, no env/secrets). Files: `internal/cli/update.go`, `internal/cli/update_test.go`, `internal/installer/gentleai_install.go`, `internal/installer/gentleai_install_test.go`. Route: delegated (Sol, model-team).
 - [ ] T04 — Transfer Engram/Context7 ownership to gentle-ai: `internal/installer/{engram.go,context7.go,codexmcp.go,openclawmcp.go}` (+tests). Tests: pre-existing installs, non-destructive uninstall. Route: delegated. Engram Cloud decided (keep click layer).
 - [ ] T05 — Click-only guidance (no competing SDD/ODD instructions): `internal/installer/{claudemd.go,codex.go,openclaw.go}` (+tests). Tests: foreign/upstream section preservation. Route: delegated.
 - [ ] T06 — Guard/policy/permissions overlay: `internal/installer/hooksettings.go`, new `internal/installer/permissions.go` (+tests), `plugins/click-memory/docs/{memory-policy.md,allowed-memory.md}`. Tests: hook coexistence with gentle-ai hooks, deny preservation. Route: delegated.
@@ -66,7 +67,7 @@ None at present.
 
 ## Delivery
 Strategy: ask-on-risk. Forecast: ~3000+ authored changed lines (plus the click-sdd asset deletion). Chain strategy: feature-branch-chain (user, 2026-10-08) — tracker branch `feat/gentle-ai-distribution` accumulates integration; slice PRs target the previous slice branch; only the tracker merges to main.
-Slices: slice 1 = 9f894b6..0aa7f56 (T01+T02, reviewed). Further slices recorded as they land.
+Slices: slice 1 = 9f894b6..0aa7f56 (T01+T02, reviewed); slice 2 = b3f53e6 (T03, reviewed). Further slices recorded as they land.
 Base: `fix/memory-guard-mutation-coverage` @ 9c6825f (unpushed). Branch: `feat/gentle-ai-distribution`.
 
 ## Progress / evidence
@@ -84,8 +85,15 @@ Base: `fix/memory-guard-mutation-coverage` @ 9c6825f (unpushed). Branch: `feat/g
   - SUGGESTION R2-go-min-literal `gentleai.go:211-216`; R2-shadow-version-pkg `gentleai.go:267-268`; R2-task-tracker-files `odd/tasks/gentle-ai-distribution.md:47`; R3-go-version-field-count `gentleai.go:243-249`; R3-oversize-download-untested `gentleai.go:126-129`; R3-probe-format-unqualified `gentleai.go:263-266`.
 - Hook-suggested START over the accumulated branch (base e845227) was not run: ODD reviews slices from the last reviewed boundary, and this slice already had a bound transaction.
 
+## Review (RDD) — slice 2 (T03)
+- Assessment: high (`high_risk`: update path, process execution in `gentleai_install.go`), base 0aa7f56, commit b3f53e6, 13 files / 949 lines. Consent: granted by user.
+- Native 4-lens review, lineage `review-aa66951080f9e88a`: approved; acknowledged, authority burned (consumed revision sha256:db1d3ceb...). Reviewed boundary is now b3f53e6.
+- Non-blocking findings:
+  - Accepted into T03a (behavior regression introduced by T03): WARNING R1-update-selection-widened-by-home / R3-update-selection-overrides-persisted-intent / R2-update-selection-comment-contradicts-code `internal/cli/update.go:58-61` (`selection.Codex = cfg.CodexHome != ""` re-enables a target the user disabled); WARNING R4-gentleai-failure-cause-discarded `internal/installer/gentleai_install.go:84-86`.
+  - Later work: WARNING R2-dry-run-encoded-as-decline `internal/cli/install.go:144-146`; SUGGESTION R1-pin-match-trusts-self-reported-version `gentleai_install.go:63-69`, R2-dry-run-flag-literal `install.go:45`, R2-garbled-test-doc-comment `preview_test.go:131-132`, R2-test-message-index-mismatch `preview_test.go:104`.
+
 ## Follow-ups (outside current scope)
 - Test isolation leak: `TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump` runs doctor against the real `~/.codex/AGENTS.md` and ambient `openclaw`, violating the isolated-home rule; it fails on any machine with OpenClaw installed.
 
 ## Next step
-T04 — transfer Engram/Context7 ownership to gentle-ai; keep click cloud layer (D50).
+T03a — update target-intent fix + failure cause; then T04.
