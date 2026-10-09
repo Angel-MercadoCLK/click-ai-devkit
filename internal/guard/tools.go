@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -78,4 +79,45 @@ func ToolMatcherPattern() string {
 		tools[i] = regexp.QuoteMeta(tool)
 	}
 	return "^(?:" + strings.Join(prefixes, "|") + ")(?:" + strings.Join(tools, "|") + ")$"
+}
+
+// readOnlyEngramProbeTools are representative Engram tools that never persist content. A hook
+// matcher must not fire for them (every call would pay a guard process for nothing and a broad
+// matcher would also start screening unrelated traffic).
+var readOnlyEngramProbeTools = []string{"mem_search", "mem_get_observation", "mem_context"}
+
+// VerifyToolMatcher checks a registered PreToolUse matcher by behavior: it must compile as a
+// regular expression, match every persisting Engram tool under every accepted name form, and match
+// none of the representative read-only tools (nor a non-Engram tool). The error is dev-facing
+// (Spanish, D10) and names what is wrong. Go's RE2 is used as a proxy for the regular-expression
+// semantics Claude Code applies to a matcher; the live check recorded in the ODD feature document
+// confirmed the canonical anchored form behaves identically there.
+func VerifyToolMatcher(matcher string) error {
+	re, err := regexp.Compile(matcher)
+	if err != nil {
+		return fmt.Errorf("el matcher %q no compila como expresión regular: %w", matcher, err)
+	}
+	var missed, overmatched []string
+	for _, prefix := range engramToolPrefixes {
+		for _, tool := range persistingEngramTools {
+			if name := prefix + tool; !re.MatchString(name) {
+				missed = append(missed, name)
+			}
+		}
+		for _, tool := range readOnlyEngramProbeTools {
+			if name := prefix + tool; re.MatchString(name) {
+				overmatched = append(overmatched, name)
+			}
+		}
+	}
+	if re.MatchString("Bash") {
+		overmatched = append(overmatched, "Bash")
+	}
+	if len(missed) > 0 {
+		return fmt.Errorf("el matcher %q no cubre herramientas de Engram que persisten contenido: %s", matcher, strings.Join(missed, ", "))
+	}
+	if len(overmatched) > 0 {
+		return fmt.Errorf("el matcher %q cubre de más: coincide con herramientas que no persisten contenido: %s", matcher, strings.Join(overmatched, ", "))
+	}
+	return nil
 }

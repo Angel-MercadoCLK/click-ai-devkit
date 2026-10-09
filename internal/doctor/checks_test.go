@@ -1559,3 +1559,91 @@ func TestCheckMemoryGuardHook_CurrentMatcherIsHealthy(t *testing.T) {
 		t.Fatalf("checkMemoryGuardHook unhealthy after a fresh register: %s", result.Detail)
 	}
 }
+
+func writeGuardSettings(t *testing.T, cfg installer.Config, matcher string) {
+	t.Helper()
+	settings := map[string]any{"hooks": map[string]any{"PreToolUse": []any{map[string]any{
+		"matcher": matcher,
+		"hooks":   []any{map[string]any{"type": "command", "command": installer.MemoryGuardCommand}},
+	}}}}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("Marshal(settings) error = %v", err)
+	}
+	if err := os.WriteFile(cfg.SettingsPath(), data, 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+}
+
+func TestCheckMemoryGuardHook_ProbeFailsWhenMatcherMissesAPersistingTool(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	writeGuardSettings(t, cfg, "^(?:mcp__plugin_engram_engram__|mcp__engram__)(?:mem_save|mem_save_prompt)$")
+
+	result := checkMemoryGuardHook(cfg)
+
+	if result.Healthy {
+		t.Fatal("checkMemoryGuardHook reports healthy for a matcher that misses persisting tools")
+	}
+	for _, want := range []string{"no cubre", "mem_update", "click update"} {
+		if !strings.Contains(result.Detail, want) {
+			t.Errorf("Detail = %q, want it to contain %q", result.Detail, want)
+		}
+	}
+}
+
+func TestCheckMemoryGuardHook_ProbeFailsWhenMatcherDoesNotCompile(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	writeGuardSettings(t, cfg, "^(?:mcp__engram__")
+
+	result := checkMemoryGuardHook(cfg)
+
+	if result.Healthy {
+		t.Fatal("checkMemoryGuardHook reports healthy for a matcher that does not compile")
+	}
+	for _, want := range []string{"no compila", "click update"} {
+		if !strings.Contains(result.Detail, want) {
+			t.Errorf("Detail = %q, want it to contain %q", result.Detail, want)
+		}
+	}
+}
+
+func TestCheckMemoryGuardHook_ProbeFailsWhenMatcherOvermatchesReadOnlyTools(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	writeGuardSettings(t, cfg, ".*")
+
+	result := checkMemoryGuardHook(cfg)
+
+	if result.Healthy {
+		t.Fatal("checkMemoryGuardHook reports healthy for a matcher that matches every tool")
+	}
+	for _, want := range []string{"cubre de más", "mem_search", "click update"} {
+		if !strings.Contains(result.Detail, want) {
+			t.Errorf("Detail = %q, want it to contain %q", result.Detail, want)
+		}
+	}
+}
+
+func TestCheckMemoryGuardHook_BehaviorNotStringDecidesHealth(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	writeGuardSettings(t, cfg, "^mcp__(?:plugin_engram_engram|engram)__(?:mem_capture_passive|mem_compare|mem_judge|mem_save|mem_save_prompt|mem_session_end|mem_session_summary|mem_update)$")
+
+	if result := checkMemoryGuardHook(cfg); !result.Healthy {
+		t.Fatalf("checkMemoryGuardHook unhealthy for an equivalent hand-written matcher: %s", result.Detail)
+	}
+}
+
+func TestCheckMemoryGuardHook_SurfacesUnreadableSettings(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	if err := os.WriteFile(cfg.SettingsPath(), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+
+	result := checkMemoryGuardHook(cfg)
+
+	if result.Healthy {
+		t.Fatal("checkMemoryGuardHook reports healthy for unparseable settings")
+	}
+	if !strings.Contains(result.Detail, "parse settings") {
+		t.Fatalf("Detail = %q, want the underlying parse error", result.Detail)
+	}
+}

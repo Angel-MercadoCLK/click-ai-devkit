@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/guard"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
@@ -883,20 +884,42 @@ func expectedClickSDDConfigKeys() []string {
 	return keys
 }
 
+// checkMemoryGuardHook probes the Click guard hook by behavior, not by comparing strings: the
+// registered matcher, compiled as a regular expression, must match every persisting Engram tool under
+// both MCP name forms and none of the representative read-only tools (guard.VerifyToolMatcher). A
+// hook that is registered but would not fire for a persisting tool is as dangerous as a missing one,
+// so it fails with the remedy `click update` (D10).
 func checkMemoryGuardHook(cfg installer.Config) CheckResult {
 	const name = "memory-guard hook"
 
-	ok, err := installer.HasMemoryGuardHook(cfg)
+	matchers, err := installer.RegisteredMemoryGuardMatchers(cfg)
 	if err != nil {
 		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
 	}
-	if !ok {
-		if legacy, legacyErr := installer.HasLegacyMemoryGuardHook(cfg); legacyErr == nil && legacy {
-			return CheckResult{Name: name, Healthy: false, Detail: "hook PreToolUse desactualizado en " + cfg.SettingsPath() + ": solo cubre mem_save y deja sin escaneo a mem_update y las demás herramientas de Engram que persisten contenido — ejecute `click update`"}
-		}
+	if len(matchers) == 0 {
 		return CheckResult{Name: name, Healthy: false, Detail: "hook PreToolUse ausente en " + cfg.SettingsPath()}
 	}
-	return CheckResult{Name: name, Healthy: true, Detail: "hook PreToolUse registrado"}
+
+	var firstProbeErr error
+	for _, matcher := range matchers {
+		probeErr := guard.VerifyToolMatcher(matcher)
+		if probeErr == nil {
+			return CheckResult{Name: name, Healthy: true, Detail: "hook PreToolUse registrado; el matcher cubre todas las herramientas de Engram que persisten contenido"}
+		}
+		if firstProbeErr == nil {
+			firstProbeErr = probeErr
+		}
+	}
+
+	outdated, err := installer.HasLegacyMemoryGuardHook(cfg)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	state := "con un matcher que no protege"
+	if outdated {
+		state = "desactualizado"
+	}
+	return CheckResult{Name: name, Healthy: false, Detail: "hook PreToolUse " + state + " en " + cfg.SettingsPath() + ": " + firstProbeErr.Error() + " — ejecute `click update`"}
 }
 
 // ClickBinaryMissingMessage is the actionable Spanish message shown when checkClickBinary cannot
