@@ -27,7 +27,7 @@ Out of scope: guard rule semantics (blocklist vs allowlist), gentle-ai migration
 - [x] T2 — Hook registration covers all of them; existing installs with the legacy matcher are upgraded idempotently; uninstall and doctor recognize old and new entries. Route: delegated.
 - [x] T3 — OpenClaw hook recognition and docs aligned with the new coverage. Route: delegated.
 
-- [ ] T4 — Prove the anchored regex matcher fires in a live Claude Code session (and does not fire for read-only tools); make `click doctor` verify the registered matcher actually matches every persisting tool in both name forms, and address R4 (no fallback once the legacy entry is removed) based on the live result. Route: live check inline (bounded test action); code delegated (writer trigger: 2+ non-trivial files).
+- [x] T4 — Prove the anchored regex matcher fires in a live Claude Code session (and does not fire for read-only tools); make `click doctor` verify the registered matcher actually matches every persisting tool in both name forms, and address R4 (no fallback once the legacy entry is removed) based on the live result. Route: live check inline (bounded test action); code delegated (writer trigger: 2+ non-trivial files).
 
 ## Acceptance criteria
 - A blocked payload is denied via `mem_save`, `mem_update` and every other persisting tool, in plugin (`mcp__plugin_engram_engram__*`) and standalone (`mcp__engram__*`) forms.
@@ -70,6 +70,24 @@ Strategy: ask-on-risk. Forecast: ~250-400 authored changed lines.
 - Docs updated: README.md (memory-guard section), SECURITY.md, plugins/click-memory/docs/memory-policy.md, documentacion/architecture.md. Not edited (historical/locked): D7, D35 in documentacion/00-decisions-and-open-questions.md and the FR-038 matcher snippet in documentacion/tech-spec.md still say mem_save; flagged for the parent.
 - OpenClaw enforcement remains UNVERIFIED at runtime (tool names are a best guess); docs say so.
 
+### T4 evidence
+- Commits: 7ac75e9 `fix(installer): identify Click guard hooks by command and expose the matcher read-only`; 7ca7fd9 `fix(doctor): verify the memory-guard matcher covers every persisting tool`.
+- Route: live check inline by the parent (bounded test action); code delegated writer (writer trigger: 2+ non-trivial files).
+- Live evidence (parent): Claude Code 2.1.295, `claude -p` with `--setting-sources project --settings <file> --mcp-config <fake engram MCP> --strict-mcp-config`, model haiku, 2026-10-09.
+  - Run 1 (logging hook, registered matcher `^(?:mcp__plugin_engram_engram__|mcp__engram__)(?:mem_capture_passive|mem_compare|mem_judge|mem_save|mem_save_prompt|mem_session_end|mem_session_summary|mem_update)$`): hook fired for `mcp__engram__mem_update` and `mcp__engram__mem_save`, did NOT fire for `mcp__engram__mem_search`; all three tool calls executed.
+  - Run 2 (hook = real `click memory-guard` built from this branch, isolated CLICK_CLAUDE_HOME): `mem_update` with "CUIT 20-12345678-3 del asegurado" was blocked by PreToolUse ("blocked: detected pii") and never reached the MCP server; `mem_save` with "Store architecture decisions only" was allowed; audit log recorded deny(pii)/allow with content_sha256 only.
+  - Not exercised live: the `mcp__plugin_engram_engram__` prefix (same regex alternation).
+- R4 decision: the regex matcher is proven to fire in current Claude Code, so no legacy fallback entry is added; the doctor probe below is the ongoing safety net.
+- Doctor probe: `guard.VerifyToolMatcher` (compile as regexp; must match every persisting tool in both name forms; must not match mem_search/mem_get_observation/mem_context in either form nor `Bash`). `checkMemoryGuardHook` runs it on the matchers actually registered (health is decided by behavior, not string equality); failure is Spanish with `click update`. Go RE2 is a proxy for Claude Code's regex semantics (the live run confirmed the canonical form).
+  - RED: `go test ./internal/guard -run VerifyToolMatcher` failed to compile (undefined VerifyToolMatcher); `go test ./internal/doctor -run CheckMemoryGuardHook` failed: ProbeFailsWhenMatcherMissesAPersistingTool, ProbeFailsWhenMatcherDoesNotCompile, ProbeFailsWhenMatcherOvermatchesReadOnlyTools, BehaviorNotStringDecidesHealth.
+  - GREEN: TestVerifyToolMatcher_{AcceptsTheCanonicalPattern,RejectsMatchersThatDoNotCompile,RejectsMatchersThatMissAPersistingTool,RejectsMatchersThatOvermatchReadOnlyTools,AcceptsAnEquivalentHandWrittenMatcher}; TestCheckMemoryGuardHook_{ProbeFails...x3,BehaviorNotStringDecidesHealth,SurfacesUnreadableSettings (already green: pins the surfaced error)} plus the T2 legacy/current tests.
+- R2 swallowed legacy-check error: doctor no longer drops errors; reading registered matchers and `HasLegacyMemoryGuardHook` errors are returned as the check Detail (covered by TestCheckMemoryGuardHook_SurfacesUnreadableSettings; the legacy-call error branch is not separately testable because both reads hit the same file).
+- R2 mutable `var`: `installer.MemoryGuardToolMatcher` is now a func over the unexported `memoryGuardToolMatcher`. RED: `go vet ./internal/installer ./internal/cli` failed to compile after tests switched to `MemoryGuardToolMatcher()` ("string is not a function"); GREEN after the accessor (compile-level change, no runtime assertion possible for non-reassignability).
+- R3 matcher drift: Click guard hooks are identified by `MemoryGuardCommand` in register, uninstall, `HasLegacyMemoryGuardHook` (now: any Click hook under a non-current matcher), and `managedSettingsProjectionHash`. Register keeps the first Click hook under the current matcher and removes every other (drifted, legacy, duplicate); foreign hooks survive. New `installer.RegisteredMemoryGuardMatchers`.
+  - RED: `go test ./internal/installer` failed: TestRegisterMemoryGuardHook_UpgradesDriftedMatcherToExactlyOneEntry, TestRegisterMemoryGuardHook_CollapsesDuplicateCurrentEntries, TestUnregisterMemoryGuardHook_RemovesDriftedEntry, TestHasLegacyMemoryGuardHook_TreatsDriftedMatcherAsOutdated, TestManagedSettingsProjectionHash_TreatsDriftedGuardEntryAsOwned.
+  - GREEN: the same tests plus TestRegisteredMemoryGuardMatchers_{ReturnsOnlyClickOwnedMatchers,MissingSettingsReturnsNone}. Changed an existing assertion: TestManagedSettingsProjectionHash "ownership follows the command, not the matcher" (previously asserted a Click command under a wrong matcher is NOT owned; that is the behavior R3 intentionally reverses).
+- Docs: README `click doctor` row mentions the matcher-coverage probe.
+
 ## Verification (final)
 - `go build ./...` ok; `go vet ./...` ok; `go test ./...` all packages ok except the pre-existing environmental failure noted above (`TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump`: real `openclaw` CLI help output contains "Usage:"; fails identically on base e845227).
 
@@ -82,4 +100,4 @@ Strategy: ask-on-risk. Forecast: ~250-400 authored changed lines.
   - R2: mutable matcher `var` (`hooksettings.go:25`), swallowed legacy-check error (`internal/doctor/checks.go:894`), unreachable-fallback comment (`hooks.js:128-130`), duplicated prefix list in `hooks.test.js:51`, stale line anchors in this doc.
 
 ## Next step
-Follow-ups above; reword D7/D35/FR-038 if wanted; push/PR are the user's call.
+Remaining non-blocking follow-ups (R2: unreachable-fallback comment `hooks.js:128-130`, duplicated prefix list `hooks.test.js:51`, stale line anchors in this doc); the R3/R4/R1 and R2 items for `hooksettings.go`/`checks.go` are closed by T4. Optionally re-run native review on 7ac75e9..7ca7fd9; reword D7/D35/FR-038 if wanted; push/PR are the user's call.
