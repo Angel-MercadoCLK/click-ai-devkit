@@ -5,6 +5,19 @@
 > not the current runtime support contract. For current behavior, see [`README.md`](../README.md),
 > [`codex-target.md`](codex-target.md), and [`portability-runbook.md`](portability-runbook.md).
 
+## Current direction (2026-10-08)
+
+Per [D48](00-decisions-and-open-questions.md), `click-ai-devkit` is a Click Seguros distribution
+layered on qualified gentle-ai **v4.0.0 stable**, not a fork. `click` provisions the exact upstream
+release artifact with pinned SHA-256 verification; Scoop installs only `click`, and upstream
+self-update is suppressed. gentle-ai owns ODD, RDD, Engram lifecycle, and runtime adapters.
+Click owns its rules, skills, memory guard and insurance data policy, extra permissions,
+installer/doctor/rollback, and model profiles mapped to upstream roles. The migration retires
+`click-sdd`; `click-review` keeps business/insurance checklists, not a separate review engine.
+Only Engram Cloud retention under D40–D47 remains an open product decision.
+
+## Historical v0.1 baseline
+
 The conclusions below were valid for the original v0.1 scope. They are not a prohibition on the
 current supported target slices: Claude Code remains the native plugin workflow, OpenClaw has a
 portable SDD workflow plus documented native model CLI configuration, and Codex receives guidance
@@ -85,7 +98,11 @@ instrumentation metric — v0.1 does not build usage analytics or a dashboard (s
 ## Non-goals (v0.1)
 
 - **Not reimplementing Engram.** It is bundled as a dependency, pinned per release — not rebuilt.
+  > **Superseded by D48:** gentle-ai owns Engram lifecycle instead of Click bundling and pinning
+  > it directly; Click retains the memory guard and insurance data policy.
 - **Not installing the full Gentle-AI ecosystem.** Only what Click needs is adapted and rebranded.
+  > **Superseded by D48:** adaptation/rebranding is replaced by a pinned upstream distribution;
+  > ODD and RDD belong to gentle-ai. See the current direction above.
 - **Not a dashboard or analytics product.** Success is measured by self-report, not telemetry.
 - **Not multi-tool.** Built for Claude Code only; no support for other AI coding assistants in v0.1.
 - **Not production automation.** No auto-merge, no auto-deploy — a human stays in the loop.
