@@ -147,8 +147,15 @@ Note: `click update` syncs the devkit (plugins, Engram, skills, etc.) rather tha
 
 ## memory-guard
 
-`memory-guard` es un hook PreToolUse de Claude Code que intercepta cada llamada a `mem_save`
-antes de que pueda llegar a Engram. Es:
+`memory-guard` es un hook PreToolUse de Claude Code que intercepta cada llamada a una herramienta
+de Engram que persiste contenido (`mem_save`, `mem_update`, `mem_save_prompt`,
+`mem_session_summary`, `mem_session_end`, `mem_capture_passive`, `mem_judge`, `mem_compare`), tanto
+con el nombre del plugin (`mcp__plugin_engram_engram__*`) como con el del servidor MCP independiente
+(`mcp__engram__*`), antes de que pueda llegar a Engram. Las herramientas de solo lectura
+(`mem_search`, `mem_context`, `mem_get_observation`, ...) no se escanean. La lista vive en
+`internal/guard/tools.go`; `click update` migra un hook antiguo que solo cubría `mem_save`, y
+`click doctor` lo marca como desactualizado hasta entonces. El plugin de OpenClaw aplica la misma
+lista, pero esa aplicación no se ha verificado en un runtime real de OpenClaw. Es:
 
 - **Solo bloqueo:** si el contenido coincide con un patrón prohibido, la llamada se deniega por
   completo; todavía no existe una ruta de redacción/edición parcial (está contemplada, pero sin

@@ -1,7 +1,7 @@
 {
   "name": "click-memory-guard",
   "version": "1.0.0",
-  "description": "Enforces click's memory-guard deny-by-default scan on Engram mem_save calls made by OpenClaw agents, mirroring Claude Code's PreToolUse hook (design #1666, decisions OCG-1..6).",
+  "description": "Enforces click's memory-guard scan on content-persisting Engram tool calls (mem_save, mem_update, ...) made by OpenClaw agents, mirroring Claude Code's PreToolUse hook (design #1666, decisions OCG-1..6).",
   "main": "plugins/hooks.js",
   "entry": "plugins/hooks.js",
   "hooks": {

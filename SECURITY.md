@@ -44,7 +44,7 @@ This layer guides what an agent should attempt to save.
 
 ### Layer 2 — Deterministic enforcement
 
-The `click memory-guard` PreToolUse hook scans every `mem_save` payload before it reaches Engram.
+The `click memory-guard` PreToolUse hook scans the payload of every Engram tool that persists content (`mem_save`, `mem_update`, `mem_save_prompt`, `mem_session_summary`, `mem_session_end`, `mem_capture_passive`, `mem_judge`, `mem_compare`) before it reaches Engram, under both the plugin-scoped (`mcp__plugin_engram_engram__*`) and standalone (`mcp__engram__*`) tool names. Read-only tools are not scanned. The list lives in `internal/guard/tools.go`. The OpenClaw plugin applies the same list, but OpenClaw enforcement has not been verified at runtime.
 
 Characteristics:
 
