@@ -101,3 +101,8 @@ Strategy: ask-on-risk. Forecast: ~250-400 authored changed lines.
 
 ## Next step
 Remaining non-blocking follow-ups (R2: unreachable-fallback comment `hooks.js:128-130`, duplicated prefix list `hooks.test.js:51`, stale line anchors in this doc); the R3/R4/R1 and R2 items for `hooksettings.go`/`checks.go` are closed by T4. Optionally re-run native review on 7ac75e9..7ca7fd9; reword D7/D35/FR-038 if wanted; push/PR are the user's call.
+
+## Review (RDD) — T4 slice
+- Assessment: medium, `slice_budget_reached`, base e78e936, commits 7ac75e9..c612a01. Consent: granted by user.
+- Native review (single consolidated reliability lens), lineage acknowledged, authority burned: approved.
+- Non-blocking follow-ups: R3-001 (WARNING) snapshots recorded by older builds for a hand-edited Click matcher project `absent:` and now `present:`, so SnapshotDrift may report a spurious managed-content veto after upgrade (`internal/installer/snapshot_projection.go:99`); R3-002 the "matcher que no protege" doctor branch is effectively unreachable (`internal/doctor/checks.go:914-921`); R3-003 plain-name matchers may be exact-match in Claude Code vs unanchored RE2 in the probe (`internal/guard/tools.go:95-102`), no false-healthy result.
