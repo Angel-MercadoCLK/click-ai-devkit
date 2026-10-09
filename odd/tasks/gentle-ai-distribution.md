@@ -64,7 +64,7 @@ Writer: Codex `gpt-6.1-sol` high. Per-task reviewer: Codex `gpt-6-astra` xhigh. 
 
 ## Delivery
 Strategy: ask-on-risk. Forecast: ~3000+ authored changed lines (plus the click-sdd asset deletion). Chain strategy: feature-branch-chain (user, 2026-10-08) — tracker branch `feat/gentle-ai-distribution` accumulates integration; slice PRs target the previous slice branch; only the tracker merges to main.
-Slices: to be recorded as work-unit commits land.
+Slices: slice 1 = 9f894b6..0aa7f56 (T01+T02, reviewed). Further slices recorded as they land.
 Base: `fix/memory-guard-mutation-coverage` @ 9c6825f (unpushed). Branch: `feat/gentle-ai-distribution`.
 
 ## Progress / evidence
@@ -73,6 +73,14 @@ Base: `fix/memory-guard-mutation-coverage` @ 9c6825f (unpushed). Branch: `feat/g
 - 2026-10-08 T01: Sol deleted the untracked `.engram/config.json` as "task-generated metadata" without reporting it; parent recreated it. Writer prompts must list it as do-not-touch.
 
 - 2026-10-08 T02 (Sol): partial in sandbox; outside sandbox `go build ./...` OK, `go vet ./...` OK, `go test ./...` only failure is `TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump` (internal/cli), which also fails on base 9f894b6 → pre-existing environmental failure (the test reads real `~/.codex/AGENTS.md` and the ambient `openclaw` binary). ~926 authored lines (platform-specific safety + failure-path tests). Astra review done (see T02).
+
+## Review (RDD) — slice 1 (T01+T02)
+- Assessment: high (`high_risk`, process execution in `internal/installer/gentleai.go`), base 9c6825f, commits 9f894b6..0aa7f56, 10 files / 1399 lines. Consent: granted by user.
+- Native 4-lens review, lineage `review-e8fccfe78dfdb011`: approved; acknowledged, authority burned (consumed revision sha256:cee92f47...). Reviewed boundary is now 0aa7f56.
+- Non-blocking findings (separate later work, never a reason to re-review this candidate):
+  - WARNING R2-seam-doc-misleading `gentleai.go:350-354`; R4-go-install-stderr-dropped `gentleai.go:218-219` (go install stderr lost on failure); R4-windows-rename-running-exe `gentleai.go:344` (rename over a running gentle-ai.exe fails on Windows).
+  - SUGGESTION R2-go-min-literal `gentleai.go:211-216`; R2-shadow-version-pkg `gentleai.go:267-268`; R2-task-tracker-files `odd/tasks/gentle-ai-distribution.md:47`; R3-go-version-field-count `gentleai.go:243-249`; R3-oversize-download-untested `gentleai.go:126-129`; R3-probe-format-unqualified `gentleai.go:263-266`.
+- Hook-suggested START over the accumulated branch (base e845227) was not run: ODD reviews slices from the last reviewed boundary, and this slice already had a bound transaction.
 
 ## Follow-ups (outside current scope)
 - Test isolation leak: `TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump` runs doctor against the real `~/.codex/AGENTS.md` and ambient `openclaw`, violating the isolated-home rule; it fails on any machine with OpenClaw installed.
