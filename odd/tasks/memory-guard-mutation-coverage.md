@@ -71,5 +71,13 @@ Strategy: ask-on-risk. Forecast: ~250-400 authored changed lines.
 ## Verification (final)
 - `go build ./...` ok; `go vet ./...` ok; `go test ./...` all packages ok except the pre-existing environmental failure noted above (`TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump`: real `openclaw` CLI help output contains "Usage:"; fails identically on base e845227).
 
+## Review (RDD)
+- Assessment: high (`hot_path` SECURITY.md), base e845227, commits 2be004b..b862635. Consent: granted by user.
+- Native 4-lens review, lineage `review-56c48f4abac0988c`: approved; acknowledged, authority burned (consumed revision sha256:2e12bb12...).
+- Non-blocking follow-ups (informational, separate later work):
+  - R3/R4/R1: the anchored regex matcher is not verified in a live Claude Code session; doctor only compares the matcher string, so a non-firing matcher would still read healthy. Add a runtime smoke check or a doctor probe.
+  - R3: a drifted (hand-edited) Click matcher is not recognized as Click-owned (`internal/installer/hooksettings.go:77-81`).
+  - R2: mutable matcher `var` (`hooksettings.go:25`), swallowed legacy-check error (`internal/doctor/checks.go:894`), unreachable-fallback comment (`hooks.js:128-130`), duplicated prefix list in `hooks.test.js:51`, stale line anchors in this doc.
+
 ## Next step
-Parent: review decisions/docs flagged above; push/PR are the user's call.
+Follow-ups above; reword D7/D35/FR-038 if wanted; push/PR are the user's call.
