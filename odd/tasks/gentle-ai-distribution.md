@@ -26,7 +26,13 @@ Out of scope: push, PR creation, merge, release publishing (user decisions).
 - ~400 authored changed lines per task is a planning heuristic only.
 
 ## Model team (user instruction)
-Writer: Codex `gpt-6.1-sol` high. Per-task reviewer: Codex `gpt-6-astra` xhigh. Final reviewer: Claude Opus xhigh.
+Current instruction (2026-10-09): writer Codex `gpt-6-luna` high; parent reviews each task before closure and continuation. This supersedes the earlier Sol/Astra/Opus assignment for remaining work. Native RDD remains governed by the user-owned switch and per-candidate consent.
+
+## Resumed authorization (2026-10-09)
+- User authorized completing the remaining plan, task-by-task implementation/review, commits, and pushes after successful checks. No merge or release publishing is authorized.
+- Local work stays on `feat/gentle-ai-distribution`; existing T03a edits must be preserved and verified, not blindly reapplied.
+- Push destination and credential confirmation remain pending; no remote operation before that confirmation.
+- Resume point: T01–T03 committed; T03a source/tests are present but uncommitted and unchecked. Historical T03a verification is in Engram #509–#511; fresh checks are required before closure.
 
 ## Defaults taken (recommended by exploration; user may override)
 - Pin gentle-ai **v4.0.0 stable**, exact release artifact + SHA-256, never "latest"; suppress upstream self-update (`GENTLE_AI_NO_SELF_UPDATE=1`).
@@ -96,4 +102,14 @@ Base: `fix/memory-guard-mutation-coverage` @ 9c6825f (unpushed). Branch: `feat/g
 - Test isolation leak: `TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump` runs doctor against the real `~/.codex/AGENTS.md` and ambient `openclaw`, violating the isolated-home rule; it fails on any machine with OpenClaw installed.
 
 ## Next step
-T03a — update target-intent fix + failure cause; then T04.
+T03a — close the verified local correction through commit and native review; then T04.
+
+## Resumed T03a verification (2026-10-09)
+- Writer/verifier: GPT-6 Luna high. Existing four-file implementation preserved; no additional behavior changes needed. Normalized with gofmt before verification.
+- Parent review: inspected all four file diffs plus the update/resolver integration. No blocking findings. The resolver already filters target availability, so explicit AND strengthens the invariant rather than proving a pre-existing end-to-end reactivation bug.
+- PASS: `go test ./internal/installer ./internal/cli -run 'TestGentleAI|TestUpdate' -count=1`; `go build ./...`; `go vet ./...`; `git diff --check`.
+- Parent spot check PASS: `go test ./internal/installer ./internal/cli -run 'TestGentleAIInstall_FailuresPreserveSanitizedCause|TestUpdate_PersistedIntentNarrowsTargetsWithoutRewritingSelection' -count=1`.
+- FAIL: `go test ./internal/installer ./internal/cli -count=1`, reproducing the four previously recorded environmental failures: `TestResolveGitExecutionContext_NonRepositorySelectorCreatesRecoveryRepoAndCleansItOnFailure`, `TestExecCommandRunner_CommandDirInitializationFailureIsClear`, `TestExecCommandRunner_NonRepositoryUsesInitializedIsolatedRepo`, `TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump`. Full-suite green is NOT claimed.
+- Runtime harness: mocked upstream runner and binary lookup, temporary target homes, exact selected-agent argv, dry-run non-execution, and unchanged persisted target bytes. No real installs. Windows execution not performed in this Linux session.
+- Rollback boundary: the T03a changes in `internal/cli/update.go`, `internal/cli/update_test.go`, `internal/installer/gentleai_install.go`, `internal/installer/gentleai_install_test.go` only.
+- Native assessment: high (`hot_path`, `process_boundary`), review due. Commit identity and candidate-scoped review outcome will be recorded after they exist; T03a remains unchecked until closure.

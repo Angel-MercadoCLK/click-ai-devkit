@@ -55,10 +55,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Persisted intent is not this run's scope: exclude unavailable/skipped targets
-	// before building both the upstream selection and the local action plan.
-	selection.Codex = cfg.CodexHome != ""
-	selection.OpenClaw = cfg.OpenClawHome != ""
+	// Narrow persisted intent by availability for this run; never enable an excluded
+	// target before building the upstream selection and the local action plan.
+	selection.Codex = selection.Codex && cfg.CodexHome != ""
+	selection.OpenClaw = selection.OpenClaw && cfg.OpenClawHome != ""
 	if selection.Claude {
 		claudeHome, resolveErr := installer.ResolveClaudeHome()
 		if resolveErr != nil {

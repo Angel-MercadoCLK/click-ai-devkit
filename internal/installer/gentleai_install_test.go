@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -139,6 +140,60 @@ func TestGentleAIInstall_EmptySelectionHasNoSideEffects(t *testing.T) {
 	p.HomeDir = func() (string, error) { t.Fatal("resolved home for empty selection"); return "", nil }
 	if _, err := p.Install(context.Background(), pin, TargetSelection{}, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGentleAIInstall_FailuresPreserveSanitizedCause(t *testing.T) {
+	sentinel := errors.New("stderr: secret-token; ENGRAM_CLOUD_TOKEN=private-env-value")
+	exitErr := &exec.ExitError{Stderr: []byte("secret-token private-env-value")}
+	for _, stage := range []string{"provision", "install"} {
+		for _, tt := range []struct {
+			name    string
+			cause   error
+			summary string
+		}{
+			{"unknown", sentinel, "error no clasificado"},
+			{"exit", exitErr, "código de salida -1"},
+			{"permission", os.ErrPermission, "permiso denegado"},
+			{"deadline", context.DeadlineExceeded, "tiempo de espera agotado"},
+		} {
+			t.Run(stage+"/"+tt.name, func(t *testing.T) {
+				archive := gentleAIArchive(t, []*tar.Header{{Name: "gentle-ai", Size: 6, Mode: 0o755}})
+				p, pin, _ := gentleAIFixture(t, "linux_amd64", archive)
+				t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())
+				p.Environ = func() []string { return []string{"ENGRAM_CLOUD_TOKEN=private-env-value"} }
+				p.EnsureOnPath = func(string) (bool, error) { return false, nil }
+				injected := fmt.Errorf("stderr: secret-token; ENGRAM_CLOUD_TOKEN=private-env-value: %w", tt.cause)
+				if stage == "provision" {
+					p.WriteBinary = func(string, []byte) error { return injected }
+				}
+				p.Run = func(context.Context, []string, string, ...string) ([]byte, error) {
+					return []byte("stdout/stderr: secret-token private-env-value"), injected
+				}
+				_, err := p.Install(context.Background(), pin, TargetSelection{Claude: true}, nil)
+				if !errors.Is(err, tt.cause) {
+					t.Error("underlying cause was discarded")
+				}
+				if tt.cause == exitErr {
+					var got *exec.ExitError
+					if !errors.As(err, &got) || got != exitErr {
+						t.Error("underlying exit error is not reachable via errors.As")
+					}
+				}
+				if err == nil {
+					t.Fatal("expected install failure")
+				}
+				message := err.Error()
+				for _, secret := range []string{"secret-token", "private-env-value", "ENGRAM_CLOUD_TOKEN", "stdout", "stderr"} {
+					if strings.Contains(message, secret) {
+						t.Error("rendered error leaked injected subprocess/environment content")
+					}
+				}
+				if len(message) > 600 || !strings.HasPrefix(message, "No se pudo ") || !strings.Contains(message, "Revise ") || !strings.Contains(message, tt.summary) {
+					t.Errorf("expected bounded Spanish remediation with sanitized summary %q", tt.summary)
+				}
+			})
+		}
 	}
 }
 

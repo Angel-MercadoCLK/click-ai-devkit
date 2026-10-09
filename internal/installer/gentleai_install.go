@@ -2,8 +2,10 @@ package installer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -76,15 +78,48 @@ func (p GentleAIProvisioner) Install(ctx context.Context, pin manifest.GentleAI,
 		result, err = p.Provision(ctx, pin)
 		if err != nil {
 			// Raw subprocess errors/output may contain credentials; never echo them here.
-			return result, fmt.Errorf("No se pudo instalar la versión fijada de gentle-ai (%s). Revise la conexión, los permisos de ~/.click/bin y, en Windows, Go >= 1.25.10; vuelva a ejecutar `click install` o `click update`.", pin.Version)
+			return result, gentleAIInstallFailure{
+				message: fmt.Sprintf("No se pudo instalar la versión fijada de gentle-ai (%s). Revise la conexión, los permisos de ~/.click/bin y, en Windows, Go >= 1.25.10; vuelva a ejecutar `click install` o `click update`.", pin.Version),
+				cause:   err,
+			}
 		}
 	} else {
 		result = p.reconcilePath(result)
 	}
 	if _, err := p.Run(ctx, GentleAIEnvironment(p.Environ()), result.Path, args...); err != nil {
-		return result, fmt.Errorf("No se pudo configurar gentle-ai para los runtimes seleccionados. Revise los permisos de sus directorios de configuración y vuelva a ejecutar `click install` o `click update`.")
+		return result, gentleAIInstallFailure{
+			message: "No se pudo configurar gentle-ai para los runtimes seleccionados. Revise los permisos de sus directorios de configuración y vuelva a ejecutar `click install` o `click update`.",
+			cause:   err,
+		}
 	}
 	return result, nil
+}
+
+// Preserve diagnostic identity without formatting untrusted error text or output.
+// Only fixed Spanish categories and a numeric process exit code are rendered.
+type gentleAIInstallFailure struct {
+	message string
+	cause   error
+}
+
+func (e gentleAIInstallFailure) Unwrap() error { return e.cause }
+
+func (e gentleAIInstallFailure) Error() string {
+	summary := "error no clasificado"
+	var exitErr *exec.ExitError
+	switch {
+	case errors.As(e.cause, &exitErr):
+		summary = fmt.Sprintf("código de salida %d", exitErr.ExitCode())
+	case errors.Is(e.cause, context.DeadlineExceeded):
+		summary = "tiempo de espera agotado"
+	case errors.Is(e.cause, context.Canceled):
+		summary = "operación cancelada"
+	case errors.Is(e.cause, os.ErrPermission):
+		summary = "permiso denegado"
+	case errors.Is(e.cause, os.ErrNotExist):
+		summary = "archivo no encontrado"
+	}
+	return e.message + " (causa: " + summary + ")"
 }
 
 var gentleAIProvisionerFactory = NewGentleAIProvisioner

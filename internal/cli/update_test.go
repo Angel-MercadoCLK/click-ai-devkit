@@ -731,3 +731,106 @@ func TestUpdate_GentleAIOnlyUsesActiveTargets(t *testing.T) {
 func TestUpdate_GentleAIFailurePreservesPreexistingState(t *testing.T) {
 	testGentleAIFailurePreservesPreexistingState(t, "update")
 }
+
+func TestUpdate_PersistedIntentNarrowsTargetsWithoutRewritingSelection(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		selection installer.TargetSelection
+		available []string
+		skip      bool
+		agents    string
+		codex     bool
+		openClaw  bool
+	}{
+		{"codex disabled with existing home", installer.TargetSelection{Claude: true}, []string{"claude", "codex"}, false, "claude-code", false, false},
+		{"codex selected unavailable", installer.TargetSelection{Claude: true, Codex: true}, []string{"claude"}, false, "claude-code", false, false},
+		{"codex selected available", installer.TargetSelection{Claude: true, Codex: true}, []string{"claude", "codex"}, false, "claude-code,codex", true, false},
+		{"openclaw disabled with existing home", installer.TargetSelection{Claude: true}, []string{"claude", "openclaw"}, false, "claude-code", false, false},
+		{"openclaw selected unavailable", installer.TargetSelection{Claude: true, OpenClaw: true}, []string{"claude"}, false, "claude-code", false, false},
+		{"openclaw selected available", installer.TargetSelection{Claude: true, OpenClaw: true}, []string{"claude", "openclaw"}, false, "claude-code,openclaw", false, true},
+		{"openclaw selected skipped", installer.TargetSelection{Claude: true, OpenClaw: true}, []string{"claude", "openclaw"}, true, "claude-code", false, false},
+		{"claude disabled with existing home", installer.TargetSelection{Codex: true}, []string{"claude", "codex"}, false, "codex", true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home, state, openClawHome, codexHome := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+			cfg := installer.Config{ClickStateHome: state}
+			tt.selection.Configured = true
+			if err := installer.SaveTargetSelection(cfg, tt.selection); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(cfg.TargetSelectionPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := newTestCommandRunner(home)
+			t.Cleanup(installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner }))
+			p := installer.NewGentleAIProvisioner()
+			p.HomeDir = func() (string, error) { return state, nil }
+			p.EnsureOnPath = func(string) (bool, error) { return false, nil }
+			p.Environ = func() []string { return nil }
+			path, err := p.ManagedPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("fixture"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			installs := 0
+			p.Run = func(_ context.Context, _ []string, _ string, args ...string) ([]byte, error) {
+				if args[0] == "version" {
+					return []byte("gentle-ai v4.0.0"), nil
+				}
+				installs++
+				if args[0] != "install" || args[1] != "--agents" || args[2] != tt.agents {
+					t.Errorf("upstream argv = %q, want agents %q", args, tt.agents)
+				}
+				return nil, nil
+			}
+			t.Cleanup(installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
+			resolved := map[string]string{"git": "/fixture/git"}
+			for _, name := range tt.available {
+				resolved[name] = "/fixture/" + name
+			}
+			lookup := cliFakeBinaryLookup{resolved: resolved}
+			args := []string{"update", "--yes"}
+			if tt.skip {
+				args = append(args, "--skip-openclaw")
+			}
+			preview, err := execRootWithHomesAndLookup(t, home, state, openClawHome, codexHome, lookup, append(args, "--dry-run")...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if installs != 0 || !strings.Contains(preview, "gentle-ai install --agents "+tt.agents+" --preset") {
+				t.Error("dry-run did not render the narrowed upstream selection without executing it")
+			}
+			for _, target := range []struct {
+				marker string
+				active bool
+			}{
+				{"Actualizando AGENTS.md de Codex", tt.codex},
+				{"Actualizando AGENTS.md y SOUL.md de OpenClaw", tt.openClaw},
+				{"Actualizando CLAUDE.md", tt.selection.Claude},
+			} {
+				if strings.Contains(preview, target.marker) != target.active {
+					t.Errorf("local plan marker %q active = %t, want %t", target.marker, !target.active, target.active)
+				}
+			}
+			if _, err := execRootWithHomesAndLookup(t, home, state, openClawHome, codexHome, lookup, args...); err != nil {
+				t.Fatal(err)
+			}
+			if installs != 1 {
+				t.Errorf("install calls = %d, want 1", installs)
+			}
+			after, err := os.ReadFile(cfg.TargetSelectionPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Error("update rewrote persisted target intent")
+			}
+		})
+	}
+}
