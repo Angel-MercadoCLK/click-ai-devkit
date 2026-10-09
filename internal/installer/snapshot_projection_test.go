@@ -129,7 +129,7 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 			"hooks": map[string]any{
 				"PreToolUse": []any{
 					map[string]any{
-						"matcher": MemoryGuardToolMatcher,
+						"matcher": MemoryGuardToolMatcher(),
 						"hooks": []any{
 							map[string]any{
 								"type":    "command",
@@ -154,7 +154,7 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 						"hooks":   []any{},
 					},
 					map[string]any{
-						"matcher": MemoryGuardToolMatcher,
+						"matcher": MemoryGuardToolMatcher(),
 						"hooks": []any{
 							map[string]any{
 								"type":    "command",
@@ -184,7 +184,7 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 			"hooks": map[string]any{
 				"PreToolUse": []any{
 					map[string]any{
-						"matcher": MemoryGuardToolMatcher,
+						"matcher": MemoryGuardToolMatcher(),
 						"hooks": []any{
 							map[string]any{
 								"type":    "command",
@@ -269,7 +269,7 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 			"hooks": map[string]any{
 				"PreToolUse": []any{
 					map[string]any{
-						"matcher": MemoryGuardToolMatcher,
+						"matcher": MemoryGuardToolMatcher(),
 						"hooks": []any{
 							map[string]any{
 								"type":    "command",
@@ -290,7 +290,7 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 			"hooks": map[string]any{
 				"PreToolUse": []any{
 					map[string]any{
-						"matcher": MemoryGuardToolMatcher,
+						"matcher": MemoryGuardToolMatcher(),
 						"hooks": []any{
 							map[string]any{
 								"type":    "command",
@@ -317,9 +317,9 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 		}
 	})
 
-	// Test 7: owned hook is only included when both matcher and command match
-	t.Run("only matches when both matcher and command match", func(t *testing.T) {
-		// Wrong matcher
+	// Test 7: ownership is decided by the Click command, not the matcher string
+	t.Run("ownership follows the command, not the matcher", func(t *testing.T) {
+		// Drifted matcher, Click command: still Click-owned
 		settings1 := map[string]any{
 			"hooks": map[string]any{
 				"PreToolUse": []any{
@@ -341,7 +341,7 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 			"hooks": map[string]any{
 				"PreToolUse": []any{
 					map[string]any{
-						"matcher": MemoryGuardToolMatcher,
+						"matcher": MemoryGuardToolMatcher(),
 						"hooks": []any{
 							map[string]any{
 								"type":    "command",
@@ -359,8 +359,11 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 		hash1 := managedSettingsProjectionHash(string(data1))
 		hash2 := managedSettingsProjectionHash(string(data2))
 
-		if !strings.HasPrefix(hash1, "absent:") || !strings.HasPrefix(hash2, "absent:") {
-			t.Errorf("Both should be absent when matcher or command doesn't match, got %s and %s", hash1, hash2)
+		if !strings.HasPrefix(hash1, "present:") {
+			t.Errorf("a Click command under a drifted matcher must be owned (present:), got %s", hash1)
+		}
+		if !strings.HasPrefix(hash2, "absent:") {
+			t.Errorf("a foreign command under the Click matcher must not be owned (absent:), got %s", hash2)
 		}
 	})
 
@@ -370,7 +373,7 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 			"hooks": map[string]any{
 				"PreToolUse": []any{
 					map[string]any{
-						"matcher": MemoryGuardToolMatcher,
+						"matcher": MemoryGuardToolMatcher(),
 						"hooks": []any{
 							map[string]any{
 								"type":    "command",
@@ -396,7 +399,7 @@ func TestManagedSettingsProjectionHash(t *testing.T) {
 			"hooks": map[string]any{
 				"PreToolUse": []any{
 					map[string]any{
-						"matcher": MemoryGuardToolMatcher,
+						"matcher": MemoryGuardToolMatcher(),
 						"hooks": []any{
 							map[string]any{
 								"type": "some_other_type",

@@ -52,11 +52,11 @@ func legacyGuardEntry(extraHooks ...any) map[string]any {
 }
 
 func TestMemoryGuardToolMatcher_CoversEveryPersistingToolInBothNameForms(t *testing.T) {
-	re := regexp.MustCompile(MemoryGuardToolMatcher)
+	re := regexp.MustCompile(MemoryGuardToolMatcher())
 	for _, tool := range guard.PersistingEngramTools() {
 		for _, prefix := range []string{"mcp__plugin_engram_engram__", "mcp__engram__"} {
 			if !re.MatchString(prefix + tool) {
-				t.Errorf("MemoryGuardToolMatcher %q does not match %q", MemoryGuardToolMatcher, prefix+tool)
+				t.Errorf("MemoryGuardToolMatcher %q does not match %q", MemoryGuardToolMatcher(), prefix+tool)
 			}
 		}
 	}
@@ -65,7 +65,7 @@ func TestMemoryGuardToolMatcher_CoversEveryPersistingToolInBothNameForms(t *test
 			t.Errorf("MemoryGuardToolMatcher matches %q, which never persists content", name)
 		}
 	}
-	if MemoryGuardToolMatcher == MemoryGuardLegacyToolMatcher {
+	if MemoryGuardToolMatcher() == MemoryGuardLegacyToolMatcher {
 		t.Fatal("the current matcher must differ from the legacy mem_save-only matcher")
 	}
 }
@@ -78,8 +78,8 @@ func TestRegisterMemoryGuardHook_RegistersExactlyOneEntryWithFullMatcher(t *test
 		}
 	}
 	matchers := clickGuardEntryMatchers(t, cfg)
-	if len(matchers) != 1 || matchers[0] != MemoryGuardToolMatcher {
-		t.Fatalf("click guard entries = %v, want exactly [%q]", matchers, MemoryGuardToolMatcher)
+	if len(matchers) != 1 || matchers[0] != MemoryGuardToolMatcher() {
+		t.Fatalf("click guard entries = %v, want exactly [%q]", matchers, MemoryGuardToolMatcher())
 	}
 }
 
@@ -98,8 +98,8 @@ func TestRegisterMemoryGuardHook_UpgradesLegacyMatcherToExactlyOneEntry(t *testi
 	}
 
 	matchers := clickGuardEntryMatchers(t, cfg)
-	if len(matchers) != 1 || matchers[0] != MemoryGuardToolMatcher {
-		t.Fatalf("click guard entries after upgrade = %v, want exactly [%q]", matchers, MemoryGuardToolMatcher)
+	if len(matchers) != 1 || matchers[0] != MemoryGuardToolMatcher() {
+		t.Fatalf("click guard entries after upgrade = %v, want exactly [%q]", matchers, MemoryGuardToolMatcher())
 	}
 	settings := readSettingsJSON(t, cfg)
 	if settings["other"] != true {
@@ -131,8 +131,8 @@ func TestRegisterMemoryGuardHook_UpgradeKeepsForeignHooksSharingTheLegacyEntry(t
 	if !strings.Contains(string(raw), "audit-extra") {
 		t.Fatalf("upgrade dropped a foreign hook that shared the legacy entry: %s", raw)
 	}
-	if matchers := clickGuardEntryMatchers(t, cfg); len(matchers) != 1 || matchers[0] != MemoryGuardToolMatcher {
-		t.Fatalf("click guard entries = %v, want exactly [%q]", matchers, MemoryGuardToolMatcher)
+	if matchers := clickGuardEntryMatchers(t, cfg); len(matchers) != 1 || matchers[0] != MemoryGuardToolMatcher() {
+		t.Fatalf("click guard entries = %v, want exactly [%q]", matchers, MemoryGuardToolMatcher())
 	}
 }
 
@@ -161,7 +161,7 @@ func TestHasMemoryGuardHook_LegacyOnlyIsNotFullyRegistered(t *testing.T) {
 func TestUnregisterMemoryGuardHook_RemovesLegacyAndCurrentEntries(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir()}
 	current := map[string]any{
-		"matcher": MemoryGuardToolMatcher,
+		"matcher": MemoryGuardToolMatcher(),
 		"hooks":   []any{map[string]any{"type": "command", "command": MemoryGuardCommand}},
 	}
 	foreign := map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": "other-tool"}}}

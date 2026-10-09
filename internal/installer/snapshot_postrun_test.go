@@ -84,7 +84,7 @@ func TestRecordSnapshotPostRun(t *testing.T) {
 
 		// Create a settings.json with owned hook
 		settingsFile := filepath.Join(tmpDir, "settings.json")
-		settingsContent := `{"hooks":{"PreToolUse":[{"matcher":"` + MemoryGuardToolMatcher + `","hooks":[{"type":"command","command":"` + MemoryGuardCommand + `"}]}]}}`
+		settingsContent := `{"hooks":{"PreToolUse":[{"matcher":"` + MemoryGuardToolMatcher() + `","hooks":[{"type":"command","command":"` + MemoryGuardCommand + `"}]}]}}`
 		if err := os.WriteFile(settingsFile, []byte(settingsContent), 0o600); err != nil {
 			t.Fatalf("Failed to create settings file: %v", err)
 		}

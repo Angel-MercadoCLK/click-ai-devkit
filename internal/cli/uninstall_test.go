@@ -750,7 +750,7 @@ func TestUninstallCommand_FullClaude_PrunesEmptyClickKeys(t *testing.T) {
 		"hooks": map[string]any{
 			"PreToolUse": []any{
 				map[string]any{
-					"matcher": installer.MemoryGuardToolMatcher,
+					"matcher": installer.MemoryGuardToolMatcher(),
 					"hooks":   []any{map[string]any{"type": "command", "command": installer.MemoryGuardCommand}},
 				},
 			},
@@ -874,21 +874,21 @@ func TestUninstallCommand_ForeignHooksSurvive(t *testing.T) {
 			"PreToolUse": []any{
 				// Click's memory guard hook (will be removed)
 				map[string]any{
-					"matcher": installer.MemoryGuardToolMatcher,
+					"matcher": installer.MemoryGuardToolMatcher(),
 					"hooks": []any{
 						map[string]any{"type": "command", "command": installer.MemoryGuardCommand},
 					},
 				},
 				// Foreign hook 1: same matcher, different type (should survive)
 				map[string]any{
-					"matcher": installer.MemoryGuardToolMatcher,
+					"matcher": installer.MemoryGuardToolMatcher(),
 					"hooks": []any{
 						map[string]any{"type": "javascript", "code": "console.log('foreign hook')"},
 					},
 				},
 				// Foreign hook 2: same matcher, different command (should survive)
 				map[string]any{
-					"matcher": installer.MemoryGuardToolMatcher,
+					"matcher": installer.MemoryGuardToolMatcher(),
 					"hooks": []any{
 						map[string]any{"type": "command", "command": "foreign-command"},
 					},
@@ -958,7 +958,7 @@ func TestUninstallCommand_ForeignHooksSurvive(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if entryMap["matcher"] != installer.MemoryGuardToolMatcher {
+		if entryMap["matcher"] != installer.MemoryGuardToolMatcher() {
 			continue
 		}
 		hooks, _ := entryMap["hooks"].([]any)
@@ -984,7 +984,7 @@ func TestUninstallCommand_ForeignHooksSurvive(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if entryMap["matcher"] != installer.MemoryGuardToolMatcher {
+		if entryMap["matcher"] != installer.MemoryGuardToolMatcher() {
 			continue
 		}
 		hooks, _ := entryMap["hooks"].([]any)

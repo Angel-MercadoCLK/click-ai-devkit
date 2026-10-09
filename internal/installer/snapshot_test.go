@@ -543,7 +543,7 @@ func TestSnapshotDrift_ManagedContentVeto_EditOutsideMarkers_NoVeto(t *testing.T
 // veto; only edits to click's owned hook entry may.
 func TestSnapshotDrift_ManagedContentVeto_SettingsUnrelatedKey_NoVeto(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
-	owned := `{"hooks":{"PreToolUse":[{"matcher":"` + MemoryGuardToolMatcher + `","hooks":[{"type":"command","command":"` + MemoryGuardCommand + `"}]}]},"other":true}`
+	owned := `{"hooks":{"PreToolUse":[{"matcher":"` + MemoryGuardToolMatcher() + `","hooks":[{"type":"command","command":"` + MemoryGuardCommand + `"}]}]},"other":true}`
 	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
 	writeTestFile(t, cfg.SettingsPath(), owned)
 	if err := SnapshotRun(cfg); err != nil {
@@ -551,7 +551,7 @@ func TestSnapshotDrift_ManagedContentVeto_SettingsUnrelatedKey_NoVeto(t *testing
 	}
 
 	// Unrelated-key churn: no veto.
-	writeTestFile(t, cfg.SettingsPath(), `{"hooks":{"PreToolUse":[{"matcher":"`+MemoryGuardToolMatcher+`","hooks":[{"type":"command","command":"`+MemoryGuardCommand+`"}]}]},"other":false,"claude-code-churn":123}`)
+	writeTestFile(t, cfg.SettingsPath(), `{"hooks":{"PreToolUse":[{"matcher":"`+MemoryGuardToolMatcher()+`","hooks":[{"type":"command","command":"`+MemoryGuardCommand+`"}]}]},"other":false,"claude-code-churn":123}`)
 	report, err := SnapshotDrift(cfg)
 	if err != nil {
 		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
@@ -561,7 +561,7 @@ func TestSnapshotDrift_ManagedContentVeto_SettingsUnrelatedKey_NoVeto(t *testing
 	}
 
 	// Edit to the click-owned hook itself: veto.
-	writeTestFile(t, cfg.SettingsPath(), `{"hooks":{"PreToolUse":[{"matcher":"`+MemoryGuardToolMatcher+`","hooks":[{"type":"command","command":"hand-edited command"}]}]},"other":true}`)
+	writeTestFile(t, cfg.SettingsPath(), `{"hooks":{"PreToolUse":[{"matcher":"`+MemoryGuardToolMatcher()+`","hooks":[{"type":"command","command":"hand-edited command"}]}]},"other":true}`)
 	report, err = SnapshotDrift(cfg)
 	if err != nil {
 		t.Fatalf("SnapshotDrift() error = %v, want nil", err)

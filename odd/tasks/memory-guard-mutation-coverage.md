@@ -27,6 +27,8 @@ Out of scope: guard rule semantics (blocklist vs allowlist), gentle-ai migration
 - [x] T2 — Hook registration covers all of them; existing installs with the legacy matcher are upgraded idempotently; uninstall and doctor recognize old and new entries. Route: delegated.
 - [x] T3 — OpenClaw hook recognition and docs aligned with the new coverage. Route: delegated.
 
+- [ ] T4 — Prove the anchored regex matcher fires in a live Claude Code session (and does not fire for read-only tools); make `click doctor` verify the registered matcher actually matches every persisting tool in both name forms, and address R4 (no fallback once the legacy entry is removed) based on the live result. Route: live check inline (bounded test action); code delegated (writer trigger: 2+ non-trivial files).
+
 ## Acceptance criteria
 - A blocked payload is denied via `mem_save`, `mem_update` and every other persisting tool, in plugin (`mcp__plugin_engram_engram__*`) and standalone (`mcp__engram__*`) forms.
 - Read-only Engram tools stay allowed without scanning.
