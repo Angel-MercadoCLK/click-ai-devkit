@@ -17,6 +17,7 @@ func TestBuildTargetPlan_TargetFirstOrderAndSharedProjections(t *testing.T) {
 	}
 	got := plan.StepLabels()
 	want := []string{
+		"gentle-ai",
 		"Claude Code",
 		"Claude model/profile",
 		"Codex CLI",
@@ -47,7 +48,7 @@ func TestBuildTargetPlan_CodexOnlySkipsClaudeOwnedSteps(t *testing.T) {
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
 	got := plan.StepLabels()
-	want := []string{"Codex CLI", "Codex Engram MCP", "Codex model profile", "Codex native model", "SDD assets"}
+	want := []string{"gentle-ai", "Codex CLI", "Codex Engram MCP", "Codex model profile", "Codex native model", "SDD assets"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("StepLabels() = %#v, want %#v", got, want)
 	}
@@ -80,10 +81,10 @@ func TestBuildTargetPlan_CodexOnlyExposesLifecycleActionsForProductionCommands(t
 	// install/update action set: a plain Codex run neither lists nor performs any native mutation.
 	// StepActionSyncCodexMCP, unlike the native-model mutation, is ALWAYS present — registering
 	// Engram's MCP server is independent of --codex-model.
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionSaveCodexModelProfile}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionSaveCodexModelProfile}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionSaveCodexModelProfile}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionSaveCodexModelProfile}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
 	// Uninstall reverses the managed AGENTS.md block (StripCodexGuidance) AND deregisters Engram's
@@ -106,10 +107,10 @@ func TestBuildTargetPlan_CodexNativeModelFlag_AddsNativeMutationAction(t *testin
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{CodexNativeModel: true})
 
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionSaveCodexModelProfile, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionSaveCodexModelProfile, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionSaveCodexModelProfile, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionSaveCodexModelProfile, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
 }
@@ -122,10 +123,10 @@ func TestBuildTargetPlan_OpenClawExposesMCPRegistrationActions(t *testing.T) {
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
 
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncEngram, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionRegisterOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncEngram, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionRegisterOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncEngram, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionRegisterOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncEngram, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionRegisterOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
 	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills, StepActionUnregisterOpenClawMCP, StepActionRemoveOpenClawModelProfile, StepActionRemoveEngram, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
@@ -489,4 +490,23 @@ func TestBuildTargetPlan_CloudResolvableConfiguresSessionSync(t *testing.T) {
 	}
 	assertConfigureBeforeSync("InstallActionKinds", installKinds)
 	assertConfigureBeforeSync("UpdateActionKinds", updateKinds)
+}
+
+func TestBuildTargetPlan_GentleAIFirstAndNotReversedYet(t *testing.T) {
+	for _, selection := range []TargetSelection{{Claude: true}, {Codex: true}, {OpenClaw: true}, {Claude: true, Codex: true, OpenClaw: true}} {
+		plan := BuildTargetPlan(Config{}, selection, PlanOptions{})
+		for _, actions := range [][]StepActionKind{plan.InstallActionKinds(), plan.UpdateActionKinds()} {
+			if len(actions) == 0 || string(actions[0]) != "sync-gentle-ai" {
+				t.Fatalf("actions = %q, want gentle-ai first", actions)
+			}
+		}
+		for _, step := range plan.Steps {
+			if step.ID == "gentle-ai" && (len(step.Snapshot) != 0 || len(step.UninstallActions) != 0 || len(step.DoctorChecks) != 0) {
+				t.Fatal("T10 surfaces wired prematurely")
+			}
+		}
+	}
+	if actions := BuildTargetPlan(Config{}, TargetSelection{}, PlanOptions{}).InstallActionKinds(); len(actions) != 0 {
+		t.Fatalf("empty selection actions = %q", actions)
+	}
 }

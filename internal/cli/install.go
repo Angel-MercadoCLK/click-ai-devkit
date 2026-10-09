@@ -42,6 +42,7 @@ func newInstallCommand() *cobra.Command {
 			return runInstall(cmd)
 		},
 	}
+	cmd.Flags().Bool("dry-run", false, "Mostrar el plan sin ejecutar comandos ni modificar archivos")
 	cmd.Flags().Bool(yesFlag, false, "Skip the interactive model-selection screen; install click-sdd with default per-phase models")
 	cmd.Flags().Bool(nonInteractiveFlag, false, "Alias for --yes")
 	cmd.Flags().String(profileFlag, "", "Perfil de orquestación a usar (balanced/cost-saver/quality); default balanced. En instalación no interactiva selecciona el preset directamente; en la interactiva sólo precarga el editor por fase inicial.")
@@ -104,6 +105,7 @@ func runInstall(cmd *cobra.Command) error {
 		}
 	}
 	codexTier := resolveInstallCodexTier(cmd, selection, out, r)
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	nonInteractive := isNonInteractiveInstall(cmd, out)
 	profile := modelconfig.ProfileName("")
 	var models map[modelconfig.Phase]string
@@ -139,7 +141,9 @@ func runInstall(cmd *cobra.Command) error {
 		return err
 	}
 	if !proceed {
-		fmt.Fprintln(out, r.Info("Instalación cancelada."))
+		if !dryRun {
+			fmt.Fprintln(out, r.Info("Instalación cancelada."))
+		}
 		return nil
 	}
 
@@ -175,6 +179,14 @@ func runInstall(cmd *cobra.Command) error {
 		}
 	}()
 
+	// The mandatory upstream foundation must succeed before Click persists selection
+	// or migrates models. The run-start snapshot and deferred recording are already armed.
+	if len(installer.GentleAIInstallArgs(selection)) > 0 {
+		if err := runGentleAIStep(cmd, out, r, m, selection); err != nil {
+			return err
+		}
+	}
+
 	if err := installer.SaveTargetSelection(cfg, selection); err != nil {
 		return err
 	}
@@ -184,6 +196,9 @@ func runInstall(cmd *cobra.Command) error {
 
 	for _, action := range plan.InstallActionKinds() {
 		switch action {
+		case installer.StepActionSyncGentleAI:
+			// Already completed before Click-owned state writes; never run it twice.
+			continue
 		case installer.StepActionSyncMarketplacePlugins:
 			if err := r.RunStep("Registrando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins registrados en Claude Code", func() error {
 				return installer.SyncMarketplacePlugins(models, profile)
@@ -344,7 +359,7 @@ func runInstall(cmd *cobra.Command) error {
 }
 
 // isNonInteractiveInstall decides whether click install should skip the TUI and go straight to
-// defaults: true when --yes/--non-interactive was passed, OR when EITHER stdout or stdin isn't a
+// defaults: true when --yes/--non-interactive/--dry-run was passed, OR when EITHER stdout or stdin isn't a
 // real terminal. Both streams are required (via rootdefault.go's shared isTerminalWriter/
 // isTerminalReader helpers — the same both-streams rule bare `click`'s interactive() uses): the
 // alt-screen wizard (runInstallSelectTUI) starves on piped stdin and confirmProceed's ReadString
@@ -353,6 +368,9 @@ func runInstall(cmd *cobra.Command) error {
 // blocking read. Piped output, CI runs, and `go test`'s bytes.Buffer all fall back automatically
 // without a flag.
 func isNonInteractiveInstall(cmd *cobra.Command, out io.Writer) bool {
+	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+		return true
+	}
 	if yes, _ := cmd.Flags().GetBool(yesFlag); yes {
 		return true
 	}
@@ -608,4 +626,23 @@ var runInstallSelectTUI = func(cmd *cobra.Command, initialProfile modelconfig.Pr
 		return "", nil, true, nil
 	}
 	return result.Profile.Selected, result.Model.Selection, false, nil
+}
+
+// runGentleAIStep is shared by install/update so selection, warnings and fatal
+// foundational failures cannot diverge. Supplemental cloud/MCP steps stay non-fatal.
+func runGentleAIStep(cmd *cobra.Command, out io.Writer, r *ui.Renderer, m *manifest.Manifest, selection installer.TargetSelection) error {
+	var result installer.GentleAIProvisionResult
+	err := r.RunStep("Sincronizando gentle-ai y sus componentes seleccionados…", "gentle-ai configurado", func() error {
+		var syncErr error
+		result, syncErr = installer.SyncGentleAI(cmd.Context(), m.GentleAI, selection, func(notice installer.GentleAIInstallNotice) {
+			if notice.Warning {
+				fmt.Fprintln(out, r.Warn(notice.Message))
+			} else {
+				fmt.Fprintln(out, r.Info(notice.Message))
+			}
+		})
+		return syncErr
+	})
+	surfacePathWarning(out, r, result.PathWarning)
+	return err
 }

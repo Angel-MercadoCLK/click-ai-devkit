@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -64,6 +65,8 @@ func actionLabels(kinds []installer.StepActionKind, options actionLabelOptions) 
 
 func actionLabel(kind installer.StepActionKind, options actionLabelOptions) string {
 	switch kind {
+	case installer.StepActionSyncGentleAI:
+		return "Verificando gentle-ai: conservar el pin si coincide; instalar si falta o volver a fijarlo si difiere (puede degradar una versión más reciente)…"
 	case installer.StepActionSyncMarketplacePlugins:
 		if options.updateMode {
 			return "Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…"
@@ -151,6 +154,14 @@ func renderWritePlan(out io.Writer, r *ui.Renderer, cfg installer.Config, plan i
 	if _, err := os.Stat(cfg.TargetSelectionPath()); err == nil {
 		fmt.Fprintln(out, r.Info(fmt.Sprintf("La selección persistente de runtimes se conserva en %s.", cfg.TargetSelectionPath())))
 	}
+	if args := installer.GentleAIInstallArgs(plan.Selection); len(args) > 0 {
+		// Render only: even a version probe would execute upstream before consent.
+		if m, err := manifest.Load(); err == nil {
+			fmt.Fprintln(out, r.Info("Versión fijada de gentle-ai: "+m.GentleAI.Version+"."))
+		}
+		fmt.Fprintln(out, r.Info("Se usará el binario gentle-ai gestionado por Click en ~/.click/bin, no otro binario del PATH."))
+		fmt.Fprintln(out, r.Info("Comando previsto: GENTLE_AI_NO_SELF_UPDATE=1 gentle-ai "+strings.Join(args, " ")))
+	}
 	fmt.Fprintln(out, r.Info("Se aplicarán los siguientes cambios, en este orden:"))
 	for i, step := range steps {
 		fmt.Fprintf(out, "  %d. %s\n", i+1, step)
@@ -195,8 +206,14 @@ func confirmProceed(reader *bufio.Reader, out io.Writer, r *ui.Renderer) (bool, 
 //
 // Returns a shared *bufio.Reader that can be used for subsequent prompts (like consent prompt) to
 // consume input in order from a single buffer, avoiding buffered input loss. When nonInteractive is
-// true, returns nil.
+// true, returns nil. --dry-run always renders without confirmation, snapshots or writes.
 func confirmAndSnapshot(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg installer.Config, plan installer.TargetPlan, nonInteractive bool, steps []string) (bool, *bufio.Reader, error) {
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	if dryRun {
+		renderWritePlan(out, r, cfg, plan, steps)
+		fmt.Fprintln(out, r.Info("Simulación completada; no se ejecutaron comandos de instalación ni se modificaron archivos."))
+		return false, nil, nil
+	}
 	if !nonInteractive {
 		renderWritePlan(out, r, cfg, plan, steps)
 		reader := bufio.NewReader(cmd.InOrStdin())

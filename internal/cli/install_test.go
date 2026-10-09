@@ -3,9 +3,14 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -762,5 +767,260 @@ func TestInstall_PersistFlagDoesNotPrintConsentPrompt(t *testing.T) {
 
 	if got := env["ENGRAM_CLOUD_TOKEN"]; got != "test-token" {
 		t.Fatal("cloud token should be persisted with persist flag")
+	}
+}
+
+// TestMain supplies a fail-closed, isolated upstream runner for every legacy CLI
+// test too. Dedicated gentle-ai tests replace it with their own bounded fixtures.
+func TestMain(m *testing.M) {
+	home, err := os.MkdirTemp("", "click-cli-gentle-ai-test-*")
+	if err != nil {
+		panic(err)
+	}
+	p := installer.NewGentleAIProvisioner()
+	p.EnsureOnPath = func(string) (bool, error) { return false, nil }
+	p.HomeDir = func() (string, error) { return home, nil }
+	path, err := p.ManagedPath()
+	if err != nil {
+		panic(err)
+	}
+	if err = os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		panic(err)
+	}
+	if err = os.WriteFile(path, []byte("fixture"), 0o755); err != nil {
+		panic(err)
+	}
+	p.Environ = func() []string { return []string{"GENTLE_AI_NO_SELF_UPDATE=0"} }
+	p.Run = func(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+		if name != path || len(args) == 0 {
+			panic("unexpected upstream command")
+		}
+		if args[0] == "version" {
+			return []byte("gentle-ai v4.0.0"), nil
+		}
+		if args[0] == "install" {
+			return nil, nil
+		}
+		panic("unexpected upstream operation")
+	}
+	p.Fetch = func(context.Context, string) (io.ReadCloser, error) { panic("unexpected network access") }
+	p.WriteBinary = func(string, []byte) error { panic("unexpected provisioning") }
+	restore := installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p })
+	code := m.Run()
+	restore()
+	os.RemoveAll(home)
+	os.Exit(code)
+}
+
+func TestGentleAICommands_SelectedTargetsAndFailStop(t *testing.T) {
+	for _, command := range []string{"install", "update"} {
+		for mask := 1; mask < 8; mask++ {
+			t.Run(fmt.Sprintf("%s/%d", command, mask), func(t *testing.T) {
+				selection := installer.TargetSelection{Claude: mask&1 != 0, Codex: mask&2 != 0, OpenClaw: mask&4 != 0}
+				resolved := map[string]string{"git": "/fixture/git"}
+				if selection.Claude {
+					resolved["claude"] = "/fixture/claude"
+				}
+				if selection.Codex {
+					resolved["codex"] = "/fixture/codex"
+				}
+				if selection.OpenClaw {
+					resolved["openclaw"] = "/fixture/openclaw"
+				}
+				home := t.TempDir()
+				runner := newTestCommandRunner(home)
+				t.Cleanup(installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner }))
+				p := installer.NewGentleAIProvisioner()
+				p.EnsureOnPath = func(string) (bool, error) { return false, nil }
+				// Use a fixed managed fixture root, never a runtime or real user home.
+				managedHome := t.TempDir()
+				p.HomeDir = func() (string, error) { return managedHome, nil }
+				path, err := p.ManagedPath()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(path, []byte("fixture"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				calls := 0
+				p.Environ = func() []string { return nil }
+				p.Run = func(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+					if name != path {
+						t.Fatalf("binary = %q", name)
+					}
+					if args[0] == "version" {
+						return []byte("gentle-ai v4.0.0"), nil
+					}
+					calls++
+					if !reflect.DeepEqual(args, installer.GentleAIInstallArgs(selection)) {
+						t.Fatalf("argv=%q", args)
+					}
+					if !strings.Contains(strings.Join(env, "\n"), "GENTLE_AI_NO_SELF_UPDATE=1") {
+						t.Fatal("missing suppression")
+					}
+					return nil, errors.New("upstream failure")
+				}
+				t.Cleanup(installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
+				state := t.TempDir()
+				if command == "update" {
+					selection.Configured = true
+					if err := installer.SaveTargetSelection(installer.Config{ClickStateHome: state}, selection); err != nil {
+						t.Fatal(err)
+					}
+				}
+				out, err := execRootWithHomesAndLookup(t, home, state, t.TempDir(), t.TempDir(), cliFakeBinaryLookup{resolved: resolved}, command, "--yes")
+				if err == nil || calls != 1 || !strings.Contains(out, "No se pudo configurar gentle-ai") {
+					t.Fatalf("error=%v calls=%d output=%s", err, calls, out)
+				}
+				if len(runner.commands) != 0 {
+					t.Fatalf("continued after upstream failure: %q", runner.commands)
+				}
+			})
+		}
+	}
+}
+
+func TestGentleAIStep_DriftUsesWarningAndMissingUsesInfo(t *testing.T) {
+	for _, tt := range []struct{ version, marker string }{{"v4.1.0", "[warn] gentle-ai difiere"}, {"", "[i] gentle-ai no está instalado"}} {
+		t.Run(tt.version, func(t *testing.T) {
+			p := installer.NewGentleAIProvisioner()
+			p.EnsureOnPath = func(string) (bool, error) { return false, nil }
+			home := t.TempDir()
+			p.HomeDir = func() (string, error) { return home, nil }
+			p.Environ = func() []string { return nil }
+			if tt.version != "" {
+				path, err := p.ManagedPath()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(path, []byte("fixture"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p.Run = func(context.Context, []string, string, ...string) ([]byte, error) {
+				return []byte("gentle-ai " + tt.version), nil
+			}
+			p.Fetch = func(context.Context, string) (io.ReadCloser, error) { return nil, errors.New("fixture failure") }
+			t.Cleanup(installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
+			cmd := newInstallCommand()
+			cmd.SetContext(context.Background())
+			var out bytes.Buffer
+			r := rendererFor(cmd, &out)
+			m, err := manifest.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := runGentleAIStep(cmd, &out, r, m, installer.TargetSelection{Codex: true}); err == nil {
+				t.Fatal("provisioning failure returned success")
+			}
+			if !strings.Contains(out.String(), tt.marker) {
+				t.Fatalf("missing %q: %s", tt.marker, out.String())
+			}
+		})
+	}
+}
+
+func TestInstall_GentleAIFailurePreservesPreexistingState(t *testing.T) {
+	testGentleAIFailurePreservesPreexistingState(t, "install")
+}
+
+func testGentleAIFailurePreservesPreexistingState(t *testing.T, command string) {
+	t.Helper()
+	for _, failure := range []string{"provision", "install"} {
+		t.Run(failure, func(t *testing.T) {
+			home, state := t.TempDir(), t.TempDir()
+			cfg := installer.Config{ClaudeHome: home, ClickStateHome: state}
+			models := []byte("{\n  \"schema_version\": 1, \"models\": {\"default\": \"user-choice\"}\n}\n")
+			// Distinct formatting and a previously selected, now-unavailable target detect
+			// even a semantically similar rewrite of the persistent selection.
+			targets := []byte("{\"schemaVersion\":1, \"configured\":true, \"claude\":true, \"codex\":true, \"openclaw\":false}\n")
+			if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for path, data := range map[string][]byte{cfg.ModelsPath(): models, cfg.TargetSelectionPath(): targets} {
+				if err := os.WriteFile(path, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runner := newTestCommandRunner(home)
+			t.Cleanup(installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner }))
+			bookkeeping := 0
+			t.Cleanup(SetRecordSnapshotPostRunFuncForTests(func(installer.Config) error { bookkeeping++; return nil }))
+			checkSnapshot := func() {
+				t.Helper()
+				if found, err := installer.HasRunSnapshot(cfg); err != nil || !found {
+					t.Fatalf("gentle-ai ran before snapshot: found=%t error=%v", found, err)
+				}
+			}
+			p := installer.NewGentleAIProvisioner()
+			p.EnsureOnPath = func(string) (bool, error) { return false, nil }
+			managedHome := t.TempDir()
+			p.HomeDir = func() (string, error) { return managedHome, nil }
+			p.Environ = func() []string { return nil }
+			provisions, installs := 0, 0
+			p.Fetch = func(context.Context, string) (io.ReadCloser, error) {
+				checkSnapshot()
+				provisions++
+				return nil, errors.New("offline fixture")
+			}
+			p.WriteBinary = func(string, []byte) error { t.Fatal("unexpected binary write"); return nil }
+			if failure == "install" {
+				path, err := p.ManagedPath()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("fixture"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p.Run = func(_ context.Context, _ []string, name string, args ...string) ([]byte, error) {
+				checkSnapshot()
+				if failure == "provision" {
+					// Windows provisions via Go rather than fetching a release archive.
+					if p.GOOS != "windows" || name != "go" || args[0] != "version" {
+						t.Fatal("unexpected subprocess during provisioning")
+					}
+					provisions++
+					return nil, errors.New("Go toolchain fixture failure")
+				}
+				if args[0] == "version" {
+					return []byte("gentle-ai v4.0.0"), nil
+				}
+				installs++
+				return nil, errors.New("install fixture failure")
+			}
+			t.Cleanup(installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
+			out, err := execRootWithHomesAndLookup(t, home, state, t.TempDir(), t.TempDir(), cliFakeBinaryLookup{resolved: map[string]string{"claude": "/fixture/claude", "git": "/fixture/git"}}, command, "--yes")
+			wantError := "No se pudo configurar gentle-ai"
+			if failure == "provision" {
+				wantError = "No se pudo instalar la versión fijada"
+			}
+			if err == nil || !strings.Contains(out, wantError) {
+				t.Fatalf("error=%v output=%s, want %q", err, out, wantError)
+			}
+			if (failure == "provision" && (provisions != 1 || installs != 0)) || (failure == "install" && (provisions != 0 || installs != 1)) {
+				t.Errorf("provisions=%d installs=%d, want exactly one failing gentle-ai step", provisions, installs)
+			}
+			for path, want := range map[string][]byte{cfg.ModelsPath(): models, cfg.TargetSelectionPath(): targets} {
+				if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, want) {
+					t.Errorf("gentle-ai failure changed %s: got=%q want=%q error=%v", filepath.Base(path), got, want, err)
+				}
+			}
+			if _, err := os.Stat(cfg.ModelsPath() + ".bak"); !os.IsNotExist(err) {
+				t.Errorf("model migration ran before gentle-ai: backup error=%v", err)
+			}
+			if bookkeeping != 1 || len(runner.commands) != 0 {
+				t.Errorf("bookkeeping=%d local commands=%q", bookkeeping, runner.commands)
+			}
+		})
 	}
 }

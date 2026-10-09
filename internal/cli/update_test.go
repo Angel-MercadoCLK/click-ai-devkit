@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -672,4 +673,61 @@ func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
 	if _, present := env["ENGRAM_CLOUD_TOKEN"]; present {
 		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] present, want absent (declined persistence must remove stored token)")
 	}
+}
+
+func TestUpdate_GentleAIOnlyUsesActiveTargets(t *testing.T) {
+	for _, skip := range []bool{false, true} {
+		t.Run(fmt.Sprintf("skip-openclaw=%t", skip), func(t *testing.T) {
+			home, state := t.TempDir(), t.TempDir()
+			cfg := installer.Config{ClickStateHome: state}
+			if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Claude: true, Codex: true, OpenClaw: true}); err != nil {
+				t.Fatal(err)
+			}
+			runner := newTestCommandRunner(home)
+			t.Cleanup(installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner }))
+			p := installer.NewGentleAIProvisioner()
+			p.EnsureOnPath = func(string) (bool, error) { return false, nil }
+			managed := t.TempDir()
+			p.HomeDir = func() (string, error) { return managed, nil }
+			path, err := p.ManagedPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(path, []byte("fixture"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			p.Environ = func() []string { return nil }
+			calls := 0
+			p.Run = func(_ context.Context, _ []string, _ string, args ...string) ([]byte, error) {
+				if args[0] == "version" {
+					return []byte("gentle-ai v4.0.0"), nil
+				}
+				calls++
+				if args[2] != "claude-code" {
+					t.Fatalf("unavailable/skipped targets included: %q", args)
+				}
+				return nil, fmt.Errorf("stop fixture")
+			}
+			t.Cleanup(installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
+			resolved := map[string]string{"claude": "/fixture/claude", "git": "/fixture/git"}
+			if skip {
+				resolved["openclaw"] = "/fixture/openclaw"
+			}
+			args := []string{"update", "--yes"}
+			if skip {
+				args = append(args, "--skip-openclaw")
+			}
+			_, err = execRootWithHomesAndLookup(t, home, state, t.TempDir(), t.TempDir(), cliFakeBinaryLookup{resolved: resolved}, args...)
+			if err == nil || calls != 1 {
+				t.Fatalf("error=%v calls=%d", err, calls)
+			}
+		})
+	}
+}
+
+func TestUpdate_GentleAIFailurePreservesPreexistingState(t *testing.T) {
+	testGentleAIFailurePreservesPreexistingState(t, "update")
 }

@@ -27,11 +27,13 @@ const gentleAIMaxBytes = 100 << 20
 var gentleAIVersionPattern = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 
 // GentleAIProvisioner keeps machine and execution boundaries injectable. HomeDir controls
-// the filesystem root; WriteBinary is the atomic filesystem write seam. Tests must replace
-// Fetch, Run, and EnsureOnPath as well as HomeDir to avoid network and real-user mutations.
+// the filesystem root; Lstat controls managed-binary inspection; WriteBinary is the atomic
+// filesystem write seam. Tests must replace Fetch, Run, and EnsureOnPath as well as
+// HomeDir to avoid network and real-user mutations.
 type GentleAIProvisioner struct {
 	GOOS, GOARCH string
 	HomeDir      func() (string, error)
+	Lstat        func(string) (os.FileInfo, error)
 	Environ      func() []string
 	Fetch        func(context.Context, string) (io.ReadCloser, error)
 	Run          func(context.Context, []string, string, ...string) ([]byte, error)
@@ -57,7 +59,7 @@ type GentleAIVersionProbe struct {
 func NewGentleAIProvisioner() GentleAIProvisioner {
 	return GentleAIProvisioner{
 		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
-		HomeDir: os.UserHomeDir, Environ: os.Environ,
+		HomeDir: os.UserHomeDir, Environ: os.Environ, Lstat: os.Lstat,
 		Fetch: fetchGentleAIAsset,
 		Run: func(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 			cmd := exec.CommandContext(ctx, name, args...)
@@ -69,9 +71,23 @@ func NewGentleAIProvisioner() GentleAIProvisioner {
 	}
 }
 
+// ManagedPath is shared by install and future doctor/ownership integration. It never
+// discovers or runs a developer-managed binary from PATH.
+func (p GentleAIProvisioner) ManagedPath() (string, error) {
+	home, err := p.HomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		return "", fmt.Errorf("gentle-ai: no se pudo resolver un directorio personal absoluto")
+	}
+	name := "gentle-ai"
+	if p.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(home, ".click", "bin", name), nil
+}
+
 // Provision always installs the qualified pin, including when a newer binary exists.
 // The binary lives in ~/.click/bin, independent of the selected runtime's config home.
-// No runtime installation, plugin registration, doctor check, or state file is wired here.
+// Provision writes only the binary and PATH; Install wires selected runtime components.
 func (p GentleAIProvisioner) Provision(ctx context.Context, pin manifest.GentleAI) (GentleAIProvisionResult, error) {
 	var result GentleAIProvisionResult
 	if !gentleAIVersionPattern.MatchString(pin.Version) || !strings.HasPrefix(pin.Version, "v") || pin.Module == "" {
@@ -80,15 +96,13 @@ func (p GentleAIProvisioner) Provision(ctx context.Context, pin manifest.GentleA
 	if (p.GOOS != "linux" && p.GOOS != "darwin" && p.GOOS != "windows") || (p.GOARCH != "amd64" && p.GOARCH != "arm64") {
 		return result, fmt.Errorf("gentle-ai: plataforma no compatible: %s/%s", p.GOOS, p.GOARCH)
 	}
-	home, err := p.HomeDir()
-	if err != nil || !filepath.IsAbs(home) {
-		return result, fmt.Errorf("gentle-ai: no se pudo resolver un directorio personal absoluto: %v", err)
+	path, err := p.ManagedPath()
+	if err != nil {
+		return result, err
 	}
-	dir := filepath.Join(home, ".click", "bin")
-	name := "gentle-ai"
+	dir := filepath.Dir(path)
 	var binary []byte
 	if p.GOOS == "windows" {
-		name += ".exe"
 		binary, err = p.buildWindows(ctx, pin, dir)
 	} else {
 		binary, err = p.downloadBinary(ctx, pin)
@@ -96,16 +110,22 @@ func (p GentleAIProvisioner) Provision(ctx context.Context, pin manifest.GentleA
 	if err != nil {
 		return result, err
 	}
-	path := filepath.Join(dir, name)
 	if err := p.WriteBinary(path, binary); err != nil {
 		return result, fmt.Errorf("gentle-ai: no se pudo instalar el binario en %s: %w", path, err)
 	}
 	result.Path, result.PathDir = path, dir
-	result.PathChanged, err = p.EnsureOnPath(dir)
+	return p.reconcilePath(result), nil
+}
+
+// Matching pins and newly provisioned binaries both repair persistent discoverability.
+// A PATH failure remains a warning: callers can execute the managed absolute path.
+func (p GentleAIProvisioner) reconcilePath(result GentleAIProvisionResult) GentleAIProvisionResult {
+	var err error
+	result.PathChanged, err = p.EnsureOnPath(result.PathDir)
 	if err != nil {
-		result.PathWarning = fmt.Sprintf("No se pudo agregar %s al PATH persistente: %v. Use %s o abra una nueva terminal después de corregir el PATH.", dir, err, path)
+		result.PathWarning = fmt.Sprintf("No se pudo agregar %s al PATH persistente: %v. Use %s o abra una nueva terminal después de corregir el PATH.", result.PathDir, err, result.Path)
 	}
-	return result, nil
+	return result
 }
 
 func (p GentleAIProvisioner) downloadBinary(ctx context.Context, pin manifest.GentleAI) ([]byte, error) {

@@ -3,6 +3,8 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,12 +14,12 @@ import (
 
 // --- openclaw-target-support write-step generalization (tasks 2.14-2.18) ---
 
-// TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps guards the "zero behavior change"
-// contract: a Config with no OpenClawHome must produce the exact same 6-step list installWriteSteps
-// returned before OpenClaw support existed — no new prompts, no new lines.
-func TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) {
+// TestInstallWriteSteps_OpenClawAbsent_IncludesGentleAIAndLocalSteps checks the upstream foundation plus existing local steps:
+// a Config with no OpenClawHome includes gentle-ai before the six local steps.
+func TestInstallWriteSteps_OpenClawAbsent_IncludesGentleAIAndLocalSteps(t *testing.T) {
 	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir()}, false)
 	want := []string{
+		"Verificando gentle-ai: conservar el pin si coincide; instalar si falta o volver a fijarlo si difiere (puede degradar una versión más reciente)…",
 		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
 		"Instalando Engram (memoria persistente)…",
 		"Registrando Context7 (documentación de librerías)…",
@@ -26,7 +28,7 @@ func TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T)
 		"Guardando modelos por fase de click-sdd…",
 	}
 	if len(got) != len(want) {
-		t.Fatalf("installWriteSteps() = %#v, want exactly %d steps (pre-change behavior)", got, len(want))
+		t.Fatalf("installWriteSteps() = %#v, want exactly %d steps", got, len(want))
 	}
 	for i := range want {
 		if got[i] != want[i] {
@@ -42,12 +44,12 @@ func TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T)
 func TestInstallWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := installWriteSteps(cfg, false)
-	if len(got) != 12 {
-		t.Fatalf("installWriteSteps() = %#v, want 12 steps (6 Claude + 6 OpenClaw)", got)
+	if len(got) != 13 {
+		t.Fatalf("installWriteSteps() = %#v, want 13 steps (gentle-ai + 6 Claude + 6 OpenClaw)", got)
 	}
-	for _, step := range got[6:] {
+	for _, step := range got[7:] {
 		if !strings.Contains(step, "OpenClaw") {
-			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[6:])
+			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[7:])
 		}
 	}
 }
@@ -58,6 +60,7 @@ func TestInstallWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T
 func TestInstallWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
 	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir()}, true)
 	want := []string{
+		"Verificando gentle-ai: conservar el pin si coincide; instalar si falta o volver a fijarlo si difiere (puede degradar una versión más reciente)…",
 		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
 		"Instalando Engram (memoria persistente)…",
 		"Configurando Engram Cloud Session Sync en settings.json…",
@@ -94,18 +97,18 @@ func TestInstallWriteSteps_CloudNotConfigured_NoCloudStep(t *testing.T) {
 func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := installWriteSteps(cfg, true)
-	if len(got) != 14 {
-		t.Fatalf("installWriteSteps() = %#v, want 14 steps (6 Claude + 2 Cloud + 6 OpenClaw)", got)
+	if len(got) != 15 {
+		t.Fatalf("installWriteSteps() = %#v, want 15 steps (gentle-ai + 6 Claude + 2 Cloud + 6 OpenClaw)", got)
 	}
-	if got[2] != "Configurando Engram Cloud Session Sync en settings.json…" {
-		t.Fatalf("installWriteSteps()[2] = %q, want the cloud session-sync configure step right after local Engram", got[2])
+	if got[3] != "Configurando Engram Cloud Session Sync en settings.json…" {
+		t.Fatalf("installWriteSteps()[2] = %q, want the cloud session-sync configure step right after local Engram", got[3])
 	}
-	if got[3] != "Enrolando Engram Cloud…" {
-		t.Fatalf("installWriteSteps()[3] = %q, want the Engram Cloud enrollment step right after the configure step", got[3])
+	if got[4] != "Enrolando Engram Cloud…" {
+		t.Fatalf("installWriteSteps()[3] = %q, want the Engram Cloud enrollment step right after the configure step", got[4])
 	}
-	for _, step := range got[8:] {
+	for _, step := range got[9:] {
 		if !strings.Contains(step, "OpenClaw") {
-			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[8:])
+			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[9:])
 		}
 	}
 }
@@ -115,22 +118,22 @@ func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 func TestUpdateWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := updateWriteSteps("0.1.1", cfg, false, false)
-	if len(got) != 12 {
-		t.Fatalf("updateWriteSteps() = %#v, want 12 steps (6 Claude + 6 OpenClaw)", got)
+	if len(got) != 13 {
+		t.Fatalf("updateWriteSteps() = %#v, want 13 steps (gentle-ai + 6 Claude + 6 OpenClaw)", got)
 	}
-	for _, step := range got[6:] {
+	for _, step := range got[7:] {
 		if !strings.Contains(step, "OpenClaw") {
-			t.Fatalf("updateWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[6:])
+			t.Fatalf("updateWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[7:])
 		}
 	}
 }
 
-// TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps is updateWriteSteps' zero-behavior-
-// change guard, mirroring TestInstallWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps.
-func TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) {
+// TestUpdateWriteSteps_OpenClawAbsent_IncludesGentleAIAndLocalSteps is updateWriteSteps' zero-behavior-
+// foundation guard, mirroring TestInstallWriteSteps_OpenClawAbsent_IncludesGentleAIAndLocalSteps.
+func TestUpdateWriteSteps_OpenClawAbsent_IncludesGentleAIAndLocalSteps(t *testing.T) {
 	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, false, false)
-	if len(got) != 6 {
-		t.Fatalf("updateWriteSteps() = %#v, want exactly 6 steps when OpenClaw is absent", got)
+	if len(got) != 7 {
+		t.Fatalf("updateWriteSteps() = %#v, want exactly 7 steps when OpenClaw is absent", got)
 	}
 }
 
@@ -140,6 +143,7 @@ func TestUpdateWriteSteps_OpenClawAbsent_MatchesPreChangeSixSteps(t *testing.T) 
 func TestUpdateWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
 	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, true, false)
 	want := []string{
+		"Verificando gentle-ai: conservar el pin si coincide; instalar si falta o volver a fijarlo si difiere (puede degradar una versión más reciente)…",
 		"Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…",
 		"Guardando modelos por fase de click-sdd…",
 		"Actualizando CLAUDE.md…",
@@ -181,7 +185,7 @@ func TestOpenClawWriteSteps_Absent_ReturnsNil(t *testing.T) {
 // config.toml mutation step — the native write is neither listed nor run without the explicit flag.
 func TestCodexWriteSteps_NoFlag_ListsGuidanceButNotNativeModelStep(t *testing.T) {
 	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir()}, false)
-	if len(got) != 9 || got[6] != "Actualizando AGENTS.md de Codex…" || got[7] != "Registrando Engram en Codex (MCP)…" || got[8] != "Guardando perfil de modelos de Codex (referencia)…" {
+	if len(got) != 10 || got[7] != "Actualizando AGENTS.md de Codex…" || got[8] != "Registrando Engram en Codex (MCP)…" || got[9] != "Guardando perfil de modelos de Codex (referencia)…" {
 		t.Fatalf("installWriteSteps() = %#v, want Codex guidance, Engram MCP, and model profile steps appended and no native-model step without the flag", got)
 	}
 	for _, step := range got {
@@ -198,7 +202,7 @@ func TestCodexWriteSteps_WithFlag_AppendsNativeModelStep(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir()}
 	selection := installer.TargetSelection{Configured: true, Claude: true, Codex: true}
 	got := installWriteStepsForSelection(cfg, false, selection, true, false)
-	if len(got) != 10 || got[6] != "Actualizando AGENTS.md de Codex…" || got[7] != "Registrando Engram en Codex (MCP)…" || got[8] != "Guardando perfil de modelos de Codex (referencia)…" || got[9] != "Configurando modelo nativo de Codex en config.toml (selección explícita)…" {
+	if len(got) != 11 || got[7] != "Actualizando AGENTS.md de Codex…" || got[8] != "Registrando Engram en Codex (MCP)…" || got[9] != "Guardando perfil de modelos de Codex (referencia)…" || got[10] != "Configurando modelo nativo de Codex en config.toml (selección explícita)…" {
 		t.Fatalf("installWriteStepsForSelection() = %#v, want Codex guidance, Engram MCP, model profile, and explicit native-model steps appended", got)
 	}
 }
@@ -428,4 +432,51 @@ func TestConfirmAndSnapshot_InteractiveDecline_NoSnapshotTaken(t *testing.T) {
 	if has {
 		t.Fatal("HasRunSnapshot() = true, want false — decline must result in zero writes, including no snapshot")
 	}
+}
+
+func TestGentleAIDryRun_RendersWithoutExecutingOrSnapshotting(t *testing.T) {
+	for _, command := range []string{"install", "update"} {
+		t.Run(command, func(t *testing.T) {
+			home, state := t.TempDir(), t.TempDir()
+			if command == "update" {
+				if err := installer.SaveTargetSelection(installer.Config{ClickStateHome: state}, installer.TargetSelection{Configured: true, Codex: true}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runner := newTestCommandRunner(home)
+			t.Cleanup(installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner }))
+			p := installer.NewGentleAIProvisioner()
+			p.HomeDir = func() (string, error) { t.Fatal("dry-run resolved upstream home"); return "", nil }
+			p.Run = func(context.Context, []string, string, ...string) ([]byte, error) {
+				t.Fatal("dry-run executed upstream")
+				return nil, nil
+			}
+			t.Cleanup(installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
+			out, err := execRootWithHomesAndLookup(t, home, state, t.TempDir(), t.TempDir(), cliFakeBinaryLookup{resolved: map[string]string{"codex": "/fixture/codex"}}, command, "--dry-run", "--yes")
+			if err != nil {
+				t.Fatalf("dry-run error=%v output=%s", err, out)
+			}
+			for _, want := range []string{"v4.0.0", "si coincide", "puede degradar", "GENTLE_AI_NO_SELF_UPDATE=1 gentle-ai install --agents codex --preset full-gentleman --components skills,permissions,persona --persona neutral --scope global"} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("preview missing %q: %s", want, out)
+				}
+			}
+			if len(runner.commands) != 0 {
+				t.Fatalf("dry-run commands=%q", runner.commands)
+			}
+			for _, dir := range []string{home, state} {
+				entries, err := os.ReadDir(dir)
+				if err != nil || len(entries) != expectedEntries(command, dir, state) {
+					t.Fatalf("dry-run mutated %s: %v %v", dir, entries, err)
+				}
+			}
+		})
+	}
+}
+
+func expectedEntries(command, dir, state string) int {
+	if command == "update" && dir == state {
+		return 1
+	}
+	return 0
 }

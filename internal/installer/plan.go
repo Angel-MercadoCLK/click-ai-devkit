@@ -42,6 +42,7 @@ type PlanOptions struct {
 type StepActionKind string
 
 const (
+	StepActionSyncGentleAI                    StepActionKind = "sync-gentle-ai"
 	StepActionSyncMarketplacePlugins          StepActionKind = "sync-marketplace-plugins"
 	StepActionSyncEngram                      StepActionKind = "sync-engram"
 	StepActionConfigureEngramCloudSessionSync StepActionKind = "configure-engram-cloud-session-sync"
@@ -208,6 +209,7 @@ func collectOrderedActionKinds(steps []Step, order []StepActionKind, actionsFor 
 }
 
 var installActionOrder = []StepActionKind{
+	StepActionSyncGentleAI,
 	StepActionSyncMarketplacePlugins,
 	StepActionSyncEngram,
 	StepActionConfigureEngramCloudSessionSync,
@@ -230,6 +232,7 @@ var installActionOrder = []StepActionKind{
 }
 
 var updateActionOrder = []StepActionKind{
+	StepActionSyncGentleAI,
 	StepActionSyncMarketplacePlugins,
 	StepActionSaveModels,
 	StepActionWriteClaudeManagedBlock,
@@ -254,6 +257,9 @@ var updateActionOrder = []StepActionKind{
 func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions) TargetPlan {
 	steps := make([]Step, 0, 12)
 	capabilities := make([]string, 0, 3)
+	if selection.Claude || selection.Codex || selection.OpenClaw {
+		steps = append(steps, Step{ID: "gentle-ai", Target: PlanTargetShared, Label: "gentle-ai", InstallActions: []StepActionKind{StepActionSyncGentleAI}, UpdateActions: []StepActionKind{StepActionSyncGentleAI}})
+	}
 	if selection.Claude {
 		claudeRuntime := Step{ID: "claude-runtime", Target: PlanTargetClaude, Label: "Claude Code", Snapshot: []SnapshotDecl{snapshot(cfg.ClaudeMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.SettingsPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UpdateActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UninstallActions: []StepActionKind{StepActionRemoveMarketplacePlugins}, DoctorChecks: []DoctorCheckKind{DoctorCheckClaude, DoctorCheckClickPluginRegistries, DoctorCheckClickSDDPlugin, DoctorCheckClickMemoryPlugin, DoctorCheckClickReviewPlugin, DoctorCheckClickSkillsPlugin, DoctorCheckClaudeManagedBlock}}
 		if !options.CloudResolvable {

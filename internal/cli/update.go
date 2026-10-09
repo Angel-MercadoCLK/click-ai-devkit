@@ -24,6 +24,7 @@ func newUpdateCommand() *cobra.Command {
 	// defaults, same meaning as install's — the two commands' escape hatch must not drift. The help
 	// text is worded for THIS command (and in Spanish, like update's other flags): install's copy
 	// says "instalar", which would be wrong on an update.
+	cmd.Flags().Bool("dry-run", false, "Mostrar el plan sin ejecutar comandos ni modificar archivos")
 	cmd.Flags().Bool(yesFlag, false, "Omitir toda pantalla interactiva y confirmar la actualización automáticamente")
 	cmd.Flags().Bool(nonInteractiveFlag, false, "Alias de --yes")
 	cmd.Flags().Bool(skipOpenClawFlag, false, "Omitir la integración con OpenClaw aunque se detecte openclaw en este equipo")
@@ -54,6 +55,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Persisted intent is not this run's scope: exclude unavailable/skipped targets
+	// before building both the upstream selection and the local action plan.
+	selection.Codex = cfg.CodexHome != ""
+	selection.OpenClaw = cfg.OpenClawHome != ""
 	if selection.Claude {
 		claudeHome, resolveErr := installer.ResolveClaudeHome()
 		if resolveErr != nil {
@@ -103,7 +108,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if !proceed {
-		fmt.Fprintln(out, r.Info("Actualización cancelada."))
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		if !dryRun {
+			fmt.Fprintln(out, r.Info("Actualización cancelada."))
+		}
 		return nil
 	}
 
@@ -138,6 +146,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo registrar el estado posterior a la ejecución para rollback: %v", recordErr)))
 		}
 	}()
+
+	// The mandatory upstream foundation must succeed before Click persists selection
+	// or migrates models. The run-start snapshot and deferred recording are already armed.
+	if len(installer.GentleAIInstallArgs(selection)) > 0 {
+		if err := runGentleAIStep(cmd, out, r, m, selection); err != nil {
+			return err
+		}
+	}
 
 	// Confirmed migration behavior for the real-SDD-taxonomy realignment: a stale (pre-realignment
 	// or otherwise outdated schema_version) models.json is backed up to models.json.bak FIRST,
@@ -178,6 +194,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	for _, action := range plan.UpdateActionKinds() {
 		switch action {
+		case installer.StepActionSyncGentleAI:
+			// Already completed before Click-owned state writes; never run it twice.
+			continue
 		case installer.StepActionSyncMarketplacePlugins:
 			if err := r.RunStep("Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins sincronizados en Claude Code", func() error {
 				return installer.SyncMarketplacePlugins(models, profile)
