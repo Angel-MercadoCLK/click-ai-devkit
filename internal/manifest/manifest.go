@@ -33,6 +33,20 @@ type Engram struct {
 	Source  string `yaml:"source"`
 }
 
+// GentleAIAsset is an official release archive qualified by a pinned SHA-256.
+type GentleAIAsset struct {
+	Name   string `yaml:"name"`
+	SHA256 string `yaml:"sha256"`
+}
+
+// GentleAI is the qualified upstream CLI pin. Assets are keyed by GOOS_GOARCH;
+// Windows intentionally has no archive and is built from Module@Version.
+type GentleAI struct {
+	Version string                   `yaml:"version"`
+	Module  string                   `yaml:"module"`
+	Assets  map[string]GentleAIAsset `yaml:"assets"`
+}
+
 // EngramCloud holds the optional non-secret Engram Cloud enrollment config surfaced in
 // manifest.yaml. Empty values mean local-only Engram behavior (no cloud enrollment).
 type EngramCloud struct {
@@ -44,6 +58,7 @@ type EngramCloud struct {
 type Manifest struct {
 	SchemaVersion        int               `yaml:"schema_version"`
 	ClickVersion         string            `yaml:"click_version"`
+	GentleAI             GentleAI          `yaml:"gentle_ai"`
 	Engram               Engram            `yaml:"engram"`
 	Plugins              map[string]Plugin `yaml:"plugins"`
 	MinClaudeCodeVersion string            `yaml:"min_claude_code_version"`

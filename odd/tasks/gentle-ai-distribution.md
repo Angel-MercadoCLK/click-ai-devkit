@@ -36,6 +36,7 @@ Writer: Codex `gpt-6.1-sol` high. Per-task reviewer: Codex `gpt-6-astra` xhigh. 
 ## Decided by user
 - 2026-10-08 chain strategy: feature-branch-chain.
 - 2026-10-08 Engram project: commit `.engram/config.json` (`project_name: click-ai-devkit`) so the team shares one Engram project; lands with T01.
+- 2026-10-08 Windows provisioning: gentle-ai publishes no Windows binary (v3.5–v4.0.0 ship only darwin/linux amd64/arm64 tar.gz + minisign-signed `checksums.txt`; README documents Windows as `go install`). Windows uses `go install github.com/gentleman-programming/gentle-ai/v4/cmd/gentle-ai@v4.0.0` (integrity via Go checksum DB, requires Go >= 1.25.10, same pattern click uses for Engram); macOS/Linux use the official release tar.gz verified against the SHA-256 pinned in click. D48 must be amended accordingly (T02).
 - 2026-10-08 pin drift: warn and re-pin — `click doctor` reports an installed gentle-ai that differs from the pin as drift; `click install`/`click update` reinstall the qualified version and say so explicitly (may downgrade a dev-chosen newer version).
 
 ## Open product decisions
@@ -43,7 +44,7 @@ Writer: Codex `gpt-6.1-sol` high. Per-task reviewer: Codex `gpt-6-astra` xhigh. 
 
 ## Tasks
 - [x] T01 — Record distribution/ownership decision; supersede D1/D8/D9/D12/D25, revisit D36/D38. Files: `documentacion/00-decisions-and-open-questions.md`, `documentacion/vision.md`. Route: inline-eligible docs; delegated to Sol per model-team instruction. Evidence: D48 added; Astra xhigh review CHANGES_REQUIRED (1 blocker: pin drift left open; 2 warnings: chain strategy missing, historical vision bullets rewritten) → all fixed by Sol; parent spot check of D48 text and restored bullets. Docs only, no Go tests.
-- [ ] T02 — Qualified upstream pin: `GENTLE_AI_VERSION`, `internal/installer/gentleai.go` (+test), `internal/manifest/{manifest.go,manifest.yaml,release_qualification_test.go}`, `.github/workflows/release.yml`. Tests: checksum/version rejection, self-update suppression. Route: delegated (writer trigger).
+- [x] T02 — Qualified upstream pin: `GENTLE_AI_VERSION`, `internal/installer/gentleai.go` (+test), `internal/manifest/{manifest.go,manifest.yaml,release_qualification_test.go}`, `.github/workflows/release.yml`. Tests: checksum/version rejection, self-update suppression. Route: delegated (writer trigger). Evidence: Astra xhigh CHANGES_REQUIRED (2 blockers: saved Go config/GOFLAGS bypass of checksum DB and build — parent reproduced with GOENV file; 4 warnings: toolchain gate order, HTTPS redirect downgrade, RC version parsing, decompression budget) → all fixed by Sol with RED→GREEN tests; controlled Go env GOENV=off, GOFLAGS cleared, GOSUMDB=sum.golang.org, GONOSUMDB/GOPRIVATE/GONOPROXY=none, GOPROXY=https://proxy.golang.org, GOTOOLCHAIN=local. Outside sandbox: build/vet OK, `go test ./...` only known env failure. CI release.yml not touched (deferred).
 - [ ] T03 — Upstream install selection/orchestration: `internal/installer/{plan.go,installer.go}`, `internal/cli/{install.go,update.go}` (+tests). Tests: exact argv, selected-agent scope, failures, idempotency. Route: delegated.
 - [ ] T04 — Transfer Engram/Context7 ownership to gentle-ai: `internal/installer/{engram.go,context7.go,codexmcp.go,openclawmcp.go}` (+tests). Tests: pre-existing installs, non-destructive uninstall. Route: delegated. Blocked on Engram Cloud decision.
 - [ ] T05 — Click-only guidance (no competing SDD/ODD instructions): `internal/installer/{claudemd.go,codex.go,openclaw.go}` (+tests). Tests: foreign/upstream section preservation. Route: delegated.
@@ -71,5 +72,10 @@ Base: `fix/memory-guard-mutation-coverage` @ 9c6825f (unpushed). Branch: `feat/g
 
 - 2026-10-08 T01: Sol deleted the untracked `.engram/config.json` as "task-generated metadata" without reporting it; parent recreated it. Writer prompts must list it as do-not-touch.
 
+- 2026-10-08 T02 (Sol): partial in sandbox; outside sandbox `go build ./...` OK, `go vet ./...` OK, `go test ./...` only failure is `TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump` (internal/cli), which also fails on base 9f894b6 → pre-existing environmental failure (the test reads real `~/.codex/AGENTS.md` and the ambient `openclaw` binary). ~926 authored lines (platform-specific safety + failure-path tests). Astra review done (see T02).
+
+## Follow-ups (outside current scope)
+- Test isolation leak: `TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump` runs doctor against the real `~/.codex/AGENTS.md` and ambient `openclaw`, violating the isolated-home rule; it fails on any machine with OpenClaw installed.
+
 ## Next step
-T02 — qualified gentle-ai pin.
+T03 — wire gentle-ai provisioning into `click install`/`click update`.
