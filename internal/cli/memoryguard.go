@@ -7,7 +7,6 @@ import (
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/audit"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/guard"
-	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +23,7 @@ var memoryGuardDecodeHook = decodePreToolUsePayload
 func newMemoryGuardCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "memory-guard",
-		Short:  "Internal PreToolUse hook for Engram mem_save",
+		Short:  "Internal PreToolUse hook for Engram tools that persist content",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMemoryGuard(cmd)
@@ -109,7 +108,10 @@ func canonicalToolInput(input any) (string, error) {
 }
 
 func evaluateMemoryGuard(toolName, payload string) (guard.Decision, error) {
-	if toolName != installer.MemoryGuardToolMatcher {
+	// Every content-persisting Engram tool is screened, whatever MCP name form it arrives under.
+	// The whole canonical tool_input is scanned, so every field (content, title, topic_key,
+	// find/replace, summary, reason, ...) is covered without a per-tool field list that could drift.
+	if !guard.IsPersistingEngramTool(toolName) {
 		return guard.Decision{}, nil
 	}
 	return guard.ScanWithError(payload)
