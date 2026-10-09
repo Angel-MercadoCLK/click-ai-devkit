@@ -891,6 +891,9 @@ func checkMemoryGuardHook(cfg installer.Config) CheckResult {
 		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
 	}
 	if !ok {
+		if legacy, legacyErr := installer.HasLegacyMemoryGuardHook(cfg); legacyErr == nil && legacy {
+			return CheckResult{Name: name, Healthy: false, Detail: "hook PreToolUse desactualizado en " + cfg.SettingsPath() + ": solo cubre mem_save y deja sin escaneo a mem_update y las demás herramientas de Engram que persisten contenido — ejecute `click update`"}
+		}
 		return CheckResult{Name: name, Healthy: false, Detail: "hook PreToolUse ausente en " + cfg.SettingsPath()}
 	}
 	return CheckResult{Name: name, Healthy: true, Detail: "hook PreToolUse registrado"}
@@ -903,10 +906,10 @@ func checkMemoryGuardHook(cfg installer.Config) CheckResult {
 // installer/hooksettings.go) — Claude Code itself resolves that command on PATH when it spawns the
 // hook process. checkMemoryGuardHook above only confirms the hook ENTRY exists in settings.json; it
 // says nothing about whether the command it names can actually run. On a machine where click is not
-// on the PATH Claude Code's own process sees, the hook silently never fires: every mem_save payload
+// on the PATH Claude Code's own process sees, the hook silently never fires: every persisting Engram tool payload (mem_save, mem_update, ...)
 // flows straight into persistent memory with zero secrets/PII scanning, and nothing else in this
 // package would ever surface it.
-const ClickBinaryMissingMessage = "el binario click no está en el PATH visible para Claude Code. El hook memory-guard está registrado como el comando \"click memory-guard\" (resuelto por PATH cuando Claude Code lo ejecuta), así que si click no resuelve ahí el hook nunca se dispara y mem_save queda sin el escaneo de secretos/PII, sin ningún aviso. Verifique la instalación de click y asegúrese de que el comando click esté disponible en el PATH; luego reinicie Claude Code para que la sesión lo vea."
+const ClickBinaryMissingMessage = "el binario click no está en el PATH visible para Claude Code. El hook memory-guard está registrado como el comando \"click memory-guard\" (resuelto por PATH cuando Claude Code lo ejecuta), así que si click no resuelve ahí el hook nunca se dispara y las herramientas de Engram que persisten contenido (mem_save, mem_update, ...) quedan sin el escaneo de secretos/PII, sin ningún aviso. Verifique la instalación de click y asegúrese de que el comando click esté disponible en el PATH; luego reinicie Claude Code para que la sesión lo vea."
 
 // clickBinaryLookup resolves the click binary on the live PATH. It is a package-level var — not a
 // direct exec.LookPath call — so checkClickBinary's tests can override it deterministically,

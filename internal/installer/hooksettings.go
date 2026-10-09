@@ -5,14 +5,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/guard"
 )
 
 const (
-	// MemoryGuardToolMatcher must use the plugin-scoped tool name. Verify the exact scoped runtime
-	// name before shipping; a bare mcp__engram__mem_save matcher never fires for a plugin-bundled MCP.
-	MemoryGuardToolMatcher = "mcp__plugin_engram_engram__mem_save"
-	MemoryGuardCommand     = "click memory-guard"
+	MemoryGuardCommand = "click memory-guard"
+
+	// MemoryGuardLegacyToolMatcher is the mem_save-only matcher shipped before the guard covered
+	// every persisting Engram tool. Installs that still hold it are upgraded in place and the
+	// entry is recognized (never left behind) on uninstall, doctor and snapshot projection.
+	MemoryGuardLegacyToolMatcher = "mcp__plugin_engram_engram__mem_save"
 )
+
+// MemoryGuardToolMatcher is the PreToolUse matcher registered for the guard: an anchored regular
+// expression derived from internal/guard's single source of truth, so the hook fires for exactly
+// the Engram tools the guard screens (every persisting tool, plugin and standalone MCP name form).
+// Claude Code treats a matcher with regex metacharacters as a regular expression.
+var MemoryGuardToolMatcher = guard.ToolMatcherPattern()
 
 // clickSettingsAllowlist are the top-level keys that click manages and may prune when empty after
 // uninstall. The external `claude` CLI subprocess removes click's entries from these objects but
@@ -20,15 +30,23 @@ const (
 var clickSettingsAllowlist = []string{"enabledPlugins", "extraKnownMarketplaces", "pluginConfigs"}
 
 // RegisterMemoryGuardHook ensures Claude Code's PreToolUse settings invoke click memory-guard for
-// Engram mem_save calls.
+// every Engram tool that persists content. It is idempotent and upgrades an install that still holds
+// the legacy mem_save-only matcher, leaving exactly one Click guard entry.
 func RegisterMemoryGuardHook(cfg Config) error {
 	settings, err := readSettingsFile(cfg.SettingsPath())
 	if err != nil {
 		return err
 	}
 	entries := getPreToolUseEntries(settings)
+	// Drop the legacy entry's Click hook first (foreign hooks sharing that entry survive) so an
+	// upgrade can never leave two Click guard entries behind.
+	entries, removedLegacy := removeClickGuardHooks(entries, isLegacyGuardMatcher)
 	if hasHookEntry(entries, MemoryGuardToolMatcher, MemoryGuardCommand) {
-		return nil
+		if !removedLegacy {
+			return nil
+		}
+		setPreToolUseEntries(settings, entries)
+		return writeSettingsFile(cfg.SettingsPath(), settings)
 	}
 	entries = append(entries, map[string]any{
 		"matcher": MemoryGuardToolMatcher,
@@ -51,8 +69,23 @@ func UnregisterMemoryGuardHook(cfg Config) error {
 		return err
 	}
 
-	entries := getPreToolUseEntries(settings)
+	filtered, _ := removeClickGuardHooks(getPreToolUseEntries(settings), isClickGuardMatcher)
+	setPreToolUseEntries(settings, filtered)
+	return writeSettingsFile(cfg.SettingsPath(), settings)
+}
+
+func isLegacyGuardMatcher(matcher string) bool { return matcher == MemoryGuardLegacyToolMatcher }
+
+func isClickGuardMatcher(matcher string) bool {
+	return matcher == MemoryGuardToolMatcher || isLegacyGuardMatcher(matcher)
+}
+
+// removeClickGuardHooks removes Click's memory-guard command hook from every PreToolUse entry whose
+// matcher satisfies owns. Foreign hooks sharing such an entry are kept; an entry left with no hooks
+// is dropped. It reports whether anything was removed.
+func removeClickGuardHooks(entries []any, owns func(matcher string) bool) ([]any, bool) {
 	filtered := make([]any, 0, len(entries))
+	removed := false
 	for _, raw := range entries {
 		entry, ok := raw.(map[string]any)
 		if !ok {
@@ -61,7 +94,7 @@ func UnregisterMemoryGuardHook(cfg Config) error {
 		}
 		matcher, _ := entry["matcher"].(string)
 		hooks, _ := entry["hooks"].([]any)
-		if matcher != MemoryGuardToolMatcher {
+		if !owns(matcher) {
 			filtered = append(filtered, raw)
 			continue
 		}
@@ -69,11 +102,8 @@ func UnregisterMemoryGuardHook(cfg Config) error {
 		remainingHooks := make([]any, 0, len(hooks))
 		for _, hookRaw := range hooks {
 			hook, ok := hookRaw.(map[string]any)
-			if !ok {
-				remainingHooks = append(remainingHooks, hookRaw)
-				continue
-			}
-			if hook["type"] == "command" && hook["command"] == MemoryGuardCommand {
+			if ok && hook["type"] == "command" && hook["command"] == MemoryGuardCommand {
+				removed = true
 				continue
 			}
 			remainingHooks = append(remainingHooks, hookRaw)
@@ -84,11 +114,11 @@ func UnregisterMemoryGuardHook(cfg Config) error {
 		entry["hooks"] = remainingHooks
 		filtered = append(filtered, entry)
 	}
-	setPreToolUseEntries(settings, filtered)
-	return writeSettingsFile(cfg.SettingsPath(), settings)
+	return filtered, removed
 }
 
-// HasMemoryGuardHook reports whether the managed PreToolUse hook is registered.
+// HasMemoryGuardHook reports whether the managed PreToolUse hook is registered with the current
+// matcher, i.e. covering every persisting Engram tool. A legacy mem_save-only entry does not count.
 func HasMemoryGuardHook(cfg Config) (bool, error) {
 	settings, err := readSettingsFile(cfg.SettingsPath())
 	if err != nil {
@@ -98,6 +128,19 @@ func HasMemoryGuardHook(cfg Config) (bool, error) {
 		return false, err
 	}
 	return hasHookEntry(getPreToolUseEntries(settings), MemoryGuardToolMatcher, MemoryGuardCommand), nil
+}
+
+// HasLegacyMemoryGuardHook reports whether the legacy mem_save-only guard entry is still registered,
+// which lets doctor distinguish an outdated install from a missing hook.
+func HasLegacyMemoryGuardHook(cfg Config) (bool, error) {
+	settings, err := readSettingsFile(cfg.SettingsPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return hasHookEntry(getPreToolUseEntries(settings), MemoryGuardLegacyToolMatcher, MemoryGuardCommand), nil
 }
 
 // PruneEmptyClickSettingsKeys removes the three Click-managed top-level keys (enabledPlugins,

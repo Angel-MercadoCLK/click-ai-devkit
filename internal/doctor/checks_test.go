@@ -1532,3 +1532,30 @@ func TestCheckEngramCloudSessionSync_UnhealthyOnUndecodableHookPayload(t *testin
 		t.Fatalf("checkEngramCloudSessionSync() detail does not name the undecodable payload")
 	}
 }
+
+func TestCheckMemoryGuardHook_LegacyMatcherReportsOutdatedCoverage(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	legacy := `{"hooks":{"PreToolUse":[{"matcher":"` + installer.MemoryGuardLegacyToolMatcher + `","hooks":[{"type":"command","command":"` + installer.MemoryGuardCommand + `"}]}]}}`
+	if err := os.WriteFile(cfg.SettingsPath(), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+
+	result := checkMemoryGuardHook(cfg)
+
+	if result.Healthy {
+		t.Fatal("checkMemoryGuardHook reports healthy for the legacy mem_save-only matcher, want unhealthy")
+	}
+	if !strings.Contains(result.Detail, "mem_save") || !strings.Contains(result.Detail, "click update") {
+		t.Fatalf("Detail = %q, want it to name the mem_save-only coverage and the click update remedy", result.Detail)
+	}
+}
+
+func TestCheckMemoryGuardHook_CurrentMatcherIsHealthy(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	if err := installer.RegisterMemoryGuardHook(cfg); err != nil {
+		t.Fatalf("RegisterMemoryGuardHook() error = %v", err)
+	}
+	if result := checkMemoryGuardHook(cfg); !result.Healthy {
+		t.Fatalf("checkMemoryGuardHook unhealthy after a fresh register: %s", result.Detail)
+	}
+}

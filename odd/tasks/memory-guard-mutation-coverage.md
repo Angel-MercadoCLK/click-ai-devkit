@@ -24,7 +24,7 @@ Out of scope: guard rule semantics (blocklist vs allowlist), gentle-ai migration
 
 ## Tasks
 - [x] T1 — Define the set of persisting Engram tools and accepted name forms in one place; guard evaluates all of them and scans the correct content fields. Route: delegated (writer trigger: 2+ non-trivial files).
-- [ ] T2 — Hook registration covers all of them; existing installs with the legacy matcher are upgraded idempotently; uninstall and doctor recognize old and new entries. Route: delegated.
+- [x] T2 — Hook registration covers all of them; existing installs with the legacy matcher are upgraded idempotently; uninstall and doctor recognize old and new entries. Route: delegated.
 - [ ] T3 — OpenClaw hook recognition and docs aligned with the new coverage. Route: delegated.
 
 ## Acceptance criteria
@@ -42,6 +42,7 @@ Strategy: ask-on-risk. Forecast: ~250-400 authored changed lines.
 - Engram mirror `odd/memory-guard-mutation-coverage/tasks`: PENDING (mem_current_project ambiguous: engram cwd resolves to parent dir, no click-ai-devkit project).
 
 ### T1 evidence
+- Commit: 2be004b `fix(guard): screen every persisting engram tool`.
 - Route: delegated writer (writer trigger: 2+ non-trivial files).
 - Single source of truth: `internal/guard/tools.go` (`PersistingEngramTools`, `IsPersistingEngramTool`, `ToolMatcherPattern`). Name forms: `mcp__plugin_engram_engram__<tool>` and `mcp__engram__<tool>`.
 - Persisting set: mem_capture_passive, mem_compare, mem_judge, mem_save, mem_save_prompt, mem_session_end, mem_session_summary, mem_update. Evidence: `engram mcp` tools/list on installed Engram v3.2.1 (pinned ENGRAM_VERSION is v1.20.0; the set is a superset, extra names are harmless). Not persisting-with-text: mem_pin/unpin, mem_delete, mem_session_start, mem_merge_projects, mem_review; read-only: mem_search, mem_context, mem_get_observation, mem_current_project, mem_timeline, mem_stats, mem_list_projects, mem_doctor, mem_suggest_topic_key.
@@ -50,5 +51,13 @@ Strategy: ask-on-risk. Forecast: ~250-400 authored changed lines.
 - GREEN: TestEvaluateMemoryGuard_DeniesEveryPersistingEngramToolInBothNameForms, TestEvaluateMemoryGuard_ScansEveryFieldOfMemUpdate, TestEvaluateMemoryGuard_AllowsReadOnlyAndUnrelatedToolsWithoutScanning, TestMemoryGuardCommand_DeniesMemUpdateAndStandaloneForms, TestPersistingEngramTools_*, TestIsPersistingEngramTool, TestToolMatcherPattern_MatchesExactlyTheAcceptedNames.
 - Known environmental failure (also fails on base e845227): `TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump`.
 
+### T2 evidence
+- Route: delegated writer.
+- Matcher registered: `^(?:mcp__plugin_engram_engram__|mcp__engram__)(?:mem_capture_passive|mem_compare|mem_judge|mem_save|mem_save_prompt|mem_session_end|mem_session_summary|mem_update)$` (`installer.MemoryGuardToolMatcher`, derived from `guard.ToolMatcherPattern()`); legacy `mcp__plugin_engram_engram__mem_save` kept as `MemoryGuardLegacyToolMatcher`.
+- Register strips the legacy Click hook (foreign hooks sharing the entry survive) then ensures one current entry; uninstall, doctor (`HasLegacyMemoryGuardHook` -> "desactualizado ... click update") and snapshot projection recognize both.
+- RED: `go test ./internal/installer -run 'MemoryGuard|ManagedSettingsProjection'` failed (TestMemoryGuardToolMatcher_CoversEveryPersistingToolInBothNameForms, TestHasMemoryGuardHook_LegacyOnlyIsNotFullyRegistered; first run failed to compile on undefined MemoryGuardLegacyToolMatcher); `go test ./internal/doctor -run CheckMemoryGuardHook` failed (TestCheckMemoryGuardHook_LegacyMatcherReportsOutdatedCoverage).
+- GREEN: TestMemoryGuardToolMatcher_CoversEveryPersistingToolInBothNameForms, TestRegisterMemoryGuardHook_RegistersExactlyOneEntryWithFullMatcher, TestRegisterMemoryGuardHook_UpgradesLegacyMatcherToExactlyOneEntry, TestRegisterMemoryGuardHook_UpgradeKeepsForeignHooksSharingTheLegacyEntry, TestHasMemoryGuardHook_LegacyOnlyIsNotFullyRegistered, TestUnregisterMemoryGuardHook_RemovesLegacyAndCurrentEntries, TestManagedSettingsProjectionHash_TreatsLegacyGuardEntryAsOwned, TestCheckMemoryGuardHook_LegacyMatcherReportsOutdatedCoverage, TestCheckMemoryGuardHook_CurrentMatcherIsHealthy.
+- Unverified: that Claude Code accepts this anchored regex form in a live session (matcher regex semantics per Claude Code hooks docs; not exercised at runtime here).
+
 ## Next step
-T2.
+T3.

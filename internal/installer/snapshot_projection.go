@@ -57,7 +57,8 @@ func managedMarkdownProjectionHash(content string) string {
 // The projection is a tagged digest: "absent:<hash>" when no owned hook exists, or "present:<hash>"
 // when owned hooks are found — the compact-serialized hooks are hashed, never returned, so the
 // manifest never carries click-owned content in plaintext.
-// Owned hooks are identified by matching both MemoryGuardToolMatcher and MemoryGuardCommand.
+// Owned hooks are identified by matching MemoryGuardCommand under MemoryGuardToolMatcher or the
+// legacy MemoryGuardLegacyToolMatcher.
 // The projection is order-independent to tolerate writeSettingsFile's key-order normalization.
 //
 // The projection also encodes token presence (boolean) in env.ENGRAM_CLOUD_TOKEN, never the token
@@ -88,7 +89,7 @@ func managedSettingsProjectionHash(content string) string {
 			continue
 		}
 		matcher, _ := entry["matcher"].(string)
-		if matcher != MemoryGuardToolMatcher {
+		if !isClickGuardMatcher(matcher) {
 			continue
 		}
 
