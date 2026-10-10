@@ -93,7 +93,7 @@ func TestWiring(t *testing.T) {
 		})
 	})
 
-	// Test (b): update's deferred call observes final state including a forced Codex-failure RestoreRun
+	// Test (b): update's deferred call observes final state including a forced Codex guidance failure and RestoreRun
 	t.Run("update deferred call observes final state after RestoreRun", func(t *testing.T) {
 		claudeHome := t.TempDir()
 		stateHome := t.TempDir()
@@ -131,15 +131,15 @@ func TestWiring(t *testing.T) {
 		}
 
 		restoreGuidance := SetSyncCodexGuidanceFuncForTests(func(installer.Config) error {
-			return errors.New("codex guidance failed after native mutation")
+			return errors.New("codex guidance failed after upstream MCP sync")
 		})
 		defer restoreGuidance()
 
-		// Run update with --codex-model to trigger native mutation and subsequent failure
+		// Run ordinary update to trigger upstream MCP sync and subsequent guidance failure
 		// Do NOT override the recording seam - let the REAL RecordSnapshotPostRun run
-		out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "update", "--codex-model", "gpt-5.6")
+		out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "update")
 		if err == nil {
-			t.Fatalf("update command error = nil, want rollback-triggering failure after Codex native mutation, output:\n%s", out)
+			t.Fatalf("update command error = nil, want rollback-triggering failure after Codex MCP sync, output:\n%s", out)
 		}
 
 		// Verify RestoreRun restored config.toml to its original state

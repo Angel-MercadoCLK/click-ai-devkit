@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	toml "github.com/pelletier/go-toml/v2"
+
 	"github.com/spf13/cobra"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/doctor"
@@ -826,9 +828,6 @@ func TestInstallCommand_CodexOnly_NonInteractiveOmitsNativeModelWithoutFlagAndDo
 	if strings.Contains(out, "gpt-5.6") {
 		t.Fatalf("install output = %q, want no fabricated default Codex native model in noninteractive mode", out)
 	}
-	if !strings.Contains(out, "Codex usa su modelo nativo ya configurado") {
-		t.Fatalf("install output = %q, want the native-default guidance for Codex when --codex-model is omitted", out)
-	}
 	config, readErr := os.ReadFile(filepath.Join(codexHome, "config.toml"))
 	if readErr != nil {
 		t.Fatalf("ReadFile(config.toml) error = %v, want upstream MCP registration", readErr)
@@ -839,7 +838,7 @@ func TestInstallCommand_CodexOnly_NonInteractiveOmitsNativeModelWithoutFlagAndDo
 		}
 	}
 	if strings.Contains(string(config), "model =") {
-		t.Fatalf("config.toml = %q, want no native model mutation without --codex-model", config)
+		t.Fatalf("config.toml = %q, want no Click-owned native model mutation", config)
 	}
 	selection, found, loadErr := installer.LoadTargetSelection(installer.Config{ClickStateHome: stateHome})
 	if loadErr != nil {
@@ -850,11 +849,8 @@ func TestInstallCommand_CodexOnly_NonInteractiveOmitsNativeModelWithoutFlagAndDo
 	}
 }
 
-// TestInstallCommand_CodexOnly_SavesRecommendedModelProfileAndUninstallRemovesIt is the v1 Codex
-// tier picker end-to-end contract: a non-interactive Codex-only install writes the "recommended"
-// tier to Click's own reference file under CodexHome, and `click uninstall` removes that file without
-// touching Codex's native config.toml.
-func TestInstallCommand_CodexOnly_SavesRecommendedModelProfileAndUninstallRemovesIt(t *testing.T) {
+// TestInstallCommand_CodexOnly_PreservesLegacyModelProfileOnUninstall verifies install and uninstall leave legacy model metadata untouched.
+func TestInstallCommand_CodexOnly_PreservesLegacyModelProfileOnUninstall(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 	codexHome := filepath.Join(stateHome, "codex-home")
@@ -863,29 +859,186 @@ func TestInstallCommand_CodexOnly_SavesRecommendedModelProfileAndUninstallRemove
 	defer restoreRunner()
 	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
 
+	cfg := installer.Config{CodexHome: codexHome}
+	profilePath := cfg.CodexModelProfilePath()
+	profile := []byte(`{"schema_version":1,"tier":"preserve-user-tier","roles":{"apply":"vendor/user"}}`)
+	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(profilePath, profile, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "install")
 	if err != nil {
 		t.Fatalf("install command error = %v, want nil for Codex-only noninteractive install, output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Guardando perfil de modelos de Codex") {
-		t.Fatalf("install output = %q, want it to mention the Codex model profile step", out)
-	}
-
-	cfg := installer.Config{CodexHome: codexHome}
-	profilePath := cfg.CodexModelProfilePath()
 	raw, err := os.ReadFile(profilePath)
-	if err != nil {
-		t.Fatalf("ReadFile(model-profile.json) error = %v, want the recommended profile written", err)
-	}
-	if !strings.Contains(string(raw), `"tier": "recommended"`) {
-		t.Fatalf("model-profile.json content = %q, want tier=recommended", raw)
+	if err != nil || !bytes.Equal(raw, profile) {
+		t.Fatalf("model-profile.json = %q (err %v), want exact legacy bytes preserved", raw, err)
 	}
 
 	if _, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "uninstall"); err != nil {
 		t.Fatalf("uninstall command error = %v", err)
 	}
-	if _, err := os.Stat(profilePath); !os.IsNotExist(err) {
-		t.Fatalf("Stat(model-profile.json) error = %v, want the profile removed after uninstall", err)
+	got, err := os.ReadFile(profilePath)
+	if err != nil || !bytes.Equal(got, profile) {
+		t.Fatalf("model-profile.json after uninstall = %q (err %v), want exact legacy bytes preserved", got, err)
+	}
+}
+
+func TestInstallUpdate_RetiredModelFlagsRejectBeforeSideEffects(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "install Claude profile", args: []string{"install", "--profile="}},
+		{name: "install empty Codex model", args: []string{"install", "--codex-model="}},
+		{name: "install Codex model", args: []string{"install", "--codex-model=gpt-5.6"}},
+		{name: "install empty OpenClaw model", args: []string{"install", "--openclaw-model="}},
+		{name: "install OpenClaw model", args: []string{"install", "--openclaw-model=provider/model"}},
+		{name: "install empty OpenClaw fallback", args: []string{"install", "--openclaw-fallback-model="}},
+		{name: "install OpenClaw fallback", args: []string{"install", "--openclaw-fallback-model=provider/fallback"}},
+		{name: "update Claude profile", args: []string{"update", "--profile="}},
+		{name: "update empty Codex model", args: []string{"update", "--codex-model="}},
+		{name: "update Codex model", args: []string{"update", "--codex-model=gpt-5.6"}},
+		{name: "update empty OpenClaw model", args: []string{"update", "--openclaw-model="}},
+		{name: "update OpenClaw model", args: []string{"update", "--openclaw-model=provider/model"}},
+		{name: "update empty OpenClaw fallback", args: []string{"update", "--openclaw-fallback-model="}},
+		{name: "update OpenClaw fallback", args: []string{"update", "--openclaw-fallback-model=provider/fallback"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			claudeHome, stateHome := t.TempDir(), t.TempDir()
+			openClawHome, codexHome := t.TempDir(), t.TempDir()
+			runner := newTestCommandRunner(claudeHome)
+			restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+			defer restoreRunner()
+
+			provisionerFactoryCalls := 0
+			restoreProvisioner := installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner {
+				provisionerFactoryCalls++
+				return installer.NewGentleAIProvisioner()
+			})
+			defer restoreProvisioner()
+
+			lookup := cliFakeBinaryLookup{resolved: map[string]string{
+				"claude": "/usr/bin/claude", "git": "/usr/bin/git",
+				"codex": "/usr/bin/codex", "openclaw": "/usr/bin/openclaw",
+			}}
+			out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, openClawHome, codexHome, lookup, tt.args...)
+			if err == nil || !strings.Contains(err.Error(), "modelos") {
+				t.Fatalf("%v error = %v, output %q; want actionable Spanish model deprecation", tt.args[0], err, out)
+			}
+			if len(runner.commands) != 0 || provisionerFactoryCalls != 0 {
+				t.Fatalf("side effects: runner commands=%#v provisioner factory calls=%d; want none", runner.commands, provisionerFactoryCalls)
+			}
+			cfg := installer.Config{ClickStateHome: stateHome, CodexHome: codexHome, OpenClawHome: openClawHome}
+			for _, path := range []string{cfg.TargetSelectionPath(), filepath.Join(cfg.BackupDir(), "latest", "manifest.json")} {
+				if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+					t.Fatalf("%v created state at %q: %v", tt.args[0], path, statErr)
+				}
+			}
+		})
+	}
+}
+
+func TestInstallUpdate_RetiredModelFlagsAreHiddenCompatibilityFlags(t *testing.T) {
+	for _, command := range []*cobra.Command{newInstallCommand(), newUpdateCommand()} {
+		for _, name := range []string{profileFlag, codexModelFlag, openClawModelFlag, openClawFallbackFlag} {
+			flag := command.Flags().Lookup(name)
+			if flag == nil || !flag.Hidden {
+				t.Errorf("%s --%s flag = %#v, want hidden compatibility flag", command.Name(), name, flag)
+			}
+		}
+	}
+}
+
+func TestCodexOpenClawModelStatePreservedAcrossInstallUpdateUninstall(t *testing.T) {
+	for _, command := range []string{"install", "update", "uninstall"} {
+		t.Run(command, func(t *testing.T) {
+			claudeHome, stateHome := t.TempDir(), t.TempDir()
+			codexHome, openClawHome := t.TempDir(), t.TempDir()
+			cfg := installer.Config{ClickStateHome: stateHome, CodexHome: codexHome, OpenClawHome: openClawHome}
+			if err := os.MkdirAll(codexHome, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			codexConfig := []byte("model = \"vendor/codex-user-model\"\n\n[profiles.sdd-strong]\nmodel = \"vendor/codex-profile-model\"\n")
+			if err := os.WriteFile(cfg.CodexConfigPath(), codexConfig, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			codexProfile := []byte(`{"schema_version":1,"tier":"user-tier","roles":{"apply":"user-model"}}`)
+			if err := os.MkdirAll(filepath.Dir(cfg.CodexModelProfilePath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(cfg.CodexModelProfilePath(), codexProfile, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(openClawHome, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			openClawConfig := []byte(`{"agents":{"defaults":{"model":{"primary":"provider/openclaw-user","fallbacks":["provider/fallback-user"]}}},"mcp":{"servers":{"custom":{"command":"keep-me"}}}}`)
+			if err := os.WriteFile(cfg.OpenClawMCPConfigPath(), openClawConfig, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			openClawProfile := []byte(`{"schema_version":2,"profile":"legacy-user-profile","models":{"default":"preserve-me"}}`)
+			if err := os.MkdirAll(filepath.Dir(cfg.OpenClawModelProfilePath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(cfg.OpenClawModelProfilePath(), openClawProfile, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if command != "install" {
+				if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Codex: true, OpenClaw: true}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runner := newTestCommandRunner(claudeHome)
+			restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+			defer restoreRunner()
+			lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex", "openclaw": "/usr/bin/openclaw"}}
+			out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, openClawHome, codexHome, lookup, command)
+			if err != nil {
+				t.Fatalf("%s error = %v, output:\n%s", command, err, out)
+			}
+
+			gotCodex, readErr := os.ReadFile(cfg.CodexConfigPath())
+			if readErr != nil {
+				t.Fatalf("read Codex config: %v", readErr)
+			}
+			var codexSettings map[string]any
+			if err := toml.Unmarshal(gotCodex, &codexSettings); err != nil {
+				t.Fatalf("parse Codex config: %v", err)
+			}
+			profiles := codexSettings["profiles"].(map[string]any)
+			sddStrong := profiles["sdd-strong"].(map[string]any)
+			if codexSettings["model"] != "vendor/codex-user-model" || sddStrong["model"] != "vendor/codex-profile-model" {
+				t.Fatalf("Codex model settings = (top-level %#v, profiles.sdd-strong %#v), want exact configured values", codexSettings["model"], sddStrong["model"])
+			}
+			gotCodexProfile, readErr := os.ReadFile(cfg.CodexModelProfilePath())
+			if readErr != nil || !bytes.Equal(gotCodexProfile, codexProfile) {
+				t.Fatalf("Codex profile = %q (err %v), want exact legacy metadata preservation", gotCodexProfile, readErr)
+			}
+			var gotOpenClaw map[string]any
+			if err := readJSONFile(cfg.OpenClawMCPConfigPath(), &gotOpenClaw); err != nil {
+				t.Fatalf("read OpenClaw config: %v", err)
+			}
+			agents := gotOpenClaw["agents"].(map[string]any)
+			defaults := agents["defaults"].(map[string]any)
+			model := defaults["model"].(map[string]any)
+			if model["primary"] != "provider/openclaw-user" || !reflect.DeepEqual(model["fallbacks"], []any{"provider/fallback-user"}) {
+				t.Fatalf("OpenClaw native model = %#v, want user primary and fallback preserved", model)
+			}
+			gotOpenClawProfile, readErr := os.ReadFile(cfg.OpenClawModelProfilePath())
+			if readErr != nil || !bytes.Equal(gotOpenClawProfile, openClawProfile) {
+				t.Fatalf("OpenClaw profile = %q (err %v), want exact legacy metadata preservation", gotOpenClawProfile, readErr)
+			}
+			for _, commandLine := range runner.commands {
+				if strings.Contains(commandLine, "--config") || strings.Contains(commandLine, "config set") {
+					t.Fatalf("Click emitted a model mutation: %q", commandLine)
+				}
+			}
+		})
 	}
 }
 
@@ -912,9 +1065,6 @@ func TestUpdateCommand_CodexOnly_UsesPersistedSelectionWithoutClaudeAndOmitsNati
 	if strings.Contains(out, "gpt-5.6") {
 		t.Fatalf("update output = %q, want no fabricated default Codex native model in noninteractive mode", out)
 	}
-	if !strings.Contains(out, "Codex usa su modelo nativo ya configurado") {
-		t.Fatalf("update output = %q, want the native-default guidance for Codex when --codex-model is omitted", out)
-	}
 	config, readErr := os.ReadFile(filepath.Join(codexHome, "config.toml"))
 	if readErr != nil {
 		t.Fatalf("ReadFile(config.toml) error = %v, want upstream MCP registration", readErr)
@@ -929,7 +1079,7 @@ func TestUpdateCommand_CodexOnly_UsesPersistedSelectionWithoutClaudeAndOmitsNati
 	}
 }
 
-func TestUpdateCommand_CodexNativeMutationFailure_RollsBackConfigToml(t *testing.T) {
+func TestUpdateCommand_CodexGuidanceFailure_RollsBackCodexConfig(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 	codexHome := filepath.Join(stateHome, "codex-home")
@@ -948,13 +1098,13 @@ func TestUpdateCommand_CodexNativeMutationFailure_RollsBackConfigToml(t *testing
 		t.Fatalf("WriteFile(config.toml) error = %v", err)
 	}
 	restoreGuidance := SetSyncCodexGuidanceFuncForTests(func(installer.Config) error {
-		return errors.New("codex guidance failed after native mutation")
+		return errors.New("codex guidance failed after upstream MCP sync")
 	})
 	defer restoreGuidance()
 
-	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "update", "--codex-model", "gpt-5.6")
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "update")
 	if err == nil {
-		t.Fatalf("update command error = nil, want rollback-triggering failure after Codex native mutation, output:\n%s", out)
+		t.Fatalf("update command error = nil, want rollback-triggering failure after Codex MCP sync, output:\n%s", out)
 	}
 	after, readErr := os.ReadFile(filepath.Join(codexHome, "config.toml"))
 	if readErr != nil {
@@ -1347,7 +1497,7 @@ func TestRetiredClaudeProfileFlagRejectsBeforeInstallOrUpdateWrites(t *testing.T
 			defer restoreRunner()
 
 			out, err := execRootWithStateHome(t, home, stateHome, command, "--profile", "quality")
-			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "perfil") || !strings.Contains(strings.ToLower(err.Error()), "gentle-ai") {
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "modelos") || !strings.Contains(strings.ToLower(err.Error()), "gentle-ai") {
 				t.Fatalf("%s --profile error = %v, output %q; want actionable Spanish deprecation error", command, err, out)
 			}
 			if len(runner.commands) != 0 {

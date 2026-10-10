@@ -212,10 +212,6 @@ func runUninstall(cmd *cobra.Command) error {
 			runStep("skills de OpenClaw", "Quitando skills de Click de OpenClaw…", "Skills de Click de OpenClaw eliminados", false, func() error {
 				return removeOpenClawSkillsFunc(cfg)
 			})
-		case installer.StepActionRemoveOpenClawModelProfile:
-			runStep("metadatos de modelos de OpenClaw", "Quitando metadatos de modelos de OpenClaw…", "Metadatos de modelos de OpenClaw eliminados", false, func() error {
-				return installer.RemoveOpenClawModelProfile(cfg)
-			})
 		case installer.StepActionStripCodexGuidance:
 			runStep("AGENTS.md de Codex", "Limpiando AGENTS.md de Codex…", "Bloque de AGENTS.md de Codex eliminado", false, func() error {
 				return stripCodexGuidanceFunc(cfg)
@@ -226,10 +222,6 @@ func runUninstall(cmd *cobra.Command) error {
 			// the teardown.
 			runStep("Engram MCP de Codex", "Quitando registro de Engram en Codex (MCP)…", "Registro de Engram en Codex procesado", false, func() error {
 				return installer.RemoveCodexMCP(cfg)
-			})
-		case installer.StepActionRemoveCodexModelProfile:
-			runStep("perfil de modelos de Codex", "Quitando perfil de modelos de Codex…", "Perfil de modelos de Codex eliminado", false, func() error {
-				return installer.RemoveCodexModelProfile(cfg)
 			})
 		case installer.StepActionUnregisterOpenClawMCP:
 			// Best-effort, like SyncOpenClawMCP on install (D45 "supplementary integrations are non-fatal"):

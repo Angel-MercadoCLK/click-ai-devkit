@@ -30,13 +30,6 @@ type TargetPlan struct {
 
 type PlanOptions struct {
 	CloudResolvable bool
-	// CodexNativeModel / OpenClawNativeModel are set ONLY when the developer explicitly opted into a
-	// native-model mutation via --codex-model / --openclaw-model. When false (the normal case), the
-	// corresponding native-model write action is omitted from the plan entirely, so a plain install
-	// neither lists nor runs any native-model mutation — Codex and OpenClaw keep running the portable
-	// SDD against the model each already has configured in its own installation.
-	CodexNativeModel    bool
-	OpenClawNativeModel bool
 }
 
 type StepActionKind string
@@ -221,11 +214,8 @@ var installActionOrder = []StepActionKind{
 	StepActionRegisterOpenClawMCP,
 	StepActionSyncOpenClawPlugin,
 	StepActionSyncOpenClawSkills,
-	StepActionConfigureOpenClawNativeModel,
 	StepActionSyncCodexGuidance,
 	StepActionSyncCodexMCP,
-	StepActionSaveCodexModelProfile,
-	StepActionConfigureCodexNativeModel,
 }
 
 var updateActionOrder = []StepActionKind{
@@ -241,11 +231,8 @@ var updateActionOrder = []StepActionKind{
 	StepActionRegisterOpenClawMCP,
 	StepActionSyncOpenClawPlugin,
 	StepActionSyncOpenClawSkills,
-	StepActionConfigureOpenClawNativeModel,
 	StepActionSyncCodexGuidance,
 	StepActionSyncCodexMCP,
-	StepActionSaveCodexModelProfile,
-	StepActionConfigureCodexNativeModel,
 }
 
 func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions) TargetPlan {
@@ -265,52 +252,16 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		capabilities = append(capabilities, "Claude Code: plugins nativos y assets portables")
 	}
 	if selection.Codex {
-		// The codex-model step keeps its config.toml snapshot unconditionally (so an explicit
-		// --codex-model mutation can always roll back), but only carries the native-model write
-		// ACTION when the developer opted in via PlanOptions.CodexNativeModel. Without the flag, the
-		// step is inert: config.toml is never touched and the write is never listed or run.
-		//
-		// DECISION: it has NO UninstallActions. `click uninstall` deliberately does NOT revert the
-		// config.toml `model =` value: it is a user-owned setting, and reverting it is ambiguous (there
-		// is no unambiguous "previous" value to restore to). Uninstall only reverses click-owned
-		// managed blocks, click-owned state files, and MCP registrations — never native model values.
-		codexModelStep := Step{ID: "codex-model", Target: PlanTargetCodex, Label: "Codex native model", Snapshot: []SnapshotDecl{snapshot(cfg.CodexConfigPath(), DriftPolicyNonVeto)}}
-		if options.CodexNativeModel {
-			codexModelStep.InstallActions = []StepActionKind{StepActionConfigureCodexNativeModel}
-			codexModelStep.UpdateActions = []StepActionKind{StepActionConfigureCodexNativeModel}
-		}
-		// codex-model-profile persists Click's own portable tier recommendation. It is reference data
-		// only — it never writes Codex's native config.toml or any ~/.codex/sdd-*.config.toml profile.
-		codexModelProfileStep := Step{ID: "codex-model-profile", Target: PlanTargetCodex, Label: "Codex model profile", Snapshot: []SnapshotDecl{snapshot(cfg.CodexModelProfilePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSaveCodexModelProfile}, UpdateActions: []StepActionKind{StepActionSaveCodexModelProfile}, UninstallActions: []StepActionKind{StepActionRemoveCodexModelProfile}}
 		steps = append(steps,
-			Step{ID: "codex-runtime", Target: PlanTargetCodex, Label: "Codex CLI", Snapshot: []SnapshotDecl{snapshot(cfg.CodexAgentsMDPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionSyncCodexGuidance}, UpdateActions: []StepActionKind{StepActionSyncCodexGuidance}, UninstallActions: []StepActionKind{StepActionStripCodexGuidance}, DoctorChecks: []DoctorCheckKind{DoctorCheckCodexGuidance}},
-			codexModelProfileStep,
-			codexModelStep,
+			Step{ID: "codex-runtime", Target: PlanTargetCodex, Label: "Codex CLI", Snapshot: []SnapshotDecl{snapshot(cfg.CodexAgentsMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.CodexConfigPath(), DriftPolicyNonVeto), snapshot(cfg.CodexModelProfilePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSyncCodexGuidance}, UpdateActions: []StepActionKind{StepActionSyncCodexGuidance}, UninstallActions: []StepActionKind{StepActionStripCodexGuidance}, DoctorChecks: []DoctorCheckKind{DoctorCheckCodexGuidance}},
 		)
 		capabilities = append(capabilities, "Codex CLI: AGENTS.md gestionado y componentes MCP configurados por gentle-ai")
 	}
 	if selection.OpenClaw {
-		// The openclaw-model step always keeps its native-model doctor check, but only carries the
-		// native `openclaw config set` write ACTION when the developer opted in via
-		// PlanOptions.OpenClawNativeModel. Without --openclaw-model the step runs no CLI mutation:
-		// OpenClaw keeps the provider/model the developer already connected. The portable model
-		// Legacy portable profile metadata is preserved and is no longer regenerated by install or
-		// update. Its historical uninstall action remains until the OpenClaw retirement slice.
-		//
-		// DECISION: its UninstallAction removes ONLY click's own model-profile.json
-		// (StepActionRemoveOpenClawModelProfile). `click uninstall` deliberately does NOT revert the
-		// native provider/model set via `openclaw config set`: like Codex's config.toml model above,
-		// that is a user-owned setting and reverting it is ambiguous.
-		openClawModelStep := Step{ID: "openclaw-model", Target: PlanTargetOpenClaw, Label: "OpenClaw native model", UninstallActions: []StepActionKind{StepActionRemoveOpenClawModelProfile}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClawNativeModel}}
-		if options.OpenClawNativeModel {
-			openClawModelStep.InstallActions = []StepActionKind{StepActionConfigureOpenClawNativeModel}
-			openClawModelStep.UpdateActions = []StepActionKind{StepActionConfigureOpenClawNativeModel}
-		}
 		steps = append(steps,
 			Step{ID: "openclaw-runtime", Target: PlanTargetOpenClaw, Label: "OpenClaw", Snapshot: []SnapshotDecl{snapshot(cfg.OpenClawAgentsMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.OpenClawSoulMDPath(), DriftPolicyWholeFileVeto), snapshot(cfg.OpenClawModelProfilePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}, UpdateActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}, UninstallActions: []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClaw}},
-			openClawModelStep,
 		)
-		capabilities = append(capabilities, "OpenClaw: workspace, skills, MCP y modelo provider/model mediante gentle-ai y su CLI")
+		capabilities = append(capabilities, "OpenClaw: workspace, skills y MCP mediante gentle-ai y su CLI")
 	}
 	if options.CloudResolvable && selection.Claude {
 		// StepActionRemoveEngramCloudState is StepActionSyncEngramCloud's reversal. RemoveEngramCloudState

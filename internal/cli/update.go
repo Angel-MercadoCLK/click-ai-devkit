@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
@@ -29,14 +28,19 @@ func newUpdateCommand() *cobra.Command {
 	cmd.Flags().String(profileFlag, "", "")
 	_ = cmd.Flags().MarkHidden(profileFlag)
 	cmd.Flags().Bool(skipOpenClawFlag, false, "Omitir la integración con OpenClaw aunque se detecte openclaw en este equipo")
-	cmd.Flags().String(codexModelFlag, "", "Referencia de modelo nativa de Codex, por ejemplo gpt-5.6")
+	cmd.Flags().String(codexModelFlag, "", "")
+	cmd.Flags().String(openClawModelFlag, "", "")
+	cmd.Flags().StringSlice(openClawFallbackFlag, nil, "")
+	_ = cmd.Flags().MarkHidden(codexModelFlag)
+	_ = cmd.Flags().MarkHidden(openClawModelFlag)
+	_ = cmd.Flags().MarkHidden(openClawFallbackFlag)
 	cmd.Flags().Bool(persistEngramCloudTokenFlag, false, "Autorizar almacenamiento de ENGRAM_CLOUD_TOKEN en ~/.claude/settings.json con permisos 0600 (requiere consentimiento explícito)")
 	return cmd
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
-	if profileFlagWasSet(cmd) {
-		return retiredClaudeProfileError()
+	if retiredModelFlagsWereSet(cmd) {
+		return retiredModelConfigurationError()
 	}
 	out := cmd.OutOrStdout()
 	r := rendererFor(cmd, out)
@@ -77,25 +81,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Native-model config mirrors `click install`: no prompt, and a native mutation only when the
-	// developer explicitly passes --codex-model. Without it, Codex keeps running the portable SDD
-	// against the model it already has configured, and OpenClaw keeps the provider/model already
-	// connected — so the native-model write is neither listed nor run. Print a Spanish info line for
-	// each detected target making the resulting behavior explicit.
-	codexModelValue, _ := cmd.Flags().GetString(codexModelFlag)
-	codexModel := strings.TrimSpace(codexModelValue)
-	codexNativeModel := selection.Codex && codexModel != ""
-	if selection.Codex {
-		if codexNativeModel {
-			fmt.Fprintln(out, r.Info("Codex: modelo nativo configurado explícitamente: "+codexModel+"."))
-		} else {
-			fmt.Fprintln(out, r.Info("Codex usa su modelo nativo ya configurado; el SDD portable corre con ese default."))
-		}
-	}
-	if selection.OpenClaw {
-		fmt.Fprintln(out, r.Info("OpenClaw usa el proveedor/modelo que ya conectaste; el SDD portable corre con ese default."))
-	}
-
 	m, err := manifest.Load()
 	if err != nil {
 		return err
@@ -104,13 +89,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err := preflightGentleAI(cfg, selection); err != nil {
 		return err
 	}
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable})
 
 	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
-	// snapshot — all BEFORE MigrateIfStale/step 1 below (the first external `claude` subprocess
-	// invocation). A decline here means zero writes: nothing below this point has run yet.
-	proceed, sharedReader, err := confirmAndSnapshot(cmd, out, r, cfg, plan, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg, cloudResolvable, codexNativeModel))
+	// snapshot before the first external `claude` subprocess invocation. A decline here means zero
+	// writes: nothing below this point has run yet.
+	proceed, sharedReader, err := confirmAndSnapshot(cmd, out, r, cfg, plan, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg, cloudResolvable))
 	if err != nil {
 		return err
 	}
@@ -159,16 +144,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if len(installer.GentleAIInstallArgs(selection)) > 0 {
 		if err := runGentleAIStep(cmd, out, r, m, cfg, selection); err != nil {
 			return err
-		}
-	}
-
-	// Re-apply the previously chosen Codex tier, or default to "recommended" if none was saved yet.
-	codexTier := "recommended"
-	if selection.Codex {
-		if savedTier, found, loadErr := installer.LoadCodexModelProfile(cfg); loadErr != nil {
-			return loadErr
-		} else if found {
-			codexTier = savedTier
 		}
 	}
 
@@ -297,24 +272,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo registrar Engram en Codex: %v. La actualización local continúa; reintenta más tarde con `click update`.", mcpErr)))
 			} else {
 				fmt.Fprintln(out, r.Success("Engram registrado en Codex"))
-			}
-		case installer.StepActionSaveCodexModelProfile:
-			if err := r.RunStep("Guardando perfil de modelos de Codex (referencia)…", "Perfil de modelos de Codex guardado", func() error {
-				return installer.SaveCodexModelProfile(cfg, codexTier)
-			}); err != nil {
-				if restoreErr := installer.RestoreRun(cfg); restoreErr != nil {
-					return fmt.Errorf("%w; rollback failed: %v", err, restoreErr)
-				}
-				return fmt.Errorf("%w; rollback restored the previous snapshot", err)
-			}
-		case installer.StepActionConfigureCodexNativeModel:
-			// Only present in the plan when --codex-model was passed (see PlanOptions.CodexNativeModel
-			// above); a plain update never reaches this native config.toml mutation.
-			if err := installer.ConfigureCodexModel(cfg.CodexHome, codexModel); err != nil {
-				if restoreErr := installer.RestoreRun(cfg); restoreErr != nil {
-					return fmt.Errorf("%w; rollback failed: %v", err, restoreErr)
-				}
-				return fmt.Errorf("%w; rollback restored the previous snapshot", err)
 			}
 		}
 	}

@@ -20,14 +20,14 @@ func installWriteSteps(cfg installer.Config, cloudResolvable bool) []string {
 	return actionLabels(plan.InstallActionKinds(), actionLabelOptions{})
 }
 
-func installWriteStepsForSelection(cfg installer.Config, cloudResolvable bool, selection installer.TargetSelection, codexNativeModel, openClawNativeModel bool) []string {
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel, OpenClawNativeModel: openClawNativeModel})
+func installWriteStepsForSelection(cfg installer.Config, cloudResolvable bool, selection installer.TargetSelection) []string {
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable})
 	return actionLabels(plan.InstallActionKinds(), actionLabelOptions{})
 }
 
-func updateWriteSteps(engramVersion string, cfg installer.Config, cloudResolvable, codexNativeModel bool) []string {
+func updateWriteSteps(engramVersion string, cfg installer.Config, cloudResolvable bool) []string {
 	selection := installer.TargetSelection{Configured: true, Claude: cfg.ClaudeHome != "", OpenClaw: cfg.OpenClawHome != "", Codex: cfg.CodexHome != ""}
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable})
 	return actionLabels(plan.UpdateActionKinds(), actionLabelOptions{engramVersion: engramVersion, updateMode: true})
 }
 
@@ -101,10 +101,6 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 		return "Actualizando AGENTS.md de Codex…"
 	case installer.StepActionSyncCodexMCP:
 		return "Registrando Engram en Codex (MCP)…"
-	case installer.StepActionSaveCodexModelProfile:
-		return "Guardando perfil de modelos de Codex (referencia)…"
-	case installer.StepActionConfigureCodexNativeModel:
-		return "Configurando modelo nativo de Codex en config.toml (selección explícita)…"
 	case installer.StepActionSyncOpenClawWorkspace:
 		return "Actualizando AGENTS.md y SOUL.md de OpenClaw…"
 	case installer.StepActionSyncOpenClawMCP:
@@ -115,8 +111,6 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 		return "Instalando plugin de memory-guard para OpenClaw…"
 	case installer.StepActionSyncOpenClawSkills:
 		return "Sincronizando skills de Click en OpenClaw…"
-	case installer.StepActionConfigureOpenClawNativeModel:
-		return "Configurando modelo nativo de OpenClaw mediante su CLI (selección explícita)…"
 	default:
 		return string(kind)
 	}
@@ -139,7 +133,7 @@ func renderWritePlan(out io.Writer, r *ui.Renderer, cfg installer.Config, plan i
 		fmt.Fprintln(out, r.Info("Los metadatos de modelos existentes de OpenClaw se conservan sin regenerarlos."))
 	}
 	if cfg.CodexHome != "" {
-		fmt.Fprintln(out, r.Info(fmt.Sprintf("Codex recibe orientación en %s; config.toml sólo cambia con selección explícita.", cfg.CodexAgentsMDPath())))
+		fmt.Fprintln(out, r.Info(fmt.Sprintf("Codex recibe orientación en %s; los cambios de MCP no reemplazan los modelos configurados.", cfg.CodexAgentsMDPath())))
 	}
 	if _, err := os.Stat(cfg.TargetSelectionPath()); err == nil {
 		fmt.Fprintln(out, r.Info(fmt.Sprintf("La selección persistente de runtimes se conserva en %s.", cfg.TargetSelectionPath())))

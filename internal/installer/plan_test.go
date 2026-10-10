@@ -20,10 +20,7 @@ func TestBuildTargetPlan_TargetFirstOrderAndSharedProjections(t *testing.T) {
 		"gentle-ai",
 		"Claude Code",
 		"Codex CLI",
-		"Codex model profile",
-		"Codex native model",
 		"OpenClaw",
-		"OpenClaw native model",
 		"Engram Cloud",
 		"plugins",
 		"memory guard",
@@ -82,7 +79,7 @@ func TestBuildTargetPlan_CodexOnlySkipsClaudeOwnedSteps(t *testing.T) {
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
 	got := plan.StepLabels()
-	want := []string{"gentle-ai", "Codex CLI", "Codex model profile", "Codex native model", "SDD assets"}
+	want := []string{"gentle-ai", "Codex CLI", "SDD assets"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("StepLabels() = %#v, want %#v", got, want)
 	}
@@ -91,14 +88,44 @@ func TestBuildTargetPlan_CodexOnlySkipsClaudeOwnedSteps(t *testing.T) {
 	}
 }
 
-func TestBuildTargetPlan_SnapshotPathsIncludeCodexConfigForNativeMutation(t *testing.T) {
+func TestBuildTargetPlan_RetiresCodexAndOpenClawModelLifecycleActions(t *testing.T) {
+	cfg := Config{CodexHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	selection := TargetSelection{Configured: true, Codex: true, OpenClaw: true}
+	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
+
+	for _, label := range plan.StepLabels() {
+		if label == "Codex model profile" || label == "Codex native model" || label == "OpenClaw native model" {
+			t.Errorf("StepLabels() contains retired model step %q", label)
+		}
+	}
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncCodexGuidance}; !reflect.DeepEqual(got, want) {
+		t.Errorf("InstallActionKinds() = %#v, want only upstream and non-model Click actions %#v", got, want)
+	}
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncCodexGuidance}; !reflect.DeepEqual(got, want) {
+		t.Errorf("UpdateActionKinds() = %#v, want only upstream and non-model Click actions %#v", got, want)
+	}
+	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripCodexGuidance, StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
+		t.Errorf("UninstallActionKinds() = %#v, want only Click-owned non-model cleanup %#v", got, want)
+	}
+	if got, want := plan.DoctorCheckKinds(), []DoctorCheckKind{DoctorCheckCodexGuidance, DoctorCheckOpenClaw}; !reflect.DeepEqual(got, want) {
+		t.Errorf("DoctorCheckKinds() = %#v, want only target health and guidance checks %#v", got, want)
+	}
+	if !sliceContains(plan.SnapshotPaths(), cfg.CodexConfigPath()) {
+		t.Errorf("SnapshotPaths() = %#v, want Codex config snapshot retained for non-model MCP changes", plan.SnapshotPaths())
+	}
+	if !sliceContains(plan.SnapshotPaths(), cfg.CodexModelProfilePath()) || !sliceContains(plan.SnapshotPaths(), cfg.OpenClawModelProfilePath()) {
+		t.Errorf("SnapshotPaths() = %#v, want historical profile snapshots retained until T07d", plan.SnapshotPaths())
+	}
+}
+
+func TestBuildTargetPlan_SnapshotPathsIncludeCodexConfigForMCPChanges(t *testing.T) {
 	cfg := Config{CodexHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	selection := TargetSelection{Configured: true, Codex: true}
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
 	paths := plan.SnapshotPaths()
 	if !sliceContains(paths, cfg.CodexConfigPath()) {
-		t.Fatalf("SnapshotPaths() = %#v, want Codex config.toml path %q for native rollback", paths, cfg.CodexConfigPath())
+		t.Fatalf("SnapshotPaths() = %#v, want Codex config.toml path %q for upstream MCP rollback", paths, cfg.CodexConfigPath())
 	}
 	if sliceContains(paths, cfg.ClaudeMDPath()) {
 		t.Fatalf("SnapshotPaths() = %#v, want no Claude snapshot path in a Codex-only plan", paths)
@@ -111,36 +138,19 @@ func TestBuildTargetPlan_CodexOnlyExposesLifecycleActionsForProductionCommands(t
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
 
-	// Engram MCP now belongs to gentle-ai; plain Click install only manages Click's Codex guidance and profile.
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSaveCodexModelProfile}; !reflect.DeepEqual(got, want) {
+	// Engram MCP belongs to gentle-ai; Click install only manages Codex guidance.
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSaveCodexModelProfile}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
-	// Uninstall removes Click guidance/profile only and never removes shared upstream MCP registrations.
-	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripCodexGuidance, StepActionRemoveCodexModelProfile, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
+	// Uninstall removes Click guidance only and never removes shared upstream MCP registrations.
+	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripCodexGuidance, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UninstallActionKinds() = %#v, want %#v", got, want)
 	}
 	if got, want := plan.DoctorCheckKinds(), []DoctorCheckKind{DoctorCheckCodexGuidance}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("DoctorCheckKinds() = %#v, want %#v", got, want)
-	}
-}
-
-// TestBuildTargetPlan_CodexNativeModelFlag_AddsNativeMutationAction proves the opt-in path: when the
-// developer passed --codex-model (PlanOptions.CodexNativeModel), the native config.toml mutation is
-// added to the install/update action set so the flag path still writes the Codex model.
-func TestBuildTargetPlan_CodexNativeModelFlag_AddsNativeMutationAction(t *testing.T) {
-	cfg := Config{CodexHome: t.TempDir(), ClickStateHome: t.TempDir()}
-	selection := TargetSelection{Configured: true, Codex: true}
-
-	plan := BuildTargetPlan(cfg, selection, PlanOptions{CodexNativeModel: true})
-
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSaveCodexModelProfile, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
-	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSaveCodexModelProfile, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
 }
 
@@ -158,33 +168,8 @@ func TestBuildTargetPlan_OpenClawDelegatesMCPRegistration(t *testing.T) {
 	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills, StepActionRemoveOpenClawModelProfile, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UninstallActionKinds() = %#v, want %#v", got, want)
-	}
-}
-
-// TestBuildTargetPlan_OpenClawNativeModelFlag_AddsNativeMutationAction is the OpenClaw counterpart:
-// the native `openclaw config set` write action only appears when --openclaw-model was passed.
-func TestBuildTargetPlan_OpenClawNativeModelFlag_GatesNativeMutationAction(t *testing.T) {
-	cfg := Config{OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
-	selection := TargetSelection{Configured: true, OpenClaw: true}
-
-	withoutFlag := BuildTargetPlan(cfg, selection, PlanOptions{})
-	for _, action := range withoutFlag.InstallActionKinds() {
-		if action == StepActionConfigureOpenClawNativeModel {
-			t.Fatalf("InstallActionKinds() = %#v, want no native OpenClaw mutation without the flag", withoutFlag.InstallActionKinds())
-		}
-	}
-
-	withFlag := BuildTargetPlan(cfg, selection, PlanOptions{OpenClawNativeModel: true})
-	found := false
-	for _, action := range withFlag.InstallActionKinds() {
-		if action == StepActionConfigureOpenClawNativeModel {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("InstallActionKinds() = %#v, want the native OpenClaw mutation when the flag is set", withFlag.InstallActionKinds())
 	}
 }
 
@@ -363,9 +348,9 @@ func TestBuildTargetPlan_MatrixAssertions(t *testing.T) {
 			},
 		},
 		{
-			name:      "Codex with native model configured",
+			name:      "Codex model options retired",
 			selection: TargetSelection{Codex: true},
-			options:   PlanOptions{CodexNativeModel: true},
+			options:   PlanOptions{},
 			setupFunc: func(t *testing.T) Config {
 				return Config{
 					CodexHome:      t.TempDir(),
@@ -374,9 +359,9 @@ func TestBuildTargetPlan_MatrixAssertions(t *testing.T) {
 			},
 		},
 		{
-			name:      "OpenClaw with native model configured",
+			name:      "OpenClaw model options retired",
 			selection: TargetSelection{OpenClaw: true},
-			options:   PlanOptions{OpenClawNativeModel: true},
+			options:   PlanOptions{},
 			setupFunc: func(t *testing.T) Config {
 				return Config{
 					OpenClawHome:   t.TempDir(),

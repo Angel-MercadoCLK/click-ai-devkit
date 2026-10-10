@@ -90,6 +90,18 @@ func TestRun_AfterInstall_ReportsHealthy(t *testing.T) {
 	}
 }
 
+func TestRun_DoesNotReportRetiredOpenClawModelAction(t *testing.T) {
+	t.Cleanup(installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return fakeGitLookup{resolved: map[string]string{}}
+	}))
+	report := Run(installer.Config{OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()})
+	for _, check := range report.Checks {
+		if check.Name == "OpenClaw native model action" {
+			t.Fatalf("Run() reported retired model-selection health check: %+v", check)
+		}
+	}
+}
+
 func TestRun_AfterUninstall_ReportsUnhealthy(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
@@ -121,9 +133,9 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	report := Run(cfg)
 
-	// 12 base checks after removing the retired Claude model ownership checks,
+	// 11 base checks after retiring model-specific ownership checks,
 	// standalone PATH-based detection check (openclaw-target-support PR-A).
-	const wantChecks = 12 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 11 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
 		t.Fatalf("Run() returned %d checks, want %d without retired model checks", len(report.Checks), wantChecks)
 	}
@@ -131,7 +143,7 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 
 func TestRun_CheckCountIncludesEngramCloudSessionSync(t *testing.T) {
 	report := Run(installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()})
-	const wantChecks = 12 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 11 + EngramChecksCount + Context7ChecksCount
 	if got := len(report.Checks); got != wantChecks {
 		t.Fatalf("Run() check count = %d, want %d including engram cloud session sync", got, wantChecks)
 	}
@@ -670,38 +682,6 @@ func TestCheckOpenClaw_ReportsHealthyWhenAbsent(t *testing.T) {
 	}
 	if !checked {
 		t.Fatal(`Run() did not include an "openclaw" check`)
-	}
-}
-
-func TestCheckOpenClawNativeModelAction_UnavailableButHealthyWithGuidance(t *testing.T) {
-	restoreLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
-		return fakeGitLookup{resolved: map[string]string{"openclaw": "/usr/bin/openclaw"}}
-	})
-	defer restoreLookup()
-	restoreStatus := installer.SetOpenClawNativeModelMenuStatusForTests(installer.OpenClawNativeModelMenuStatus{
-		Available: false,
-		Detail:    "OpenClaw native model action is unavailable until `click update` refreshes the contract and Claude Code restarts.",
-	})
-	defer restoreStatus()
-
-	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
-	report := Run(cfg)
-
-	var checked bool
-	for _, c := range report.Checks {
-		if c.Name != "OpenClaw native model action" {
-			continue
-		}
-		checked = true
-		if !c.Healthy {
-			t.Fatalf("OpenClaw native model action check = %+v, want Healthy=true for an unavailable optional action", c)
-		}
-		if !strings.Contains(c.Detail, "click update") || !strings.Contains(strings.ToLower(c.Detail), "restart") {
-			t.Fatalf("OpenClaw native model action detail = %q, want update and restart guidance", c.Detail)
-		}
-	}
-	if !checked {
-		t.Fatal(`Run() did not include an "OpenClaw native model action" check`)
 	}
 }
 

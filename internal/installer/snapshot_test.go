@@ -1237,36 +1237,21 @@ func TestBuildTargetPlan_AllSnapshotDeclarationsHaveKnownPolicy(t *testing.T) {
 			options:     PlanOptions{CloudResolvable: true},
 			description: "Claude target with cloud config",
 		},
-		{
-			name:        "Claude-with-native-model",
-			selection:   TargetSelection{Claude: true},
-			options:     PlanOptions{CodexNativeModel: true},
-			description: "Claude target with native model option (no effect on Claude)",
-		},
+
 		{
 			name:        "Codex-only",
 			selection:   TargetSelection{Codex: true},
 			options:     PlanOptions{},
-			description: "Codex target only, no native model",
+			description: "Codex target only",
 		},
-		{
-			name:        "Codex-with-native-model",
-			selection:   TargetSelection{Codex: true},
-			options:     PlanOptions{CodexNativeModel: true},
-			description: "Codex target with native model mutation",
-		},
+
 		{
 			name:        "OpenClaw-only",
 			selection:   TargetSelection{OpenClaw: true},
 			options:     PlanOptions{},
-			description: "OpenClaw target only, no native model",
+			description: "OpenClaw target only",
 		},
-		{
-			name:        "OpenClaw-with-native-model",
-			selection:   TargetSelection{OpenClaw: true},
-			options:     PlanOptions{OpenClawNativeModel: true},
-			description: "OpenClaw target with native model mutation",
-		},
+
 		{
 			name:        "Claude-and-Codex",
 			selection:   TargetSelection{Claude: true, Codex: true},
@@ -1284,12 +1269,6 @@ func TestBuildTargetPlan_AllSnapshotDeclarationsHaveKnownPolicy(t *testing.T) {
 			selection:   TargetSelection{Claude: true, Codex: true, OpenClaw: true},
 			options:     PlanOptions{CloudResolvable: true},
 			description: "All targets with cloud config",
-		},
-		{
-			name:        "All-targets-all-native-models",
-			selection:   TargetSelection{Claude: true, Codex: true, OpenClaw: true},
-			options:     PlanOptions{CloudResolvable: true, CodexNativeModel: true, OpenClawNativeModel: true},
-			description: "All targets with cloud and all native models",
 		},
 	}
 

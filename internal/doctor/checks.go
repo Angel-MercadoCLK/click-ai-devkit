@@ -61,7 +61,7 @@ func (r Report) Healthy() bool {
 func Run(cfg installer.Config) Report {
 	selection := installer.TargetSelection{Configured: true, Claude: cfg.ClaudeHome != "", OpenClaw: cfg.OpenClawHome != "", Codex: cfg.CodexHome != ""}
 	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{})
-	checks := []CheckResult{checkGit(cfg), checkOpenClaw(cfg), checkOpenClawNativeModelAction(cfg), checkClickBinary(cfg)}
+	checks := []CheckResult{checkGit(cfg), checkOpenClaw(cfg), checkClickBinary(cfg)}
 	for _, kind := range plan.DoctorCheckKinds() {
 		checks = append(checks, doctorCheckResult(cfg, kind))
 	}
@@ -77,8 +77,6 @@ func doctorCheckResult(cfg installer.Config, kind installer.DoctorCheckKind) Che
 		return checkClaude(cfg)
 	case installer.DoctorCheckOpenClaw:
 		return checkOpenClaw(cfg)
-	case installer.DoctorCheckOpenClawNativeModel:
-		return checkOpenClawNativeModelAction(cfg)
 	case installer.DoctorCheckClickPluginRegistries:
 		return checkClickPluginRegistries(cfg)
 	case installer.DoctorCheckClickSDDPlugin:
@@ -370,15 +368,6 @@ func checkOpenClaw(cfg installer.Config) CheckResult {
 		return CheckResult{Name: name, Healthy: true, Detail: "resuelto en " + path}
 	}
 	return CheckResult{Name: name, Healthy: true, Detail: "no detectado (objetivo opcional, sin instalación de OpenClaw en este equipo)"}
-}
-
-func checkOpenClawNativeModelAction(cfg installer.Config) CheckResult {
-	const name = "OpenClaw native model action"
-	status := installer.OpenClawNativeModelActionStatus()
-	if status.Available {
-		return CheckResult{Name: name, Healthy: true, Detail: status.Detail}
-	}
-	return CheckResult{Name: name, Healthy: true, Detail: status.Detail}
 }
 
 func checkCodexGuidance(cfg installer.Config) CheckResult {
