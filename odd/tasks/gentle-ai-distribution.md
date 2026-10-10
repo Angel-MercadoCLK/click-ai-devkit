@@ -48,7 +48,7 @@ Current instruction (2026-10-09): writer Codex `gpt-6-luna` high; parent reviews
 - 2026-10-08 pin drift: warn and re-pin — `click doctor` reports an installed gentle-ai that differs from the pin as drift; `click install`/`click update` reinstall the qualified version and say so explicitly (may downgrade a dev-chosen newer version).
 
 ## Open product decisions
-None at present.
+- T06: D48 names Click-owned extra permissions but defines no entries, target runtimes or merge policy. Decide whether permissions remain upstream-only (T06 limited to Click guard/policy coexistence) or specify the additional Click rules and surfaces. Never invent allow/deny entries. Any new settings permission writer must include its managed rollback projection in the same unit.
 
 ## Tasks
 - [x] T01 — Record distribution/ownership decision; supersede D1/D8/D9/D12/D25, revisit D36/D38. Files: `documentacion/00-decisions-and-open-questions.md`, `documentacion/vision.md`. Route: inline-eligible docs; delegated to Sol per model-team instruction. Evidence: D48 added; Astra xhigh review CHANGES_REQUIRED (1 blocker: pin drift left open; 2 warnings: chain strategy missing, historical vision bullets rewritten) → all fixed by Sol; parent spot check of D48 text and restored bullets. Docs only, no Go tests.
@@ -142,6 +142,11 @@ T04 and T05 are complete on `feat/gentle-ai-distribution-review-slices`; proceed
 - Final checks PASS: focused guidance/managed/portability tests, installer+doctor suites, full `go test ./... -count=1`, build, vet, diff check. Earlier sandbox run reproduced only the three known recovery-context failures; elevated rerun passed, and final writer full suite also passed sandboxed. No tests skipped, real installation or Windows execution. Native review pending before task closure.
 
 - Native review closure: commit `f752c02`, 8 files / 210 authored changed lines, medium (assessment under budget; explicit per-task review selected under standing consent). One consolidated reliability review, no findings, no correction. Exact acknowledgement burned lineage `review-15a591ff8571486e` at revision `sha256:44599af6a1d364cffb2a7a55d316ab38c5a285a924f062019b357d152c4d0e74`; reviewed boundary `f752c02`. Reviewer inspected frozen patches, not independent command execution; functional proof is the writer/parent checks above. No push, PR, live install or Windows execution.
+
+## T06 read-only findings
+- Delegated Luna high mapping and parent readback: the guard already merges by Click command identity, preserves foreign/shared hooks and removes only Click-owned hooks. Existing coverage proves coexistence/idempotency/teardown; no replacement hook engine needed. Memory/insurance policies already exist; `plugins/click-memory/docs/allowed-memory.md` contains a stale Click SDD example suitable for neutral wording.
+- No Click permissions merge or concrete extra permission list was found. Upstream permissions are selected by D49; D48's extra-permissions ownership statement is not a grant to invent new allow/deny rules. Current settings rollback projection covers only Click guard/Cloud token, so permissions ownership changes would require narrowly scoped projection work alongside the writer, rather than deferring it to T10.
+- T06 implementation paused for the product choice above. No T06 source edits or test executions; T05 remains complete and reviewed. Proposed safe default for user decision: keep permissions upstream-owned and limit T06 to Click guard/policy coexistence.
 
 ## Resumed T03a verification (2026-10-09)
 - Writer/verifier: GPT-6 Luna high. Existing four-file implementation preserved; no additional behavior changes needed. Normalized with gofmt before verification.
