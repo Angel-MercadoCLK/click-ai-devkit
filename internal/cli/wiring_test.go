@@ -70,7 +70,6 @@ func TestWiring(t *testing.T) {
 			root.SetArgs([]string{"install", "--non-interactive"})
 			configureCLIExecutionHomes(t, home, "", "", []string{"install"})
 			t.Setenv("CLICK_STATE_HOME", t.TempDir())
-			t.Setenv("CLICK_OPENCLAW_HOME", t.TempDir())
 			seedResolvableGit(t)
 
 			err := root.Execute()

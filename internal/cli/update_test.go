@@ -239,8 +239,7 @@ func TestUpdateCommand_CloudConfigured_PartialTokenMissing_SkipsCloudStep(t *tes
 
 // TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal is resilience fix W1: an Engram Cloud
 // re-sync failure must be NON-FATAL to `click update`. The command must (a) return nil, (b) surface a
-// Spanish warning containing the underlying error, and (c) still run the remaining steps through to
-// completion (Context7 sync and the completion line follow the cloud step in runUpdate).
+// Spanish warning containing the underlying error, and (c) still reach completion.
 // The --persist-engram-cloud-token opt-in authorizes the re-sync to run unattended (DD-3).
 func TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal(t *testing.T) {
 	home := t.TempDir()
@@ -268,9 +267,6 @@ func TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal(t *testing.T) {
 	if !strings.Contains(out, errTestEngramCloud.Error()) {
 		t.Fatalf("update output = %q, want the warning to include the underlying error %q", out, errTestEngramCloud.Error())
 	}
-	if !strings.Contains(out, "Context7 sincronizado") {
-		t.Fatalf("update output = %q, want the steps after the cloud step to still run", out)
-	}
 	if !strings.Contains(out, "Update completo.") {
 		t.Fatalf("update output = %q, want the command to continue to completion after cloud failure", out)
 	}
@@ -285,13 +281,8 @@ func TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal(t *testing.T) {
 	}
 }
 
-// TestUpdateCommand_CodexMCPFailureIsNonFatal is FIX 2's non-fatal contract for `click update`,
-// mirroring TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal for Codex's Engram MCP
-// registration (D45 "supplementary integrations are non-fatal" pattern): a failure re-registering
-// Engram's MCP server with Codex must never abort an otherwise-good update. The command must (a)
-// return nil, (b) surface a Spanish warning containing the underlying error, and (c) still reach
-// completion.
-func TestUpdateCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
+// TestUpdateCommand_DoesNotRegisterCodexMCP proves gentle-ai owns Codex MCP during update too.
+func TestUpdateCommand_DoesNotRegisterCodexMCP(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 	runner := newTestCommandRunner(claudeHome)
@@ -309,7 +300,9 @@ func TestUpdateCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
 	})
 	defer restoreGuidance()
 
+	mcpCalls := 0
 	restoreMCP := SetSyncCodexMCPFuncForTests(func(cfg installer.Config) error {
+		mcpCalls++
 		return errTestCodexMCP
 	})
 	defer restoreMCP()
@@ -318,17 +311,14 @@ func TestUpdateCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update command error = %v, want nil (Codex MCP failure must be non-fatal), output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "No se pudo registrar Engram en Codex") {
-		t.Fatalf("update output = %q, want it to contain the Spanish Codex MCP failure warning", out)
-	}
-	if !strings.Contains(out, errTestCodexMCP.Error()) {
-		t.Fatalf("update output = %q, want the warning to include the underlying error %q", out, errTestCodexMCP.Error())
-	}
 	if !strings.Contains(out, "Update completo.") {
-		t.Fatalf("update output = %q, want the command to continue to completion after the Codex MCP failure", out)
+		t.Fatalf("update output = %q, want the command to complete", out)
 	}
 	if guidanceCalls != 1 {
-		t.Fatalf("SyncCodexGuidance called %d times, want 1 — the AGENTS.md write step must still have run before the failed MCP step", guidanceCalls)
+		t.Fatalf("SyncCodexGuidance called %d times, want 1", guidanceCalls)
+	}
+	if mcpCalls != 0 {
+		t.Fatalf("SyncCodexMCP called %d times, want no Click-owned Codex registration", mcpCalls)
 	}
 }
 
@@ -372,6 +362,9 @@ func TestUpdate_ConfigureFailureWarnsAndContinues(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("update command error = %v, want nil (cloud settings failure must be non-fatal)", err)
 	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
+	}
 	if len(order) != 2 || order[0] != "configure" || order[1] != "enrollment" {
 		t.Fatalf("recorded order = %v, want [configure enrollment]", order)
 	}
@@ -413,6 +406,9 @@ func TestUpdate_DeclineWarnsAutosyncDisabled(t *testing.T) {
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("update command error = %v, want nil (decline remains successful)", err)
+	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "autosync desactivado") {
 		t.Fatalf("update output missing the Spanish autosync-disabled warning (ECS-3.3)")
@@ -462,7 +458,7 @@ func TestUpdate_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 	}
 
 	// Read the actual settings.json file on disk
-	settingsPath := filepath.Join(os.Getenv("CLICK_CLAUDE_HOME"), "settings.json")
+	settingsPath := filepath.Join(home, "settings.json")
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatalf("read settings.json: %v", err)
@@ -548,6 +544,7 @@ func TestUpdate_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 // stored token must remain present and unchanged (NoOp mode - never delete).
 func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 	home := t.TempDir()
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
@@ -555,7 +552,7 @@ func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 
 	// Seed settings.json with a previously-consented token
 	storedToken := "previously-consented-token-456"
-	settingsPath := filepath.Join(home, "settings.json")
+	settingsPath := filepath.Join(os.Getenv("CLICK_CLAUDE_HOME"), "settings.json")
 	initialSettings := fmt.Sprintf(`{
   "env": {
     "ENGRAM_CLOUD_TOKEN": "%s"
@@ -572,7 +569,6 @@ func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
 	// ENGRAM_CLOUD_TOKEN intentionally absent
-	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 
 	// Run update (non-interactive, no consent needed since no token present)
@@ -588,6 +584,9 @@ func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 		// If a regression causes this test to fail and out contains the token,
 		// printing it would leak the secret into CI logs.
 		t.Fatalf("update command failed unexpectedly; see test setup for expected update flow")
+	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
 	}
 
 	// Read the actual settings.json file on disk
@@ -617,6 +616,7 @@ func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 // This ensures a future change cannot collapse the two states again.
 func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
 	home := t.TempDir()
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
@@ -624,7 +624,7 @@ func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
 
 	// Seed settings.json with a previously-consented token
 	storedToken := "previously-consented-token-789"
-	settingsPath := filepath.Join(home, "settings.json")
+	settingsPath := filepath.Join(os.Getenv("CLICK_CLAUDE_HOME"), "settings.json")
 	initialSettings := fmt.Sprintf(`{
   "env": {
     "ENGRAM_CLOUD_TOKEN": "%s"
@@ -642,7 +642,6 @@ func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
 	t.Setenv("ENGRAM_CLOUD_TOKEN", processToken)
-	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 
 	// Run update WITHOUT --persist-engram-cloud-token (decline persistence)
@@ -658,9 +657,6 @@ func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
 		// If a regression causes this test to fail and out contains the token,
 		// printing it would leak the secret into CI logs.
 		t.Fatalf("update command failed unexpectedly; see test setup for expected decline flow")
-	}
-	if err := syncStandardTargetFixtures(); err != nil {
-		t.Fatal(err)
 	}
 
 	// Read the actual settings.json file on disk

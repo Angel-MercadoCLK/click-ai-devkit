@@ -52,30 +52,27 @@ func (r *failingClaudeRunner) Output(name string, args ...string) ([]byte, error
 	return []byte{}, nil
 }
 
-// TestUninstallCommand_SurfacesEngramPathWarning_WarningOnlyNoError is the pre-existing-shaped half
-// of the T4-1 follow-up regression coverage: a warning-only RemoveEngramPlugin result (err == nil)
-// must surface via surfacePathWarning and `click uninstall` must still succeed. This mirrors the
-// success path runUninstall already exercised before the fix — kept here as an explicit CLI-level
-// case alongside the double-failure test below, so both branches of the same `if err != nil` split
-// are covered from the same seam.
-func TestUninstallCommand_SurfacesEngramPathWarning_WarningOnlyNoError(t *testing.T) {
+// TestUninstallCommand_DoesNotRemoveUpstreamEngram proves Click uninstall no longer removes shared
+// Engram state or invokes the legacy Click-owned teardown path.
+func TestUninstallCommand_DoesNotRemoveUpstreamEngram(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 
-	wantWarning := "no se pudo quitar C:\\fake\\gobin del PATH persistente: acceso denegado"
+	removeCalls := 0
 	restoreRemove := SetRemoveEngramPluginFuncForTests(func(cfg installer.Config) (string, error) {
-		return wantWarning, nil
+		removeCalls++
+		return "", nil
 	})
 	defer restoreRemove()
 
-	out, err := execRoot(t, home, "uninstall")
+	_, err := execRoot(t, home, "uninstall")
 	if err != nil {
 		t.Fatalf("uninstall command error = %v, want nil when RemoveEngramPlugin only returns a pathWarning", err)
 	}
-	if !strings.Contains(out, wantWarning) {
-		t.Fatalf("uninstall output = %q, want it to contain the PATH warning %q", out, wantWarning)
+	if removeCalls != 0 {
+		t.Fatalf("RemoveEngramPlugin called %d times, want Click uninstall to preserve upstream Engram", removeCalls)
 	}
 }
 
@@ -86,25 +83,25 @@ func TestUninstallCommand_SurfacesEngramPathWarning_WarningOnlyNoError(t *testin
 // captured it into engramPathWarning but returned early on `err != nil`, before ever reaching
 // surfacePathWarning. The fatal error itself still surfaced (via cobra), but the PATH-specific
 // detail vanished. The fix surfaces engramPathWarning on BOTH the error path and the success path.
-func TestUninstallCommand_SurfacesEngramPathWarning_EvenOnFatalError(t *testing.T) {
+func TestUninstallCommand_DoesNotRunLegacySharedTeardown(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 
-	wantWarning := "no se pudo quitar C:\\fake\\gobin del PATH persistente: acceso denegado"
-	wantErr := errors.New("no se pudo desinstalar el plugin engram@engram")
+	removeCalls := 0
 	restoreRemove := SetRemoveEngramPluginFuncForTests(func(cfg installer.Config) (string, error) {
-		return wantWarning, wantErr
+		removeCalls++
+		return "", nil
 	})
 	defer restoreRemove()
 
-	out, err := execRoot(t, home, "uninstall")
-	if err == nil {
-		t.Fatalf("uninstall command error = nil, want a non-nil error when RemoveEngramPlugin also fails, output:\n%s", out)
+	_, err := execRoot(t, home, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall command error = %v, want nil", err)
 	}
-	if !strings.Contains(out, wantWarning) {
-		t.Fatalf("uninstall output = %q, want it to contain the PATH warning %q even though RemoveEngramPlugin also returned a fatal error", out, wantWarning)
+	if removeCalls != 0 {
+		t.Fatalf("RemoveEngramPlugin called %d times, want no shared dependency teardown", removeCalls)
 	}
 }
 
@@ -375,12 +372,9 @@ func TestUninstallCommand_RemoveOpenClawSkillsError_ContinuesTeardown(t *testing
 	}
 }
 
-// TestUninstallCommand_CorruptedEngramState_SucceedsWithWarning is Finding 3's CLI-level regression
-// test: a truncated/corrupted engram.json must not abort `click uninstall` — RemoveEngramPlugin now
-// reports it as a warning (installer.RemoveEngramPlugin's own corrupted-state handling), so with
-// every other step healthy the overall command must still succeed, and the warning must be visible
-// in the output rather than silently dropped.
-func TestUninstallCommand_CorruptedEngramState_SucceedsWithWarning(t *testing.T) {
+// TestUninstallCommand_PreservesLegacyEngramState proves Click does not mutate upstream/shared
+// Engram state during uninstall, including unclassifiable legacy state.
+func TestUninstallCommand_PreservesLegacyEngramState(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -399,8 +393,9 @@ func TestUninstallCommand_CorruptedEngramState_SucceedsWithWarning(t *testing.T)
 	if err != nil {
 		t.Fatalf("uninstall command error = %v, want nil — a corrupted engram.json must be a warning, not a fatal failure, output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "dañado") {
-		t.Fatalf("uninstall output = %q, want it to contain the corrupted-state warning", out)
+	got, readErr := os.ReadFile(statePath)
+	if readErr != nil || string(got) != "{not valid json" {
+		t.Fatalf("legacy Engram state = %q, err = %v, want exact bytes preserved", got, readErr)
 	}
 }
 
@@ -653,11 +648,9 @@ func TestUninstallCommand_FailedCodexTeardown_ContinuesForwardNoRollback(t *test
 	}
 }
 
-// TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregistersCodexMCP is FIX 1's
-// end-to-end proof of the completed uninstall lifecycle: a full Claude + OpenClaw + Codex teardown
-// must strip OpenClaw's managed AGENTS.md/SOUL.md blocks (which nothing removed before) AND issue the
-// exact real `codex mcp remove engram` to deregister Engram's Codex MCP server.
-func TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregistersCodexMCP(t *testing.T) {
+// TestUninstallCommand_FullOpenClawAndCodex_PreservesSharedMCP proves the Click workspace blocks
+// are removed while the shared Codex MCP server is not deregistered.
+func TestUninstallCommand_FullOpenClawAndCodex_PreservesSharedMCP(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
 	codexHome := t.TempDir()
@@ -674,8 +667,7 @@ func TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregist
 	})
 	defer restoreLookup()
 
-	// testCommandRunner makes `codex mcp get engram` succeed (Output returns nil), so RemoveCodexMCP
-	// treats Engram as registered and issues `mcp remove engram`; its Run records but no-ops it.
+	// The runner records any native MCP command; Click uninstall must leave upstream registrations alone.
 	runner := newTestCommandRunner(claudeHome)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
@@ -685,11 +677,24 @@ func TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregist
 	if err := installer.SaveTargetSelection(stateCfg, installer.TargetSelection{Configured: true, Claude: true, OpenClaw: true, Codex: true}); err != nil {
 		t.Fatalf("SaveTargetSelection() error = %v", err)
 	}
+	claudeCfg := installer.Config{ClaudeHome: claudeHome}
+	claudeMCP := []byte(`{"mcpServers":{"engram":{"command":"/fixture/engram","args":["mcp","--tools=agent"]},"context7":{"type":"http","url":"https://mcp.context7.com/mcp"}}}`)
+	if err := os.WriteFile(claudeCfg.Context7ConfigPath(), claudeMCP, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	openClawCfg := installer.Config{OpenClawHome: openClawHome}
+	openClawMCP := []byte(`{"mcp":{"servers":{"engram":{"command":"/fixture/engram","args":["mcp","--tools=agent"]}}},"userSetting":true}`)
+	if err := os.WriteFile(openClawCfg.OpenClawMCPConfigPath(), openClawMCP, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := installer.SyncOpenClawWorkspace(openClawCfg); err != nil {
 		t.Fatalf("SyncOpenClawWorkspace() error = %v", err)
 	}
 	codexCfg := installer.Config{CodexHome: codexHome}
+	codexMCP := []byte("[mcp_servers.engram]\ncommand = \"engram\"\nargs = [\"mcp\", \"--tools=agent\"]\n")
+	if err := os.WriteFile(codexCfg.CodexConfigPath(), codexMCP, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := installer.WriteManagedBlock(codexCfg.CodexAgentsMDPath(), installer.DefaultCodexAgentsContent); err != nil {
 		t.Fatalf("WriteManagedBlock(CodexAgentsMDPath) error = %v", err)
 	}
@@ -714,11 +719,23 @@ func TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregist
 			t.Fatalf("HasManagedBlock(%s) = true after uninstall, want the OpenClaw managed block removed", path)
 		}
 	}
+	for _, entry := range []struct {
+		path string
+		want []byte
+	}{
+		{claudeCfg.Context7ConfigPath(), claudeMCP},
+		{openClawCfg.OpenClawMCPConfigPath(), openClawMCP},
+		{codexCfg.CodexConfigPath(), codexMCP},
+	} {
+		got, err := os.ReadFile(entry.path)
+		if err != nil || !bytes.Equal(got, entry.want) {
+			t.Fatalf("shared MCP config %s = %q, err = %v, want exact bytes preserved", entry.path, got, err)
+		}
+	}
 
-	// Codex Engram MCP registration was deregistered with the exact confirmed real syntax.
 	joined := strings.Join(runner.commands, "\n")
-	if !strings.Contains(joined, "mcp remove engram") {
-		t.Fatalf("codex command log =\n%s\nwant `codex mcp remove engram` issued", joined)
+	if strings.Contains(joined, "mcp remove engram") {
+		t.Fatalf("codex command log =\n%s\nwant shared Engram MCP registration preserved", joined)
 	}
 }
 

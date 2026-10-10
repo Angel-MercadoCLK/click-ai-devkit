@@ -219,7 +219,6 @@ var installActionOrder = []StepActionKind{
 	StepActionRegisterMemoryGuard,
 	StepActionSaveModels,
 	StepActionSyncOpenClawWorkspace,
-	StepActionSyncOpenClawMCP,
 	StepActionRegisterOpenClawMCP,
 	StepActionSyncOpenClawPlugin,
 	StepActionSyncOpenClawSkills,
@@ -242,7 +241,6 @@ var updateActionOrder = []StepActionKind{
 	StepActionSyncEngramCloud,
 	StepActionSyncContext7,
 	StepActionSyncOpenClawWorkspace,
-	StepActionSyncOpenClawMCP,
 	StepActionRegisterOpenClawMCP,
 	StepActionSyncOpenClawPlugin,
 	StepActionSyncOpenClawSkills,
@@ -261,7 +259,7 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		steps = append(steps, Step{ID: "gentle-ai", Target: PlanTargetShared, Label: "gentle-ai", InstallActions: []StepActionKind{StepActionSyncGentleAI}, UpdateActions: []StepActionKind{StepActionSyncGentleAI}})
 	}
 	if selection.Claude {
-		claudeRuntime := Step{ID: "claude-runtime", Target: PlanTargetClaude, Label: "Claude Code", Snapshot: []SnapshotDecl{snapshot(cfg.ClaudeMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.SettingsPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UpdateActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UninstallActions: []StepActionKind{StepActionRemoveMarketplacePlugins}, DoctorChecks: []DoctorCheckKind{DoctorCheckClaude, DoctorCheckClickPluginRegistries, DoctorCheckClickSDDPlugin, DoctorCheckClickMemoryPlugin, DoctorCheckClickReviewPlugin, DoctorCheckClickSkillsPlugin, DoctorCheckClaudeManagedBlock}}
+		claudeRuntime := Step{ID: "claude-runtime", Target: PlanTargetClaude, Label: "Claude Code", Snapshot: []SnapshotDecl{snapshot(cfg.ClaudeMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.SettingsPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UpdateActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UninstallActions: []StepActionKind{StepActionRemoveMarketplacePlugins}, DoctorChecks: []DoctorCheckKind{DoctorCheckClaude, DoctorCheckClickPluginRegistries, DoctorCheckClickSDDPlugin, DoctorCheckClickMemoryPlugin, DoctorCheckClickReviewPlugin, DoctorCheckClickSkillsPlugin, DoctorCheckClaudeManagedBlock, DoctorCheckEngramPlugin, DoctorCheckEngramSubagentVisibility, DoctorCheckEngramBinary, DoctorCheckEngramPath, DoctorCheckContext7}}
 		if !options.CloudResolvable {
 			claudeRuntime.UninstallActions = append(claudeRuntime.UninstallActions, StepActionRemoveEngramCloudSessionSync, StepActionRemoveEngramCloudState)
 		}
@@ -289,22 +287,15 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 			codexModelStep.InstallActions = []StepActionKind{StepActionConfigureCodexNativeModel}
 			codexModelStep.UpdateActions = []StepActionKind{StepActionConfigureCodexNativeModel}
 		}
-		// codex-mcp always runs when Codex is a target — independent of the --codex-model native-model
-		// opt-in (unlike codexModelStep above): registering Engram's MCP server is a supplementary,
-		// non-fatal integration (D45 pattern), always attempted, never gated behind a flag. No Snapshot
-		// paths: SyncCodexMCP makes zero file writes, so there is nothing for click's own backup/rollback
-		// to capture — it is pure CLI state delegated to `codex mcp`.
-		codexMCPStep := Step{ID: "codex-mcp", Target: PlanTargetCodex, Label: "Codex Engram MCP", InstallActions: []StepActionKind{StepActionSyncCodexMCP}, UpdateActions: []StepActionKind{StepActionSyncCodexMCP}, UninstallActions: []StepActionKind{StepActionRemoveCodexMCP}}
 		// codex-model-profile persists Click's own portable tier recommendation. It is reference data
 		// only — it never writes Codex's native config.toml or any ~/.codex/sdd-*.config.toml profile.
 		codexModelProfileStep := Step{ID: "codex-model-profile", Target: PlanTargetCodex, Label: "Codex model profile", Snapshot: []SnapshotDecl{snapshot(cfg.CodexModelProfilePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSaveCodexModelProfile}, UpdateActions: []StepActionKind{StepActionSaveCodexModelProfile}, UninstallActions: []StepActionKind{StepActionRemoveCodexModelProfile}}
 		steps = append(steps,
 			Step{ID: "codex-runtime", Target: PlanTargetCodex, Label: "Codex CLI", Snapshot: []SnapshotDecl{snapshot(cfg.CodexAgentsMDPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionSyncCodexGuidance}, UpdateActions: []StepActionKind{StepActionSyncCodexGuidance}, UninstallActions: []StepActionKind{StepActionStripCodexGuidance}, DoctorChecks: []DoctorCheckKind{DoctorCheckCodexGuidance}},
-			codexMCPStep,
 			codexModelProfileStep,
 			codexModelStep,
 		)
-		capabilities = append(capabilities, "Codex CLI: AGENTS.md gestionado, Engram MCP registrado y modelo nativo de config.toml")
+		capabilities = append(capabilities, "Codex CLI: AGENTS.md gestionado y componentes MCP configurados por gentle-ai")
 	}
 	if selection.OpenClaw {
 		// The openclaw-model step always keeps its native-model doctor check, but only carries the
@@ -323,16 +314,11 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 			openClawModelStep.InstallActions = []StepActionKind{StepActionConfigureOpenClawNativeModel}
 			openClawModelStep.UpdateActions = []StepActionKind{StepActionConfigureOpenClawNativeModel}
 		}
-		openClawMCPStep := Step{ID: "openclaw-mcp", Target: PlanTargetOpenClaw, Label: "OpenClaw Engram MCP", InstallActions: []StepActionKind{StepActionRegisterOpenClawMCP}, UpdateActions: []StepActionKind{StepActionRegisterOpenClawMCP}, UninstallActions: []StepActionKind{StepActionUnregisterOpenClawMCP}}
 		steps = append(steps,
-			Step{ID: "openclaw-runtime", Target: PlanTargetOpenClaw, Label: "OpenClaw", Snapshot: []SnapshotDecl{snapshot(cfg.OpenClawAgentsMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.OpenClawSoulMDPath(), DriftPolicyWholeFileVeto), snapshot(cfg.OpenClawMCPConfigPath(), DriftPolicyWholeFileVeto), snapshot(cfg.OpenClawModelProfilePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UpdateActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UninstallActions: []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClaw}},
-			openClawMCPStep,
+			Step{ID: "openclaw-runtime", Target: PlanTargetOpenClaw, Label: "OpenClaw", Snapshot: []SnapshotDecl{snapshot(cfg.OpenClawAgentsMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.OpenClawSoulMDPath(), DriftPolicyWholeFileVeto), snapshot(cfg.OpenClawModelProfilePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UpdateActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}, UninstallActions: []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClaw}},
 			openClawModelStep,
 		)
-		capabilities = append(capabilities, "OpenClaw: workspace, skills y modelo provider/model mediante su CLI")
-	}
-	if selection.Claude || selection.OpenClaw {
-		steps = append(steps, Step{ID: "engram", Target: PlanTargetShared, Label: "Engram", Snapshot: []SnapshotDecl{snapshot(cfg.EngramStatePath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSyncEngram}, UpdateActions: []StepActionKind{StepActionSyncEngram}, UninstallActions: []StepActionKind{StepActionRemoveEngram}, DoctorChecks: []DoctorCheckKind{DoctorCheckEngramPlugin, DoctorCheckEngramSubagentVisibility, DoctorCheckEngramBinary, DoctorCheckEngramPath}})
+		capabilities = append(capabilities, "OpenClaw: workspace, skills, MCP y modelo provider/model mediante gentle-ai y su CLI")
 	}
 	if options.CloudResolvable && selection.Claude {
 		// StepActionRemoveEngramCloudState is StepActionSyncEngramCloud's reversal. RemoveEngramCloudState
@@ -345,7 +331,6 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 	}
 	if selection.Claude {
 		steps = append(steps,
-			Step{ID: "context7", Target: PlanTargetShared, Label: "Context7", Snapshot: []SnapshotDecl{snapshot(cfg.Context7StatePath(), DriftPolicyWholeFileVeto), snapshot(cfg.Context7ConfigPath(), DriftPolicyNonVeto)}, InstallActions: []StepActionKind{StepActionSyncContext7}, UpdateActions: []StepActionKind{StepActionSyncContext7}, UninstallActions: []StepActionKind{StepActionRemoveContext7}, DoctorChecks: []DoctorCheckKind{DoctorCheckContext7}},
 			Step{ID: "plugins", Target: PlanTargetShared, Label: "plugins", Snapshot: []SnapshotDecl{snapshot(cfg.KnownMarketplacesPath(), DriftPolicyNonVeto), snapshot(cfg.InstalledPluginsPath(), DriftPolicyNonVeto)}},
 			Step{ID: "memory-guard", Target: PlanTargetShared, Label: "memory guard", Snapshot: []SnapshotDecl{snapshot(cfg.SettingsPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionWriteClaudeManagedBlock, StepActionRegisterMemoryGuard}, UpdateActions: []StepActionKind{StepActionWriteClaudeManagedBlock, StepActionRegisterMemoryGuard}, UninstallActions: []StepActionKind{StepActionStripClaudeManagedBlock, StepActionUnregisterMemoryGuard}, DoctorChecks: []DoctorCheckKind{DoctorCheckMemoryGuard}},
 		)

@@ -13,7 +13,7 @@ import (
 )
 
 // GentleAIInstallArgs limits upstream writes to the runtimes selected for this run.
-// Engram and Context7 stay Click-owned until their registrations transfer together.
+// Engram and Context7 registration/lifecycle are owned by the pinned upstream installer.
 func GentleAIInstallArgs(selection TargetSelection) []string {
 	var agents []string
 	if selection.Claude {
@@ -28,7 +28,7 @@ func GentleAIInstallArgs(selection TargetSelection) []string {
 	if len(agents) == 0 {
 		return nil
 	}
-	return []string{"install", "--agents", strings.Join(agents, ","), "--preset", "full-gentleman", "--components", "skills,permissions,persona", "--persona", "neutral", "--scope", "global"}
+	return []string{"install", "--agents", strings.Join(agents, ","), "--preset", "full-gentleman", "--components", "engram,skills,context7,permissions,persona", "--persona", "neutral", "--scope", "global"}
 }
 
 // GentleAIInstallNotice separates actionable warnings from informational pin decisions.

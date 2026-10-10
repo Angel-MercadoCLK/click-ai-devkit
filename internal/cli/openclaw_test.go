@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,14 +67,12 @@ func execRootWithOpenClaw(t *testing.T, claudeHome, openClawHome string, args ..
 }
 
 // TestInstallCommand_OpenClawDetected_WritesAgentsAndSoul is task 2.14/2.17's end-to-end test,
-// adapted for the urgent cleanup-only fix: with openclaw resolvable on PATH, `click install` must
+// adapted for the ownership transfer: with openclaw resolvable on PATH, `click install` must
 // write AGENTS.md and SOUL.md, under the SAME single confirm as Claude Code's own writes
 // (execRootWithOpenClaw's non-TTY buffer takes the non-interactive path, exactly like every other
 // CLI test in this package, so this proves the writes actually run, not just that the plan lists
-// them). It must NOT create openclaw.json — SyncOpenClawMCPConfig is cleanup-only now (real
-// `validate config` evidence proved OpenClaw's schema has no top-level "mcpServers" key, so click
-// must never write one, not even to register Engram), and there is nothing to clean on a fresh
-// install where openclaw.json never existed.
+// them). gentle-ai owns the upstream MCP config in openclaw.json; Click writes only its guidance,
+// model profile, and memory-guard assets around that registration.
 func TestInstallCommand_OpenClawDetected_WritesAgentsAndSoul(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
@@ -104,8 +103,20 @@ func TestInstallCommand_OpenClawDetected_WritesAgentsAndSoul(t *testing.T) {
 	if !strings.Contains(string(soulRaw), "click-ai-devkit (managed)") {
 		t.Fatalf("SOUL.md content = %q, want it to contain the managed block markers", soulRaw)
 	}
-	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); !os.IsNotExist(err) {
-		t.Fatalf("Stat(openclaw.json) error = %v, want it left absent — SyncOpenClawMCPConfig is cleanup-only and must never create the file", err)
+	upstreamConfig, err := os.ReadFile(cfg.OpenClawMCPConfigPath())
+	if err != nil {
+		t.Fatalf("ReadFile(openclaw.json) error = %v, want gentle-ai's selected MCP registrations", err)
+	}
+	var openClawConfig map[string]any
+	if err := json.Unmarshal(upstreamConfig, &openClawConfig); err != nil {
+		t.Fatalf("parse gentle-ai OpenClaw config: %v", err)
+	}
+	mcp := openClawConfig["mcp"].(map[string]any)
+	servers := mcp["servers"].(map[string]any)
+	for _, name := range []string{"engram", "context7"} {
+		if _, ok := servers[name]; !ok {
+			t.Fatalf("OpenClaw mcp.servers = %v, want upstream registration %q", servers, name)
+		}
 	}
 	profileRaw, err := os.ReadFile(cfg.OpenClawModelProfilePath())
 	if err != nil {
@@ -259,8 +270,7 @@ func TestInstallCommand_OpenClawAbsent_NoSkillWrites(t *testing.T) {
 }
 
 // TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoul mirrors the install-side detection test
-// for `click update`, adapted for the cleanup-only fix: no pre-existing openclaw.json means update
-// leaves it absent too (nothing to clean).
+// for `click update` and keeps the upstream-owned MCP configuration present.
 func TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoul(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
@@ -281,14 +291,14 @@ func TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoul(t *testing.T) {
 	}
 
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
-	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); !os.IsNotExist(err) {
-		t.Fatalf("Stat(openclaw.json) error = %v, want it left absent — nothing to clean when it never existed", err)
+	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); err != nil {
+		t.Fatalf("Stat(openclaw.json) error = %v, want upstream-owned config retained", err)
 	}
 }
 
-// TestInstallCommand_OpenClawDetected_RejectsUnprovenLegacyMCPRegistration ensures preflight
-// rejects an existing same-name registration that cannot be proven Click-owned, without mutation.
-func TestInstallCommand_OpenClawDetected_RejectsUnprovenLegacyMCPRegistration(t *testing.T) {
+// TestInstallCommand_OpenClawDetected_PreservesUnprovenLegacyMCPConfig proves Click does not
+// delete an unproven same-name registration while transferring MCP ownership to gentle-ai.
+func TestInstallCommand_OpenClawDetected_PreservesUnprovenLegacyMCPConfig(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
 	runner := newTestCommandRunner(claudeHome)
@@ -317,6 +327,9 @@ func TestInstallCommand_OpenClawDetected_RejectsUnprovenLegacyMCPRegistration(t 
 	}
 	if string(got) != corrupted {
 		t.Fatalf("openclaw.json = %s, want unproven legacy config preserved exactly", got)
+	}
+	if !strings.Contains(string(got), "someUserKey") {
+		t.Fatalf("openclaw.json = %s, want unrelated top-level key preserved", got)
 	}
 }
 

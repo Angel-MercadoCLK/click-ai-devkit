@@ -380,11 +380,7 @@ func (r *testCommandRunner) writeKnownMarketplace(source string) error {
 // the real CLI in documentacion/spikes/spike-g-context7.md), mirroring the equivalent simulation
 // already used by installer package's own fakeCommandRunner (internal/installer/plugins.go).
 func (r *testCommandRunner) context7ConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(r.homeDir(), ".claude.json")
-	}
-	return filepath.Join(home, ".claude.json")
+	return filepath.Join(r.homeDir(), ".claude.json")
 }
 
 func (r *testCommandRunner) upsertMCPServer(name, url string) error {
@@ -551,6 +547,10 @@ func writeTestFile(path, content string) {
 
 func TestInstallCommand_Succeeds(t *testing.T) {
 	home := t.TempDir()
+	writeJSONFileForTest(t, filepath.Join(home, ".claude.json"), map[string]any{
+		"mcpServers":  map[string]any{"private-server": map[string]any{"command": "private-tool"}},
+		"userSetting": "preserved",
+	})
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
@@ -572,6 +572,29 @@ func TestInstallCommand_Succeeds(t *testing.T) {
 	}
 	if !strings.Contains(out, "CLAUDE.md") {
 		t.Errorf("install output = %q, want it to mention the CLAUDE.md step", out)
+	}
+	configBytes, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(.claude.json) error = %v", err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(configBytes, &config); err != nil {
+		t.Fatalf("parse .claude.json: %v", err)
+	}
+	if config["userSetting"] != "preserved" {
+		t.Fatalf(".claude.json userSetting = %v, want existing unrelated value preserved", config["userSetting"])
+	}
+	servers := config["mcpServers"].(map[string]any)
+	for _, name := range []string{"private-server", "engram", "context7"} {
+		if _, ok := servers[name]; !ok {
+			t.Fatalf(".claude.json mcpServers = %v, want %q present", servers, name)
+		}
+	}
+	if !reflect.DeepEqual(servers["engram"], map[string]any{"command": "engram", "args": []any{"mcp", "--tools=agent"}}) {
+		t.Fatalf("upstream Engram registration = %#v, want pinned gentle-ai shape", servers["engram"])
+	}
+	if !reflect.DeepEqual(servers["context7"], map[string]any{"command": "npx", "args": []any{"-y", "--package=@upstash/context7-mcp@2.2.5", "--", "context7-mcp"}}) {
+		t.Fatalf("upstream Context7 registration = %#v, want pinned gentle-ai shape", servers["context7"])
 	}
 }
 
@@ -795,18 +818,9 @@ func TestInstallCommand_CodexOnly_NonInteractiveOmitsNativeModelWithoutFlagAndDo
 	if err != nil {
 		t.Fatalf("install command error = %v, want nil for Codex-only noninteractive install without Claude, output:\n%s", err, out)
 	}
-	// SyncCodexMCP always runs for a Codex target (independent of --codex-model), issuing exactly
-	// one `codex mcp get engram` idempotency check via the fake runner — the fake's default Output
-	// stub answers success, so no `mcp add` follows. No Claude marketplace/preflight command is
-	// ever issued for a Codex-only install. SyncCodexMCP resolves the binary to an absolute path
-	// (filepath.Abs), so the fake lookup's "/usr/bin/codex" is qualified the same way here.
-	qualifiedCodexBinary, absErr := filepath.Abs("/usr/bin/codex")
-	if absErr != nil {
-		t.Fatal(absErr)
-	}
-	wantCommands := []string{qualifiedCodexBinary + " mcp get engram"}
-	if !reflect.DeepEqual(runner.commands, wantCommands) {
-		t.Fatalf("runner.commands = %#v, want exactly %#v (only the Codex Engram MCP check, no Claude commands)", runner.commands, wantCommands)
+	// gentle-ai owns Codex MCP registration; Click must issue no duplicate mcp get/add command.
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want no Click-owned Codex MCP commands", runner.commands)
 	}
 	if strings.Contains(out, "gpt-5.6") {
 		t.Fatalf("install output = %q, want no fabricated default Codex native model in noninteractive mode", out)
@@ -814,8 +828,17 @@ func TestInstallCommand_CodexOnly_NonInteractiveOmitsNativeModelWithoutFlagAndDo
 	if !strings.Contains(out, "Codex usa su modelo nativo ya configurado") {
 		t.Fatalf("install output = %q, want the native-default guidance for Codex when --codex-model is omitted", out)
 	}
-	if _, statErr := os.Stat(filepath.Join(codexHome, "config.toml")); !os.IsNotExist(statErr) {
-		t.Fatalf("Stat(config.toml) error = %v, want no Codex config write when --codex-model is omitted", statErr)
+	config, readErr := os.ReadFile(filepath.Join(codexHome, "config.toml"))
+	if readErr != nil {
+		t.Fatalf("ReadFile(config.toml) error = %v, want upstream MCP registration", readErr)
+	}
+	for _, want := range []string{"mcp_servers", "engram", "context7", "https://mcp.context7.com/mcp"} {
+		if !strings.Contains(string(config), want) {
+			t.Fatalf("config.toml = %q, want upstream MCP field %q", config, want)
+		}
+	}
+	if strings.Contains(string(config), "model =") {
+		t.Fatalf("config.toml = %q, want no native model mutation without --codex-model", config)
 	}
 	selection, found, loadErr := installer.LoadTargetSelection(installer.Config{ClickStateHome: stateHome})
 	if loadErr != nil {
@@ -881,18 +904,9 @@ func TestUpdateCommand_CodexOnly_UsesPersistedSelectionWithoutClaudeAndOmitsNati
 	if err != nil {
 		t.Fatalf("update command error = %v, want nil for Codex-only update without Claude, output:\n%s", err, out)
 	}
-	// SyncCodexMCP always runs for a Codex target (independent of --codex-model), issuing exactly
-	// one `codex mcp get engram` idempotency check via the fake runner. No Claude marketplace/
-	// preflight command is ever issued for a Codex-only update. SyncCodexMCP resolves the binary to
-	// an absolute path (filepath.Abs), so the fake lookup's "/usr/bin/codex" is qualified the same
-	// way here.
-	qualifiedCodexBinary, absErr := filepath.Abs("/usr/bin/codex")
-	if absErr != nil {
-		t.Fatal(absErr)
-	}
-	wantCommands := []string{qualifiedCodexBinary + " mcp get engram"}
-	if !reflect.DeepEqual(runner.commands, wantCommands) {
-		t.Fatalf("runner.commands = %#v, want exactly %#v (only the Codex Engram MCP check, no Claude commands)", runner.commands, wantCommands)
+	// gentle-ai owns Codex MCP registration; Click must issue no duplicate mcp get/add command.
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want no Click-owned Codex MCP commands", runner.commands)
 	}
 	if strings.Contains(out, "gpt-5.6") {
 		t.Fatalf("update output = %q, want no fabricated default Codex native model in noninteractive mode", out)
@@ -900,8 +914,17 @@ func TestUpdateCommand_CodexOnly_UsesPersistedSelectionWithoutClaudeAndOmitsNati
 	if !strings.Contains(out, "Codex usa su modelo nativo ya configurado") {
 		t.Fatalf("update output = %q, want the native-default guidance for Codex when --codex-model is omitted", out)
 	}
-	if _, statErr := os.Stat(filepath.Join(codexHome, "config.toml")); !os.IsNotExist(statErr) {
-		t.Fatalf("Stat(config.toml) error = %v, want no Codex config write when --codex-model is omitted", statErr)
+	config, readErr := os.ReadFile(filepath.Join(codexHome, "config.toml"))
+	if readErr != nil {
+		t.Fatalf("ReadFile(config.toml) error = %v, want upstream MCP registration", readErr)
+	}
+	for _, want := range []string{"mcp_servers", "engram", "context7", "https://mcp.context7.com/mcp"} {
+		if !strings.Contains(string(config), want) {
+			t.Fatalf("config.toml = %q, want upstream MCP field %q", config, want)
+		}
+	}
+	if strings.Contains(string(config), "model =") {
+		t.Fatalf("config.toml = %q, want no native model mutation without --codex-model", config)
 	}
 }
 
@@ -944,7 +967,7 @@ func TestUpdateCommand_CodexNativeMutationFailure_RollsBackConfigToml(t *testing
 	}
 }
 
-func TestDoctorCommand_StaleCacheThenUpdateThenFreshDoctorReportsHealthy(t *testing.T) {
+func TestDoctorCommand_ReportsMissingCacheEntryThenUpdateRestoresHealth(t *testing.T) {
 	seedResolvableEngram(t)
 	seedResolvableClickBinary(t)
 	home := t.TempDir()
@@ -978,10 +1001,10 @@ func TestDoctorCommand_StaleCacheThenUpdateThenFreshDoctorReportsHealthy(t *test
 
 	doctorOut, doctorErr := execRoot(t, home, "doctor")
 	if doctorErr == nil {
-		t.Fatalf("doctor error = nil on a stale click-sdd cache path, want unhealthy report, output:\n%s", doctorOut)
+		t.Fatalf("doctor error = nil for a registered cache path with missing agent files, output:\n%s", doctorOut)
 	}
-	if !strings.Contains(strings.ToLower(doctorOut), "click update") {
-		t.Fatalf("doctor output = %q, want update guidance for stale cache recovery", doctorOut)
+	if !strings.Contains(doctorOut, "caché registrada") || !strings.Contains(doctorOut, "obsoleta o incompleta") {
+		t.Fatalf("doctor output = %q, want the actual missing-cache diagnostic", doctorOut)
 	}
 
 	updateOut, updateErr := execRoot(t, home, "update")
@@ -992,8 +1015,8 @@ func TestDoctorCommand_StaleCacheThenUpdateThenFreshDoctorReportsHealthy(t *test
 	if freshDoctorErr != nil {
 		t.Fatalf("doctor after update error = %v, want healthy report after the refreshed session, output:\n%s", freshDoctorErr, freshDoctorOut)
 	}
-	if !strings.Contains(freshDoctorOut, "propagación") {
-		t.Fatalf("doctor after update output = %q, want the live propagation limitation note from the refreshed session", freshDoctorOut)
+	if !strings.Contains(freshDoctorOut, "Engram subagent visibility") {
+		t.Fatalf("doctor after update output = %q, want the refreshed Engram visibility check", freshDoctorOut)
 	}
 }
 
@@ -1236,8 +1259,8 @@ func TestUpdateCommand_ResyncsPluginsAndWritesEngramPin(t *testing.T) {
 	if !strings.Contains(out, "click-review") {
 		t.Errorf("update output = %q, want it to mention the click-review re-sync step", out)
 	}
-	if !strings.Contains(out, "Engram") {
-		t.Errorf("update output = %q, want it to mention the Engram pin step", out)
+	if !strings.Contains(out, "gentle-ai") {
+		t.Errorf("update output = %q, want it to mention upstream component sync", out)
 	}
 
 	wantCommand := "claude plugin install click-review@click-ai-devkit"
@@ -1245,12 +1268,9 @@ func TestUpdateCommand_ResyncsPluginsAndWritesEngramPin(t *testing.T) {
 		t.Fatalf("update command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
 	}
 
-	// click no longer writes an MCP config file itself — Step 0 of Slice 3 proved Claude Code
-	// never reads a hand-rolled <ClaudeHome>/mcp/engram.json; only the engram plugin's own
-	// bundled .mcp.json is actually loaded. `click update` now just re-syncs the engram plugin
-	// (idempotent) and refreshes click's own state bookkeeping file.
-	if _, err := os.Stat(filepath.Join(home, "click-ai-devkit", "engram.json")); err != nil {
-		t.Fatalf("update did not write engram pinned state: %v", err)
+	// Click no longer writes a separate Engram pin or MCP registration; gentle-ai owns that lifecycle.
+	if _, err := os.Stat(filepath.Join(home, "click-ai-devkit", "engram.json")); !os.IsNotExist(err) {
+		t.Fatalf("update created Click-owned Engram state: stat error = %v, want no state file", err)
 	}
 }
 

@@ -21,15 +21,11 @@ func TestBuildTargetPlan_TargetFirstOrderAndSharedProjections(t *testing.T) {
 		"Claude Code",
 		"Claude model/profile",
 		"Codex CLI",
-		"Codex Engram MCP",
 		"Codex model profile",
 		"Codex native model",
 		"OpenClaw",
-		"OpenClaw Engram MCP",
 		"OpenClaw native model",
-		"Engram",
 		"Engram Cloud",
-		"Context7",
 		"plugins",
 		"memory guard",
 		"SDD assets",
@@ -42,13 +38,26 @@ func TestBuildTargetPlan_TargetFirstOrderAndSharedProjections(t *testing.T) {
 	}
 }
 
+func TestBuildTargetPlan_DelegatesEngramAndContext7LifecycleToGentleAI(t *testing.T) {
+	selection := TargetSelection{Configured: true, Claude: true, Codex: true, OpenClaw: true}
+	plan := BuildTargetPlan(Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}, selection, PlanOptions{CloudResolvable: true})
+	for _, action := range append(append(plan.InstallActionKinds(), plan.UpdateActionKinds()...), plan.UninstallActionKinds()...) {
+		switch action {
+		case StepActionSyncEngram, StepActionRemoveEngram, StepActionSyncContext7, StepActionRemoveContext7,
+			StepActionSyncCodexMCP, StepActionRemoveCodexMCP, StepActionRegisterOpenClawMCP, StepActionUnregisterOpenClawMCP,
+			StepActionSyncOpenClawMCP:
+			t.Errorf("Click action %q still owns a gentle-ai-managed registration", action)
+		}
+	}
+}
+
 func TestBuildTargetPlan_CodexOnlySkipsClaudeOwnedSteps(t *testing.T) {
 	cfg := Config{CodexHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	selection := TargetSelection{Configured: true, Codex: true}
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
 	got := plan.StepLabels()
-	want := []string{"gentle-ai", "Codex CLI", "Codex Engram MCP", "Codex model profile", "Codex native model", "SDD assets"}
+	want := []string{"gentle-ai", "Codex CLI", "Codex model profile", "Codex native model", "SDD assets"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("StepLabels() = %#v, want %#v", got, want)
 	}
@@ -77,20 +86,15 @@ func TestBuildTargetPlan_CodexOnlyExposesLifecycleActionsForProductionCommands(t
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
 
-	// Without an explicit --codex-model opt-in, the native config.toml mutation is NOT part of the
-	// install/update action set: a plain Codex run neither lists nor performs any native mutation.
-	// StepActionSyncCodexMCP, unlike the native-model mutation, is ALWAYS present — registering
-	// Engram's MCP server is independent of --codex-model.
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionSaveCodexModelProfile}; !reflect.DeepEqual(got, want) {
+	// Engram MCP now belongs to gentle-ai; plain Click install only manages Click's Codex guidance and profile.
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSaveCodexModelProfile}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionSaveCodexModelProfile}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSaveCodexModelProfile}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
-	// Uninstall reverses the managed AGENTS.md block (StripCodexGuidance) AND deregisters Engram's
-	// Codex MCP server (StepActionRemoveCodexMCP — SyncCodexMCP's reversal), then removes the neutral
-	// target selection. The native config.toml model is deliberately NOT reverted (user-owned).
-	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripCodexGuidance, StepActionRemoveCodexMCP, StepActionRemoveCodexModelProfile, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
+	// Uninstall removes Click guidance/profile only and never removes shared upstream MCP registrations.
+	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripCodexGuidance, StepActionRemoveCodexModelProfile, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UninstallActionKinds() = %#v, want %#v", got, want)
 	}
 	if got, want := plan.DoctorCheckKinds(), []DoctorCheckKind{DoctorCheckCodexGuidance}; !reflect.DeepEqual(got, want) {
@@ -107,29 +111,29 @@ func TestBuildTargetPlan_CodexNativeModelFlag_AddsNativeMutationAction(t *testin
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{CodexNativeModel: true})
 
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionSaveCodexModelProfile, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSaveCodexModelProfile, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSyncCodexMCP, StepActionSaveCodexModelProfile, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncCodexGuidance, StepActionSaveCodexModelProfile, StepActionConfigureCodexNativeModel}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
 }
 
-// TestBuildTargetPlan_OpenClawExposesMCPRegistrationActions proves that OpenClaw's dedicated MCP
-// step contributes register-openclaw-mcp to install/update and unregister-openclaw-mcp to uninstall.
-func TestBuildTargetPlan_OpenClawExposesMCPRegistrationActions(t *testing.T) {
+// TestBuildTargetPlan_OpenClawDelegatesMCPRegistration proves that Click no longer registers or
+// removes the Engram MCP server in OpenClaw.
+func TestBuildTargetPlan_OpenClawDelegatesMCPRegistration(t *testing.T) {
 	cfg := Config{OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	selection := TargetSelection{Configured: true, OpenClaw: true}
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
 
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncEngram, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionRegisterOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncEngram, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawMCP, StepActionRegisterOpenClawMCP, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills, StepActionUnregisterOpenClawMCP, StepActionRemoveOpenClawModelProfile, StepActionRemoveEngram, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills, StepActionRemoveOpenClawModelProfile, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UninstallActionKinds() = %#v, want %#v", got, want)
 	}
 }
@@ -174,10 +178,8 @@ func TestBuildTargetPlan_ClaudeExposesModelsAndCloudTeardown(t *testing.T) {
 	want := []StepActionKind{
 		StepActionRemoveMarketplacePlugins,
 		StepActionRemoveModels,
-		StepActionRemoveEngram,
 		StepActionRemoveEngramCloudSessionSync,
 		StepActionRemoveEngramCloudState,
-		StepActionRemoveContext7,
 		StepActionStripClaudeManagedBlock,
 		StepActionUnregisterMemoryGuard,
 		StepActionRemoveTargetSelection,

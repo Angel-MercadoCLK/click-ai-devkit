@@ -194,7 +194,7 @@ func TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump(t *
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	t.Setenv("CLICK_CLAUDE_HOME", filepath.Join(home, ".claude"))
+	t.Setenv("CLICK_CLAUDE_HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("CLICK_OPENCLAW_HOME", filepath.Join(home, ".openclaw"))
 	t.Setenv("CLICK_STATE_HOME", filepath.Join(home, ".click-state"))

@@ -17,6 +17,7 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
+	toml "github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -348,14 +349,8 @@ func TestInstall_EnrollmentRunnerFailureStillExitZero(t *testing.T) {
 	}
 }
 
-// TestInstallCommand_CodexMCPFailureIsNonFatal is FIX 2's non-fatal contract, mirroring
-// TestInstallCommand_CloudConfigured_EnrollmentFailureIsNonFatal for Codex's Engram MCP
-// registration (D45 "supplementary integrations are non-fatal" pattern): a failure registering
-// Engram's MCP server with Codex must never abort an otherwise-good local install. The command must
-// (a) return nil, (b) surface a Spanish warning containing the underlying error, and (c) still
-// complete the remaining steps (the Codex AGENTS.md guidance write already ran before this step,
-// and the install still reaches its completion line).
-func TestInstallCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
+// TestInstallCommand_DoesNotRegisterCodexMCP proves the pinned upstream install owns Codex MCP.
+func TestInstallCommand_DoesNotRegisterCodexMCP(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 	runner := newTestCommandRunner(claudeHome)
@@ -370,7 +365,9 @@ func TestInstallCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
 	})
 	defer restoreGuidance()
 
+	mcpCalls := 0
 	restoreMCP := SetSyncCodexMCPFuncForTests(func(cfg installer.Config) error {
+		mcpCalls++
 		return errTestCodexMCP
 	})
 	defer restoreMCP()
@@ -379,17 +376,14 @@ func TestInstallCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install command error = %v, want nil (Codex MCP failure must be non-fatal), output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "No se pudo registrar Engram en Codex") {
-		t.Fatalf("install output = %q, want it to contain the Spanish Codex MCP failure warning", out)
-	}
-	if !strings.Contains(out, errTestCodexMCP.Error()) {
-		t.Fatalf("install output = %q, want the warning to include the underlying error %q", out, errTestCodexMCP.Error())
-	}
 	if !strings.Contains(out, "Instalación completa.") {
-		t.Fatalf("install output = %q, want the command to continue to completion after the Codex MCP failure", out)
+		t.Fatalf("install output = %q, want the command to complete", out)
 	}
 	if guidanceCalls != 1 {
-		t.Fatalf("SyncCodexGuidance called %d times, want 1 — the AGENTS.md write step must still have run before the failed MCP step", guidanceCalls)
+		t.Fatalf("SyncCodexGuidance called %d times, want 1", guidanceCalls)
+	}
+	if mcpCalls != 0 {
+		t.Fatalf("SyncCodexMCP called %d times, want no Click-owned Codex registration", mcpCalls)
 	}
 }
 
@@ -469,7 +463,7 @@ func TestInstall_SharedReaderConsentBeforeTokenWrite(t *testing.T) {
 		t.Fatal("consent reader was not called by runInstall")
 	}
 
-	settingsPath := filepath.Join(home, "settings.json")
+	settingsPath := filepath.Join(os.Getenv("CLICK_CLAUDE_HOME"), "settings.json")
 	settings, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatalf("ReadFile(settings.json) error = %v", err)
@@ -611,7 +605,6 @@ func TestInstall_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 	t.Setenv("ENGRAM_CLOUD_TOKEN", tokenOverride)
 	configureCLIExecutionHomes(t, home, "", "", []string{"install"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
-	t.Setenv("CODEX_HOME", t.TempDir())
 
 	// Run install with --persist-engram-cloud-token to give consent
 	root := NewRootCommand()
@@ -826,6 +819,9 @@ func TestMain(m *testing.M) {
 			return []byte("gentle-ai v4.0.0"), nil
 		}
 		if args[0] == "install" {
+			if err := writeGentleAIInstallFixture(args); err != nil {
+				return nil, err
+			}
 			return nil, nil
 		}
 		panic("unexpected upstream operation")
@@ -837,6 +833,159 @@ func TestMain(m *testing.M) {
 	restore()
 	os.RemoveAll(home)
 	os.Exit(code)
+}
+
+func writeGentleAIInstallFixture(args []string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	agents, components := "", ""
+	for i := 0; i < len(args)-1; i++ {
+		switch args[i] {
+		case "--agents":
+			agents = args[i+1]
+		case "--components":
+			components = args[i+1]
+		}
+	}
+	engram := map[string]any{"command": "engram", "args": []string{"mcp", "--tools=agent"}}
+	context7 := map[string]any{"command": "npx", "args": []string{"-y", "--package=@upstash/context7-mcp@2.2.5", "--", "context7-mcp"}}
+	contains := func(list, value string) bool {
+		for _, item := range strings.Split(list, ",") {
+			if item == value {
+				return true
+			}
+		}
+		return false
+	}
+	entries := map[string]any{}
+	if contains(components, "engram") {
+		entries["engram"] = engram
+	}
+	if contains(components, "context7") {
+		entries["context7"] = context7
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	if contains(agents, "claude-code") {
+		if err := updateJSONMCPFixture(filepath.Join(home, ".claude.json"), "mcpServers", entries); err != nil {
+			return err
+		}
+	}
+	if contains(agents, "codex") {
+		codexEntries := map[string]any{}
+		if _, ok := entries["engram"]; ok {
+			codexEntries["engram"] = engram
+		}
+		if _, ok := entries["context7"]; ok {
+			codexEntries["context7"] = map[string]any{"url": "https://mcp.context7.com/mcp"}
+		}
+		if err := updateCodexMCPFixture(filepath.Join(home, ".codex", "config.toml"), codexEntries); err != nil {
+			return err
+		}
+	}
+	if contains(agents, "openclaw") {
+		if err := updateOpenClawMCPFixture(filepath.Join(home, ".openclaw", "openclaw.json"), entries); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func updateJSONMCPFixture(path, key string, entries map[string]any) error {
+	root := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &root); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	servers, _ := root[key].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	for name, entry := range entries {
+		servers[name] = entry
+	}
+	root[key] = servers
+	data, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o600)
+}
+
+func updateOpenClawMCPFixture(path string, entries map[string]any) error {
+	root := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &root); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	mcp, _ := root["mcp"].(map[string]any)
+	if mcp == nil {
+		mcp = map[string]any{}
+	}
+	servers, _ := mcp["servers"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	if legacy, ok := root["mcpServers"].(map[string]any); ok {
+		for name, entry := range legacy {
+			if _, exists := servers[name]; !exists {
+				servers[name] = entry
+			}
+		}
+		delete(root, "mcpServers")
+	}
+	for name, entry := range entries {
+		servers[name] = entry
+	}
+	mcp["servers"] = servers
+	root["mcp"] = mcp
+	data, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o600)
+}
+
+func updateCodexMCPFixture(path string, entries map[string]any) error {
+	root := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := toml.Unmarshal(data, &root); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	servers, _ := root["mcp_servers"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	for name, entry := range entries {
+		servers[name] = entry
+	}
+	root["mcp_servers"] = servers
+	data, err := toml.Marshal(root)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }
 
 func TestGentleAIStep_UnsupportedRootStopsBeforeProvisioning(t *testing.T) {
@@ -1040,6 +1189,9 @@ func TestGentleAICommands_SelectedTargetsAndFailStop(t *testing.T) {
 func TestGentleAIStep_DriftUsesWarningAndMissingUsesInfo(t *testing.T) {
 	for _, tt := range []struct{ version, marker string }{{"v4.1.0", "[warn] gentle-ai difiere"}, {"", "[i] gentle-ai no está instalado"}} {
 		t.Run(tt.version, func(t *testing.T) {
+			processHome := t.TempDir()
+			t.Setenv("HOME", processHome)
+			t.Setenv("USERPROFILE", processHome)
 			p := installer.NewGentleAIProvisioner()
 			p.EnsureOnPath = func(string) (bool, error) { return false, nil }
 			home := t.TempDir()
@@ -1062,9 +1214,6 @@ func TestGentleAIStep_DriftUsesWarningAndMissingUsesInfo(t *testing.T) {
 			}
 			p.Fetch = func(context.Context, string) (io.ReadCloser, error) { return nil, errors.New("fixture failure") }
 			t.Cleanup(installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
-			processHome := t.TempDir()
-			t.Setenv("HOME", processHome)
-			t.Setenv("USERPROFILE", processHome)
 			cmd := newInstallCommand()
 			cmd.SetContext(context.Background())
 			var out bytes.Buffer

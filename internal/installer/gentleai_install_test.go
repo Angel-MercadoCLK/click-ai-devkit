@@ -28,7 +28,7 @@ func TestGentleAIInstallArgs_SelectedTargets(t *testing.T) {
 		{TargetSelection{Claude: true, Codex: true, OpenClaw: true}, "claude-code,codex,openclaw"},
 	} {
 		t.Run(tt.agents, func(t *testing.T) {
-			want := []string{"install", "--agents", tt.agents, "--preset", "full-gentleman", "--components", "skills,permissions,persona", "--persona", "neutral", "--scope", "global"}
+			want := []string{"install", "--agents", tt.agents, "--preset", "full-gentleman", "--components", "engram,skills,context7,permissions,persona", "--persona", "neutral", "--scope", "global"}
 			if got := GentleAIInstallArgs(tt.selection); !reflect.DeepEqual(got, want) {
 				t.Fatalf("argv = %q, want %q", got, want)
 			}
