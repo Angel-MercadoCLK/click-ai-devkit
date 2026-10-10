@@ -11,18 +11,71 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 )
 
-// TestConfigureOpenClawModelCommand_NoArgs_PrintsGuidanceAndReturnsNil is the FIX 1 contract:
-// running `click configure-openclaw-model` with NO args (exactly what the standing menu dispatches)
-// must NEVER return an error — an error here would propagate through runMenuLoop and terminate the
-// whole interactive menu session. It must instead print the Spanish guidance line and exit cleanly.
-func TestConfigureOpenClawModelCommand_NoArgs_PrintsGuidanceAndReturnsNil(t *testing.T) {
-	home := t.TempDir()
-	out, err := execRoot(t, home, "configure-openclaw-model")
-	if err != nil {
-		t.Fatalf("`click configure-openclaw-model` with no args error = %v, want nil (must never crash the menu)", err)
-	}
-	if !strings.Contains(out, "Indique el modelo con: click configure-openclaw-model <provider/model>") {
-		t.Fatalf("no-args output = %q, want the Spanish guidance line", out)
+func TestConfigureOpenClawModelCommand_RetiredWithoutChangingExistingConfiguration(t *testing.T) {
+	for _, args := range [][]string{{"configure-openclaw-model"}, {"configure-openclaw-model", "openai/example-model"}} {
+		t.Run(strings.Join(args, "-"), func(t *testing.T) {
+			claudeHome, openClawHome := t.TempDir(), t.TempDir()
+			t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
+			cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+			if err := os.MkdirAll(filepath.Dir(cfg.OpenClawMCPConfigPath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			before := []byte(`{"mcp":{"servers":{"foreign":{"command":"keep-me"}}},"agents":{"defaults":{"model":{"primary":"vendor/existing","fallbacks":["vendor/fallback"]}}},"custom":"sentinel"}`)
+			if err := os.WriteFile(cfg.OpenClawMCPConfigPath(), before, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(cfg.OpenClawModelProfilePath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			profileBefore := []byte(`{"schema_version":2,"profile":"legacy","models":{"default":"preserve-me"}}`)
+			if err := os.WriteFile(cfg.OpenClawModelProfilePath(), profileBefore, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			runner := newTestCommandRunner(claudeHome)
+			restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+			t.Cleanup(restoreRunner)
+			lookupCalls := 0
+			restoreLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+				lookupCalls++
+				return cliFakeBinaryLookup{resolved: map[string]string{}}
+			})
+			t.Cleanup(restoreLookup)
+
+			cmd := newConfigureOpenClawModelCommand()
+			var output bytes.Buffer
+			cmd.SetOut(&output)
+			cmd.SetErr(&output)
+			cmd.SetIn(&bytes.Buffer{})
+			cmd.SetArgs(args[1:])
+			err := cmd.Execute()
+			out := output.String()
+			if err == nil {
+				t.Fatalf("command error = nil, want a deprecation error; output=%q", out)
+			}
+			if !strings.Contains(err.Error(), "retirado") {
+				t.Fatalf("command error = %q, want a Spanish retirement notice", err)
+			}
+			if len(runner.commands) != 0 {
+				t.Fatalf("runner commands = %v, want none", runner.commands)
+			}
+			if lookupCalls != 0 {
+				t.Fatalf("runtime lookup factory called %d times, want 0", lookupCalls)
+			}
+			after, readErr := os.ReadFile(cfg.OpenClawMCPConfigPath())
+			if readErr != nil {
+				t.Fatalf("ReadFile(existing OpenClaw config) error = %v", readErr)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("existing OpenClaw config changed: before=%q after=%q", before, after)
+			}
+			profileAfter, readErr := os.ReadFile(cfg.OpenClawModelProfilePath())
+			if readErr != nil {
+				t.Fatalf("ReadFile(existing OpenClaw model profile) error = %v", readErr)
+			}
+			if string(profileAfter) != string(profileBefore) {
+				t.Fatalf("existing OpenClaw model profile changed: before=%q after=%q", profileBefore, profileAfter)
+			}
+		})
 	}
 }
 

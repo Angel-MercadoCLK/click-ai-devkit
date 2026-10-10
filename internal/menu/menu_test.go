@@ -163,13 +163,13 @@ func TestConfigureTargetsMenuItemIsActiveAndDispatchable(t *testing.T) {
 	}
 }
 
-func TestConfigureOpenClawModelMenuItemRequiresExplicitRefs(t *testing.T) {
-	idx := firstItemIndexWhere(t, func(it Item) bool { return it.Action == ActionConfigureOpenClawModel })
-	if !Items[idx].Active || Items[idx].Label != "Configurar modelo nativo de OpenClaw" {
-		t.Fatalf("configure OpenClaw model item = %+v, want active Spanish menu row", Items[idx])
-	}
-	if got := ActionArgs(ActionConfigureOpenClawModel); len(got) != 1 || got[0] != "configure-openclaw-model" {
-		t.Fatalf("ActionArgs(configure OpenClaw model) = %v, want command without guessed model refs", got)
+func TestDefaultMenuOmitsRetiredModelSelectors(t *testing.T) {
+	for _, retired := range []string{"configure-models", "configure-openclaw-model"} {
+		for _, item := range DefaultItems() {
+			if item.Action == retired || strings.Contains(item.Label, "Configurar modelo") {
+				t.Errorf("default menu contains retired model selector: %+v", item)
+			}
+		}
 	}
 }
 
@@ -347,16 +347,15 @@ func TestModel_View_InertItemsShowComingSoonSuffix(t *testing.T) {
 
 func TestActionArgs_MapsEachActiveDispatchableAction(t *testing.T) {
 	cases := map[string][]string{
-		ActionInstall:         {"install"},
-		ActionUpdate:          {"update"},
-		ActionConfigureModels: {"configure-models"},
-		ActionAgentBuilder:    {"agent-builder"},
-		ActionDoctor:          {"doctor"},
-		ActionTargets:         {"targets"},
-		ActionUninstall:       {"uninstall"},
-		ActionManageBackups:   {"manage-backups"},
-		ActionRollback:        {"rollback"},
-		ActionPlugins:         {"plugins"},
+		ActionInstall:       {"install"},
+		ActionUpdate:        {"update"},
+		ActionAgentBuilder:  {"agent-builder"},
+		ActionDoctor:        {"doctor"},
+		ActionTargets:       {"targets"},
+		ActionUninstall:     {"uninstall"},
+		ActionManageBackups: {"manage-backups"},
+		ActionRollback:      {"rollback"},
+		ActionPlugins:       {"plugins"},
 	}
 	for action, want := range cases {
 		got := ActionArgs(action)

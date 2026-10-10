@@ -80,8 +80,8 @@ func TestReleaseDocumentation_MatchesCurrentTargetContracts(t *testing.T) {
 	assertContains(t, codex, "Click never changes credentials, providers, or any table-scoped `model` keys.")
 
 	runbook := readText(t, filepath.Join("..", "..", "documentacion", "portability-runbook.md"))
-	assertContains(t, runbook, "Click's automated OpenClaw mutation is qualified by the `openclaw config set --help` probe.")
-	assertContains(t, runbook, "Release evidence still requires a recorded run against a real installed OpenClaw CLI before publication.")
+	assertContains(t, runbook, "Click's `configure-models` and `configure-openclaw-model` selectors are retired.")
+	assertContains(t, runbook, "Configure OpenClaw through OpenClaw's own")
 	assertContains(t, runbook, "Portability runbook (`documentacion/portability-runbook.md`) passed on a clean/gentle-ai-absent profile for this version.")
 }
 

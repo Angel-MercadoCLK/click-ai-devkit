@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -10,17 +11,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newConfigureModelsCommand backs the menu's "Configure models" item: it reuses install.go's
-// existing runModelSelectTUI (the same internal/ui.ModelSelectModel screen `click install`
-// already drives — not rebuilt here) and persists the result via resolveAndSaveConfiguredModels,
-// which preserves the currently persisted orchestration profile label (C1 fix) instead of
-// silently dropping it. Hidden from `click --help` since it's primarily reached through the
-// standing menu, but still directly runnable (`click configure-models`) for scripts or developers
-// who want to skip the menu.
+// newConfigureModelsCommand remains as a compatibility entrypoint for scripts that used the
+// retired Click-owned model selector. It deliberately performs no prompt or configuration write.
 func newConfigureModelsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "configure-models",
-		Short:  "Interactively choose click-sdd's per-phase models and save them",
+		Short:  "Comando retirado; la selección de modelos compatibles pertenece a gentle-ai",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runConfigureModels(cmd)
@@ -29,26 +25,8 @@ func newConfigureModelsCommand() *cobra.Command {
 	return cmd
 }
 
-func runConfigureModels(cmd *cobra.Command) error {
-	out := cmd.OutOrStdout()
-	r := rendererFor(cmd, out)
-
-	// Same non-hang safety net as bare `click`'s interactive() gate: this command can be reached
-	// directly (not only through the already-TTY-gated menu), so it must never spin up a real
-	// bubbletea program against a non-terminal. Both streams are required: bubbletea starves on
-	// piped/redirected stdin even when stdout is a real TTY.
-	if !isTerminalWriter(out) || !isTerminalReader(cmd.InOrStdin()) {
-		fmt.Fprintln(out, r.Info("No hay terminal interactiva disponible; use `click install` o `click update` para aplicar los modelos por defecto."))
-		return nil
-	}
-
-	claudeHome, err := installer.ResolveClaudeHome()
-	if err != nil {
-		return err
-	}
-	cfg := installer.Config{ClaudeHome: claudeHome}
-
-	return resolveAndSaveConfiguredModels(cmd, out, r, cfg, runModelSelectTUI)
+func runConfigureModels(_ *cobra.Command) error {
+	return errors.New("el selector de modelos de Click fue retirado; para roles compatibles, use la configuración interactiva de Configure Models de gentle-ai")
 }
 
 // configureModelsSelector matches runModelSelectTUI's signature so tests can drive

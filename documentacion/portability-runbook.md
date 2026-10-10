@@ -17,22 +17,16 @@ Adding files to the plugin staging location is not the same as activating a plug
 invent a registration protocol or install arbitrary files; activation must use the target's native
 flow once that flow is explicitly supported.
 
-## OpenClaw native model configuration
+## Model selection ownership
 
-Click keeps `model-profile.json` as Click-owned reference/rollback metadata. It is not OpenClaw's
-native configuration. To change OpenClaw's native model settings, provide explicit model references
-through Click; Click delegates the writes to OpenClaw and never rewrites `~/.openclaw/openclaw.json`:
+Click's `configure-models` and `configure-openclaw-model` selectors are retired. The compatibility
+commands return a deprecation error and do not prompt or modify configuration. For roles supported
+by gentle-ai, use its interactive Configure Models flow. Configure OpenClaw through OpenClaw's own
+native configuration tools; Click does not claim or wrap an OpenClaw model-selection interface.
 
-```text
-click configure-openclaw-model openai/gpt-5.6-sol
-click configure-openclaw-model openai/gpt-5.6-sol anthropic/claude-sonnet-4-6
-```
-
-The adapter invokes `openclaw config set agents.defaults.model.primary
-<provider/model>` and, when fallbacks are supplied, `openclaw config set agents.defaults.model.fallbacks
-'[...]' --strict-json`. Click's automated OpenClaw mutation is qualified by the `openclaw config set --help` probe. That probe must expose the expected command, keys, and JSON flag before Click writes anything. Model references must use the `provider/model` form. Click does not guess a provider, model, API key, or credential; credentials remain OpenClaw's responsibility. If OpenClaw is absent or rejects a command, Click reports the error and does not claim success.
-
-Release evidence still requires a recorded run against a real installed OpenClaw CLI before publication. The automated help probe is the safety gate for repository code and CI; the real installed-CLI receipt is the release gate for shipping the claim.
+Existing Click model-profile artifacts and OpenClaw native settings are preserved. Install/update
+profile lifecycle retirement is handled separately; do not treat this selector retirement as proof
+that every older profile path has already been removed.
 
 ## Invocation contract
 
