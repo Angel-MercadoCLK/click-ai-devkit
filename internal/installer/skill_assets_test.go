@@ -9,10 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestSkillAssets verifies PR1 and PR2's content-only slices: the canonical Spanish
-// OpenClaw SKILL.md assets for clickhola and clickdev, plus their thin English Claude Code
-// aliases. Each document must parse as YAML and retain the concrete contract sections and
-// phrases supplied by the user.
+// TestSkillAssets verifies the retained Spanish OpenClaw clickhola skill. The retired Click SDD
+// bridge and aliases are intentionally no longer shipped.
 func TestSkillAssets(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -49,8 +47,10 @@ func TestSkillAssets(t *testing.T) {
 				"bosquejo de referencia desechable",
 				"kebab-case",
 				"confirma",
-				"mem_save",
+				"guarda el brief estructurado en inglés usando `mem_save`",
 				"sdd/{change-name}/elicitation",
+				"Presenta también el brief completo en esta conversación",
+				"el solicitante decide cómo continuar",
 				"Source: clickhola (OpenClaw)",
 				"Problem",
 				"Users",
@@ -63,64 +63,9 @@ func TestSkillAssets(t *testing.T) {
 			},
 			wantMissing: []string{
 				"{{CLICK_BIN}}",
-			},
-		},
-		{
-			name:     "click_sdd_clickhola_alias",
-			path:     filepath.Join("..", "..", "plugins", "click-sdd", "skills", "clickhola", "SKILL.md"),
-			wantName: "clickhola",
-			wantMarkers: []string{
 				"click-elicitor",
-				"requirements-elicitation",
-				"Paso 1",
-				"alias",
-			},
-			wantMissing: []string{
-				"duplicate elicitation logic",
-				"executor",
-				"Engram Cloud",
-			},
-		},
-		{
-			name:          "openclaw_clickdev",
-			path:          filepath.Join("..", "..", "internal", "installer", "assets", "openclaw", "skills", "clickdev", "SKILL.md"),
-			wantName:      "clickdev",
-			wantInvokable: true,
-			wantDesc:      "desarrolladores que quieren retomar en Claude Code un pedido capturado por clickhola",
-			wantMarkers: []string{
-				"# clickdev — puente hacia el pipeline SDD (perfil desarrollador)",
-				"habla en español",
-				"solo localiza el brief",
-				"entrega el siguiente paso",
-				"NO ejecutes el pipeline",
-				"no tiene agentes sdd-*",
-				"sdd/{change-name}/elicitation",
-				"mem_search",
-				"Abrí Claude Code en el repositorio",
-				"flujo SDD para {change-name}",
-				"brief ya está en la memoria compartida",
-				"si no existe el brief",
-				"no inicies la entrevista",
-				"no traduzcas el brief",
-			},
-			wantMissing: []string{
-				"{{CLICK_BIN}}",
-			},
-		},
-		{
-			name:     "click_sdd_clickdev_alias",
-			path:     filepath.Join("..", "..", "plugins", "click-sdd", "skills", "clickdev", "SKILL.md"),
-			wantName: "clickdev",
-			wantMarkers: []string{
-				"sdd/{change-name}/elicitation",
-				"explore",
-				"propose",
-				"alias",
-			},
-			wantMissing: []string{
-				"duplicate elicitation logic",
-				"executor",
-				"Engram Cloud",
+				"el orquestador lo llevará a la siguiente fase",
+				"No guardes el brief en una clave de flujo heredada",
 			},
 		},
 	}
@@ -167,18 +112,15 @@ func TestSkillAssets(t *testing.T) {
 				t.Errorf("frontmatter user-invocable = %v, want true", meta.UserInvokable)
 			}
 
-			if tt.name == "openclaw_clickhola" {
-				bins := meta.Metadata.OpenClaw.Requires.Bins
-				hasEngram := false
-				for _, b := range bins {
-					if b == "engram" {
-						hasEngram = true
-						break
-					}
+			requiresEngram := false
+			for _, bin := range meta.Metadata.OpenClaw.Requires.Bins {
+				if bin == "engram" {
+					requiresEngram = true
+					break
 				}
-				if !hasEngram {
-					t.Errorf("metadata.openclaw.requires.bins = %v, want it to contain %q", bins, "engram")
-				}
+			}
+			if !requiresEngram {
+				t.Errorf("metadata.openclaw.requires.bins = %v, want Engram dependency for retained brief persistence", meta.Metadata.OpenClaw.Requires.Bins)
 			}
 
 			// Body must not be empty.

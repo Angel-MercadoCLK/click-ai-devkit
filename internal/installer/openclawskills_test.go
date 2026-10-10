@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,16 +60,27 @@ func TestSyncOpenClawSkills_DoesNotInstallRetiredSDDWorkflow(t *testing.T) {
 	}
 }
 
-func TestOpenClawSDDEntry_DoesNotExposeClaudeDelegation(t *testing.T) {
-	data, err := openClawSkillsAssets.ReadFile(openClawSkillsAssetsRoot + "/click-sdd/SKILL.md")
-	if err != nil {
-		t.Fatalf("ReadFile(embedded click-sdd entry) error = %v", err)
-	}
-	content := strings.ToLower(string(data))
-	for _, forbidden := range []string{"agent tool", "skill tool", "claude plugin", "plugin registry", "model routing"} {
-		if strings.Contains(content, forbidden) {
-			t.Errorf("entry skill contains Claude-specific invocation text %q", forbidden)
+func TestOpenClawAssetsContainOnlyRetainedClickholaSkill(t *testing.T) {
+	var paths []string
+	err := fs.WalkDir(openClawSkillsAssets, openClawSkillsAssetsRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(openClawSkillsAssetsRoot, path)
+		if err != nil {
+			return err
+		}
+		paths = append(paths, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk embedded OpenClaw assets: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "clickhola/SKILL.md" {
+		t.Fatalf("embedded OpenClaw assets = %#v, want only clickhola/SKILL.md", paths)
 	}
 }
 
@@ -201,12 +213,15 @@ func TestRetireLegacyOpenClawSkills_DeletesOnlyPinnedRegularFiles(t *testing.T) 
 	}
 }
 
-func TestRetiredOpenClawSkillPinsMatchShippedAssetsAndRetireAll(t *testing.T) {
+func TestRetiredOpenClawSkillPinsMatchImmutableFixturesAndRetireAll(t *testing.T) {
 	cfg := Config{OpenClawHome: t.TempDir()}
+	// Fixtures are immutable byte-for-byte copies from source commit 613aeb2, independent of the
+	// runtime-embedded skill tree that this retirement removes.
 	for _, entry := range retiredOpenClawSkills {
-		asset, err := openClawSkillsAssets.ReadFile(openClawSkillsAssetsRoot + "/" + entry.rel)
+		fixture := filepath.Join("testdata", "legacy-openclaw-skills", filepath.Base(filepath.Dir(entry.rel))+".txt")
+		asset, err := os.ReadFile(fixture)
 		if err != nil {
-			t.Fatalf("read shipped retired skill %s: %v", entry.rel, err)
+			t.Fatalf("read immutable retired-skill fixture %s: %v", fixture, err)
 		}
 		digest := sha256.Sum256(asset)
 		if got := hex.EncodeToString(digest[:]); got != entry.sha256 {
