@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/agentbuilder"
-	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
 type Step int
@@ -16,8 +15,6 @@ type Step int
 const (
 	StepEngine Step = iota
 	StepDescription
-	StepSDDMode
-	StepPhase
 	StepThemes
 	StepPreview
 	StepPlacement
@@ -39,14 +36,6 @@ type AgentBuilderModel struct {
 	cursor             int
 	input              string
 	checkNameAvailable func(agentbuilder.AgentSpec) error
-}
-
-var agentBuilderSDDModeOptions = []struct {
-	label string
-	mode  agentbuilder.SDDMode
-}{
-	{label: "Standalone", mode: agentbuilder.SDDStandalone},
-	{label: "Phase Support", mode: agentbuilder.SDDPhaseSupport},
 }
 
 // agentBuilderThemeKind tags what a theme prompt's answer is used for, so validation
@@ -146,10 +135,6 @@ func (m AgentBuilderModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateEngine(keyMsg)
 	case StepDescription:
 		return m.updateDescription(keyMsg)
-	case StepSDDMode:
-		return m.updateSDDMode(keyMsg)
-	case StepPhase:
-		return m.updatePhase(keyMsg)
 	case StepThemes:
 		return m.updateThemes(keyMsg)
 	case StepPreview:
@@ -191,43 +176,11 @@ func (m AgentBuilderModel) updateDescription(keyMsg tea.KeyMsg) (tea.Model, tea.
 		m.Spec.Name = name
 		m.input = ""
 		m.PreviewError = ""
-		m.Step = StepSDDMode
+		m.Step = StepThemes
 		m.cursor = 0
 		return m, nil
 	}
 	m.updateInput(keyMsg)
-	return m, nil
-}
-
-func (m AgentBuilderModel) updateSDDMode(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch keyName(keyMsg) {
-	case "up", "k":
-		m.moveCursor(-1, len(agentBuilderSDDModeOptions))
-	case "down", "j":
-		m.moveCursor(1, len(agentBuilderSDDModeOptions))
-	case "enter":
-		m.Spec.SDDMode = agentBuilderSDDModeOptions[m.cursor].mode
-		m.cursor = 0
-		if m.Spec.SDDMode == agentbuilder.SDDPhaseSupport {
-			m.Step = StepPhase
-			return m, nil
-		}
-		m.Step = StepThemes
-	}
-	return m, nil
-}
-
-func (m AgentBuilderModel) updatePhase(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch keyName(keyMsg) {
-	case "up", "k":
-		m.moveCursor(-1, len(modelconfig.Phases))
-	case "down", "j":
-		m.moveCursor(1, len(modelconfig.Phases))
-	case "enter":
-		m.Spec.Phase = modelconfig.Phases[m.cursor]
-		m.cursor = 0
-		m.Step = StepThemes
-	}
 	return m, nil
 }
 
@@ -344,10 +297,6 @@ func (m AgentBuilderModel) View() string {
 		return m.renderList("MOTOR DEL AGENTE", engineLabels(m.engines), agentBuilderChooseHints)
 	case StepDescription:
 		return renderInputWithError("DESCRIPCIÓN DEL AGENTE", m.input, m.PreviewError)
-	case StepSDDMode:
-		return m.renderList("INTEGRACIÓN SDD", sddModeLabels(), agentBuilderChooseHints)
-	case StepPhase:
-		return m.renderList("FASE SDD QUE APOYA", phaseLabelsForAgentBuilder(), agentBuilderChooseHints)
 	case StepThemes:
 		prompt := agentBuilderThemePrompts[m.ThemeIndex]
 		return renderInputWithError(fmt.Sprintf("%d/%d · %s", m.ThemeIndex+1, len(agentBuilderThemePrompts), prompt.title), m.input, m.PreviewError)
@@ -581,22 +530,6 @@ func engineLabels(engines []agentbuilder.Engine) []string {
 	labels := make([]string, len(engines))
 	for i, engine := range engines {
 		labels[i] = engine.Label
-	}
-	return labels
-}
-
-func sddModeLabels() []string {
-	labels := make([]string, len(agentBuilderSDDModeOptions))
-	for i, option := range agentBuilderSDDModeOptions {
-		labels[i] = option.label
-	}
-	return labels
-}
-
-func phaseLabelsForAgentBuilder() []string {
-	labels := make([]string, len(modelconfig.Phases))
-	for i, phase := range modelconfig.Phases {
-		labels[i] = string(phase)
 	}
 	return labels
 }

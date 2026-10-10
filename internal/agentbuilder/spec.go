@@ -1,18 +1,5 @@
 package agentbuilder
 
-import "github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
-
-type SDDMode string
-
-const (
-	SDDStandalone   SDDMode = "standalone"
-	SDDPhaseSupport SDDMode = "phase-support"
-)
-
-func SDDModes() []SDDMode {
-	return []SDDMode{SDDStandalone, SDDPhaseSupport}
-}
-
 type Placement string
 
 const (
@@ -24,8 +11,6 @@ type AgentSpec struct {
 	Engine      Engine
 	Name        string
 	Description string
-	SDDMode     SDDMode
-	Phase       modelconfig.Phase
 	Tools       string
 	Model       string
 	Purpose     string

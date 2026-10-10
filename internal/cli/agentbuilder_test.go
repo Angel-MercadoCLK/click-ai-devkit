@@ -28,7 +28,6 @@ func TestAgentBuilderCommand_InstallsConfirmedFinalMarkdownExactly(t *testing.T)
 		"## Tasks\nConfirmed tasks.\n\n" +
 		"## Triggers\nConfirmed triggers.\n\n" +
 		"## Hard Rules\nConfirmed hard rules.\n\n" +
-		"## SDD Integration\nMode: standalone\n\n" +
 		"## Tone\nConfirmed tone.\n\n" +
 		"## Domain Knowledge\nConfirmed domain knowledge.\n\n" +
 		"## Good Output\nConfirmed good output.\n"
@@ -81,7 +80,6 @@ func TestAgentBuilderCommand_PersonalInstallHonorsClaudeConfigDir(t *testing.T) 
 		"## Tasks\nConfirmed tasks.\n\n" +
 		"## Triggers\nConfirmed triggers.\n\n" +
 		"## Hard Rules\nConfirmed hard rules.\n\n" +
-		"## SDD Integration\nMode: standalone\n\n" +
 		"## Tone\nConfirmed tone.\n\n" +
 		"## Domain Knowledge\nConfirmed domain knowledge.\n\n" +
 		"## Good Output\nConfirmed good output.\n"
@@ -135,7 +133,6 @@ func TestAgentBuilderCommand_PersonalInstallHonorsClickClaudeHomeWhenClaudeConfi
 		"## Tasks\nConfirmed tasks.\n\n" +
 		"## Triggers\nConfirmed triggers.\n\n" +
 		"## Hard Rules\nConfirmed hard rules.\n\n" +
-		"## SDD Integration\nMode: standalone\n\n" +
 		"## Tone\nConfirmed tone.\n\n" +
 		"## Domain Knowledge\nConfirmed domain knowledge.\n\n" +
 		"## Good Output\nConfirmed good output.\n"
@@ -185,7 +182,6 @@ func TestAgentBuilderCommand_PersonalInstallPreservesInjectedClaudeHomeOverride(
 		"## Tasks\nConfirmed tasks.\n\n" +
 		"## Triggers\nConfirmed triggers.\n\n" +
 		"## Hard Rules\nConfirmed hard rules.\n\n" +
-		"## SDD Integration\nMode: standalone\n\n" +
 		"## Tone\nConfirmed tone.\n\n" +
 		"## Domain Knowledge\nConfirmed domain knowledge.\n\n" +
 		"## Good Output\nConfirmed good output.\n"
@@ -360,7 +356,6 @@ func cliValidAgentSpec() agentbuilder.AgentSpec {
 		Engine:      agentbuilder.ClaudeCode,
 		Name:        "release-helper",
 		Description: "Helps prepare release notes.",
-		SDDMode:     agentbuilder.SDDStandalone,
 		Tools:       "Read, Grep",
 		Model:       "sonnet",
 		Purpose:     "Turn merged pull requests into release notes.",
