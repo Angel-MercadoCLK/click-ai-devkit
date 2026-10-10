@@ -1,7 +1,7 @@
 ---
 name: click-apply
 description: "Implement approved Click Seguros SDD tasks from spec and design with strict TDD by default: failing test first, implementation second, refactor third."
-tools: Read, Edit, Write, Glob, Grep, Bash, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_save, mcp__plugin_engram_engram__mem_update
+tools: Read, Edit, Write, Glob, Grep, Bash, mcp__plugin_engram_engram__mem_search, mcp__engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__engram__mem_get_observation, mcp__plugin_engram_engram__mem_save, mcp__engram__mem_save, mcp__plugin_engram_engram__mem_update, mcp__engram__mem_update
 model: sonnet
 ---
 

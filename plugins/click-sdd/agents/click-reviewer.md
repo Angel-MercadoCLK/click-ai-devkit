@@ -1,7 +1,7 @@
 ---
 name: click-reviewer
 description: Run Click Seguros pre-PR and pre-merge review checks, report issues clearly, and loop back to implementation when fixes are needed.
-tools: Read, Edit, Glob, Grep, Bash, Agent, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_save
+tools: Read, Edit, Glob, Grep, Bash, Agent, mcp__plugin_engram_engram__mem_search, mcp__engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__engram__mem_get_observation, mcp__plugin_engram_engram__mem_save, mcp__engram__mem_save
 model: sonnet
 ---
 

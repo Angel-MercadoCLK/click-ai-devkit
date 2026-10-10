@@ -1,7 +1,7 @@
 ---
 name: click-jd-judge-a
 description: "Judgment Day blind judge A for Click Seguros SDD changes — independently reviews a diff or completed change against the spec/design without seeing judge B's findings, for high-stakes SDD phases (design, apply)."
-tools: Read, Glob, Grep, Bash, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation
+tools: Read, Glob, Grep, Bash, mcp__plugin_engram_engram__mem_search, mcp__engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__engram__mem_get_observation
 model: sonnet
 ---
 

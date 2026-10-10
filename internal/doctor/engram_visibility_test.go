@@ -37,6 +37,89 @@ func TestCheckEngramSubagentVisibility_VerifiesPluginMCPAndAgentTools(t *testing
 	}
 }
 
+func TestCheckEngramSubagentVisibility_AcceptsGentleAIDirectMCPAndAgentTools(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	clickSDDPath := filepath.Join(cfg.ClaudeHome, "plugins", "cache", "click-ai-devkit", "click-sdd", "0.1.0")
+	writeInstalledPluginPaths(t, cfg, map[string]string{installer.ClickSDDPluginID: clickSDDPath})
+	writeJSON(t, cfg.Context7ConfigPath(), map[string]any{
+		"mcpServers": map[string]any{
+			"engram": map[string]any{"command": "engram", "args": []string{"mcp", "--tools=agent"}},
+		},
+	})
+	for agent, tools := range engramAgentToolRequirements {
+		directTools := make([]string, len(tools))
+		for i, tool := range tools {
+			directTools[i] = strings.Replace(tool, "mcp__plugin_engram_engram__", "mcp__engram__", 1)
+		}
+		writeFile(t, filepath.Join(clickSDDPath, "agents", agent+".md"), "---\ntools: "+strings.Join(directTools, ", ")+"\n---\n")
+	}
+
+	check := checkEngramSubagentVisibility(cfg)
+	if !check.Healthy {
+		t.Fatalf("checkEngramSubagentVisibility() Healthy = false for direct MCP: %s", check.Detail)
+	}
+}
+
+func TestCheckEngramSubagentVisibility_RejectsAgentToolsForUnavailableTransport(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		useDirect   bool
+		assetDirect bool
+	}{
+		{name: "direct registration with plugin-only tools", useDirect: true, assetDirect: false},
+		{name: "plugin registration with direct-only tools", useDirect: false, assetDirect: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := installer.Config{ClaudeHome: t.TempDir()}
+			clickSDDPath := filepath.Join(cfg.ClaudeHome, "plugins", "cache", "click-ai-devkit", "click-sdd", "0.1.0")
+			engramPath := filepath.Join(cfg.ClaudeHome, "plugins", "cache", "engram", "engram", "0.1.1")
+			paths := map[string]string{installer.ClickSDDPluginID: clickSDDPath}
+			if tt.useDirect {
+				writeJSON(t, cfg.Context7ConfigPath(), map[string]any{"mcpServers": map[string]any{
+					"engram": map[string]any{"command": "engram", "args": []string{"mcp", "--tools=agent"}},
+				}})
+			} else {
+				paths[installer.EngramPluginID] = engramPath
+				writeFile(t, cfg.SettingsPath(), `{"enabledPlugins":{"engram@engram":true}}`)
+				writeJSON(t, filepath.Join(engramPath, ".mcp.json"), map[string]any{"mcpServers": map[string]any{
+					"engram": map[string]any{"command": "engram", "args": []string{"mcp", "--tools=agent"}},
+				}})
+			}
+			writeInstalledPluginPaths(t, cfg, paths)
+			for agent, tools := range engramAgentToolRequirements {
+				agentTools := append([]string(nil), tools...)
+				if tt.assetDirect {
+					for i := range agentTools {
+						agentTools[i] = strings.Replace(agentTools[i], "mcp__plugin_engram_engram__", "mcp__engram__", 1)
+					}
+				}
+				writeFile(t, filepath.Join(clickSDDPath, "agents", agent+".md"), "---\ntools: "+strings.Join(agentTools, ", ")+"\n---\n")
+			}
+
+			check := checkEngramSubagentVisibility(cfg)
+			if check.Healthy {
+				t.Fatalf("checkEngramSubagentVisibility() Healthy = true; incompatible transport should fail: %s", check.Detail)
+			}
+		})
+	}
+}
+
+func TestClickSDDAgentAssetsDeclareBothEngramTransports(t *testing.T) {
+	for agent, requiredTools := range engramAgentToolRequirements {
+		data, err := os.ReadFile(filepath.Join("..", "..", "plugins", "click-sdd", "agents", agent+".md"))
+		if err != nil {
+			t.Fatalf("read bundled agent %s: %v", agent, err)
+		}
+		tools := frontmatterTools(string(data))
+		for _, pluginTool := range requiredTools {
+			directTool := strings.Replace(pluginTool, "mcp__plugin_engram_engram__", "mcp__engram__", 1)
+			if !containsString(tools, pluginTool) || !containsString(tools, directTool) {
+				t.Errorf("agent %s tools missing transport pair %q and %q", agent, pluginTool, directTool)
+			}
+		}
+	}
+}
+
 func TestCheckEngramSubagentVisibility_ReportsUnresolvedCachePath(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	writeInstalledPluginPaths(t, cfg, map[string]string{installer.EngramPluginID: ""})

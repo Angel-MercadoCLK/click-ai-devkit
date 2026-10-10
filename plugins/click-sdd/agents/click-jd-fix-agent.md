@@ -1,7 +1,7 @@
 ---
 name: click-jd-fix-agent
 description: "Judgment Day surgical fix agent for Click Seguros SDD changes — applies fixes for BLOCKER/CRITICAL findings that converged between click-jd-judge-a and click-jd-judge-b, then hands back for a scoped re-review."
-tools: Read, Edit, Write, Glob, Grep, Bash, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_update
+tools: Read, Edit, Write, Glob, Grep, Bash, mcp__plugin_engram_engram__mem_search, mcp__engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__engram__mem_get_observation, mcp__plugin_engram_engram__mem_update, mcp__engram__mem_update
 model: sonnet
 ---
 

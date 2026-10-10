@@ -1,7 +1,7 @@
 ---
 name: click-explore
 description: "Investigate the existing codebase and compare candidate approaches for a Click Seguros change before committing to a plan. Entry point of the SDD chain, invoked by /sdd-explore or click-orchestrator when a request needs codebase understanding."
-tools: Read, Grep, Glob, WebFetch, WebSearch, mcp__plugin_engram_engram__mem_save
+tools: Read, Grep, Glob, WebFetch, WebSearch, mcp__plugin_engram_engram__mem_save, mcp__engram__mem_save
 model: sonnet
 ---
 

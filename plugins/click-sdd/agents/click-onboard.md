@@ -1,7 +1,7 @@
 ---
 name: click-onboard
 description: "Guide a developer end-to-end through the Click Seguros SDD workflow using their real codebase, in Spanish, so they understand each phase before running it for real."
-tools: Read, Grep, Glob, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_save, mcp__plugin_engram_engram__mem_update
+tools: Read, Grep, Glob, mcp__plugin_engram_engram__mem_search, mcp__engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__engram__mem_get_observation, mcp__plugin_engram_engram__mem_save, mcp__engram__mem_save, mcp__plugin_engram_engram__mem_update, mcp__engram__mem_update
 model: haiku
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: click-archive
 description: "Close a finished, verified Click Seguros SDD change and persist its final state for future reference."
-tools: Read, Edit, Write, Glob, Grep, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_save
+tools: Read, Edit, Write, Glob, Grep, mcp__plugin_engram_engram__mem_search, mcp__engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__engram__mem_get_observation, mcp__plugin_engram_engram__mem_save, mcp__engram__mem_save
 model: haiku
 ---
 

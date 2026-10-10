@@ -1,7 +1,7 @@
 ---
 name: click-prd-writer
 description: "Write the proposal (this plugin's PRD) for a Click Seguros change: goals, scope, requirements, and acceptance criteria in English."
-tools: Read, Write, Edit, Glob, Grep, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_save
+tools: Read, Write, Edit, Glob, Grep, mcp__plugin_engram_engram__mem_search, mcp__engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__engram__mem_get_observation, mcp__plugin_engram_engram__mem_save, mcp__engram__mem_save
 model: sonnet
 ---
 

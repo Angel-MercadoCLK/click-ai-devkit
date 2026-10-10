@@ -142,34 +142,41 @@ func checkEngramSubagentVisibility(cfg installer.Config) CheckResult {
 	if err != nil {
 		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo verificar el registro/habilitación de Engram: " + err.Error()}
 	}
-	if !installed {
-		return CheckResult{Name: name, Healthy: false, Detail: "Engram no está registrado y habilitado en Claude Code — ejecute `click install` o `click update`"}
+	direct, directErr := installer.HasGentleAIEngramMCP(cfg)
+	if directErr != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo verificar el registro MCP de Engram: " + directErr.Error()}
 	}
-
-	engramPath, found, err := installer.InstalledPluginPath(cfg, installer.EngramPluginID)
-	if err != nil {
-		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo leer la ruta de caché de Engram: " + err.Error()}
-	}
-	if !found {
-		return CheckResult{Name: name, Healthy: false, Detail: "Engram está registrado, pero su ruta de caché no se puede resolver de forma segura desde installed_plugins.json; no se adivinan rutas. Actualice/reinstale el plugin y reinicie Claude Code"}
-	}
-
-	mcpData, err := os.ReadFile(filepath.Join(engramPath, ".mcp.json"))
-	if err != nil {
-		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo verificar el .mcp.json de Engram en la caché registrada: " + err.Error() + " — ejecute `click update` y reinicie Claude Code"}
-	}
-	var mcp struct {
-		MCPServers map[string]struct {
-			Command string   `json:"command"`
-			Args    []string `json:"args"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(mcpData, &mcp); err != nil {
-		return CheckResult{Name: name, Healthy: false, Detail: "el .mcp.json de Engram es ilegible: " + err.Error()}
-	}
-	server, ok := mcp.MCPServers["engram"]
-	if !ok || server.Command != "engram" || !sameStrings(server.Args, []string{"mcp", "--tools=agent"}) {
-		return CheckResult{Name: name, Healthy: false, Detail: "el .mcp.json de Engram no contiene el servidor engram con command=engram y args=[mcp --tools=agent]"}
+	toolPrefix := "mcp__plugin_engram_engram__"
+	if direct {
+		// gentle-ai direct MCP has its own user-level transport; it does not need a plugin cache.
+		toolPrefix = "mcp__engram__"
+	} else if installed {
+		engramPath, found, err := installer.InstalledPluginPath(cfg, installer.EngramPluginID)
+		if err != nil {
+			return CheckResult{Name: name, Healthy: false, Detail: "no se pudo leer la ruta de caché de Engram: " + err.Error()}
+		}
+		if !found {
+			return CheckResult{Name: name, Healthy: false, Detail: "Engram está registrado, pero su ruta de caché no se puede resolver de forma segura desde installed_plugins.json; no se adivinan rutas. Actualice/reinstale el plugin y reinicie Claude Code"}
+		}
+		mcpData, err := os.ReadFile(filepath.Join(engramPath, ".mcp.json"))
+		if err != nil {
+			return CheckResult{Name: name, Healthy: false, Detail: "no se pudo verificar el .mcp.json de Engram en la caché registrada: " + err.Error() + " — ejecute `click update` y reinicie Claude Code"}
+		}
+		var mcp struct {
+			MCPServers map[string]struct {
+				Command string   `json:"command"`
+				Args    []string `json:"args"`
+			} `json:"mcpServers"`
+		}
+		if err := json.Unmarshal(mcpData, &mcp); err != nil {
+			return CheckResult{Name: name, Healthy: false, Detail: "el .mcp.json de Engram es ilegible: " + err.Error()}
+		}
+		server, ok := mcp.MCPServers["engram"]
+		if !ok || server.Command != "engram" || !sameStrings(server.Args, []string{"mcp", "--tools=agent"}) {
+			return CheckResult{Name: name, Healthy: false, Detail: "el .mcp.json de Engram no contiene el servidor engram con command=engram y args=[mcp --tools=agent]"}
+		}
+	} else {
+		return CheckResult{Name: name, Healthy: false, Detail: "Engram no está registrado como plugin habilitado ni como MCP directo de gentle-ai; ejecute `click install` o `click update`"}
 	}
 
 	clickSDDPath, found, err := installer.InstalledPluginPath(cfg, installer.ClickSDDPluginID)
@@ -196,13 +203,14 @@ func checkEngramSubagentVisibility(cfg installer.Config) CheckResult {
 		}
 		tools := frontmatterTools(string(data))
 		for _, required := range requiredTools {
-			if !containsString(tools, required) {
-				return CheckResult{Name: name, Healthy: false, Detail: "el agente " + agent + " no declara la herramienta Engram requerida " + required}
+			availableTool := strings.Replace(required, "mcp__plugin_engram_engram__", toolPrefix, 1)
+			if !containsString(tools, availableTool) {
+				return CheckResult{Name: name, Healthy: false, Detail: "el agente " + agent + " no declara la herramienta Engram disponible requerida " + availableTool}
 			}
 		}
 	}
 
-	return CheckResult{Name: name, Healthy: true, Detail: "prerrequisitos estáticos saludables: plugin Engram habilitado, .mcp.json y herramientas de agentes verificados; la propagación Agent-a-agent anidada no puede probarse estáticamente y requiere una sesión nueva de Claude y un diagnóstico en vivo"}
+	return CheckResult{Name: name, Healthy: true, Detail: "prerrequisitos estáticos saludables: plugin o MCP directo de Engram, configuración y herramientas de agentes verificados; la propagación Agent-a-agent anidada no puede probarse estáticamente y requiere una sesión nueva de Claude y un diagnóstico en vivo"}
 }
 
 // releaseAgentAssetStatus only treats a repository checkout as authoritative. In an installed
@@ -512,15 +520,23 @@ func checkClaudeMD(cfg installer.Config) CheckResult {
 	}
 }
 
-// checkEngramPlugin reports whether the engram@engram plugin is registered and enabled — the
-// mechanism confirmed in Step 0 (spike-e-engram-install.md) that actually wires Engram's tools
-// into a Claude Code session. It does not care whether click or the developer installed it.
+// checkEngramPlugin reports whether Engram is available through the legacy enabled plugin or the
+// direct MCP server registered by the pinned gentle-ai installer.
 func checkEngramPlugin(cfg installer.Config) CheckResult {
 	const name = "plugin engram"
 
 	ok, err := installer.HasInstalledPluginID(cfg, installer.EngramPluginID)
 	if err != nil {
 		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	if !ok {
+		ok, err = installer.HasGentleAIEngramMCP(cfg)
+		if err != nil {
+			return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+		}
+		if ok {
+			return CheckResult{Name: name, Healthy: true, Detail: "MCP directo registrado por gentle-ai"}
+		}
 	}
 	if !ok {
 		return CheckResult{Name: name, Healthy: false, Detail: "no registrado en Claude Code"}
@@ -786,7 +802,7 @@ func checkContext7(cfg installer.Config) CheckResult {
 	if !ok {
 		return CheckResult{Name: name, Healthy: false, Detail: "no registrado como servidor MCP de usuario"}
 	}
-	return CheckResult{Name: name, Healthy: true, Detail: "registrado (scope user, https://mcp.context7.com/mcp)"}
+	return CheckResult{Name: name, Healthy: true, Detail: "servidor MCP de usuario registrado"}
 }
 
 // checkModelsConfig reports whether cfg.ModelsPath() holds a stale (pre-taxonomy-realignment or

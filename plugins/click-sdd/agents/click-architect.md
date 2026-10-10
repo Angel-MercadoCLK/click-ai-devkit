@@ -1,7 +1,7 @@
 ---
 name: click-architect
 description: "Own the Click Seguros design and tasks phases: define the technical approach, architecture decisions, and ordered implementation tasks."
-tools: Read, Write, Edit, Glob, Grep, Bash, mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_save
+tools: Read, Write, Edit, Glob, Grep, Bash, mcp__plugin_engram_engram__mem_search, mcp__engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__engram__mem_get_observation, mcp__plugin_engram_engram__mem_save, mcp__engram__mem_save
 model: sonnet
 ---
 
