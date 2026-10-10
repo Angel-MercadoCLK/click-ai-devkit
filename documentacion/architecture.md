@@ -3,6 +3,11 @@
 > Status: draft v0.1. Grounded in `00-decisions-and-open-questions.md` (D1–D20).
 > Audience: engineers building or maintaining click-ai-devkit itself.
 
+> **Historical architecture snapshot.** This predates the Gentle AI distribution decision. For
+> current ownership, use D48–D53 and [`README.md`](README.md): Gentle AI owns workflow, permissions,
+> model selection, and shared Engram/Context7 lifecycle; Click ships three plugins and its own
+> business/memory policy, guard, installer, and Cloud enrollment.
+
 ## 1. High-level architecture
 
 `click-ai-devkit` has four moving parts. Three are installed *into* a developer's Claude Code

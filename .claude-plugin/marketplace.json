@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "click-ai-devkit",
-  "description": "Click Seguros Claude Code plugin marketplace for SDD, memory policy, and PR review.",
+  "description": "Click Seguros Claude Code plugins for memory policy, engineering skills, and PR review.",
   "owner": {
     "name": "Angel Mercado",
     "email": "angel.mercado@click-ai-devkit.local"

@@ -97,16 +97,17 @@ func TestGoReleaserBeforeHooks_RunRepositoryValidation(t *testing.T) {
 func TestReleaseDocumentation_MatchesCurrentTargetContracts(t *testing.T) {
 	readme := readText(t, filepath.Join("..", "..", "README.md"))
 	assertContains(t, readme, "Current release metadata lives in `bucket/click.json`, `internal/manifest/manifest.yaml`, and `click --version`.")
-	assertContains(t, readme, "Codex updates `AGENTS.md` and changes the root `model` key in `config.toml` only when an explicit native model was selected.")
+	assertContains(t, readme, "Click no escribe modelos nativos en esos runtimes.")
+	assertContains(t, readme, "Click conserva sus políticas de negocio/memoria")
 
 	codex := readText(t, filepath.Join("..", "..", "documentacion", "codex-target.md"))
-	assertContains(t, codex, "Click can update the root `model` key in `config.toml` only when an explicit native model was selected during install.")
-	assertContains(t, codex, "Click never changes credentials, providers, or any table-scoped `model` keys.")
+	assertContains(t, codex, "Click does not write Codex model/profile values, credentials, providers, or other native model")
+	assertContains(t, codex, "A configured nonstandard root is rejected before")
 
 	runbook := readText(t, filepath.Join("..", "..", "documentacion", "portability-runbook.md"))
-	assertContains(t, runbook, "Click's `configure-models` and `configure-openclaw-model` selectors are retired.")
-	assertContains(t, runbook, "Configure OpenClaw through OpenClaw's own")
-	assertContains(t, runbook, "Portability runbook (`documentacion/portability-runbook.md`) passed on a clean/gentle-ai-absent profile for this version.")
+	assertContains(t, runbook, "Click no longer ships or installs `click-sdd`")
+	assertContains(t, runbook, "Click's model-selection commands are compatibility notices")
+	assertContains(t, runbook, "that acceptance remains pending")
 }
 
 func loadWorkflow(t *testing.T, path string) workflowFile {

@@ -1,31 +1,38 @@
-# Codex CLI Target
+# Codex CLI target
 
-Click can manage Codex CLI as an optional installation target alongside Claude Code and OpenClaw.
-Claude Code remains mandatory for the native Click plugin workflow; Codex never blocks a Claude-only
-installation.
+Click supports Codex as an optional target. This document describes the current ownership boundary,
+not a Click-owned workflow engine or model selector. See [the documentation index](README.md) and
+the locked decisions D48–D53 in `00-decisions-and-open-questions.md`.
 
-## Detection and selection
+## Ownership
 
-`click targets` resolves the `codex` binary through the same injectable PATH lookup used by the other
-targets. `click configure-targets` can explicitly enable Codex, and the selection is persisted with
-the other Click target settings. An unconfigured legacy selection does not auto-enable Codex, because
-Codex did not exist when those artifacts were created.
+- Click writes and refreshes its managed block in Codex `AGENTS.md`; uninstall removes only that
+  block and preserves surrounding user/upstream text.
+- The pinned gentle-ai v4.0.0 install configures its selected runtime components, including Engram
+  and Context7 MCP integration. Click does not write duplicate shared MCP entries.
+- Click does not write Codex model/profile values, credentials, providers, or other native model
+  settings. Existing native values and historical model artifacts are preserved. Click's retired
+  model flags are rejected before provisioning or writes; use the supported Gentle AI interface for
+  model roles it exposes.
+- Click's memory guard and Click-specific business/memory policy remain separate from Gentle AI's
+  permission configuration. Click does not create allow/deny/ask lists.
 
-## Current boundary
+## Target roots and lifecycle
 
-When Codex is selected, Click resolves `CODEX_HOME` (or the user home `.codex` directory) and writes a Click-owned block to `AGENTS.md`. Click can update the root `model` key in `config.toml` only when an explicit native model was selected during install. The managed block points Codex at the portable Click SDD workflow and explicitly avoids Claude-specific Agent, Skill, plugin, and registry instructions.
+The pinned gentle-ai v4.0.0 adapters resolve targets from the process home and do not accept custom
+per-target roots. Install/update therefore require the standard home paths (`~/.claude`, `~/.codex`,
+and `~/.openclaw`) for each selected target. A configured nonstandard root is rejected before
+snapshot, provisioning, runner invocation, or config writes (D51); Click does not redirect it or
+inspect an alternate tree while Gentle AI mutates the standard one.
 
-For `click install` and `click update`, the pinned gentle-ai v4.0.0 installer must use the
-standard process-home target directories (`~/.claude`, `~/.codex`, and `~/.openclaw`). It has no
-per-target root options. A selected target configured at a different directory is rejected before
-the command snapshots or mutates user state; this avoids checking one Codex tree while gentle-ai
-changes another. See decision D51 for the accepted limitation.
+When Codex is selected, Click snapshots the managed `AGENTS.md` and native Codex config for rollback
+safety. Rollback merges only provable Click-owned content; it preserves current native model values,
+unrelated TOML settings, shared MCP configuration, and unknown historical paths, including when
+`--force` or `--yes` is supplied.
 
-Click never changes credentials, providers, or any table-scoped `model` keys. Native Codex
-skill/plugin packaging is still deferred until this repository verifies the supported location and
-interface.
+## Qualification
 
-`click update` refreshes the managed block, `click uninstall` removes only that block, and the
-run-start snapshot includes the Codex `AGENTS.md` file when the target is selected. Codex model
-changes are install-time only; updates preserve the existing native file unless the user runs a new
-install with another explicit model.
+Use isolated temporary process homes for integration tests; never use a developer's real profile.
+The Go suite validates managed-block refresh/removal, selected-target routing, and rollback behavior.
+Those mocks do not prove live Codex or Gentle AI effects. The Windows package-smoke lifecycle and
+actual Windows execution remain pending; see `portability-runbook.md`.
