@@ -44,12 +44,8 @@ func TestManagedPluginNamesExcludesRetiredClickSDD(t *testing.T) {
 
 func TestClickSDDPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
 	assertPluginStructure(t, filepath.Join("plugins", "click-sdd"), "click-sdd", []string{
-		filepath.Join("agents", "click-orchestrator.md"),
-		filepath.Join("agents", "click-prd-writer.md"),
-		filepath.Join("agents", "click-architect.md"),
 		filepath.Join("agents", "click-reviewer.md"),
 		filepath.Join("agents", "click-memory-curator.md"),
-		filepath.Join("agents", "click-elicitor.md"),
 		filepath.Join("agents", "click-explore.md"),
 		filepath.Join("agents", "click-apply.md"),
 		filepath.Join("agents", "click-archive.md"),
@@ -63,6 +59,21 @@ func TestClickSDDPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
 		filepath.Join("agents", "click-review-resilience.md"),
 		filepath.Join("agents", "click-review-refuter.md"),
 	})
+
+	retiredAgentPaths := []string{
+		filepath.Join("agents", "click-orchestrator.md"),
+		filepath.Join("agents", "click-prd-writer.md"),
+		filepath.Join("agents", "click-architect.md"),
+		filepath.Join("agents", "click-elicitor.md"),
+	}
+	for _, relPath := range retiredAgentPaths {
+		path := filepath.Join("..", "..", "plugins", "click-sdd", relPath)
+		if _, err := os.Stat(path); err == nil {
+			t.Errorf("retired Click SDD role path %s still exists", relPath)
+		} else if !os.IsNotExist(err) {
+			t.Errorf("Stat(%s) error = %v, want path absent", path, err)
+		}
+	}
 
 	retiredSkillPaths := []string{
 		filepath.Join("skills", "_shared", "result-contract.md"),
