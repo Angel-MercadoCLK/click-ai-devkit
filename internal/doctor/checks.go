@@ -6,9 +6,13 @@
 package doctor
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +27,8 @@ import (
 const engramCloudImportOutcomeStaleAfter = 7 * 24 * time.Hour
 
 var engramCloudSessionSyncNow = time.Now
+
+var managedGentleAIVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 
 // EngramChecksCount is the number of doctor checks contributed by Engram, kept as an exported
 // constant so other packages/tests documenting Run()'s total check count don't have to hardcode a
@@ -60,14 +66,132 @@ func (r Report) Healthy() bool {
 func Run(cfg installer.Config) Report {
 	selection := installer.TargetSelection{Configured: true, Claude: cfg.ClaudeHome != "", OpenClaw: cfg.OpenClawHome != "", Codex: cfg.CodexHome != ""}
 	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{})
-	checks := []CheckResult{checkGit(cfg), checkOpenClaw(cfg), checkClickBinary(cfg)}
+	checks := []CheckResult{checkGit(cfg), checkOpenClaw(cfg), checkClickBinary(cfg), checkManagedGentleAI()}
 	for _, kind := range plan.DoctorCheckKinds() {
+		// OpenClaw is an optional capability diagnostic for every report, including when
+		// the target is selected. Do not report the same PATH result twice.
+		if kind == installer.DoctorCheckOpenClaw {
+			continue
+		}
 		checks = append(checks, doctorCheckResult(cfg, kind))
 	}
 	if selection.Claude {
 		checks = append(checks, checkEngramCloud(cfg), checkEngramCloudSessionSync(cfg))
 	}
 	return Report{Checks: checks}
+}
+
+var managedGentleAIProvisionerFactory = installer.NewGentleAIProvisioner
+
+func SetManagedGentleAIProvisionerFactoryForTests(factory func() installer.GentleAIProvisioner) func() {
+	previous := managedGentleAIProvisionerFactory
+	managedGentleAIProvisionerFactory = factory
+	return func() { managedGentleAIProvisionerFactory = previous }
+}
+
+func checkManagedGentleAI() CheckResult {
+	const name = "gentle-ai administrado"
+	manifestPin, err := manifest.Load()
+	if err != nil || !managedGentleAIVersionPattern.MatchString(manifestPin.GentleAI.Version) {
+		return CheckResult{Name: name, Healthy: false, Detail: "el pin de gentle-ai incluido en Click no es válido; reinstale o actualice Click"}
+	}
+
+	provisioner := managedGentleAIProvisionerFactory()
+	path, err := provisioner.ManagedPath()
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo resolver la ruta administrada de gentle-ai; revise su directorio personal y ejecute `click update`"}
+	}
+	for _, directory := range []string{filepath.Dir(filepath.Dir(path)), filepath.Dir(path)} {
+		info, err := provisioner.Lstat(directory)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			return CheckResult{Name: name, Healthy: false, Detail: "gentle-ai no está instalado en la ruta administrada de Click; ejecute `click install` o `click update`"}
+		case err != nil:
+			return CheckResult{Name: name, Healthy: false, Detail: "no se pudo inspeccionar el directorio administrado de gentle-ai; revise los permisos de ~/.click/bin y ejecute `click update`"}
+		case !info.IsDir():
+			return CheckResult{Name: name, Healthy: false, Detail: "la ruta administrada de gentle-ai contiene un directorio inseguro; revise ~/.click/bin y ejecute `click update`"}
+		}
+	}
+	info, err := provisioner.Lstat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return CheckResult{Name: name, Healthy: false, Detail: "gentle-ai no está instalado en la ruta administrada de Click; ejecute `click install` o `click update`"}
+	case err != nil:
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo inspeccionar el binario administrado de gentle-ai; revise los permisos de ~/.click/bin y ejecute `click update`"}
+	case !info.Mode().IsRegular() || (provisioner.GOOS != "windows" && info.Mode().Perm()&0o111 == 0):
+		return CheckResult{Name: name, Healthy: false, Detail: "el binario administrado de gentle-ai no es un archivo regular ejecutable; revise ~/.click/bin y ejecute `click update`"}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	probe, err := provisioner.ProbeVersion(ctx, path, manifestPin.GentleAI.Version)
+	if err != nil {
+		if err.Error() == "gentle-ai: salida de versión no válida" {
+			return CheckResult{Name: name, Healthy: false, Detail: "gentle-ai devolvió una salida de versión no válida; ejecute `click update`"}
+		}
+		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+			return CheckResult{Name: name, Healthy: false, Detail: "la consulta de versión de gentle-ai superó el tiempo límite; ejecute `click update`"}
+		}
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo consultar la versión de gentle-ai; revise el binario administrado y ejecute `click update`"}
+	}
+	if probe.MatchesPin {
+		return CheckResult{Name: name, Healthy: true, Detail: "gentle-ai " + probe.Version + " coincide con el pin calificado " + manifestPin.GentleAI.Version}
+	}
+	if gentleAIPreRelease(probe.Version) || gentleAIPreRelease(manifestPin.GentleAI.Version) {
+		return CheckResult{Name: name, Healthy: false, Detail: "la versión preliminar de gentle-ai no coincide con el pin calificado " + manifestPin.GentleAI.Version + "; ejecute `click update`"}
+	}
+	comparison := compareGentleAIVersion(probe.Version, manifestPin.GentleAI.Version)
+	if comparison < 0 {
+		return CheckResult{Name: name, Healthy: false, Detail: "la versión administrada de gentle-ai es más antigua que el pin calificado " + manifestPin.GentleAI.Version + "; ejecute `click update`"}
+	}
+	if comparison > 0 {
+		return CheckResult{Name: name, Healthy: false, Detail: "la versión administrada de gentle-ai es más reciente que el pin calificado " + manifestPin.GentleAI.Version + "; ejecute `click update`"}
+	}
+	return CheckResult{Name: name, Healthy: false, Detail: "la versión de gentle-ai no coincide exactamente con el pin calificado " + manifestPin.GentleAI.Version + "; ejecute `click update`"}
+}
+
+func gentleAIPreRelease(value string) bool {
+	value, _, _ = strings.Cut(value, "+")
+	_, prerelease, found := strings.Cut(value, "-")
+	return found && prerelease != ""
+}
+
+func compareGentleAIVersion(left, right string) int {
+	leftCore, leftPrerelease := splitGentleAIVersion(left)
+	rightCore, rightPrerelease := splitGentleAIVersion(right)
+	for i := range leftCore {
+		l, lErr := strconv.Atoi(leftCore[i])
+		r, rErr := strconv.Atoi(rightCore[i])
+		if lErr != nil || rErr != nil {
+			return 0
+		}
+		if l < r {
+			return -1
+		}
+		if l > r {
+			return 1
+		}
+	}
+	if leftPrerelease == rightPrerelease {
+		return 0
+	}
+	if leftPrerelease {
+		return -1
+	}
+	return 1
+}
+
+func splitGentleAIVersion(value string) ([3]string, bool) {
+	var core [3]string
+	value = strings.TrimPrefix(value, "v")
+	value, _, _ = strings.Cut(value, "+")
+	value, prerelease, _ := strings.Cut(value, "-")
+	parts := strings.Split(value, ".")
+	if len(parts) != len(core) {
+		return core, prerelease != ""
+	}
+	copy(core[:], parts)
+	return core, prerelease != ""
 }
 
 func doctorCheckResult(cfg installer.Config, kind installer.DoctorCheckKind) CheckResult {

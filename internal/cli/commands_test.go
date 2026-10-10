@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/doctor"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
@@ -53,6 +55,27 @@ func seedResolvableEngram(t *testing.T) {
 func seedResolvableClickBinary(t *testing.T) {
 	t.Helper()
 	t.Cleanup(doctor.SetClickBinaryLookupForTests(func(string) (string, error) { return "/usr/bin/click", nil }))
+	pin, err := manifest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedHome := t.TempDir()
+	p := installer.NewGentleAIProvisioner()
+	p.HomeDir = func() (string, error) { return managedHome, nil }
+	managedPath, err := p.ManagedPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(managedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedPath, []byte("test binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p.Run = func(context.Context, []string, string, ...string) ([]byte, error) {
+		return []byte("gentle-ai " + pin.GentleAI.Version), nil
+	}
+	t.Cleanup(doctor.SetManagedGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
 }
 
 // cliFakeBinaryLookup fakes PATH resolution for installer.BinaryLookup, mirroring the same

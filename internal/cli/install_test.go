@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/doctor"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
@@ -789,6 +790,10 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
+	pin, err := manifest.Load()
+	if err != nil {
+		panic(err)
+	}
 	for key, value := range map[string]string{
 		"HOME": home, "USERPROFILE": home, "XDG_CONFIG_HOME": filepath.Join(home, ".config"),
 		"CLICK_CLAUDE_HOME": "", "CODEX_HOME": "", "CLICK_OPENCLAW_HOME": "", "CLICK_STATE_HOME": "",
@@ -816,7 +821,7 @@ func TestMain(m *testing.M) {
 			panic("unexpected upstream command")
 		}
 		if args[0] == "version" {
-			return []byte("gentle-ai v4.0.0"), nil
+			return []byte("gentle-ai " + pin.GentleAI.Version), nil
 		}
 		if args[0] == "install" {
 			if err := writeGentleAIInstallFixture(args); err != nil {
@@ -829,7 +834,9 @@ func TestMain(m *testing.M) {
 	p.Fetch = func(context.Context, string) (io.ReadCloser, error) { panic("unexpected network access") }
 	p.WriteBinary = func(string, []byte) error { panic("unexpected provisioning") }
 	restore := installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p })
+	restoreDoctor := doctor.SetManagedGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p })
 	code := m.Run()
+	restoreDoctor()
 	restore()
 	os.RemoveAll(home)
 	os.Exit(code)

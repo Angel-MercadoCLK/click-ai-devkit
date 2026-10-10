@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -62,6 +63,7 @@ func TestRun_AfterInstall_ReportsHealthy(t *testing.T) {
 	defer restoreGit()
 	restoreClick := seedResolvableClickBinary(t, "/usr/bin/click")
 	defer restoreClick()
+	seedManagedGentleAI(t)
 	seedInstalledState(t, cfg)
 	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
 		t.Fatalf("WriteManagedBlock() error = %v", err)
@@ -143,9 +145,9 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	report := Run(cfg)
 
-	// 10 base checks after retiring the Click SDD plugin and its dependent visibility check,
+	// 11 base checks after adding the managed Gentle AI pin diagnostic and retiring the Click SDD plugin and its dependent visibility check,
 	// standalone PATH-based detection check (openclaw-target-support PR-A).
-	const wantChecks = 10 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 11 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
 		t.Fatalf("Run() returned %d checks, want %d without retired model checks", len(report.Checks), wantChecks)
 	}
@@ -153,7 +155,7 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 
 func TestRun_CheckCountIncludesEngramCloudSessionSync(t *testing.T) {
 	report := Run(installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()})
-	const wantChecks = 10 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 11 + EngramChecksCount + Context7ChecksCount
 	if got := len(report.Checks); got != wantChecks {
 		t.Fatalf("Run() check count = %d, want %d including engram cloud session sync", got, wantChecks)
 	}
@@ -1226,6 +1228,31 @@ func seedEngramPathHealthy(t *testing.T) func() {
 		restoreProbes()
 		restoreRunner()
 	}
+}
+
+func seedManagedGentleAI(t *testing.T) {
+	t.Helper()
+	pin, err := manifest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	p := installer.NewGentleAIProvisioner()
+	p.HomeDir = func() (string, error) { return home, nil }
+	path, err := p.ManagedPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("test binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p.Run = func(context.Context, []string, string, ...string) ([]byte, error) {
+		return []byte("gentle-ai " + pin.GentleAI.Version), nil
+	}
+	t.Cleanup(SetManagedGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
 }
 
 // TestCheckEngramPath_PersistedAndLive_ReportsHealthy covers state 1/4: everything lines up right
