@@ -51,4 +51,4 @@ jobs:
           # CI smoke verifies the packaged binary runs end-to-end and prints a version line; exact
           # release-version consistency is already covered by the manifest<->bucket sync test and the
           # tagged release build.
-          ./scripts/windows-package-smoke.ps1 -DistDir dist -ExpectedVersion 'click version'
+          ./scripts/windows-package-smoke.ps1 -DistDir dist -ExpectedVersion 'click version' -DisposableRunner

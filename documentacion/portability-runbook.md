@@ -62,7 +62,11 @@ Run Go tests against mocks and temporary homes; no live install is required for 
    provisioning, runner, snapshot, or configuration write.
 
 The Go integration suite uses mocks and proves only the tested Click contract; it does not prove
-external Gentle AI/Claude/OpenClaw side effects. T11b must audit the entire
-`scripts/windows-package-smoke.ps1` lifecycle and its fixtures, then run it on Windows and retain
-the exact command/result. `pwsh` and `powershell` were unavailable in the current Linux environment,
-so that acceptance remains pending.
+external Gentle AI/Claude/OpenClaw side effects. The packaged smoke requires the explicit
+`-DisposableRunner` acknowledgement, Windows, and GitHub-hosted runner environment markers before
+it accesses the distribution or changes process state. This is an operational guard, not cryptographic runner detection.
+The actual safety boundary is the workflow's disposable
+`windows-latest` job; do not run it against a normal developer profile because provisioning may
+persist the managed binary directory in that Windows account's user PATH.
+
+`pwsh` and `powershell` were unavailable in the current Linux environment, so that acceptance remains pending until the disposable Windows workflow executes.

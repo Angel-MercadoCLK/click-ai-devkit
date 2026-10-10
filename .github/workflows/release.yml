@@ -38,7 +38,7 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content -Raw "bucket/click.json" | ConvertFrom-Json).version
-          ./scripts/windows-package-smoke.ps1 -DistDir dist -ExpectedVersion $version
+          ./scripts/windows-package-smoke.ps1 -DistDir dist -ExpectedVersion $version -DisposableRunner
 
   goreleaser:
     runs-on: ubuntu-latest
