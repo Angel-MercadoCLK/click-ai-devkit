@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
@@ -47,6 +49,80 @@ func resolveEngramCloudConfig(cfg Config, m *manifest.Manifest) (server, project
 	return server, project, os.Getenv(engramCloudTokenEnv) != ""
 }
 
+// ResolveGentleAIEngramCommand returns the executable from gentle-ai's user-scope MCP
+// registration when present. Absolute paths are verified before Cloud invokes them. When the
+// enabled plugin owns registration, this resolves and verifies gentle-ai's PATH fallback now so
+// Cloud receives the same concrete executable path as a direct MCP registration.
+func ResolveGentleAIEngramCommand(cfg Config) (string, error) {
+	if cfg.ClaudeHome == "" {
+		return "", fmt.Errorf("installer: se requiere el directorio de Claude para resolver Engram de gentle-ai")
+	}
+	root, err := readJSONConfig(cfg.Context7ConfigPath())
+	if err != nil {
+		return "", err
+	}
+	serversValue, exists := root["mcpServers"]
+	servers := map[string]any{}
+	if exists {
+		var ok bool
+		servers, ok = serversValue.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("installer: no se pudo clasificar el registro MCP de Engram; no se ejecutó Engram Cloud")
+		}
+	}
+	entryValue, found := servers["engram"]
+	if !found {
+		settings, settingsErr := readJSONConfig(cfg.SettingsPath())
+		if settingsErr != nil {
+			return "", settingsErr
+		}
+		plugins, _ := settings["enabledPlugins"].(map[string]any)
+		if enabled, _ := plugins["engram@engram"].(bool); !enabled {
+			return "", fmt.Errorf("installer: no se encontró el registro MCP ni el plugin Engram habilitado por gentle-ai; no se ejecutó Engram Cloud. Vuelva a ejecutar `click update`")
+		}
+		return resolveGentleAIEngramOnPath()
+	}
+	entry, ok := entryValue.(map[string]any)
+	if !ok || !matchesEngramJSONEntry(entry) {
+		return "", fmt.Errorf("installer: la entrada Engram de gentle-ai no coincide con el MCP esperado; no se ejecutó Engram Cloud. Revisa %s y vuelve a ejecutar `click update`", cfg.Context7ConfigPath())
+	}
+	command := entry["command"].(string)
+	expected, err := gentleAIEngramLookPath("engram")
+	if err != nil || expected == "" {
+		return "", fmt.Errorf("installer: no se pudo resolver el ejecutable Engram esperado por gentle-ai; no se ejecutó Engram Cloud")
+	}
+	expected, err = filepath.Abs(expected)
+	if err != nil {
+		return "", fmt.Errorf("installer: no se pudo verificar la ruta de Engram; no se ejecutó Engram Cloud")
+	}
+	if command == "engram" {
+		command = expected
+	} else if !filepath.IsAbs(command) || filepath.Clean(command) != filepath.Clean(expected) {
+		return "", fmt.Errorf("installer: el ejecutable Engram registrado no coincide con el binario resuelto por gentle-ai; no se ejecutó Engram Cloud")
+	}
+	info, err := os.Stat(command)
+	if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
+		return "", fmt.Errorf("installer: el ejecutable Engram registrado por gentle-ai no está disponible; no se ejecutó Engram Cloud. Revisa la instalación y vuelve a ejecutar `click update`")
+	}
+	return command, nil
+}
+
+func resolveGentleAIEngramOnPath() (string, error) {
+	path, err := gentleAIEngramLookPath("engram")
+	if err != nil || path == "" {
+		return "", fmt.Errorf("installer: no se pudo resolver el Engram habilitado por gentle-ai; no se ejecutó Engram Cloud")
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("installer: no se pudo verificar la ruta de Engram; no se ejecutó Engram Cloud")
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
+		return "", fmt.Errorf("installer: el ejecutable Engram habilitado por gentle-ai no está disponible; no se ejecutó Engram Cloud")
+	}
+	return path, nil
+}
+
 // SyncEngramCloud enrolls the local Engram client into the configured cloud project when cloud
 // config and ENGRAM_CLOUD_TOKEN are all present. It is idempotent: the first call runs the full
 // config -> enroll -> upgrade -> sync sequence, while later calls (when the local state says
@@ -70,6 +146,10 @@ func SyncEngramCloud(cfg Config, m *manifest.Manifest) error {
 	}
 
 	runner := commandRunnerFactory()
+	engramCommand, err := ResolveGentleAIEngramCommand(cfg)
+	if err != nil {
+		return err
+	}
 
 	if !existing.Enrolled {
 		// First-time enrollment with pre-existing local-only data: the Engram Cloud docs require an
@@ -102,7 +182,7 @@ func SyncEngramCloud(cfg Config, m *manifest.Manifest) error {
 			{"engram sync", []string{"sync", "--cloud", "--project", project}},
 		}
 		for _, step := range steps {
-			if err := runEngramCloudStep(runner, step.name, step.args...); err != nil {
+			if err := runEngramCloudStep(runner, engramCommand, step.name, step.args...); err != nil {
 				return err
 			}
 		}
@@ -120,10 +200,10 @@ func SyncEngramCloud(cfg Config, m *manifest.Manifest) error {
 	}
 
 	// Already enrolled: re-apply server config and sync. No re-enroll, no re-upgrade.
-	if err := runEngramCloudStep(runner, "engram cloud config", "cloud", "config", "--server", server); err != nil {
+	if err := runEngramCloudStep(runner, engramCommand, "engram cloud config", "cloud", "config", "--server", server); err != nil {
 		return err
 	}
-	if err := runEngramCloudStep(runner, "engram sync", "sync", "--cloud", "--project", project); err != nil {
+	if err := runEngramCloudStep(runner, engramCommand, "engram sync", "sync", "--cloud", "--project", project); err != nil {
 		return err
 	}
 	return nil
@@ -132,12 +212,12 @@ func SyncEngramCloud(cfg Config, m *manifest.Manifest) error {
 // runEngramCloudStep runs one engram subcommand through the injectable runner and returns a
 // wrapped, human-readable error. It centralizes the "fail-stop on first error" behavior shared by
 // both the first-time enrollment chain and the idempotent re-sync path.
-func runEngramCloudStep(runner CommandRunner, stepName string, args ...string) error {
+func runEngramCloudStep(runner CommandRunner, command, stepName string, args ...string) error {
 	var err error
 	if quietRunner, ok := runner.(quietCommandRunner); ok {
-		err = quietRunner.RunQuietly("engram", args...)
+		err = quietRunner.RunQuietly(command, args...)
 	} else {
-		err = runner.Run("engram", args...)
+		err = runner.Run(command, args...)
 	}
 	if err != nil {
 		return fmt.Errorf("installer: %s failed; run `engram cloud status` for details", stepName)
