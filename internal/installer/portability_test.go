@@ -6,11 +6,9 @@ import (
 	"testing"
 )
 
-// orphanRoleAgentTokens lists the 12 SDD roles that previously had no dedicated click-branded
-// agent file (they either fell back to a generic delegation or had no click asset at all). Each
-// token here is the exact modelconfig.Phase string / skill-dir name, and each must resolve to a
-// real, non-empty agents/click-{token}.md file so click-sdd never needs gentle-ai's
-// ~/.claude/agents/sdd-*.md (or any generic/unnamed agent) to run a full SDD cycle standalone.
+// orphanRoleAgentTokens lists the 12 retained SDD-role agent source files. Each token is the exact
+// modelconfig.Phase string and must resolve to a real, non-empty agents/click-{token}.md file while
+// these inert agent sources remain in the repository during the staged retirement.
 var orphanRoleAgentTokens = []string{
 	"explore",
 	"apply",
@@ -24,67 +22,6 @@ var orphanRoleAgentTokens = []string{
 	"review-reliability",
 	"review-resilience",
 	"review-refuter",
-}
-
-// canonicalSkillPhaseTokens are the skill directory/frontmatter names. They are deliberately bare
-// phase tokens: the click-* prefix identifies the Agent that loads each skill and is not part of the
-// skill name. Review lenses are agent-only roles and therefore are not included here.
-var canonicalSkillPhaseTokens = []string{
-	"explore", "propose", "spec", "design", "tasks", "apply", "verify", "archive", "onboard",
-	"jd-judge-a", "jd-judge-b", "jd-fix-agent",
-}
-
-var canonicalSkillPhaseAgents = map[string]string{
-	"explore":      "click-explore",
-	"propose":      "click-prd-writer",
-	"spec":         "click-prd-writer",
-	"design":       "click-architect",
-	"tasks":        "click-architect",
-	"apply":        "click-apply",
-	"verify":       "click-reviewer",
-	"archive":      "click-archive",
-	"onboard":      "click-onboard",
-	"jd-judge-a":   "click-jd-judge-a",
-	"jd-judge-b":   "click-jd-judge-b",
-	"jd-fix-agent": "click-jd-fix-agent",
-}
-
-// TestClickSDD_CanonicalInvocationContract guards the declared mechanism boundary: bare phase tokens
-// name skills, while click-* names name agents. This is a static contract check; live Claude loading
-// remains covered by the manual portability runbook. It intentionally does not add sdd-* or
-// click-orchestrator aliases, which would make the two registries ambiguous.
-func TestClickSDD_CanonicalInvocationContract(t *testing.T) {
-	orchestrator := string(mustReadRepoFile(t, "plugins", "click-sdd", "agents", "click-orchestrator.md"))
-	if !strings.Contains(orchestrator, "name: click-orchestrator") {
-		t.Fatal("click-orchestrator.md must declare the click-orchestrator agent name")
-	}
-	if strings.Contains(orchestrator, "click-orchestrator/SKILL.md") {
-		t.Fatal("click-orchestrator must not be advertised as a skill")
-	}
-
-	for _, phase := range canonicalSkillPhaseTokens {
-		phase := phase
-		t.Run(phase, func(t *testing.T) {
-			skillPath := []string{"plugins", "click-sdd", "skills", phase, "SKILL.md"}
-			content := string(mustReadRepoFile(t, skillPath...))
-			if !strings.Contains(content, "name: "+phase) {
-				t.Errorf("skill %s must declare canonical frontmatter name %q", strings.Join(skillPath, "/"), phase)
-			}
-
-			agent := canonicalSkillPhaseAgents[phase]
-			agentPath := []string{"plugins", "click-sdd", "agents", agent + ".md"}
-			agentContent := string(mustReadRepoFile(t, agentPath...))
-			if !strings.Contains(agentContent, "name: "+agent) {
-				t.Errorf("phase %q must resolve to agent frontmatter name %q", phase, agent)
-			}
-			if !strings.Contains(orchestrator, "`"+phase+"`") || !strings.Contains(orchestrator, "`"+agent+"`") {
-				t.Errorf("orchestrator must advertise canonical mapping %q -> %q", phase, agent)
-			}
-		})
-	}
-	if !strings.Contains(orchestrator, "plugins/click-sdd/skills/<phase>/SKILL.md") {
-		t.Error("orchestrator must advertise the canonical skill path template")
-	}
 }
 
 // TestClickSDD_AllOrphanRolesHaveDedicatedAgent asserts every one of the 12 previously-orphan SDD
@@ -135,9 +72,8 @@ func TestDefaultManagedContent_DelegatesWorkflowToGentleAI(t *testing.T) {
 	}
 }
 
-// resultContractFieldTokens are the 6 canonical Result Contract field names, defined once in
-// plugins/click-sdd/skills/_shared/result-contract.md and echoed inline by every phase-executor
-// agent file.
+// resultContractFieldTokens are the 6 canonical Result Contract field names still embedded inline
+// in the retained phase-executor agent sources. The shared skill document is retired separately.
 var resultContractFieldTokens = []string{
 	"status",
 	"executive_summary",
@@ -147,11 +83,10 @@ var resultContractFieldTokens = []string{
 	"skill_resolution",
 }
 
-// phaseExecutorAgentTokens are the 15 agent-file tokens (basename minus "click-") that MUST carry
-// the full inline Result Contract: the 12 orphanRoleAgentTokens (already contract-bearing) plus
-// prd-writer, architect, and reviewer (the 3 agents this change adds the contract to). These are
-// agent-file tokens, not phase tokens: propose/spec -> prd-writer, design/tasks -> architect,
-// verify -> reviewer.
+// phaseExecutorAgentTokens are the 15 agent-file tokens (basename minus "click-") whose retained
+// source files carry the inline Result Contract: the 12 orphanRoleAgentTokens plus prd-writer,
+// architect, and reviewer. These are agent-file tokens, not phase tokens: propose/spec ->
+// prd-writer, design/tasks -> architect, verify -> reviewer.
 var phaseExecutorAgentTokens = append(append([]string{}, orphanRoleAgentTokens...),
 	"prd-writer",
 	"architect",
@@ -168,23 +103,6 @@ var resultContractExemptAgentTokens = []string{
 	// elicitor: conversational interviewer with no Write/mem/skill tools; returns a requirements
 	// brief, not a structured envelope.
 	"elicitor",
-}
-
-// TestResultContractSharedDocExists guards Decision 1 (design doc): the shared Result Contract
-// doc must exist, be non-empty, and enumerate all 6 canonical field names.
-func TestResultContractSharedDocExists(t *testing.T) {
-	relPath := filepath.Join("plugins", "click-sdd", "skills", "_shared", "result-contract.md")
-	data := mustReadRepoFile(t, "plugins", "click-sdd", "skills", "_shared", "result-contract.md")
-	content := string(data)
-
-	if len(strings.TrimSpace(content)) == 0 {
-		t.Fatalf("expected shared doc %s to be non-empty", relPath)
-	}
-	for _, field := range resultContractFieldTokens {
-		if !strings.Contains(content, field) {
-			t.Errorf("shared doc %s does not enumerate field %q", relPath, field)
-		}
-	}
 }
 
 // TestPhaseExecutorAgentsDeclareResultContract asserts every one of the 15 phase-executor agent
@@ -298,25 +216,6 @@ func TestClickOrchestrator_JudgmentDayMandatory(t *testing.T) {
 
 	if strings.Contains(lowerSection, "optional") {
 		t.Errorf("Mandatory Judgment Day flow item still contains conditional/optional language")
-	}
-}
-
-// TestTasksSkill_HasReviewWorkloadForecast asserts plugins/click-sdd/skills/tasks/SKILL.md
-// requires the mandatory 3-line Review Workload Forecast (Phase 5 design Decision 1): the three
-// exact plain-text forecast lines with their allowed-value vocabulary.
-func TestTasksSkill_HasReviewWorkloadForecast(t *testing.T) {
-	data := mustReadRepoFile(t, "plugins", "click-sdd", "skills", "tasks", "SKILL.md")
-	content := string(data)
-
-	required := []string{
-		"Decision needed before apply: Yes|No",
-		"Chained PRs recommended: Yes|No",
-		"400-line budget risk: Low|Medium|High",
-	}
-	for _, want := range required {
-		if !strings.Contains(content, want) {
-			t.Errorf("tasks/SKILL.md does not contain forecast line %q", want)
-		}
 	}
 }
 

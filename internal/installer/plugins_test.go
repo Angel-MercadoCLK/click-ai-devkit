@@ -62,20 +62,40 @@ func TestClickSDDPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
 		filepath.Join("agents", "click-review-reliability.md"),
 		filepath.Join("agents", "click-review-resilience.md"),
 		filepath.Join("agents", "click-review-refuter.md"),
-		filepath.Join("skills", "explore", "SKILL.md"),
-		filepath.Join("skills", "propose", "SKILL.md"),
-		filepath.Join("skills", "spec", "SKILL.md"),
-		filepath.Join("skills", "design", "SKILL.md"),
-		filepath.Join("skills", "tasks", "SKILL.md"),
+	})
+
+	retiredSkillPaths := []string{
+		filepath.Join("skills", "_shared", "result-contract.md"),
+		filepath.Join("skills", "agent-builder", "SKILL.md"),
 		filepath.Join("skills", "apply", "SKILL.md"),
-		filepath.Join("skills", "verify", "SKILL.md"),
 		filepath.Join("skills", "archive", "SKILL.md"),
-		filepath.Join("skills", "onboard", "SKILL.md"),
+		filepath.Join("skills", "clickdev", "SKILL.md"),
+		filepath.Join("skills", "clickhola", "SKILL.md"),
+		filepath.Join("skills", "design", "SKILL.md"),
+		filepath.Join("skills", "explore", "SKILL.md"),
+		filepath.Join("skills", "jd-fix-agent", "SKILL.md"),
 		filepath.Join("skills", "jd-judge-a", "SKILL.md"),
 		filepath.Join("skills", "jd-judge-b", "SKILL.md"),
-		filepath.Join("skills", "jd-fix-agent", "SKILL.md"),
-		filepath.Join("skills", "agent-builder", "SKILL.md"),
-	})
+		filepath.Join("skills", "onboard", "SKILL.md"),
+		filepath.Join("skills", "propose", "SKILL.md"),
+		filepath.Join("skills", "spec", "SKILL.md"),
+		filepath.Join("skills", "tasks", "SKILL.md"),
+		filepath.Join("skills", "verify", "SKILL.md"),
+	}
+	for _, relPath := range retiredSkillPaths {
+		path := filepath.Join("..", "..", "plugins", "click-sdd", relPath)
+		if _, err := os.Stat(path); err == nil {
+			t.Errorf("retired Click SDD skill path %s still exists", relPath)
+		} else if !os.IsNotExist(err) {
+			t.Errorf("Stat(%s) error = %v, want path absent", path, err)
+		}
+	}
+
+	for _, plugin := range ManagedPluginNames() {
+		if plugin == "click-sdd" {
+			t.Fatal("retired click-sdd must remain absent from the active managed plugin roster")
+		}
+	}
 }
 
 func TestClickMemoryPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
