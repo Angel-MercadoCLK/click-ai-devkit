@@ -45,9 +45,8 @@ func seedResolvableOpenClaw(t *testing.T) {
 // present.
 func execRootWithOpenClaw(t *testing.T, claudeHome, openClawHome string, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	configureCLIExecutionHomes(t, claudeHome, os.Getenv("CLICK_TEST_CODEX_FIXTURE"), openClawHome, args)
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
-	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
 	seedResolvableOpenClaw(t)
 
 	root := NewRootCommand()
@@ -58,6 +57,11 @@ func execRootWithOpenClaw(t *testing.T, claudeHome, openClawHome string, args ..
 	root.SetArgs(args)
 
 	err := root.Execute()
+	if os.Getenv("CLICK_TEST_CLAUDE_FIXTURE") != "" {
+		if syncErr := syncStandardTargetFixtures(); syncErr != nil {
+			t.Errorf("sync target fixtures after command: %v", syncErr)
+		}
+	}
 	return buf.String(), err
 }
 
@@ -282,12 +286,9 @@ func TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoul(t *testing.T) {
 	}
 }
 
-// TestInstallCommand_OpenClawDetected_HealsLegacyMCPServersKey is the urgent-fix end-to-end
-// regression guard: a real machine's openclaw.json already corrupted by a PAST click run (a
-// top-level "mcpServers" key OpenClaw's own `validate config` rejects) must be healed — the key
-// removed, every other top-level key preserved — the next time `click install` runs against that
-// same OpenClaw target.
-func TestInstallCommand_OpenClawDetected_HealsLegacyMCPServersKey(t *testing.T) {
+// TestInstallCommand_OpenClawDetected_RejectsUnprovenLegacyMCPRegistration ensures preflight
+// rejects an existing same-name registration that cannot be proven Click-owned, without mutation.
+func TestInstallCommand_OpenClawDetected_RejectsUnprovenLegacyMCPRegistration(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
 	runner := newTestCommandRunner(claudeHome)
@@ -303,19 +304,19 @@ func TestInstallCommand_OpenClawDetected_HealsLegacyMCPServersKey(t *testing.T) 
 		t.Fatalf("WriteFile(openclaw.json) error = %v", err)
 	}
 
-	if _, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "install"); err != nil {
-		t.Fatalf("install command error = %v", err)
+	if _, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "install"); err == nil {
+		t.Fatal("install accepted an unproven same-name OpenClaw Engram registration")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("Click runner calls = %v, want preflight to stop before Click writes", runner.commands)
 	}
 
 	got, err := os.ReadFile(cfg.OpenClawMCPConfigPath())
 	if err != nil {
 		t.Fatalf("ReadFile(openclaw.json) error = %v", err)
 	}
-	if strings.Contains(string(got), "mcpServers") {
-		t.Fatalf("openclaw.json = %s, want the invalid legacy \"mcpServers\" key healed away", got)
-	}
-	if !strings.Contains(string(got), "someUserKey") {
-		t.Fatalf("openclaw.json = %s, want unrelated top-level key preserved", got)
+	if string(got) != corrupted {
+		t.Fatalf("openclaw.json = %s, want unproven legacy config preserved exactly", got)
 	}
 }
 

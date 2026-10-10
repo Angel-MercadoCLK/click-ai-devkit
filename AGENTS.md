@@ -16,9 +16,14 @@ go test ./...
 minimal implementation to make it pass (green). Do not skip this — see D13 in
 `documentacion/00-decisions-and-open-questions.md`.
 
-Tests must never touch the real `~/.claude`. Use the `CLICK_CLAUDE_HOME` env var override
-(`t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())`) — see `internal/installer/config.go` and its
-tests for the established pattern.
+Tests must never touch real `~/.claude`, `~/.codex`, or `~/.openclaw` state. Tests that exercise
+the pinned gentle-ai install/update runner must isolate the process home (`HOME`, `USERPROFILE`,
+and `XDG_CONFIG_HOME` as applicable) in `t.TempDir()` and use its standard `.claude`, `.codex`,
+and `.openclaw` target directories. Do not set target-root overrides for those integration
+fixtures: gentle-ai v4.0.0 resolves its own destinations from the process home. Use a nonstandard
+`CLICK_CLAUDE_HOME`, `CODEX_HOME`, or `CLICK_OPENCLAW_HOME` only in an isolated regression that
+asserts the selected target is rejected before snapshot, provisioning, runner, or config writes.
+Other Click-only tests may use target-root overrides where useful.
 
 ## Language
 

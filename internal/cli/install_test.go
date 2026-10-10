@@ -72,8 +72,9 @@ func TestInstall_MalformedSettingsDoesNotAbortRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install command error = %v, want nil; output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Se omitió el respaldo de settings.json") || !strings.Contains(out, settingsPath) {
-		t.Fatalf("install output = %q, want malformed-settings backup warning naming %q", out, settingsPath)
+	installedSettingsPath := filepath.Join(os.Getenv("CLICK_CLAUDE_HOME"), "settings.json")
+	if !strings.Contains(out, "Se omitió el respaldo de settings.json") || !strings.Contains(out, installedSettingsPath) {
+		t.Fatalf("install output = %q, want malformed-settings backup warning naming %q", out, installedSettingsPath)
 	}
 	if !strings.Contains(out, "CLAUDE.md actualizado") {
 		t.Fatalf("install output = %q, want a later configured step to run", out)
@@ -212,7 +213,7 @@ func (e *cloudError) Error() string { return e.msg }
 // persisted-token path (configure before enroll).
 func TestInstall_ConfigureFailureWarnsAndContinues(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"install"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	seedResolvableGit(t)
 
@@ -249,6 +250,9 @@ func TestInstall_ConfigureFailureWarnsAndContinues(t *testing.T) {
 
 		if err := root.Execute(); err != nil {
 			t.Fatalf("install command error = %v, want nil (cloud settings failure must be non-fatal), output:\n%s", err, out.String())
+		}
+		if err := syncStandardTargetFixtures(); err != nil {
+			t.Fatal(err)
 		}
 		if configureCalls != 1 {
 			t.Fatalf("ConfigureEngramCloudSessionSync called %d times, want 1 (CloudResolvable without token must still write env block and hook)", configureCalls)
@@ -291,6 +295,9 @@ func TestInstall_ConfigureFailureWarnsAndContinues(t *testing.T) {
 
 		if err := root.Execute(); err != nil {
 			t.Fatalf("install command error = %v, want nil (cloud settings failure must be non-fatal)", err)
+		}
+		if err := syncStandardTargetFixtures(); err != nil {
+			t.Fatal(err)
 		}
 		if len(order) != 2 || order[0] != "configure" || order[1] != "enrollment" {
 			t.Fatalf("recorded order = %v, want [configure enrollment]", order)
@@ -394,7 +401,7 @@ func (e *codexMCPError) Error() string { return e.msg }
 
 func TestInstall_SharedReaderConsentBeforeTokenWrite(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"install"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "http://127.0.0.1:18080")
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "click-ai-devkit")
@@ -455,6 +462,9 @@ func TestInstall_SharedReaderConsentBeforeTokenWrite(t *testing.T) {
 		// printing it would leak the secret into CI logs.
 		t.Fatalf("install command failed unexpectedly; see test setup for expected consent flow")
 	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
+	}
 	if !consentCalled {
 		t.Fatal("consent reader was not called by runInstall")
 	}
@@ -482,7 +492,7 @@ func TestInstall_SharedReaderConsentBeforeTokenWrite(t *testing.T) {
 
 func TestInstall_ManifestOnlyConfigPersistsTokenWithFlag(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"install"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "")
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "")
@@ -505,6 +515,9 @@ func TestInstall_ManifestOnlyConfigPersistsTokenWithFlag(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(filepath.Join(home, "settings.json"))
 	if err != nil {
 		t.Fatalf("ReadFile(settings.json) error = %v", err)
@@ -523,7 +536,7 @@ func TestInstall_ManifestOnlyConfigPersistsTokenWithFlag(t *testing.T) {
 // to settings.json. The process exits 0.
 func TestInstall_DeclinedPersistenceStillEnrolls(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"install"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	seedResolvableGit(t)
 
@@ -559,6 +572,9 @@ func TestInstall_DeclinedPersistenceStillEnrolls(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("install command error = %v, want nil (declined persistence still exits 0)", err)
 	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
+	}
 
 	if cloudCalls != 1 {
 		t.Fatalf("SyncEngramCloud called %d times, want 1 (D40 enrollment must run with the token present in the environment, even when persistence is declined)", cloudCalls)
@@ -593,7 +609,7 @@ func TestInstall_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
 	t.Setenv("ENGRAM_CLOUD_TOKEN", tokenOverride)
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"install"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	t.Setenv("CODEX_HOME", t.TempDir())
 
@@ -607,6 +623,9 @@ func TestInstall_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("install command error = %v, output:\n%s", err, out.String())
+	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
 	}
 
 	// Read the actual settings.json file on disk
@@ -777,6 +796,14 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
+	for key, value := range map[string]string{
+		"HOME": home, "USERPROFILE": home, "XDG_CONFIG_HOME": filepath.Join(home, ".config"),
+		"CLICK_CLAUDE_HOME": "", "CODEX_HOME": "", "CLICK_OPENCLAW_HOME": "", "CLICK_STATE_HOME": "",
+	} {
+		if err := os.Setenv(key, value); err != nil {
+			panic(err)
+		}
+	}
 	p := installer.NewGentleAIProvisioner()
 	p.EnsureOnPath = func(string) (bool, error) { return false, nil }
 	p.HomeDir = func() (string, error) { return home, nil }
@@ -810,6 +837,133 @@ func TestMain(m *testing.M) {
 	restore()
 	os.RemoveAll(home)
 	os.Exit(code)
+}
+
+func TestGentleAIStep_UnsupportedRootStopsBeforeProvisioning(t *testing.T) {
+	codexHome := t.TempDir()
+	provisionCalls := 0
+	p := installer.NewGentleAIProvisioner()
+	managedHome := t.TempDir()
+	p.HomeDir = func() (string, error) { return managedHome, nil }
+	p.Lstat = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	p.Run = func(context.Context, []string, string, ...string) ([]byte, error) {
+		provisionCalls++
+		return nil, nil
+	}
+	t.Cleanup(installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
+	cmd := newInstallCommand()
+	cmd.SetContext(context.Background())
+	var out bytes.Buffer
+	r := rendererFor(cmd, &out)
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runGentleAIStep(cmd, &out, r, m, installer.Config{CodexHome: codexHome}, installer.TargetSelection{Codex: true})
+	if err == nil || !strings.Contains(err.Error(), "directorio personalizado") {
+		t.Fatalf("runGentleAIStep() error = %v, want unsupported-root safety failure", err)
+	}
+	if provisionCalls != 0 {
+		t.Fatalf("provision called %d times, want root preflight to stop before upstream execution", provisionCalls)
+	}
+}
+
+func TestInstallAndUpdate_UnsupportedRootStopBeforeWritesOrCommands(t *testing.T) {
+	for _, command := range []string{"install", "update"} {
+		t.Run(command, func(t *testing.T) {
+			processHome := t.TempDir()
+			stateHome := t.TempDir()
+			claudeHome := t.TempDir()
+			t.Setenv("HOME", processHome)
+			t.Setenv("USERPROFILE", processHome)
+			t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+			t.Setenv("CLICK_STATE_HOME", stateHome)
+			t.Setenv("CLICK_OPENCLAW_HOME", "")
+			t.Setenv("CODEX_HOME", "")
+
+			runner := newTestCommandRunner(claudeHome)
+			baseRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+			defer baseRunner()
+			restoreBinaryLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+				return cliFakeBinaryLookup{resolved: map[string]string{"git": "/fixture/git", "claude": "/fixture/claude"}}
+			})
+			defer restoreBinaryLookup()
+			if command == "update" {
+				if err := installer.SaveTargetSelection(installer.Config{ClickStateHome: stateHome}, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
+					t.Fatalf("save update target selection: %v", err)
+				}
+			}
+			selectionBefore := installer.TargetSelection{}
+			if command == "update" {
+				var err error
+				var found bool
+				selectionBefore, found, err = installer.LoadTargetSelection(installer.Config{ClickStateHome: stateHome})
+				if err != nil || !found {
+					t.Fatalf("load update target selection: %v", err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(claudeHome, "untouched.json"), []byte(`{"preserve":true}`), 0o600); err != nil {
+				t.Fatalf("seed selected target home: %v", err)
+			}
+
+			provisionerCalls := 0
+			provisioner := installer.NewGentleAIProvisioner()
+			provisioner.HomeDir = func() (string, error) { return t.TempDir(), nil }
+			provisioner.EnsureOnPath = func(string) (bool, error) { return false, nil }
+			provisioner.Run = func(context.Context, []string, string, ...string) ([]byte, error) {
+				provisionerCalls++
+				return nil, nil
+			}
+			restoreProvisioner := installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return provisioner })
+			defer restoreProvisioner()
+
+			root := NewRootCommand()
+			var out bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&out)
+			root.SetIn(&bytes.Buffer{})
+			root.SetArgs([]string{command, "--yes"})
+			err := root.Execute()
+			if err == nil || !strings.Contains(err.Error(), "directorio personalizado") {
+				t.Fatalf("%s error = %v, want unsupported-root preflight failure; output:\n%s", command, err, out.String())
+			}
+			if len(runner.commands) != 0 {
+				t.Fatalf("command runner calls = %v, want zero before unsupported-root rejection", runner.commands)
+			}
+			if provisionerCalls != 0 {
+				t.Fatalf("gentle-ai calls = %d, want zero before unsupported-root rejection", provisionerCalls)
+			}
+			entries, readErr := os.ReadDir(stateHome)
+			if readErr != nil {
+				t.Fatalf("read state home: %v", readErr)
+			}
+			if command == "install" && len(entries) != 0 {
+				t.Fatalf("state home entries = %v, want no snapshot or bookkeeping writes before rejection", entries)
+			}
+			if command == "update" {
+				selectionAfter, found, err := installer.LoadTargetSelection(installer.Config{ClickStateHome: stateHome})
+				if err != nil || !found || selectionAfter != selectionBefore {
+					t.Fatalf("target selection after rejection = %#v, %v; want unchanged %#v", selectionAfter, err, selectionBefore)
+				}
+				for _, entry := range entries {
+					if entry.Name() == "backups" {
+						t.Fatalf("state home entries = %v, want no snapshot before rejection", entries)
+					}
+				}
+			}
+			entries, readErr = os.ReadDir(claudeHome)
+			if readErr != nil {
+				t.Fatalf("read selected Claude home: %v", readErr)
+			}
+			if len(entries) != 1 || entries[0].Name() != "untouched.json" {
+				t.Fatalf("selected Claude home entries = %v, want only the preserved sentinel", entries)
+			}
+			contents, readErr := os.ReadFile(filepath.Join(claudeHome, "untouched.json"))
+			if readErr != nil || string(contents) != `{"preserve":true}` {
+				t.Fatalf("selected Claude sentinel = %q, %v; want unchanged", contents, readErr)
+			}
+		})
+	}
 }
 
 func TestGentleAICommands_SelectedTargetsAndFailStop(t *testing.T) {
@@ -908,6 +1062,9 @@ func TestGentleAIStep_DriftUsesWarningAndMissingUsesInfo(t *testing.T) {
 			}
 			p.Fetch = func(context.Context, string) (io.ReadCloser, error) { return nil, errors.New("fixture failure") }
 			t.Cleanup(installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
+			processHome := t.TempDir()
+			t.Setenv("HOME", processHome)
+			t.Setenv("USERPROFILE", processHome)
 			cmd := newInstallCommand()
 			cmd.SetContext(context.Background())
 			var out bytes.Buffer
@@ -916,7 +1073,7 @@ func TestGentleAIStep_DriftUsesWarningAndMissingUsesInfo(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := runGentleAIStep(cmd, &out, r, m, installer.TargetSelection{Codex: true}); err == nil {
+			if err := runGentleAIStep(cmd, &out, r, m, installer.Config{CodexHome: filepath.Join(processHome, ".codex")}, installer.TargetSelection{Codex: true}); err == nil {
 				t.Fatal("provisioning failure returned success")
 			}
 			if !strings.Contains(out.String(), tt.marker) {

@@ -83,6 +83,184 @@ func seedResolvableGit(t *testing.T) {
 	t.Cleanup(restore)
 }
 
+// isolateStandardTargetHomes gives the CLI the standard target paths expected by the pinned
+// gentle-ai installer while keeping each target's contents in test-owned temporary directories.
+// The symlinked target trees let existing assertions keep using their fixture paths; gentle-ai
+// itself still resolves and mutates only <isolated HOME>/.claude, .codex, and .openclaw.
+func isolateStandardTargetHomes(t *testing.T, claudeFixture, codexFixture, openClawFixture string) (claudeHome, codexHome, openClawHome string) {
+	t.Helper()
+	if claudeFixture == "" {
+		claudeFixture = os.Getenv("CLICK_TEST_CLAUDE_FIXTURE")
+	}
+	if codexFixture == "" {
+		codexFixture = os.Getenv("CLICK_TEST_CODEX_FIXTURE")
+	}
+	if openClawFixture == "" {
+		openClawFixture = os.Getenv("CLICK_TEST_OPENCLAW_FIXTURE")
+	}
+	processHome := filepath.Join(filepath.Dir(claudeFixture), ".gentle-ai-test-home-"+filepath.Base(claudeFixture))
+	if err := os.MkdirAll(processHome, 0o755); err != nil {
+		t.Fatalf("create isolated process home: %v", err)
+	}
+	t.Setenv("HOME", processHome)
+	t.Setenv("USERPROFILE", processHome)
+
+	fixtures := []struct {
+		name string
+		path string
+		into *string
+	}{
+		{name: ".claude", path: claudeFixture, into: &claudeHome},
+		{name: ".codex", path: codexFixture, into: &codexHome},
+		{name: ".openclaw", path: openClawFixture, into: &openClawHome},
+	}
+	for _, fixture := range fixtures {
+		if fixture.path == "" {
+			fixture.path = t.TempDir()
+		}
+		if err := os.MkdirAll(fixture.path, 0o755); err != nil {
+			t.Fatalf("create %s fixture root: %v", fixture.name, err)
+		}
+		target := filepath.Join(processHome, fixture.name)
+		if err := replaceFixtureTree(fixture.path, target); err != nil {
+			t.Fatalf("prepare isolated %s target: %v", fixture.name, err)
+		}
+		*fixture.into = target
+	}
+	if err := copyFixtureFile(filepath.Join(claudeFixture, ".claude.json"), filepath.Join(processHome, ".claude.json")); err != nil {
+		t.Fatalf("prepare isolated Claude MCP config: %v", err)
+	}
+	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
+	t.Setenv("CLICK_TEST_CLAUDE_FIXTURE", claudeFixture)
+	t.Setenv("CLICK_TEST_CODEX_FIXTURE", codexFixture)
+	t.Setenv("CLICK_TEST_OPENCLAW_FIXTURE", openClawFixture)
+	t.Cleanup(func() {
+		for _, fixture := range fixtures {
+			if fixture.path == "" {
+				continue
+			}
+			if err := replaceFixtureTree(filepath.Join(processHome, fixture.name), fixture.path); err != nil {
+				t.Errorf("sync isolated %s fixture: %v", fixture.name, err)
+			}
+		}
+		if err := copyFixtureFile(filepath.Join(processHome, ".claude.json"), filepath.Join(claudeFixture, ".claude.json")); err != nil {
+			t.Errorf("sync isolated Claude MCP config: %v", err)
+		}
+	})
+	return claudeHome, codexHome, openClawHome
+}
+
+func syncStandardTargetFixtures() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	fixtures := []struct {
+		name string
+		path string
+	}{
+		{name: ".claude", path: os.Getenv("CLICK_TEST_CLAUDE_FIXTURE")},
+		{name: ".codex", path: os.Getenv("CLICK_TEST_CODEX_FIXTURE")},
+		{name: ".openclaw", path: os.Getenv("CLICK_TEST_OPENCLAW_FIXTURE")},
+	}
+	for _, fixture := range fixtures {
+		if fixture.path == "" {
+			continue
+		}
+		if err := replaceFixtureTree(filepath.Join(home, fixture.name), fixture.path); err != nil {
+			return fmt.Errorf("sync %s test fixture: %w", fixture.name, err)
+		}
+	}
+	if err := copyFixtureFile(filepath.Join(home, ".claude.json"), filepath.Join(os.Getenv("CLICK_TEST_CLAUDE_FIXTURE"), ".claude.json")); err != nil {
+		return fmt.Errorf("sync Claude MCP test fixture: %w", err)
+	}
+	return nil
+}
+
+func configureCLIExecutionHomes(t *testing.T, claudeFixture, codexFixture, openClawFixture string, args []string) {
+	t.Helper()
+	usesUpstreamInstall := len(args) > 0 && (args[0] == "install" || args[0] == "update")
+	continuesStandardHome := os.Getenv("CLICK_TEST_CLAUDE_FIXTURE") == claudeFixture && claudeFixture != ""
+	if usesUpstreamInstall || continuesStandardHome {
+		isolateStandardTargetHomes(t, claudeFixture, codexFixture, openClawFixture)
+		return
+	}
+	processHome := t.TempDir()
+	t.Setenv("HOME", processHome)
+	t.Setenv("USERPROFILE", processHome)
+	t.Setenv("CLICK_CLAUDE_HOME", claudeFixture)
+	if codexFixture == "" {
+		codexFixture = t.TempDir()
+	}
+	if openClawFixture == "" {
+		openClawFixture = t.TempDir()
+	}
+	t.Setenv("CODEX_HOME", codexFixture)
+	t.Setenv("CLICK_OPENCLAW_HOME", openClawFixture)
+	t.Setenv("CLICK_TEST_CLAUDE_FIXTURE", "")
+	t.Setenv("CLICK_TEST_CODEX_FIXTURE", "")
+	t.Setenv("CLICK_TEST_OPENCLAW_FIXTURE", "")
+}
+
+func copyFixtureFile(source, destination string) error {
+	data, err := os.ReadFile(source)
+	if os.IsNotExist(err) {
+		if removeErr := os.Remove(destination); removeErr != nil && !os.IsNotExist(removeErr) {
+			return removeErr
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(destination, data, 0o600)
+}
+
+func replaceFixtureTree(source, destination string) error {
+	if err := os.RemoveAll(destination); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(destination, 0o755); err != nil {
+		return err
+	}
+	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == source {
+			return nil
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		out := filepath.Join(destination, rel)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return os.MkdirAll(out, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported test fixture entry %q", path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(out, data, info.Mode().Perm())
+	})
+}
+
 func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
 	t.Helper()
 	return execRootWithStateHome(t, claudeHome, t.TempDir(), args...)
@@ -94,7 +272,8 @@ func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
 // state home would write its snapshot somewhere the command never looks.
 func execRootWithStateHome(t *testing.T, claudeHome, stateHome string, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	codexFixture, openClawFixture := os.Getenv("CLICK_TEST_CODEX_FIXTURE"), os.Getenv("CLICK_TEST_OPENCLAW_FIXTURE")
+	configureCLIExecutionHomes(t, claudeHome, codexFixture, openClawFixture, args)
 	t.Setenv("CLICK_STATE_HOME", stateHome)
 	// openclaw-target-support (PR-C safety fix): `click uninstall` now unconditionally resolves
 	// OpenClawHome (installer.ResolveOpenClawHome) to remove the memory-guard plugin dir, regardless
@@ -104,7 +283,6 @@ func execRootWithStateHome(t *testing.T, claudeHome, stateHome string, args ...s
 	// <user home>/.openclaw on whatever machine runs `go test` — violating this codebase's own hard
 	// safety rule (config.go's openClawHomeEnvOverride doc comment: "never the real home directory").
 	// Pointing it at a throwaway t.TempDir() here makes every execRoot-based test safe by default.
-	t.Setenv("CLICK_OPENCLAW_HOME", t.TempDir())
 	seedResolvableGit(t)
 
 	root := NewRootCommand()
@@ -118,6 +296,11 @@ func execRootWithStateHome(t *testing.T, claudeHome, stateHome string, args ...s
 	root.SetArgs(args)
 
 	err := root.Execute()
+	if os.Getenv("CLICK_TEST_CLAUDE_FIXTURE") != "" {
+		if syncErr := syncStandardTargetFixtures(); syncErr != nil {
+			t.Errorf("sync target fixtures after command: %v", syncErr)
+		}
+	}
 	return buf.String(), err
 }
 
@@ -130,6 +313,13 @@ type testCommandRunner struct {
 
 func newTestCommandRunner(home string) *testCommandRunner {
 	return &testCommandRunner{home: home, plugins: map[string]bool{}, pluginConfigs: map[string]map[string]string{}}
+}
+
+func (r *testCommandRunner) homeDir() string {
+	if home := os.Getenv("CLICK_CLAUDE_HOME"); home != "" {
+		return home
+	}
+	return r.home
 }
 
 func (r *testCommandRunner) Run(name string, args ...string) error {
@@ -169,6 +359,7 @@ func (r *testCommandRunner) Run(name string, args ...string) error {
 }
 
 func (r *testCommandRunner) writeKnownMarketplace(source string) error {
+	home := r.homeDir()
 	data, err := json.Marshal(map[string]any{
 		installer.ClickMarketplaceName(): map[string]any{
 			"source": map[string]any{"source": "git", "url": source},
@@ -177,7 +368,7 @@ func (r *testCommandRunner) writeKnownMarketplace(source string) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(r.home, "plugins", "known_marketplaces.json")
+	path := filepath.Join(home, "plugins", "known_marketplaces.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -189,7 +380,11 @@ func (r *testCommandRunner) writeKnownMarketplace(source string) error {
 // the real CLI in documentacion/spikes/spike-g-context7.md), mirroring the equivalent simulation
 // already used by installer package's own fakeCommandRunner (internal/installer/plugins.go).
 func (r *testCommandRunner) context7ConfigPath() string {
-	return filepath.Join(r.home, ".claude.json")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(r.homeDir(), ".claude.json")
+	}
+	return filepath.Join(home, ".claude.json")
 }
 
 func (r *testCommandRunner) upsertMCPServer(name, url string) error {
@@ -241,13 +436,14 @@ func (r *testCommandRunner) removeMCPServer(name string) error {
 // the previous unconditional empty-bytes stub. Every other command still gets the previous
 // no-op/empty-bytes behavior.
 func (r *testCommandRunner) Output(name string, args ...string) ([]byte, error) {
+	home := r.homeDir()
 	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
 	if name == "go" && len(args) == 2 && args[0] == "env" {
 		switch args[1] {
 		case "GOBIN":
 			return []byte("\n"), nil
 		case "GOPATH":
-			return []byte(filepath.Join(r.home, "go") + "\n"), nil
+			return []byte(filepath.Join(home, "go") + "\n"), nil
 		}
 	}
 	if filepath.Base(name) == "openclaw" && len(args) == 3 && args[0] == "config" && args[1] == "set" && args[2] == "--help" {
@@ -275,20 +471,31 @@ func parseTestConfigFlags(args []string) map[string]string {
 }
 
 func (r *testCommandRunner) writeSettings() error {
+	home := r.homeDir()
 	plugins := map[string]any{}
 	enabled := map[string]bool{}
 	for pluginID := range r.plugins {
 		pluginName, marketplace, _ := strings.Cut(pluginID, "@")
-		installPath := filepath.Join(r.home, "plugins", "cache", marketplace, pluginName, "0.1.0")
+		installPath := filepath.Join(home, "plugins", "cache", marketplace, pluginName, "0.1.0")
 		plugins[pluginID] = []map[string]any{{"scope": "user", "version": "0.1.0", "installPath": installPath}}
 		enabled[pluginID] = true
 		if pluginID == installer.EngramPluginID {
 			writeTestFile(filepath.Join(installPath, ".mcp.json"), `{"mcpServers":{"engram":{"command":"engram","args":["mcp","--tools=agent"]}}}`)
 		}
 		if pluginID == installer.ClickSDDPluginID {
-			tools := "mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_save, mcp__plugin_engram_engram__mem_update"
 			for _, agent := range []string{"click-apply", "click-architect", "click-archive", "click-explore", "click-jd-fix-agent", "click-jd-judge-a", "click-jd-judge-b", "click-memory-curator", "click-onboard", "click-orchestrator", "click-prd-writer", "click-reviewer"} {
-				writeTestFile(filepath.Join(installPath, "agents", agent+".md"), "---\ntools: "+tools+"\n---\n")
+				assetPath := filepath.Join("..", "..", "plugins", "click-sdd", "agents", agent+".md")
+				data, err := os.ReadFile(assetPath)
+				if err != nil {
+					return fmt.Errorf("read bundled Click agent asset %s: %w", agent, err)
+				}
+				assetDestination := filepath.Join(installPath, "agents", agent+".md")
+				if err := os.MkdirAll(filepath.Dir(assetDestination), 0o755); err != nil {
+					return err
+				}
+				if err := os.WriteFile(assetDestination, data, 0o600); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -296,7 +503,7 @@ func (r *testCommandRunner) writeSettings() error {
 	if err != nil {
 		return err
 	}
-	pluginsPath := filepath.Join(r.home, "plugins", "installed_plugins.json")
+	pluginsPath := filepath.Join(home, "plugins", "installed_plugins.json")
 	if err := os.MkdirAll(filepath.Dir(pluginsPath), 0o755); err != nil {
 		return err
 	}
@@ -313,7 +520,7 @@ func (r *testCommandRunner) writeSettings() error {
 	}
 
 	// MERGE: read existing settings.json if present, preserve foreign keys, set/replace only the keys we own
-	settingsPath := filepath.Join(r.home, "settings.json")
+	settingsPath := filepath.Join(home, "settings.json")
 	existingSettings := map[string]any{}
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		if err := json.Unmarshal(data, &existingSettings); err != nil {
@@ -398,11 +605,11 @@ func TestResolveInstallTargetSelection_NonInteractiveDoesNotPersistBeforeConfirm
 // preflight tests below, where the whole point is to simulate git being absent from PATH.
 func execRootWithGitLookup(t *testing.T, claudeHome string, lookup installer.BinaryLookup, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	codexFixture, openClawFixture := os.Getenv("CLICK_TEST_CODEX_FIXTURE"), os.Getenv("CLICK_TEST_OPENCLAW_FIXTURE")
+	configureCLIExecutionHomes(t, claudeHome, codexFixture, openClawFixture, args)
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	// Same CLICK_OPENCLAW_HOME safety override as execRoot above — see its comment for the full
 	// rationale (runUninstall's unconditional ResolveOpenClawHome call).
-	t.Setenv("CLICK_OPENCLAW_HOME", t.TempDir())
 	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup { return lookup })
 	defer restore()
 
@@ -414,15 +621,18 @@ func execRootWithGitLookup(t *testing.T, claudeHome string, lookup installer.Bin
 	root.SetArgs(args)
 
 	err := root.Execute()
+	if os.Getenv("CLICK_TEST_CLAUDE_FIXTURE") != "" {
+		if syncErr := syncStandardTargetFixtures(); syncErr != nil {
+			t.Errorf("sync target fixtures after command: %v", syncErr)
+		}
+	}
 	return buf.String(), err
 }
 
 func execRootWithHomesAndLookup(t *testing.T, claudeHome, stateHome, openClawHome, codexHome string, lookup installer.BinaryLookup, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	configureCLIExecutionHomes(t, claudeHome, codexHome, openClawHome, args)
 	t.Setenv("CLICK_STATE_HOME", stateHome)
-	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
-	t.Setenv("CODEX_HOME", codexHome)
 	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup { return lookup })
 	defer restore()
 
@@ -434,6 +644,11 @@ func execRootWithHomesAndLookup(t *testing.T, claudeHome, stateHome, openClawHom
 	root.SetArgs(args)
 
 	err := root.Execute()
+	if os.Getenv("CLICK_TEST_CLAUDE_FIXTURE") != "" {
+		if syncErr := syncStandardTargetFixtures(); syncErr != nil {
+			t.Errorf("sync target fixtures after command: %v", syncErr)
+		}
+	}
 	return buf.String(), err
 }
 

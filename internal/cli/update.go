@@ -97,6 +97,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	cloudResolvable := installer.EngramCloudConfigured(cfg, m) || installer.EngramCloudPartiallyConfigured(cfg, m)
+	if err := preflightGentleAI(cfg, selection); err != nil {
+		return err
+	}
 	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel})
 
 	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
@@ -150,7 +153,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// The mandatory upstream foundation must succeed before Click persists selection
 	// or migrates models. The run-start snapshot and deferred recording are already armed.
 	if len(installer.GentleAIInstallArgs(selection)) > 0 {
-		if err := runGentleAIStep(cmd, out, r, m, selection); err != nil {
+		if err := runGentleAIStep(cmd, out, r, m, cfg, selection); err != nil {
 			return err
 		}
 	}

@@ -128,6 +128,9 @@ func runInstall(cmd *cobra.Command) error {
 		return err
 	}
 	cloudResolvable := installer.EngramCloudConfigured(cfg, m) || installer.EngramCloudPartiallyConfigured(cfg, m)
+	if err := preflightGentleAI(cfg, selection); err != nil {
+		return err
+	}
 	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel, OpenClawNativeModel: openClawNativeModel})
 	fmt.Fprintln(out, r.Info("Capacidades seleccionadas: "+plan.CapabilitiesSummary()))
 	fmt.Fprintln(out, r.Info("Resumen final de instalación: "+strings.Join(plan.StepLabels(), " → ")+nativeSummary(native)))
@@ -182,7 +185,7 @@ func runInstall(cmd *cobra.Command) error {
 	// The mandatory upstream foundation must succeed before Click persists selection
 	// or migrates models. The run-start snapshot and deferred recording are already armed.
 	if len(installer.GentleAIInstallArgs(selection)) > 0 {
-		if err := runGentleAIStep(cmd, out, r, m, selection); err != nil {
+		if err := runGentleAIStep(cmd, out, r, m, cfg, selection); err != nil {
 			return err
 		}
 	}
@@ -630,7 +633,10 @@ var runInstallSelectTUI = func(cmd *cobra.Command, initialProfile modelconfig.Pr
 
 // runGentleAIStep is shared by install/update so selection, warnings and fatal
 // foundational failures cannot diverge. Supplemental cloud/MCP steps stay non-fatal.
-func runGentleAIStep(cmd *cobra.Command, out io.Writer, r *ui.Renderer, m *manifest.Manifest, selection installer.TargetSelection) error {
+func runGentleAIStep(cmd *cobra.Command, out io.Writer, r *ui.Renderer, m *manifest.Manifest, cfg installer.Config, selection installer.TargetSelection) error {
+	if err := preflightGentleAI(cfg, selection); err != nil {
+		return err
+	}
 	var result installer.GentleAIProvisionResult
 	err := r.RunStep("Sincronizando gentle-ai y sus componentes seleccionados…", "gentle-ai configurado", func() error {
 		var syncErr error
@@ -645,4 +651,11 @@ func runGentleAIStep(cmd *cobra.Command, out io.Writer, r *ui.Renderer, m *manif
 	})
 	surfacePathWarning(out, r, result.PathWarning)
 	return err
+}
+
+func preflightGentleAI(cfg installer.Config, selection installer.TargetSelection) error {
+	if err := installer.ValidateGentleAIDestinationRoots(cfg, selection); err != nil {
+		return err
+	}
+	return installer.PreflightGentleAIRegistrations(cfg, selection)
 }

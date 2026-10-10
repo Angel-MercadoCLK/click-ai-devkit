@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -186,7 +187,17 @@ func TestRootCommand_DirectSubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsag
 
 func TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	restoreBinaryLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return cliFakeBinaryLookup{resolved: map[string]string{}}
+	})
+	defer restoreBinaryLookup()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("CLICK_CLAUDE_HOME", filepath.Join(home, ".claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("CLICK_OPENCLAW_HOME", filepath.Join(home, ".openclaw"))
+	t.Setenv("CLICK_STATE_HOME", filepath.Join(home, ".click-state"))
 
 	parent := &cobra.Command{}
 	var buf bytes.Buffer

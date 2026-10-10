@@ -16,7 +16,7 @@ import (
 
 func TestUpdate_ManifestOnlyConfigPersistsTokenWithFlag(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "")
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "")
@@ -38,6 +38,9 @@ func TestUpdate_ManifestOnlyConfigPersistsTokenWithFlag(t *testing.T) {
 	root.SetArgs([]string{"update", "--persist-engram-cloud-token"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("update error = %v", err)
+	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(home, "settings.json"))
 	if err != nil {
@@ -64,8 +67,9 @@ func TestUpdate_MalformedSettingsDoesNotAbortRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update command error = %v, want nil; output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Se omitió el respaldo de settings.json") || !strings.Contains(out, settingsPath) {
-		t.Fatalf("update output = %q, want malformed-settings backup warning naming %q", out, settingsPath)
+	installedSettingsPath := filepath.Join(os.Getenv("CLICK_CLAUDE_HOME"), "settings.json")
+	if !strings.Contains(out, "Se omitió el respaldo de settings.json") || !strings.Contains(out, installedSettingsPath) {
+		t.Fatalf("update output = %q, want malformed-settings backup warning naming %q", out, installedSettingsPath)
 	}
 	if !strings.Contains(out, "CLAUDE.md sincronizado") {
 		t.Fatalf("update output = %q, want a later configured step to run", out)
@@ -334,7 +338,7 @@ func TestUpdateCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
 // configure runs before enrollment.
 func TestUpdate_ConfigureFailureWarnsAndContinues(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	seedResolvableGit(t)
 
@@ -388,7 +392,7 @@ func TestUpdate_ConfigureFailureWarnsAndContinues(t *testing.T) {
 // enrollment/re-sync still runs when ENGRAM_CLOUD_TOKEN is present in the environment.
 func TestUpdate_DeclineWarnsAutosyncDisabled(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	seedResolvableGit(t)
 
@@ -436,7 +440,7 @@ func TestUpdate_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
 	t.Setenv("ENGRAM_CLOUD_TOKEN", tokenOverride)
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 
 	// Run update with --persist-engram-cloud-token to give consent
@@ -453,9 +457,12 @@ func TestUpdate_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 		// printing it would leak the secret into CI logs.
 		t.Fatalf("update command failed unexpectedly; see test setup for expected consent flow")
 	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
+	}
 
 	// Read the actual settings.json file on disk
-	settingsPath := filepath.Join(home, "settings.json")
+	settingsPath := filepath.Join(os.Getenv("CLICK_CLAUDE_HOME"), "settings.json")
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatalf("read settings.json: %v", err)
@@ -565,7 +572,7 @@ func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
 	// ENGRAM_CLOUD_TOKEN intentionally absent
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 
 	// Run update (non-interactive, no consent needed since no token present)
@@ -635,7 +642,7 @@ func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
 	t.Setenv("ENGRAM_CLOUD_TOKEN", processToken)
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 
 	// Run update WITHOUT --persist-engram-cloud-token (decline persistence)
@@ -651,6 +658,9 @@ func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
 		// If a regression causes this test to fail and out contains the token,
 		// printing it would leak the secret into CI logs.
 		t.Fatalf("update command failed unexpectedly; see test setup for expected decline flow")
+	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
 	}
 
 	// Read the actual settings.json file on disk
