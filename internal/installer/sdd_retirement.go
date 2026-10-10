@@ -151,8 +151,7 @@ func persistClickSDDRetirementBackup(stateHome string, backup clickSDDRetirement
 		return "", fmt.Errorf("installer: no hay un directorio absoluto de estado de Click para respaldar click-sdd; no se retiró el plugin")
 	}
 	_, stateHomeErr := os.Lstat(stateHome)
-	stateHomeCreated := errors.Is(stateHomeErr, os.ErrNotExist)
-	if stateHomeErr != nil && !stateHomeCreated {
+	if stateHomeErr != nil && !errors.Is(stateHomeErr, os.ErrNotExist) {
 		return "", fmt.Errorf("installer: no se pudo validar el directorio de estado de Click para respaldar click-sdd")
 	}
 	if err := os.MkdirAll(stateHome, 0o700); err != nil {
@@ -162,10 +161,8 @@ func persistClickSDDRetirementBackup(stateHome string, backup clickSDDRetirement
 	if err != nil || !stateInfo.IsDir() || stateInfo.Mode()&os.ModeSymlink != 0 {
 		return "", fmt.Errorf("installer: el directorio de estado de Click para respaldar click-sdd no es seguro; no se retiró el plugin")
 	}
-	if stateHomeCreated {
-		if err := retirementDirSync(filepath.Dir(stateHome)); err != nil {
-			return "", fmt.Errorf("installer: no se pudo confirmar el directorio de estado de Click en disco; no se retiró el plugin")
-		}
+	if err := retirementDirSync(filepath.Dir(stateHome)); err != nil {
+		return "", fmt.Errorf("installer: no se pudo confirmar el directorio de estado de Click en disco; no se retiró el plugin")
 	}
 	data, err := json.MarshalIndent(backup, "", "  ")
 	if err != nil {
@@ -199,10 +196,8 @@ func persistClickSDDRetirementBackup(stateHome string, backup clickSDDRetirement
 	} else {
 		return "", fmt.Errorf("installer: el directorio de recuperación de click-sdd no es privado y seguro; no se retiró el plugin")
 	}
-	if dirCreated {
-		if err := retirementDirSync(stateHome); err != nil {
-			return "", fmt.Errorf("installer: no se pudo confirmar el directorio de recuperación de click-sdd en disco; no se retiró el plugin")
-		}
+	if err := retirementDirSync(stateHome); err != nil {
+		return "", fmt.Errorf("installer: no se pudo confirmar el directorio de recuperación de click-sdd en disco; no se retiró el plugin")
 	}
 	path := filepath.Join(dir, filename)
 	info, err := os.Lstat(path)

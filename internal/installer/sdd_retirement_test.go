@@ -540,3 +540,80 @@ func TestRetireLegacyClickSDD_DurabilityFailuresStopBeforeUninstall(t *testing.T
 		})
 	}
 }
+
+func TestRetireLegacyClickSDD_RetryReestablishesDirectoryDurabilityBeforeUninstall(t *testing.T) {
+	const inventory = `[{"id":"click-sdd@click-ai-devkit","scope":"user"}]`
+	tests := []struct {
+		name             string
+		missingStateHome bool
+		expectedSyncPath func(stateHome string) string
+	}{
+		{
+			name:             "state home ancestry after parent sync failure",
+			missingStateHome: true,
+			expectedSyncPath: func(stateHome string) string { return filepath.Dir(stateHome) },
+		},
+		{
+			name:             "recovery directory ancestry after parent sync failure",
+			expectedSyncPath: func(stateHome string) string { return stateHome },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stateParent := t.TempDir()
+			stateHome := stateParent
+			if tt.missingStateHome {
+				stateHome = filepath.Join(stateParent, "state-home")
+			}
+			cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: stateHome}
+			faultPath := filepath.Clean(tt.expectedSyncPath(stateHome))
+			diskFault := errors.New("directory persistence fault")
+			faultEnabled := true
+			oldDirSync := retirementDirSync
+			retirementDirSync = func(path string) error {
+				if faultEnabled && filepath.Clean(path) == faultPath {
+					return diskFault
+				}
+				return syncRetirementDirectory(path)
+			}
+			t.Cleanup(func() { retirementDirSync = oldDirSync })
+
+			first := &sddRetirementRunner{listOutput: []byte(inventory)}
+			if _, err := retireLegacyClickSDDWithRunner(cfg, first); err == nil {
+				t.Fatal("first attempt error = nil, want injected parent sync failure")
+			}
+			if len(first.commands) != 1 {
+				t.Errorf("first attempt commands = %#v, want inventory only", first.commands)
+			}
+
+			second := &sddRetirementRunner{listOutput: []byte(inventory)}
+			if _, err := retireLegacyClickSDDWithRunner(cfg, second); err == nil {
+				t.Fatal("retry error = nil while parent sync fault persists")
+			}
+			if len(second.commands) != 1 {
+				t.Errorf("retry commands = %#v, want inventory only while parent sync keeps failing", second.commands)
+			}
+
+			faultEnabled = false
+			syncedBeforeUninstall := false
+			retirementDirSync = func(path string) error {
+				if filepath.Clean(path) == faultPath {
+					syncedBeforeUninstall = true
+				}
+				return syncRetirementDirectory(path)
+			}
+			third := &sddRetirementRunner{listOutput: []byte(inventory)}
+			third.beforeRun = func() {
+				if !syncedBeforeUninstall {
+					t.Errorf("required parent %q was not synced before uninstall", faultPath)
+				}
+			}
+			if _, err := retireLegacyClickSDDWithRunner(cfg, third); err != nil {
+				t.Fatalf("successful retry error = %v", err)
+			}
+			if len(third.commands) != 2 || !syncedBeforeUninstall {
+				t.Errorf("successful retry commands=%#v, parent synced=%v; want sync before user uninstall", third.commands, syncedBeforeUninstall)
+			}
+		})
+	}
+}
