@@ -111,7 +111,6 @@ func snapshotSources(cfg Config) []snapshotSource {
 	if cfg.CodexHome != "" {
 		sources = append(sources,
 			snapshotSource{originalPath: cfg.CodexAgentsMDPath(), backupFile: "codex-AGENTS.md", policy: DriftPolicyManagedContentVeto},
-			snapshotSource{originalPath: cfg.CodexModelProfilePath(), backupFile: "codex-model-profile.json", policy: DriftPolicyWholeFileVeto},
 		)
 		// Codex config.toml is non-veto (user-owned)
 		if cfg.CodexConfigPath() != "" {
@@ -127,7 +126,6 @@ func snapshotSources(cfg Config) []snapshotSource {
 		snapshotSource{originalPath: cfg.OpenClawAgentsMDPath(), backupFile: "AGENTS.md", policy: DriftPolicyManagedContentVeto},
 		snapshotSource{originalPath: cfg.OpenClawSoulMDPath(), backupFile: "SOUL.md", policy: DriftPolicyWholeFileVeto},
 		snapshotSource{originalPath: cfg.OpenClawMCPConfigPath(), backupFile: "openclaw.json", policy: DriftPolicyWholeFileVeto},
-		snapshotSource{originalPath: cfg.OpenClawModelProfilePath(), backupFile: "openclaw-model-profile.json", policy: DriftPolicyWholeFileVeto},
 	)
 	for _, rel := range openClawPluginRelPaths {
 		sources = append(sources, snapshotSource{

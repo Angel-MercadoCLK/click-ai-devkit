@@ -1962,46 +1962,7 @@ func TestUpdateCommand_PreservesPartialLegacyModelsJson(t *testing.T) {
 	}
 }
 
-func TestDoctorModelsLine_ResolvesMissingReviewPhasesFromActiveProfile(t *testing.T) {
-	for _, tt := range []struct {
-		name    string
-		profile modelconfig.ProfileName
-		want    string
-	}{
-		{name: "cost saver", profile: modelconfig.ProfileCostSaver, want: "haiku"},
-		{name: "quality", profile: modelconfig.ProfileQuality, want: "opus"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := installer.Config{ClaudeHome: t.TempDir()}
-			partial := oldThirteenPhaseModelsForProfile(tt.profile)
-			if err := installer.SaveModelsWithProfile(cfg, tt.profile, partial); err != nil {
-				t.Fatalf("SaveModelsWithProfile(partial %s) error = %v", tt.profile, err)
-			}
-
-			line, err := formatModelsLine(cfg, installer.TargetSelection{Configured: true, Claude: true})
-			if err != nil {
-				t.Fatalf("formatModelsLine() error = %v", err)
-			}
-
-			for _, phase := range []modelconfig.Phase{
-				modelconfig.PhaseReviewRisk,
-				modelconfig.PhaseReviewReadability,
-				modelconfig.PhaseReviewReliability,
-				modelconfig.PhaseReviewResilience,
-				modelconfig.PhaseReviewRefuter,
-			} {
-				want := string(phase) + "=" + tt.want
-				if !strings.Contains(line, want) {
-					t.Fatalf("formatModelsLine() = %q, want it to contain %q", line, want)
-				}
-			}
-		})
-	}
-}
-
-// TestDoctorCommand_ReportsConfiguredModels guards the doctor-output contract: it must report the
-// configured per-phase models (or "defaults" pre-install) rather than staying silent about D25.
-func TestDoctorCommand_ReportsConfiguredModels(t *testing.T) {
+func TestDoctorCommand_IgnoresMalformedRetiredModelMetadata(t *testing.T) {
 	seedResolvableEngram(t)
 	seedResolvableClickBinary(t)
 	home := t.TempDir()
@@ -2011,82 +1972,32 @@ func TestDoctorCommand_ReportsConfiguredModels(t *testing.T) {
 	if _, err := execRoot(t, home, "install"); err != nil {
 		t.Fatalf("install command error = %v", err)
 	}
-
-	models := modelconfig.Defaults()
-	if err := installer.SaveModels(installer.Config{ClaudeHome: home}, models); err != nil {
-		t.Fatalf("SaveModels() error = %v", err)
-	}
-
-	out, err := execRoot(t, home, "doctor")
-	if err != nil {
-		t.Fatalf("doctor command error = %v, output:\n%s", err, out)
-	}
-	if !strings.Contains(out, "Modelos por fase de click-sdd") {
-		t.Fatalf("doctor output = %q, want it to report configured models", out)
-	}
-	if !strings.Contains(out, "propose=opus") {
-		t.Fatalf("doctor output = %q, want it to report propose=opus", out)
-	}
-}
-
-// TestDoctorCommand_ReportsActiveProfile guards the "doctor reports active profile" spec
-// requirement: the persisted orchestration profile name must appear in `click doctor`'s output.
-func TestDoctorCommand_ReportsActiveProfile(t *testing.T) {
-	seedResolvableEngram(t)
-	seedResolvableClickBinary(t)
-	home := t.TempDir()
-	runner := newTestCommandRunner(home)
-	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
-	defer restoreRunner()
-	if _, err := execRoot(t, home, "install"); err != nil {
-		t.Fatalf("install command error = %v", err)
-	}
-
-	if err := installer.SaveModelsWithProfile(installer.Config{ClaudeHome: home}, modelconfig.ProfileCostSaver, nil); err != nil {
-		t.Fatalf("SaveModelsWithProfile() error = %v", err)
-	}
-
-	out, err := execRoot(t, home, "doctor")
-	if err != nil {
-		t.Fatalf("doctor command error = %v, output:\n%s", err, out)
-	}
-	if !strings.Contains(out, "Perfil de orquestación: cost-saver") {
-		t.Fatalf("doctor output = %q, want it to report the active profile cost-saver", out)
-	}
-}
-
-// TestDoctorCommand_DoesNotMutateModelsJson guards NFR-012 / the read-only contract carried over
-// from PR2: `click doctor`'s new profile-reporting line must never write to models.json.
-func TestDoctorCommand_DoesNotMutateModelsJson(t *testing.T) {
-	seedResolvableEngram(t)
-	seedResolvableClickBinary(t)
-	home := t.TempDir()
-	runner := newTestCommandRunner(home)
-	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
-	defer restoreRunner()
-	if _, err := execRoot(t, home, "install"); err != nil {
-		t.Fatalf("install command error = %v", err)
-	}
-
 	cfg := installer.Config{ClaudeHome: home}
-	if err := installer.SaveModelsWithProfile(cfg, modelconfig.ProfileQuality, modelconfig.ResolveProfile(string(modelconfig.ProfileQuality)).Models); err != nil {
-		t.Fatalf("SaveModelsWithProfile() error = %v", err)
+	if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.ModelsPath(), []byte("{malformed legacy model data"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	before, err := os.ReadFile(cfg.ModelsPath())
 	if err != nil {
-		t.Fatalf("ReadFile(models.json) error = %v", err)
+		t.Fatalf("ReadFile(models.json) before doctor: %v", err)
 	}
-
-	if out, err := execRoot(t, home, "doctor"); err != nil {
-		t.Fatalf("doctor command error = %v, output:\n%s", err, out)
+	out, err := execRoot(t, home, "doctor")
+	if err != nil {
+		t.Fatalf("doctor must ignore retired model metadata, got %v; output:\n%s", err, out)
 	}
-
 	after, err := os.ReadFile(cfg.ModelsPath())
 	if err != nil {
-		t.Fatalf("ReadFile(models.json) error = %v", err)
+		t.Fatalf("ReadFile(models.json) after doctor: %v", err)
 	}
-	if string(before) != string(after) {
-		t.Fatalf("models.json changed after `click doctor`, want byte-for-byte unchanged (doctor must stay read-only)\nbefore: %s\nafter:  %s", before, after)
+	if !bytes.Equal(after, before) {
+		t.Fatalf("doctor changed retired models.json bytes; want exact preservation\nbefore: %q\nafter:  %q", before, after)
+	}
+	for _, retired := range []string{"Modelos por fase de click-sdd", "Perfil de orquestación"} {
+		if strings.Contains(out, retired) {
+			t.Errorf("doctor output contains retired model readout %q:\n%s", retired, out)
+		}
 	}
 }
 

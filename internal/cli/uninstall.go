@@ -254,10 +254,6 @@ func runUninstall(cmd *cobra.Command) error {
 			runStep("memory-guard", "Quitando memory-guard…", "memory-guard eliminado", false, func() error {
 				return installer.UnregisterMemoryGuardHook(cfg)
 			})
-		case installer.StepActionRemoveModels:
-			runStep("modelos por fase", "Quitando modelos por fase de click-sdd…", "Modelos por fase eliminados", false, func() error {
-				return installer.RemoveModels(cfg)
-			})
 		case installer.StepActionRemoveEngramCloudSessionSync:
 			runStep("sincronización de sesión de Engram Cloud", "Quitando sincronización de sesión de Engram Cloud…", "Sincronización de sesión de Engram Cloud eliminada", false, func() error {
 				return removeEngramCloudSessionSyncFunc(cfg)

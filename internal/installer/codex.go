@@ -5,9 +5,9 @@ import (
 )
 
 // DefaultCodexAgentsContent is guidance only. It deliberately excludes Claude Agent/Skill/plugin
-// registry instructions. Native Codex model configuration is separate and explicit.
+// registry instructions. Click does not manage Codex model choices or native model settings.
 const DefaultCodexAgentsContent = `Use gentle-ai's upstream Organic Driven Development (ODD) workflow for repository changes. Click supplies Click-specific policies and guidance; do not assume Claude Code agents, skills, plugins, or registries exist.
-Codex model selection is user-owned unless explicitly selected during installation; Click never changes credentials or providers implicitly.
+Click does not manage Codex model choices or change model settings in config.toml.
 This block is managed by click: edit via "click update" and remove via "click uninstall".`
 
 // SyncCodexGuidance writes only the Click-managed AGENTS.md block under CodexHome.

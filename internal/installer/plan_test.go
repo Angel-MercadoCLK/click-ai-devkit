@@ -113,8 +113,13 @@ func TestBuildTargetPlan_RetiresCodexAndOpenClawModelLifecycleActions(t *testing
 	if !sliceContains(plan.SnapshotPaths(), cfg.CodexConfigPath()) {
 		t.Errorf("SnapshotPaths() = %#v, want Codex config snapshot retained for non-model MCP changes", plan.SnapshotPaths())
 	}
-	if !sliceContains(plan.SnapshotPaths(), cfg.CodexModelProfilePath()) || !sliceContains(plan.SnapshotPaths(), cfg.OpenClawModelProfilePath()) {
-		t.Errorf("SnapshotPaths() = %#v, want historical profile snapshots retained until T07d", plan.SnapshotPaths())
+	for _, path := range []string{cfg.ModelsPath(), cfg.CodexModelProfilePath(), cfg.OpenClawModelProfilePath()} {
+		if sliceContains(plan.SnapshotPaths(), path) {
+			t.Errorf("SnapshotPaths() = %#v, want retired model artifact %q omitted from new plans", plan.SnapshotPaths(), path)
+		}
+	}
+	if !sliceContains(plan.SnapshotPaths(), cfg.OpenClawMCPConfigPath()) {
+		t.Errorf("SnapshotPaths() = %#v, want OpenClaw config retained for upstream MCP changes", plan.SnapshotPaths())
 	}
 }
 

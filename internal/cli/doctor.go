@@ -3,11 +3,9 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/doctor"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
-	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -74,18 +72,6 @@ func runDoctor(cmd *cobra.Command) error {
 		}
 	}
 
-	modelsLine, err := formatModelsLine(cfg, selection)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(out, r.Info(modelsLine))
-
-	profileLine, err := formatProfileLine(cfg, selection)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(out, r.Info(profileLine))
-
 	if !report.Healthy() {
 		fmt.Fprintln(out, r.Fail("click-ai-devkit no está instalado correctamente"))
 		return errUnhealthy
@@ -93,49 +79,4 @@ func runDoctor(cmd *cobra.Command) error {
 
 	fmt.Fprintln(out, r.Success("click-ai-devkit está instalado correctamente"))
 	return nil
-}
-
-// formatModelsLine reports the click-sdd per-phase models currently configured (D25): the
-// persisted models.json selection if `click install`/`click update` ever ran, or an explicit
-// "defaults" line otherwise, in modelconfig.Phases order for a stable, readable report.
-func formatModelsLine(cfg installer.Config, selection installer.TargetSelection) (string, error) {
-	if !selection.Claude && !selection.OpenClaw {
-		return "Modelos por fase de click-sdd: N/A para la selección actual de runtimes", nil
-	}
-	profile, models, found, err := installer.LoadModelsWithProfile(cfg)
-	if err != nil {
-		return "", err
-	}
-	if !found {
-		return "Modelos por fase de click-sdd: defaults", nil
-	}
-	resolved := modelconfig.ResolveForProfile(string(profile), models)
-	parts := make([]string, 0, len(modelconfig.Phases))
-	for _, phase := range modelconfig.Phases {
-		model := resolved[phase]
-		parts = append(parts, string(phase)+"="+model)
-	}
-	return "Modelos por fase de click-sdd: " + strings.Join(parts, ", "), nil
-}
-
-// formatProfileLine reports the active orchestration profile (design D4 / install-update-doctor-ux
-// spec's "Doctor Reports Active Profile" requirement): the persisted profile label if `click
-// install`/`click update` ever ran, or an explicit "balanced (defaults)" line otherwise. This is a
-// pure read via installer.LoadModelsWithProfile — it never writes to models.json, keeping `click
-// doctor` strictly read-only (NFR-012), consistent with formatModelsLine above.
-func formatProfileLine(cfg installer.Config, selection installer.TargetSelection) (string, error) {
-	if !selection.Claude && !selection.OpenClaw {
-		return "Perfil de orquestación: N/A para la selección actual de runtimes", nil
-	}
-	profile, _, found, err := installer.LoadModelsWithProfile(cfg)
-	if err != nil {
-		return "", err
-	}
-	if !found {
-		return "Perfil de orquestación: balanced (defaults)", nil
-	}
-	if profile == "" {
-		profile = modelconfig.ProfileBalanced
-	}
-	return "Perfil de orquestación: " + string(profile), nil
 }

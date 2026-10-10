@@ -758,10 +758,11 @@ func TestSnapshotDrift_ManagedContentVeto_MatchesPostRunManagedBaseline_NoVeto(t
 
 // --- Per-target snapshot generalization (openclaw-target-support, tasks 2.9-2.12) ---
 
-// TestSnapshotRun_OpenClawPresent_CapturesNineFiles is task 2.9's RED test extended by PR4: when
-// cfg.OpenClawHome is populated, SnapshotRun must capture all 9 files (2 Claude + 3 OpenClaw +
-// 2 click-memory-guard plugin files + 2 click-owned OpenClaw skill manifests). Count bumped from
-// The test's setup deliberately does NOT write the plugin or skill files
+// TestSnapshotRun_OpenClawPresent_CapturesPortableFiles verifies the selected Click and native
+// configuration paths are included in a new snapshot while retired model-only files are omitted.
+// When cfg.OpenClawHome is populated, SnapshotRun captures the Claude and OpenClaw files plus
+// click-memory-guard plugin files and click-owned OpenClaw skill manifests. The test's setup
+// deliberately does NOT write the plugin or skill files
 // (SyncOpenClawPlugin/SyncOpenClawSkills are never called here), so their entries are expected as
 // no-prior-state markers, exactly like a first-ever install would produce.
 func TestSnapshotRun_OpenClawPresent_CapturesPortableFiles(t *testing.T) {
@@ -780,18 +781,17 @@ func TestSnapshotRun_OpenClawPresent_CapturesPortableFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSnapshotManifest() error = %v", err)
 	}
-	wantEntryCount := 2 + 3 + 1 + len(openClawPluginRelPaths) + len(openClawSkillRelPaths)
+	wantEntryCount := 2 + 3 + len(openClawPluginRelPaths) + len(openClawSkillRelPaths)
 	if len(manifest.Entries) != wantEntryCount {
 		t.Fatalf("manifest.Entries = %#v, want exactly %d entries", manifest.Entries, wantEntryCount)
 	}
 
 	wantPaths := map[string]bool{
-		cfg.ClaudeMDPath():             false,
-		cfg.SettingsPath():             false,
-		cfg.OpenClawAgentsMDPath():     false,
-		cfg.OpenClawSoulMDPath():       false,
-		cfg.OpenClawMCPConfigPath():    false,
-		cfg.OpenClawModelProfilePath(): false,
+		cfg.ClaudeMDPath():          false,
+		cfg.SettingsPath():          false,
+		cfg.OpenClawAgentsMDPath():  false,
+		cfg.OpenClawSoulMDPath():    false,
+		cfg.OpenClawMCPConfigPath(): false,
 		filepath.Join(cfg.OpenClawPluginDir(), "plugins", "hooks.js"):   false,
 		filepath.Join(cfg.OpenClawPluginDir(), "plugin.json"):           false,
 		filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md"): false,
@@ -813,22 +813,90 @@ func TestSnapshotRun_OpenClawPresent_CapturesPortableFiles(t *testing.T) {
 	}
 }
 
-func TestRestoreRun_OpenClawModelProfile_RestoresPortableArtifact(t *testing.T) {
-	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
-	writeTestFile(t, cfg.OpenClawModelProfilePath(), `{"schema_version":2,"profile":"balanced","models":{"explore":"sonnet"}}`)
+func TestRestoreRun_HistoricalModelArtifactsRemainRestorable(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	cases := []struct {
+		name       string
+		path       string
+		backupName string
+		before     string
+		modified   string
+	}{
+		{
+			name:       "Claude models.json",
+			path:       cfg.ModelsPath(),
+			backupName: "models.json",
+			before:     `{"schema_version":2,"profile":"balanced","models":{"explore":"sonnet"}}`,
+			modified:   `{"schema_version":2,"profile":"quality","models":{"explore":"opus"}}`,
+		},
+		{
+			name:       "Codex model profile",
+			path:       cfg.CodexModelProfilePath(),
+			backupName: "codex-model-profile.json",
+			before:     `{"schema_version":1,"profile":"balanced","model":"sonnet"}`,
+			modified:   `{"schema_version":1,"profile":"quality","model":"opus"}`,
+		},
+		{
+			name:       "OpenClaw model profile",
+			path:       cfg.OpenClawModelProfilePath(),
+			backupName: "openclaw-model-profile.json",
+			before:     `{"schema_version":2,"profile":"balanced","models":{"explore":"sonnet"}}`,
+			modified:   `{"schema_version":2,"profile":"quality","models":{"explore":"opus"}}`,
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			writeTestFile(t, tt.path, tt.before)
+			writeTestFile(t, filepath.Join(snapshotLatestDir(cfg), tt.backupName), tt.before)
+			writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
+				OriginalPath: tt.path,
+				BackupFile:   tt.backupName,
+				Existed:      true,
+				DriftPolicy:  DriftPolicyWholeFileVeto,
+			}}})
+			writeTestFile(t, tt.path, tt.modified)
+			if err := RestoreRun(cfg); err != nil {
+				t.Fatalf("RestoreRun() error = %v", err)
+			}
+			got, err := os.ReadFile(tt.path)
+			if err != nil {
+				t.Fatalf("ReadFile(%s) error = %v", tt.path, err)
+			}
+			if string(got) != tt.before {
+				t.Fatalf("restored historical artifact = %q, want %q", got, tt.before)
+			}
+		})
+	}
+}
+
+func TestSnapshotRun_OmitsLegacyModelArtifactsAndKeepsNativeMCPConfigs(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	for _, path := range []string{cfg.ModelsPath(), cfg.CodexModelProfilePath(), cfg.OpenClawModelProfilePath()} {
+		writeTestFile(t, path, `{"legacy":"value"}`)
+	}
+	for _, path := range []string{cfg.CodexConfigPath(), cfg.OpenClawMCPConfigPath()} {
+		writeTestFile(t, path, `{}`)
+	}
 	if err := SnapshotRun(cfg); err != nil {
 		t.Fatalf("SnapshotRun() error = %v", err)
 	}
-	writeTestFile(t, cfg.OpenClawModelProfilePath(), `{"schema_version":2,"profile":"quality","models":{"explore":"opus"}}`)
-	if err := RestoreRun(cfg); err != nil {
-		t.Fatalf("RestoreRun() error = %v", err)
-	}
-	got, err := os.ReadFile(cfg.OpenClawModelProfilePath())
+	manifest, err := loadSnapshotManifest(cfg)
 	if err != nil {
-		t.Fatalf("ReadFile(model-profile.json) error = %v", err)
+		t.Fatalf("loadSnapshotManifest() error = %v", err)
 	}
-	if string(got) != `{"schema_version":2,"profile":"balanced","models":{"explore":"sonnet"}}` {
-		t.Fatalf("restored model profile = %q, want original artifact", got)
+	paths := make(map[string]bool, len(manifest.Entries))
+	for _, entry := range manifest.Entries {
+		paths[entry.OriginalPath] = true
+	}
+	for _, path := range []string{cfg.ModelsPath(), cfg.CodexModelProfilePath(), cfg.OpenClawModelProfilePath()} {
+		if paths[path] {
+			t.Errorf("SnapshotRun() includes retired model-only artifact %q", path)
+		}
+	}
+	for _, path := range []string{cfg.CodexConfigPath(), cfg.OpenClawMCPConfigPath()} {
+		if !paths[path] {
+			t.Errorf("SnapshotRun() omits native configuration %q required for MCP rollback", path)
+		}
 	}
 }
 

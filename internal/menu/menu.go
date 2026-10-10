@@ -25,19 +25,17 @@ import (
 // Action keys identify what a selected active item should do once the menu program exits.
 // Inert (coming-soon) items carry no Action — selecting one never sets Model.Chosen.
 const (
-	ActionInstall                = "install"
-	ActionUpdate                 = "update"
-	ActionConfigureModels        = "configure-models"
-	ActionAgentBuilder           = "agent-builder"
-	ActionDoctor                 = "doctor"
-	ActionTargets                = "targets"
-	ActionConfigureTargets       = "configure-targets"
-	ActionConfigureOpenClawModel = "configure-openclaw-model"
-	ActionPlugins                = "plugins"
-	ActionUninstall              = "uninstall"
-	ActionManageBackups          = "manage-backups"
-	ActionRollback               = "rollback"
-	ActionQuit                   = "quit"
+	ActionInstall          = "install"
+	ActionUpdate           = "update"
+	ActionAgentBuilder     = "agent-builder"
+	ActionDoctor           = "doctor"
+	ActionTargets          = "targets"
+	ActionConfigureTargets = "configure-targets"
+	ActionPlugins          = "plugins"
+	ActionUninstall        = "uninstall"
+	ActionManageBackups    = "manage-backups"
+	ActionRollback         = "rollback"
+	ActionQuit             = "quit"
 )
 
 // Item is one row of the menu: a label, an optional dispatch Action, and whether it's active
@@ -326,8 +324,6 @@ func ActionArgs(action string) []string {
 		return []string{"install"}
 	case ActionUpdate:
 		return []string{"update"}
-	case ActionConfigureModels:
-		return []string{"configure-models"}
 	case ActionAgentBuilder:
 		return []string{"agent-builder"}
 	case ActionDoctor:
@@ -336,8 +332,6 @@ func ActionArgs(action string) []string {
 		return []string{"targets"}
 	case ActionConfigureTargets:
 		return []string{"configure-targets"}
-	case ActionConfigureOpenClawModel:
-		return []string{"configure-openclaw-model"}
 	case ActionPlugins:
 		return []string{"plugins"}
 	case ActionUninstall:

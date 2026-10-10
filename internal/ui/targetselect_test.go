@@ -52,9 +52,14 @@ func TestTargetSelectModel_MovementDirections(t *testing.T) {
 
 func TestTargetSelectModel_ViewShowsDetectionCapabilitiesAndUnsupportedRuntime(t *testing.T) {
 	view := NewTargetSelectModel(true, true, true, false, true).View()
-	for _, want := range []string{"Claude Code", "OpenClaw", "Codex", "detectado", "SDD portable", "AGENTS.md", "Otros runtimes: no soportados"} {
+	for _, want := range []string{"Claude Code", "OpenClaw", "Codex", "detectado", "ODD portable", "AGENTS.md", "Otros runtimes: no soportados"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("target selection view missing %q:\n%s", want, view)
+		}
+	}
+	for _, obsolete := range []string{"modelos por fase", "modelo nativo"} {
+		if strings.Contains(view, obsolete) {
+			t.Errorf("target selection view advertises retired Click model ownership %q:\n%s", obsolete, view)
 		}
 	}
 }

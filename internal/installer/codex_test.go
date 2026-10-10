@@ -38,9 +38,14 @@ func TestSyncCodexGuidance_UsesUpstreamWorkflowAndPreservesUserSections(t *testi
 			t.Errorf("managed Codex guidance contains obsolete workflow %q", obsolete)
 		}
 	}
-	for _, retained := range []string{"gentle-ai", "ODD", "Codex model selection is user-owned", "click update", "click uninstall"} {
+	for _, retained := range []string{"gentle-ai", "ODD", "Click does not manage Codex model choices", "click update", "click uninstall"} {
 		if !strings.Contains(body, retained) {
 			t.Errorf("managed Codex guidance missing retained content %q", retained)
+		}
+	}
+	for _, obsolete := range []string{"selected during installation", "configures Codex models"} {
+		if strings.Contains(body, obsolete) {
+			t.Errorf("managed Codex guidance retains retired model-selection claim %q", obsolete)
 		}
 	}
 	expected := prefix + joinLines(buildManagedBlock(DefaultCodexAgentsContent)) + suffix

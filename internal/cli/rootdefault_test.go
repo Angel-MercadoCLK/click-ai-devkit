@@ -459,7 +459,7 @@ func TestRunMenuLoop_DispatchErrorStopsLoopWithoutRelaunching(t *testing.T) {
 
 func TestRootMenuItems_OmitsRetiredModelSelectors(t *testing.T) {
 	for _, item := range rootMenuItems() {
-		if item.Action == menu.ActionConfigureModels || item.Action == menu.ActionConfigureOpenClawModel {
+		if item.Action == "configure-models" || item.Action == "configure-openclaw-model" {
 			t.Errorf("root menu includes retired model selector: %+v", item)
 		}
 	}

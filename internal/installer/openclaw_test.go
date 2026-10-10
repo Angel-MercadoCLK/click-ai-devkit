@@ -142,9 +142,14 @@ func TestSyncOpenClawWorkspace_UsesUpstreamWorkflowAndPreservesUserSections(t *t
 			t.Errorf("managed OpenClaw guidance contains obsolete workflow %q", obsolete)
 		}
 	}
-	for _, retained := range []string{"gentle-ai", "ODD", "OpenClaw workflow uses its native provider/model configuration", "click-memory", "click update", "click uninstall"} {
+	for _, retained := range []string{"gentle-ai", "ODD", "Click does not manage OpenClaw model choices", "click-memory", "click update", "click uninstall"} {
 		if !strings.Contains(body, retained) {
 			t.Errorf("managed OpenClaw guidance missing retained content %q", retained)
+		}
+	}
+	for _, obsolete := range []string{"click configure-openclaw-model", "model-profile.json as local rollback metadata"} {
+		if strings.Contains(body, obsolete) {
+			t.Errorf("managed OpenClaw guidance retains retired model-management claim %q", obsolete)
 		}
 	}
 	expected := prefix + joinLines(buildManagedBlock(DefaultOpenClawAgentsContent)) + suffix

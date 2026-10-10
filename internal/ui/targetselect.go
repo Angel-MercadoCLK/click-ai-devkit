@@ -97,13 +97,13 @@ func (m TargetSelectModel) View() string {
 	var b strings.Builder
 	rows := []string{}
 	if m.ClaudeFound {
-		rows = append(rows, m.row(0, "Claude Code", m.Claude, true, "plugins nativos, SDD y modelos por fase"))
+		rows = append(rows, m.row(0, "Claude Code", m.Claude, true, "plugins nativos y políticas de Click"))
 	}
 	if m.OpenClawFound {
-		rows = append(rows, m.row(1, "OpenClaw", m.OpenClaw, true, "SDD portable, Engram, memory guard y modelo nativo"))
+		rows = append(rows, m.row(1, "OpenClaw", m.OpenClaw, true, "ODD portable, Engram y memory guard"))
 	}
 	if m.CodexFound {
-		rows = append(rows, m.row(2, "Codex CLI", m.Codex, true, "AGENTS.md gestionado y modelo nativo de config.toml"))
+		rows = append(rows, m.row(2, "Codex CLI", m.Codex, true, "AGENTS.md gestionado y flujo ODD portable"))
 	}
 
 	b.WriteString(Screen("RUNTIMES DE INSTALACIÓN", rows))

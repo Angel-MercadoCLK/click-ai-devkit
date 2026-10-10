@@ -189,6 +189,8 @@ T04–T06 are complete on `feat/gentle-ai-distribution-review-slices`; qualify t
 
 - T07c native closure: `96b54e4`, 13 paths / 732 lines, high. Four concurrent lenses, no findings or correction; exact acknowledgement burned `review-1e3cbbfcaf426fd9` revision `sha256:d7857e9b482b57e5205323c22b8cb6849eb13f9acac5f0b86433ce551a98e967`. Patch inspection only; functional proof above. Next T07d; no remote operation.
 
+- T07d: Luna high retired model-only new snapshots, doctor readouts and remaining menu/uninstall dispatch; updated managed guidance and target UI. RED→GREEN observed for changed behavior; parent reviewed and reran snapshot/doctor/guidance/menu/UI regressions PASS. Independent Sol audit/focused checks PASS. Writer full suite PASS elevated after known sandbox recovery failures; build/vet/diff PASS. Historical Claude/Codex/OpenClaw manifest restores and doctor byte-preservation characterized PASS. Explicit old backup restore/delete remains available; no automatic CLI model writer remains. Native MCP snapshots retained. Temp homes/mocks only, no live/Windows execution. Rollback: this 18-path CLI/installer/menu/UI unit with tests; 423 source/test changed lines. Native review pending, base `223fed5`.
+
 ## Resumed T03a verification (2026-10-09)
 - Writer/verifier: GPT-6 Luna high. Existing four-file implementation preserved; no additional behavior changes needed. Normalized with gofmt before verification.
 - Parent review: inspected all four file diffs plus the update/resolver integration. No blocking findings. The resolver already filters target availability, so explicit AND strengthens the invariant rather than proving a pre-existing end-to-end reactivation bug.

@@ -44,7 +44,7 @@ func runTargets(cmd *cobra.Command) error {
 	} else {
 		fmt.Fprintln(out, r.Info("Claude Code: no detectado"))
 	}
-	fmt.Fprintln(out, r.Info("  Capacidades: flujo completo de plugins, SDD y modelos."))
+	fmt.Fprintln(out, r.Info("  Capacidades: flujo ODD y plugins de Click; Click no administra la selección de modelos."))
 
 	openClawPath, openClawDetected := installer.OpenClawPath()
 	if openClawDetected {
@@ -63,10 +63,10 @@ func runTargets(cmd *cobra.Command) error {
 	codexPath, codexDetected := installer.CodexPath()
 	if codexDetected {
 		fmt.Fprintln(out, r.Success("Codex: detectado (resuelto en "+codexPath+")"))
-		fmt.Fprintln(out, r.Info("  Capacidades: AGENTS.md gestionado, flujo SDD portable y modelo nativo de config.toml."))
+		fmt.Fprintln(out, r.Info("  Capacidades: AGENTS.md gestionado y flujo ODD portable."))
 	} else {
 		fmt.Fprintln(out, r.Info("Codex: no detectado"))
-		fmt.Fprintln(out, r.Info("  Capacidades: guía AGENTS.md, flujo SDD portable y modelo nativo de config.toml al habilitar Codex."))
+		fmt.Fprintln(out, r.Info("  Capacidades: guía AGENTS.md y flujo ODD portable al habilitar Codex."))
 	}
 	fmt.Fprintln(out, r.Info("  Nota: Click no ofrece un selector de modelo para Codex ni modifica sus credenciales o proveedores."))
 	if configured {
