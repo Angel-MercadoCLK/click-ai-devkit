@@ -552,11 +552,9 @@ func snapshotRunWithSourcesWithWarnings(cfg Config, sources []snapshotSource) ([
 	return warnings, nil
 }
 
-// RestoreRun restores every snapshotted file to its last run-start snapshot (spec Requirement:
-// Restore Last Run Snapshot). It is a thin composition of PrepareRestore + ApplyPreparedRestore
-// with NO prompting and NO warning output of its own: it is used by install/update's automatic
-// failure-recovery paths, which must never prompt a user mid-command. The ownership-scoped
-// drift/consent policy lives in the rollback command, not here.
+// RestoreRun restores the eligible Click-owned portions of the last run-start snapshot. It is a
+// thin composition of PrepareRestore + ApplyPreparedRestore with no prompting; shared native
+// configs and paths not currently proven Click-owned remain untouched.
 func RestoreRun(cfg Config) error {
 	prepared, err := PrepareRestore(cfg)
 	if err != nil {

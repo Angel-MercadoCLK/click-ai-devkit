@@ -66,18 +66,20 @@ func managedMarkdownProjectionHash(content string) string {
 // leaking its value.
 func managedSettingsProjectionHash(content string) string {
 	var settings map[string]any
+	_ = json.Unmarshal([]byte(content), &settings)
+	tokenPresent := false
+	if env, ok := settings["env"].(map[string]any); ok {
+		_, tokenPresent = env["ENGRAM_CLOUD_TOKEN"]
+	}
+	return managedSettingsProjectionHashWithTokenPresence(content, tokenPresent)
+}
+
+func managedSettingsProjectionHashWithTokenPresence(content string, tokenPresent bool) string {
+	var settings map[string]any
 	if err := json.Unmarshal([]byte(content), &settings); err != nil {
 		// Invalid JSON - treat as absent
 		projection := "absent"
 		return "absent:" + CanonicalContentHash(projection)
-	}
-
-	// Check for token presence (encode boolean, never the value)
-	tokenPresent := false
-	if env, ok := settings["env"].(map[string]any); ok {
-		if _, hasToken := env["ENGRAM_CLOUD_TOKEN"]; hasToken {
-			tokenPresent = true
-		}
 	}
 
 	entries := getPreToolUseEntries(settings)

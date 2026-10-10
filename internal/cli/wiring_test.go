@@ -142,13 +142,14 @@ func TestWiring(t *testing.T) {
 			t.Fatalf("update command error = nil, want rollback-triggering failure after Codex MCP sync, output:\n%s", out)
 		}
 
-		// Verify RestoreRun restored config.toml to its original state
+		// Verify rollback retained the current shared native config after the upstream MCP sync.
 		after, readErr := os.ReadFile(filepath.Join(codexHome, "config.toml"))
 		if readErr != nil {
 			t.Fatalf("ReadFile(config.toml) error = %v", readErr)
 		}
-		if string(after) != before {
-			t.Fatalf("config.toml after failed update = %q, want rollback-restored bytes %q", after, before)
+		wantAfter := "model = 'gpt-5.5'\n\n[mcp_servers]\n[mcp_servers.context7]\nurl = 'https://mcp.context7.com/mcp'\n\n[mcp_servers.engram]\nargs = ['mcp', '--tools=agent']\ncommand = 'engram'\n"
+		if string(after) != wantAfter {
+			t.Fatalf("config.toml after failed update = %q, want current native config preserved as %q", after, wantAfter)
 		}
 
 		// Read manifest.json and verify the post-run hash matches the RESTORED content
@@ -168,17 +169,17 @@ func TestWiring(t *testing.T) {
 			t.Fatalf("json.Unmarshal(manifest.json) error = %v", err)
 		}
 
-		// Find the config.toml entry and verify its hash matches the restored content
+		// Find the config.toml entry and verify its hash matches the preserved current content.
 		foundConfigEntry := false
-		wantHash := installer.CanonicalContentHash(before)
+		wantHash := installer.CanonicalContentHash(wantAfter)
 		for _, entry := range manifest.Entries {
 			if strings.HasSuffix(entry.OriginalPath, "config.toml") {
 				foundConfigEntry = true
 				if entry.ExpectedPostRunHash == "" {
-					t.Error("config.toml manifest entry has empty ExpectedPostRunHash, want it set to the restored content hash")
+					t.Error("config.toml manifest entry has empty ExpectedPostRunHash, want it set to the final preserved content hash")
 				}
 				if entry.ExpectedPostRunHash != wantHash {
-					t.Errorf("config.toml ExpectedPostRunHash = %q, want hash of restored content %q (proves recording observed final state after RestoreRun)", entry.ExpectedPostRunHash, wantHash)
+					t.Errorf("config.toml ExpectedPostRunHash = %q, want hash of preserved current content %q", entry.ExpectedPostRunHash, wantHash)
 				}
 				break
 			}

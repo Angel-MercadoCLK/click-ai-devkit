@@ -1140,8 +1140,9 @@ func TestUpdateCommand_CodexGuidanceFailure_RollsBackCodexConfig(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("ReadFile(config.toml) error = %v", readErr)
 	}
-	if string(after) != before {
-		t.Fatalf("config.toml after failed update = %q, want rollback-restored bytes %q", after, before)
+	wantAfter := "model = 'gpt-5.5'\n\n[mcp_servers]\n[mcp_servers.context7]\nurl = 'https://mcp.context7.com/mcp'\n\n[mcp_servers.engram]\nargs = ['mcp', '--tools=agent']\ncommand = 'engram'\n"
+	if string(after) != wantAfter {
+		t.Fatalf("config.toml after failed update = %q, want current native config preserved as %q", after, wantAfter)
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "rollback") {
 		t.Fatalf("update error = %v, want rollback context after restoring the snapshot", err)
