@@ -254,6 +254,19 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			}); err != nil {
 				return err
 			}
+		case installer.StepActionRetireLegacyOpenClawSkills:
+			var warnings []string
+			err := r.RunStep("Retirando skills heredadas de OpenClaw…", "Skills heredadas de OpenClaw revisadas", func() error {
+				var retireErr error
+				warnings, retireErr = installer.RetireLegacyOpenClawSkills(cfg)
+				return retireErr
+			})
+			for _, warning := range warnings {
+				fmt.Fprintln(out, r.Warn(warning))
+			}
+			if err != nil {
+				return err
+			}
 		case installer.StepActionSyncCodexGuidance:
 			if err := r.RunStep("Actualizando AGENTS.md de Codex…", "AGENTS.md de Codex actualizado", func() error {
 				return syncCodexGuidanceFunc(cfg)

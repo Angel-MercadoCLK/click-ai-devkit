@@ -1,6 +1,8 @@
 package installer
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -20,49 +22,39 @@ func TestSyncOpenClawSkills_EmptyHome_NoOp(t *testing.T) {
 	}
 }
 
-// TestSyncOpenClawSkills_WritesBothSkills verifies the happy path: both clickhola and clickdev
-// SKILL.md files are written under cfg.OpenClawSkillsDir() with the embedded asset bytes.
-func TestSyncOpenClawSkills_WritesBothSkills(t *testing.T) {
+// TestSyncOpenClawSkills_WritesOnlyRetainedBusinessSkill verifies that only clickhola remains an
+// actively synchronized Click skill; clickdev and SDD workflow skills are retired.
+func TestSyncOpenClawSkills_WritesOnlyRetainedBusinessSkill(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() error = %v", err)
 	}
 
-	for _, name := range []string{"clickhola", "clickdev"} {
-		path := filepath.Join(cfg.OpenClawSkillsDir(), name, "SKILL.md")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("ReadFile(%s) error = %v, want it written", path, err)
-		}
-		content := string(data)
-		if !strings.Contains(content, "---") {
-			t.Errorf("%s content = %q, want YAML frontmatter", path, content)
-		}
-		if !strings.Contains(content, "name: "+name) {
-			t.Errorf("%s content = %q, want frontmatter name %q", path, content, name)
+	path := filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v, want retained skill written", path, err)
+	}
+	if !strings.Contains(string(data), "name: clickhola") {
+		t.Errorf("%s content = %q, want clickhola frontmatter", path, data)
+	}
+	for _, rel := range retiredOpenClawSkillPaths() {
+		if _, err := os.Lstat(filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Errorf("retired skill %s exists after sync, want it excluded from active synchronization", rel)
 		}
 	}
 }
 
-func TestSyncOpenClawSkills_WritesPortableSDDWorkflow(t *testing.T) {
+func TestSyncOpenClawSkills_DoesNotInstallRetiredSDDWorkflow(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() error = %v", err)
 	}
 
-	for _, rel := range []string{
-		"click-sdd/SKILL.md", "click-sdd-explore/SKILL.md", "click-sdd-propose/SKILL.md",
-		"click-sdd-spec/SKILL.md", "click-sdd-design/SKILL.md", "click-sdd-tasks/SKILL.md",
-		"click-sdd-apply/SKILL.md", "click-sdd-verify/SKILL.md", "click-sdd-archive/SKILL.md",
-		"click-sdd-onboard/SKILL.md",
-	} {
-		data, err := os.ReadFile(filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel)))
-		if err != nil {
-			t.Fatalf("ReadFile(%s) error = %v, want embedded asset installed", rel, err)
-		}
-		if !strings.Contains(string(data), "name: ") {
-			t.Errorf("%s has no skill frontmatter", rel)
+	for _, rel := range retiredOpenClawSkillPaths() {
+		if _, err := os.Lstat(filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Errorf("retired skill %s exists after sync, want no SDD workflow copied", rel)
 		}
 	}
 }
@@ -114,7 +106,7 @@ func TestSyncOpenClawSkills_ChangedContent_Overwrites(t *testing.T) {
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() 1st run error = %v", err)
 	}
-	path := filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md")
+	path := filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md")
 	if err := os.WriteFile(path, []byte("tampered content"), 0o644); err != nil {
 		t.Fatalf("WriteFile(tamper) error = %v", err)
 	}
@@ -127,10 +119,138 @@ func TestSyncOpenClawSkills_ChangedContent_Overwrites(t *testing.T) {
 		t.Fatalf("ReadFile(clickdev SKILL.md) error = %v", err)
 	}
 	if strings.Contains(string(got), "tampered content") {
-		t.Fatalf("clickdev SKILL.md still contains tampered content = %q, want restored embedded bytes", got)
+		t.Fatalf("clickhola SKILL.md still contains tampered content = %q, want restored embedded bytes", got)
 	}
-	if !strings.Contains(string(got), "name: clickdev") {
-		t.Fatalf("clickdev SKILL.md = %q, want restored embedded bytes with frontmatter name", got)
+	if !strings.Contains(string(got), "name: clickhola") {
+		t.Fatalf("clickhola SKILL.md = %q, want restored embedded bytes with frontmatter name", got)
+	}
+}
+
+func TestRetireLegacyOpenClawSkills_DeletesOnlyPinnedRegularFiles(t *testing.T) {
+	root := t.TempDir()
+	cfg := Config{OpenClawHome: root}
+	good := []byte("pinned legacy bytes\n")
+	digest := sha256.Sum256(good)
+	entries := []retiredOpenClawSkill{
+		{rel: "clickdev/SKILL.md", sha256: hex.EncodeToString(digest[:])},
+		{rel: "click-sdd/SKILL.md", sha256: hex.EncodeToString(digest[:])},
+		{rel: "click-sdd-propose/SKILL.md", sha256: hex.EncodeToString(digest[:])},
+		{rel: "click-sdd-archive/SKILL.md", sha256: hex.EncodeToString(digest[:])},
+		{rel: "sdd-upstream/SKILL.md", sha256: hex.EncodeToString(digest[:])},
+	}
+	paths := map[string]string{
+		"clickdev/SKILL.md":          "pinned legacy bytes\n",
+		"click-sdd/SKILL.md":         "edited legacy bytes\n",
+		"click-sdd-propose/SKILL.md": "pinned legacy bytes\n",
+		"clickhola/SKILL.md":         "business skill\n",
+		"sdd-upstream/SKILL.md":      "upstream skill\n",
+		"click-sdd-extra/SKILL.md":   "sibling skill\n",
+	}
+	for rel, content := range paths {
+		writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel)), content)
+	}
+	symlinkPath := filepath.Join(cfg.OpenClawSkillsDir(), "click-sdd-propose", "link")
+	if err := os.Symlink(filepath.Join(cfg.OpenClawSkillsDir(), "sdd-upstream"), symlinkPath); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	// The retired leaf itself is a symlink, so even matching target bytes are not eligible.
+	linkLeaf := filepath.Join(cfg.OpenClawSkillsDir(), "click-sdd-verify", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(linkLeaf), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(cfg.OpenClawSkillsDir(), "sdd-upstream", "SKILL.md"), linkLeaf); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(cfg.OpenClawSkillsDir(), "click-sdd-archive", "SKILL.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entries = append(entries, retiredOpenClawSkill{rel: "click-sdd-verify/SKILL.md", sha256: hex.EncodeToString(digest[:])})
+
+	warnings, err := retireLegacyOpenClawSkills(cfg, entries)
+	if err != nil {
+		t.Fatalf("retireLegacyOpenClawSkills() error = %v", err)
+	}
+	if len(warnings) < 3 {
+		t.Fatalf("warnings = %#v, want modified, symlink, and redirected-directory warnings", warnings)
+	}
+	for _, rel := range []string{"clickdev/SKILL.md"} {
+		if _, err := os.Lstat(filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Errorf("matching pinned file %s was not removed: %v", rel, err)
+		}
+	}
+	for _, rel := range []string{"click-sdd/SKILL.md", "clickhola/SKILL.md", "sdd-upstream/SKILL.md", "click-sdd-extra/SKILL.md", "click-sdd-propose/link"} {
+		if _, err := os.Lstat(filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel))); err != nil {
+			t.Errorf("preserved file %s missing: %v", rel, err)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(cfg.OpenClawSkillsDir(), "click-sdd-propose")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(cfg.OpenClawSkillsDir(), "sdd-upstream"), filepath.Join(cfg.OpenClawSkillsDir(), "click-sdd-propose")); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	warnings, err = retireLegacyOpenClawSkills(cfg, entries)
+	if err != nil {
+		t.Fatalf("retireLegacyOpenClawSkills() with redirected parent error = %v", err)
+	}
+	if len(warnings) < 4 {
+		t.Fatalf("warnings = %#v, want redirected ancestor warning", warnings)
+	}
+	if got, err := os.ReadFile(filepath.Join(cfg.OpenClawSkillsDir(), "sdd-upstream", "SKILL.md")); err != nil || string(got) != "upstream skill\n" {
+		t.Fatalf("upstream target = %q, %v, want unchanged", got, err)
+	}
+}
+
+func TestRetiredOpenClawSkillPinsMatchShippedAssetsAndRetireAll(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir()}
+	for _, entry := range retiredOpenClawSkills {
+		asset, err := openClawSkillsAssets.ReadFile(openClawSkillsAssetsRoot + "/" + entry.rel)
+		if err != nil {
+			t.Fatalf("read shipped retired skill %s: %v", entry.rel, err)
+		}
+		digest := sha256.Sum256(asset)
+		if got := hex.EncodeToString(digest[:]); got != entry.sha256 {
+			t.Errorf("pinned digest for %s = %s, want shipped asset digest %s", entry.rel, entry.sha256, got)
+		}
+		writeTestFile(t, filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(entry.rel)), string(asset))
+	}
+
+	warnings, err := RetireLegacyOpenClawSkills(cfg)
+	if err != nil {
+		t.Fatalf("RetireLegacyOpenClawSkills() error = %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("RetireLegacyOpenClawSkills() warnings = %#v, want none for shipped assets", warnings)
+	}
+	for _, entry := range retiredOpenClawSkills {
+		path := filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(entry.rel))
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Errorf("shipped retired skill %s remains after retirement: %v", entry.rel, err)
+		}
+	}
+}
+
+func TestRetireLegacyOpenClawSkills_ValidationErrorsAreSpanish(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir()}
+	tests := []struct {
+		name     string
+		entry    retiredOpenClawSkill
+		want     string
+		unwanted string
+	}{
+		{name: "unsafe path", entry: retiredOpenClawSkill{rel: "../outside", sha256: strings.Repeat("0", sha256.Size*2)}, want: "ruta heredada", unwanted: "invalid retired OpenClaw skill path"},
+		{name: "invalid digest", entry: retiredOpenClawSkill{rel: "click-sdd/SKILL.md", sha256: "not-a-digest"}, want: "digest fijado", unwanted: "invalid pinned digest"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := retireLegacyOpenClawSkills(cfg, []retiredOpenClawSkill{tt.entry})
+			if err == nil {
+				t.Fatal("retireLegacyOpenClawSkills() error = nil, want validation error")
+			}
+			if !strings.Contains(err.Error(), tt.want) || strings.Contains(err.Error(), tt.unwanted) {
+				t.Fatalf("error = %q, want Spanish context containing %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -214,8 +334,8 @@ func TestRemoveOpenClawSkills_Absent_NoOp(t *testing.T) {
 	}
 }
 
-// TestRemoveOpenClawSkills_RemovesOnlyOwnedDirs verifies that RemoveOpenClawSkills deletes
-// clickhola and clickdev but leaves any user-created sibling skill directories untouched.
+// TestRemoveOpenClawSkills_RemovesOnlyOwnedDirs verifies that RemoveOpenClawSkills deletes only
+// the retained clickhola skill and leaves sibling directories untouched.
 func TestRemoveOpenClawSkills_RemovesOnlyOwnedDirs(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 
@@ -232,7 +352,7 @@ func TestRemoveOpenClawSkills_RemovesOnlyOwnedDirs(t *testing.T) {
 		t.Fatalf("RemoveOpenClawSkills() error = %v", err)
 	}
 
-	for _, owned := range append([]string{"clickhola", "clickdev"}, portableSDDSkillDirs()...) {
+	for _, owned := range []string{"clickhola"} {
 		path := filepath.Join(cfg.OpenClawSkillsDir(), owned)
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("Stat(%s) after removal error = %v, want os.IsNotExist", owned, err)
@@ -248,7 +368,7 @@ func TestRemoveOpenClawSkills_PreservesUserFilesInsideOwnedDirs(t *testing.T) {
 	if err := SyncOpenClawSkills(cfg); err != nil {
 		t.Fatalf("SyncOpenClawSkills() error = %v", err)
 	}
-	for _, owned := range append([]string{"clickhola", "clickdev"}, portableSDDSkillDirs()...) {
+	for _, owned := range []string{"clickhola"} {
 		path := filepath.Join(cfg.OpenClawSkillsDir(), owned, "user-notes.txt")
 		if err := os.WriteFile(path, []byte("keep me\n"), 0o644); err != nil {
 			t.Fatalf("WriteFile(%s) error = %v", path, err)
@@ -258,7 +378,7 @@ func TestRemoveOpenClawSkills_PreservesUserFilesInsideOwnedDirs(t *testing.T) {
 	if err := RemoveOpenClawSkills(cfg); err != nil {
 		t.Fatalf("RemoveOpenClawSkills() error = %v", err)
 	}
-	for _, owned := range []string{"clickhola", "clickdev"} {
+	for _, owned := range []string{"clickhola"} {
 		dir := filepath.Join(cfg.OpenClawSkillsDir(), owned)
 		if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); !os.IsNotExist(err) {
 			t.Fatalf("Stat(%s) after removal error = %v, want owned file removed", dir, err)
@@ -267,10 +387,6 @@ func TestRemoveOpenClawSkills_PreservesUserFilesInsideOwnedDirs(t *testing.T) {
 			t.Fatalf("user file in %s after removal error = %v, want preserved", dir, err)
 		}
 	}
-}
-
-func portableSDDSkillDirs() []string {
-	return []string{"click-sdd", "click-sdd-explore", "click-sdd-propose", "click-sdd-spec", "click-sdd-design", "click-sdd-tasks", "click-sdd-apply", "click-sdd-verify", "click-sdd-archive", "click-sdd-onboard"}
 }
 
 // TestRemoveOpenClawSkills_Failure_WrapsContextualError verifies that an underlying RemoveAll

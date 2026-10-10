@@ -1,6 +1,9 @@
 package installer
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 type PlanTarget string
 
@@ -53,6 +56,7 @@ const (
 	StepActionUnregisterOpenClawMCP           StepActionKind = "unregister-openclaw-mcp"
 	StepActionSyncOpenClawPlugin              StepActionKind = "sync-openclaw-plugin"
 	StepActionSyncOpenClawSkills              StepActionKind = "sync-openclaw-skills"
+	StepActionRetireLegacyOpenClawSkills      StepActionKind = "retire-legacy-openclaw-skills"
 	StepActionSyncOpenClawModelProfile        StepActionKind = "sync-openclaw-model-profile"
 	StepActionConfigureOpenClawNativeModel    StepActionKind = "configure-openclaw-native-model"
 	StepActionRemoveModels                    StepActionKind = "remove-models"
@@ -208,6 +212,7 @@ var installActionOrder = []StepActionKind{
 	StepActionSyncContext7,
 	StepActionWriteClaudeManagedBlock,
 	StepActionRegisterMemoryGuard,
+	StepActionRetireLegacyOpenClawSkills,
 	StepActionSyncOpenClawWorkspace,
 	StepActionRegisterOpenClawMCP,
 	StepActionSyncOpenClawPlugin,
@@ -225,6 +230,7 @@ var updateActionOrder = []StepActionKind{
 	StepActionConfigureEngramCloudSessionSync,
 	StepActionSyncEngramCloud,
 	StepActionSyncContext7,
+	StepActionRetireLegacyOpenClawSkills,
 	StepActionSyncOpenClawWorkspace,
 	StepActionRegisterOpenClawMCP,
 	StepActionSyncOpenClawPlugin,
@@ -256,8 +262,16 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		capabilities = append(capabilities, "Codex CLI: AGENTS.md gestionado y componentes MCP configurados por gentle-ai")
 	}
 	if selection.OpenClaw {
+		snapshotSpecs := []SnapshotDecl{
+			snapshot(cfg.OpenClawAgentsMDPath(), DriftPolicyManagedContentVeto),
+			snapshot(cfg.OpenClawSoulMDPath(), DriftPolicyWholeFileVeto),
+			snapshot(cfg.OpenClawMCPConfigPath(), DriftPolicyWholeFileVeto),
+		}
+		for _, rel := range retiredOpenClawSkillPaths() {
+			snapshotSpecs = append(snapshotSpecs, snapshot(filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel)), DriftPolicyWholeFileVeto))
+		}
 		steps = append(steps,
-			Step{ID: "openclaw-runtime", Target: PlanTargetOpenClaw, Label: "OpenClaw", Snapshot: []SnapshotDecl{snapshot(cfg.OpenClawAgentsMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.OpenClawSoulMDPath(), DriftPolicyWholeFileVeto), snapshot(cfg.OpenClawMCPConfigPath(), DriftPolicyWholeFileVeto)}, InstallActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}, UpdateActions: []StepActionKind{StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}, UninstallActions: []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClaw}},
+			Step{ID: "openclaw-runtime", Target: PlanTargetOpenClaw, Label: "OpenClaw", Snapshot: snapshotSpecs, InstallActions: []StepActionKind{StepActionRetireLegacyOpenClawSkills, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}, UpdateActions: []StepActionKind{StepActionRetireLegacyOpenClawSkills, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}, UninstallActions: []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRetireLegacyOpenClawSkills, StepActionRemoveOpenClawSkills}, DoctorChecks: []DoctorCheckKind{DoctorCheckOpenClaw}},
 		)
 		capabilities = append(capabilities, "OpenClaw: workspace, skills y MCP mediante gentle-ai y su CLI")
 	}

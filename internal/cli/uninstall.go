@@ -212,6 +212,16 @@ func runUninstall(cmd *cobra.Command) error {
 			runStep("skills de OpenClaw", "Quitando skills de Click de OpenClaw…", "Skills de Click de OpenClaw eliminados", false, func() error {
 				return removeOpenClawSkillsFunc(cfg)
 			})
+		case installer.StepActionRetireLegacyOpenClawSkills:
+			var warnings []string
+			runStep("skills heredadas de OpenClaw", "Retirando skills heredadas de OpenClaw…", "Skills heredadas de OpenClaw revisadas", false, func() error {
+				var retireErr error
+				warnings, retireErr = installer.RetireLegacyOpenClawSkills(cfg)
+				return retireErr
+			})
+			for _, warning := range warnings {
+				fmt.Fprintln(out, r.Warn(warning))
+			}
 		case installer.StepActionStripCodexGuidance:
 			runStep("AGENTS.md de Codex", "Limpiando AGENTS.md de Codex…", "Bloque de AGENTS.md de Codex eliminado", false, func() error {
 				return stripCodexGuidanceFunc(cfg)

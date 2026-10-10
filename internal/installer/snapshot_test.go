@@ -2,6 +2,8 @@ package installer
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -795,10 +797,6 @@ func TestSnapshotRun_OpenClawPresent_CapturesPortableFiles(t *testing.T) {
 		filepath.Join(cfg.OpenClawPluginDir(), "plugins", "hooks.js"):   false,
 		filepath.Join(cfg.OpenClawPluginDir(), "plugin.json"):           false,
 		filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md"): false,
-		filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md"):  false,
-	}
-	for _, rel := range openClawSkillRelPaths[2:] {
-		wantPaths[filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel))] = false
 	}
 	for _, e := range manifest.Entries {
 		if _, ok := wantPaths[e.OriginalPath]; !ok {
@@ -809,6 +807,80 @@ func TestSnapshotRun_OpenClawPresent_CapturesPortableFiles(t *testing.T) {
 	for path, found := range wantPaths {
 		if !found {
 			t.Fatalf("manifest has no entry for %s", path)
+		}
+	}
+}
+
+func TestRestoreRun_RetiredOpenClawSkillRestoresPreRemovalBytes(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	const rel = "click-sdd/SKILL.md"
+	const original = "legacy bytes removed by migration\n"
+	path := filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel))
+	writeTestFile(t, path, original)
+	digest := sha256.Sum256([]byte(original))
+
+	plan := BuildTargetPlan(cfg, TargetSelection{Configured: true, OpenClaw: true}, PlanOptions{})
+	if err := SnapshotTargetPlan(cfg, plan); err != nil {
+		t.Fatalf("SnapshotTargetPlan() error = %v", err)
+	}
+	warnings, err := retireLegacyOpenClawSkills(cfg, []retiredOpenClawSkill{{rel: rel, sha256: hex.EncodeToString(digest[:])}})
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("retireLegacyOpenClawSkills() = (%#v, %v), want no warnings/error", warnings, err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("retired file still exists after cleanup: %v", err)
+	}
+	if err := RestoreRun(cfg); err != nil {
+		t.Fatalf("RestoreRun() error = %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != original {
+		t.Fatalf("restored retired skill = %q, %v; want original bytes %q", got, err, original)
+	}
+}
+
+func TestSnapshotTargetPlan_DoesNotFollowRetiredSkillSymlink(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	outside := filepath.Join(t.TempDir(), "foreign-skill.md")
+	writeTestFile(t, outside, "foreign bytes\n")
+	link := filepath.Join(cfg.OpenClawSkillsDir(), "click-sdd", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	plan := BuildTargetPlan(cfg, TargetSelection{Configured: true, OpenClaw: true}, PlanOptions{})
+	if err := SnapshotTargetPlan(cfg, plan); err != nil {
+		t.Fatalf("SnapshotTargetPlan() error = %v", err)
+	}
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range manifest.Entries {
+		if entry.OriginalPath == link {
+			t.Fatalf("manifest included symlink path %s; want it excluded instead of following or marking absent", link)
+		}
+	}
+	if got, err := os.ReadFile(outside); err != nil || string(got) != "foreign bytes\n" {
+		t.Fatalf("foreign symlink target = %q, %v; want unchanged", got, err)
+	}
+}
+
+func TestSnapshotTargetPlan_OmitsNoPriorMarkersForAbsentRetiredSkills(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	plan := BuildTargetPlan(cfg, TargetSelection{Configured: true, OpenClaw: true}, PlanOptions{})
+	if err := SnapshotTargetPlan(cfg, plan); err != nil {
+		t.Fatalf("SnapshotTargetPlan() error = %v", err)
+	}
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range manifest.Entries {
+		if isRetiredOpenClawSkillPath(cfg, entry.OriginalPath) {
+			t.Fatalf("absent retired path %s received a no-prior marker; rollback must not delete later user content", entry.OriginalPath)
 		}
 	}
 }

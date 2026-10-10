@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -108,13 +109,13 @@ func TestBuildTargetPlan_RetiresCodexAndOpenClawModelLifecycleActions(t *testing
 			t.Errorf("StepLabels() contains retired model step %q", label)
 		}
 	}
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncCodexGuidance}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionRetireLegacyOpenClawSkills, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncCodexGuidance}; !reflect.DeepEqual(got, want) {
 		t.Errorf("InstallActionKinds() = %#v, want only upstream and non-model Click actions %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncCodexGuidance}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionRetireLegacyOpenClawSkills, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncCodexGuidance}; !reflect.DeepEqual(got, want) {
 		t.Errorf("UpdateActionKinds() = %#v, want only upstream and non-model Click actions %#v", got, want)
 	}
-	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripCodexGuidance, StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripCodexGuidance, StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRetireLegacyOpenClawSkills, StepActionRemoveOpenClawSkills, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
 		t.Errorf("UninstallActionKinds() = %#v, want only Click-owned non-model cleanup %#v", got, want)
 	}
 	if got, want := plan.DoctorCheckKinds(), []DoctorCheckKind{DoctorCheckCodexGuidance, DoctorCheckOpenClaw}; !reflect.DeepEqual(got, want) {
@@ -177,14 +178,20 @@ func TestBuildTargetPlan_OpenClawDelegatesMCPRegistration(t *testing.T) {
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
 
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionRetireLegacyOpenClawSkills, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionRetireLegacyOpenClawSkills, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRetireLegacyOpenClawSkills, StepActionRemoveOpenClawSkills, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UninstallActionKinds() = %#v, want %#v", got, want)
+	}
+	for _, rel := range retiredOpenClawSkillPaths() {
+		path := filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel))
+		if !sliceContains(plan.SnapshotPaths(), path) {
+			t.Errorf("SnapshotPaths() = %#v, want retired pre-run backup path %q", plan.SnapshotPaths(), path)
+		}
 	}
 }
 

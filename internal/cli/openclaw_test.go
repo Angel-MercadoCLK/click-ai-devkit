@@ -279,11 +279,18 @@ func TestInstallCommand_SkipOpenClawFlag_NoMemoryGuardPluginWritten(t *testing.T
 	}
 }
 
-// TestInstallCommand_OpenClawDetected_SyncsClickSkills is PR4's RED test: with openclaw resolvable
-// on PATH, `click install` must synchronize the click-owned skill manifests under OpenClawSkillsDir().
-func TestInstallCommand_OpenClawDetected_SyncsClickSkills(t *testing.T) {
+// TestInstallCommand_OpenClawDetected_SyncsRetainedClickSkill verifies only the retained business
+// skill is synchronized; retired workflow paths are not recreated during install.
+func TestInstallCommand_OpenClawDetected_SyncsRetainedClickSkill(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
+	legacyPath := filepath.Join(openClawHome, "skills", "clickdev", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("custom legacy content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	runner := newTestCommandRunner(claudeHome)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
@@ -295,17 +302,19 @@ func TestInstallCommand_OpenClawDetected_SyncsClickSkills(t *testing.T) {
 	if !strings.Contains(out, "Sincronizando skills de Click en OpenClaw") {
 		t.Errorf("install output = %q, want it to mention the OpenClaw skill sync step", out)
 	}
+	if !strings.Contains(out, "Se conservó la skill heredada de OpenClaw clickdev/SKILL.md") {
+		t.Errorf("install output = %q, want Spanish warning for modified legacy skill", out)
+	}
 
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
-	for _, name := range []string{"clickhola", "clickdev"} {
-		path := filepath.Join(cfg.OpenClawSkillsDir(), name, "SKILL.md")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("ReadFile(%s) error = %v, want it written when OpenClaw is detected", path, err)
-		}
-		if !strings.Contains(string(data), "name: "+name) {
-			t.Fatalf("%s content = %q, want frontmatter name %q", path, data, name)
-		}
+	path := filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), "name: clickhola") {
+		t.Fatalf("clickhola content = %q, %v; want retained skill written", data, err)
+	}
+	got, err := os.ReadFile(legacyPath)
+	if err != nil || string(got) != "custom legacy content\n" {
+		t.Fatalf("clickdev legacy skill = %q, %v; want modified bytes preserved", got, err)
 	}
 }
 
@@ -390,9 +399,9 @@ func TestInstallCommand_OpenClawDetected_PreservesUnprovenLegacyMCPConfig(t *tes
 	}
 }
 
-// TestUpdateCommand_OpenClawDetected_ResyncsClickSkills is PR4's RED test: `click update` must re-
-// synchronize the click-owned OpenClaw skill manifests, restoring them if they drifted.
-func TestUpdateCommand_OpenClawDetected_ResyncsClickSkills(t *testing.T) {
+// TestUpdateCommand_OpenClawDetected_PreservesModifiedRetiredSkill verifies update does not
+// overwrite unknown content at a retired legacy path and reports the preservation warning.
+func TestUpdateCommand_OpenClawDetected_PreservesModifiedRetiredSkill(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
 	runner := newTestCommandRunner(claudeHome)
@@ -405,6 +414,9 @@ func TestUpdateCommand_OpenClawDetected_ResyncsClickSkills(t *testing.T) {
 
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
 	tampered := filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(tampered), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(tampered, []byte("tampered content"), 0o644); err != nil {
 		t.Fatalf("WriteFile(tamper) error = %v", err)
 	}
@@ -416,15 +428,15 @@ func TestUpdateCommand_OpenClawDetected_ResyncsClickSkills(t *testing.T) {
 	if !strings.Contains(out, "Sincronizando skills de Click en OpenClaw") {
 		t.Errorf("update output = %q, want it to mention the OpenClaw skill sync step", out)
 	}
+	if !strings.Contains(out, "Se conservó la skill heredada de OpenClaw clickdev/SKILL.md") {
+		t.Errorf("update output = %q, want Spanish preservation warning", out)
+	}
 
 	got, err := os.ReadFile(tampered)
 	if err != nil {
 		t.Fatalf("ReadFile(clickdev SKILL.md) error = %v", err)
 	}
-	if strings.Contains(string(got), "tampered content") {
-		t.Fatalf("clickdev SKILL.md still contains tampered content = %q, want resynced embedded bytes", got)
-	}
-	if !strings.Contains(string(got), "name: clickdev") {
-		t.Fatalf("clickdev SKILL.md = %q, want resynced embedded bytes with frontmatter name", got)
+	if string(got) != "tampered content" {
+		t.Fatalf("clickdev SKILL.md = %q, want modified legacy content preserved exactly", got)
 	}
 }

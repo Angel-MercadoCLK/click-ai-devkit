@@ -36,12 +36,13 @@ func updateWriteSteps(engramVersion string, cfg installer.Config, cloudResolvabl
 // shared per-target write-step builder reused by both installWriteSteps and updateWriteSteps
 // (task 2.18's REFACTOR) so the two commands' preview lists can never drift from each other for the
 // OpenClaw portion either. Order matches where install.go/update.go actually run these writes:
-// LAST, after every other write step, mirroring how they're appended here.
+// before OpenClaw synchronization, so legacy workflow paths cannot be refreshed after retirement.
 func openClawWriteSteps(cfg installer.Config) []string {
 	if cfg.OpenClawHome == "" {
 		return nil
 	}
 	return []string{
+		"Retirando skills heredadas de OpenClaw…",
 		"Actualizando AGENTS.md y SOUL.md de OpenClaw…",
 		"Limpiando configuración inválida heredada de OpenClaw…",
 		"Instalando plugin de memory-guard para OpenClaw…",
@@ -111,6 +112,8 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 		return "Instalando plugin de memory-guard para OpenClaw…"
 	case installer.StepActionSyncOpenClawSkills:
 		return "Sincronizando skills de Click en OpenClaw…"
+	case installer.StepActionRetireLegacyOpenClawSkills:
+		return "Retirando skills heredadas de OpenClaw…"
 	default:
 		return string(kind)
 	}

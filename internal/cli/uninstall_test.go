@@ -349,10 +349,9 @@ func TestUninstallCommand_OpenClawNeverInstalled_NoOpNoError(t *testing.T) {
 	}
 }
 
-// TestUninstallCommand_RemovesOpenClawSkillsAndPreservesSiblings is PR4's RED test: `click
-// uninstall` must remove the click-owned OpenClaw skill directories (clickhola, clickdev) while
-// leaving any user-created sibling skill directories untouched.
-func TestUninstallCommand_RemovesOpenClawSkillsAndPreservesSiblings(t *testing.T) {
+// TestUninstallCommand_RemovesRetainedOpenClawSkillAndPreservesSiblings verifies uninstall removes
+// clickhola while leaving user-created sibling directories untouched.
+func TestUninstallCommand_RemovesRetainedOpenClawSkillAndPreservesSiblings(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
@@ -383,7 +382,7 @@ func TestUninstallCommand_RemovesOpenClawSkillsAndPreservesSiblings(t *testing.T
 		t.Fatalf("uninstall command error = %v, output:\n%s", err, out)
 	}
 
-	for _, owned := range []string{"clickhola", "clickdev"} {
+	for _, owned := range []string{"clickhola"} {
 		path := filepath.Join(cfg.OpenClawSkillsDir(), owned)
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("Stat(%s) after uninstall error = %v, want os.IsNotExist", owned, err)
@@ -391,6 +390,45 @@ func TestUninstallCommand_RemovesOpenClawSkillsAndPreservesSiblings(t *testing.T
 	}
 	if _, err := os.Stat(sibling); err != nil {
 		t.Fatalf("Stat(user-skill) after uninstall error = %v, want sibling preserved", err)
+	}
+}
+
+func TestUninstallCommand_WarnsAndPreservesModifiedRetiredOpenClawSkill(t *testing.T) {
+	processHome := t.TempDir()
+	openClawHome := t.TempDir()
+	stateHome := t.TempDir()
+	t.Setenv("HOME", processHome)
+	t.Setenv("USERPROFILE", processHome)
+	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
+	t.Setenv("CLICK_CLAUDE_HOME", filepath.Join(processHome, ".claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(processHome, ".codex"))
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+	cfg := installer.Config{OpenClawHome: openClawHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, OpenClaw: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	legacyPath := filepath.Join(cfg.OpenClawSkillsDir(), "click-sdd", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("user-edited workflow content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCommand()
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetErr(&output)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"uninstall"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("uninstall error = %v, output:\n%s", err, output.String())
+	}
+	if got, err := os.ReadFile(legacyPath); err != nil || string(got) != "user-edited workflow content\n" {
+		t.Fatalf("modified legacy path = %q, %v; want preserved bytes", got, err)
+	}
+	if !strings.Contains(output.String(), "Se conservó la skill heredada de OpenClaw click-sdd/SKILL.md") {
+		t.Fatalf("uninstall output = %q, want Spanish preservation warning", output.String())
 	}
 }
 

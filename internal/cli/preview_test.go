@@ -34,19 +34,17 @@ func TestInstallWriteSteps_OpenClawAbsent_IncludesGentleAIAndLocalSteps(t *testi
 	}
 }
 
-// TestInstallWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps is task 2.14's RED test extended
-// by PR4: from 3 to 4 OpenClaw steps (the click-owned skill manifest sync step is appended after
-// the memory-guard plugin step) — when OpenClaw is detected (cfg.OpenClawHome populated), the
-// write plan must list all four targets.
-func TestInstallWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
+// TestInstallWriteSteps_OpenClawPresent_AppendsFiveOpenClawSteps verifies retirement runs before
+// the workspace/plugin/retained-skill writes when OpenClaw is selected.
+func TestInstallWriteSteps_OpenClawPresent_AppendsFiveOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := installWriteSteps(cfg, false)
-	if len(got) != 7 {
-		t.Fatalf("installWriteSteps() = %#v, want 7 steps (gentle-ai + Click Claude/OpenClaw layers)", got)
+	if len(got) != 8 {
+		t.Fatalf("installWriteSteps() = %#v, want 8 steps (gentle-ai + Click Claude/OpenClaw layers)", got)
 	}
 	for _, step := range got[5:] {
 		if !strings.Contains(step, "OpenClaw") {
-			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[7:])
+			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[8:])
 		}
 	}
 }
@@ -86,13 +84,13 @@ func TestInstallWriteSteps_CloudNotConfigured_NoCloudStep(t *testing.T) {
 }
 
 // TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth is task 4.1's combined preview-plan
-// test: when both OpenClaw and Engram Cloud are configured, the cloud configure and enrollment steps
-// appear right after Engram and before Context7, and the OpenClaw steps remain last.
+// test: when both OpenClaw and Engram Cloud are configured, cloud steps retain their ordering and
+// OpenClaw retirement remains ahead of OpenClaw synchronization.
 func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := installWriteSteps(cfg, true)
-	if len(got) != 9 {
-		t.Fatalf("installWriteSteps() = %#v, want 9 steps (gentle-ai + Click Claude/OpenClaw layers + Cloud)", got)
+	if len(got) != 10 {
+		t.Fatalf("installWriteSteps() = %#v, want 10 steps (gentle-ai + Click Claude/OpenClaw layers + Cloud)", got)
 	}
 	if got[2] != "Configurando Engram Cloud Session Sync en settings.json…" {
 		t.Fatalf("installWriteSteps()[2] = %q, want the cloud session-sync configure step after upstream provisioning", got[2])
@@ -100,24 +98,23 @@ func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 	if got[3] != "Enrolando Engram Cloud…" {
 		t.Fatalf("installWriteSteps()[3] = %q, want the Engram Cloud enrollment step right after the configure step", got[3])
 	}
-	for _, step := range got[7:] {
+	for _, step := range got[6:] {
 		if !strings.Contains(step, "OpenClaw") {
-			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[9:])
+			t.Fatalf("installWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[10:])
 		}
 	}
 }
 
-// TestUpdateWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps mirrors the install-side test
-// above for updateWriteSteps, extended by PR4 to 4 OpenClaw steps.
-func TestUpdateWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
+// TestUpdateWriteSteps_OpenClawPresent_AppendsFiveOpenClawSteps mirrors install's retirement order.
+func TestUpdateWriteSteps_OpenClawPresent_AppendsFiveOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := updateWriteSteps("0.1.1", cfg, false)
-	if len(got) != 7 {
-		t.Fatalf("updateWriteSteps() = %#v, want 7 steps (gentle-ai + Click Claude/OpenClaw layers)", got)
+	if len(got) != 8 {
+		t.Fatalf("updateWriteSteps() = %#v, want 8 steps (gentle-ai + Click Claude/OpenClaw layers)", got)
 	}
 	for _, step := range got[5:] {
 		if !strings.Contains(step, "OpenClaw") {
-			t.Fatalf("updateWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[7:])
+			t.Fatalf("updateWriteSteps() trailing steps = %#v, want every OpenClaw step to mention OpenClaw", got[8:])
 		}
 	}
 }
@@ -179,19 +176,18 @@ func TestCodexWriteSteps_ListsGuidanceWithoutModelSelection(t *testing.T) {
 	}
 }
 
-// TestOpenClawWriteSteps_Present_IncludesPluginAndSkillSteps is PR-C/PR4's supporting RED test:
-// the third OpenClaw step must mention the memory-guard plugin install, and the fourth must mention
-// the click-owned skill manifests.
+// TestOpenClawWriteSteps_Present_IncludesRetirementAndRetainedSkillSteps verifies that legacy
+// cleanup precedes workspace/plugin synchronization and the retained business skill.
 func TestOpenClawWriteSteps_Present_IncludesPluginAndSkillSteps(t *testing.T) {
 	got := openClawWriteSteps(installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()})
-	if len(got) != 4 {
-		t.Fatalf("openClawWriteSteps() = %#v, want exactly 4 steps", got)
+	if len(got) != 5 {
+		t.Fatalf("openClawWriteSteps() = %#v, want exactly 5 steps", got)
 	}
-	if !strings.Contains(got[2], "memory-guard") {
-		t.Fatalf("openClawWriteSteps()[2] = %q, want it to mention the memory-guard plugin install", got[2])
+	if !strings.Contains(got[0], "Retirando skills heredadas") {
+		t.Fatalf("openClawWriteSteps()[0] = %q, want legacy cleanup first", got[0])
 	}
-	if !strings.Contains(got[3], "skills") {
-		t.Fatalf("openClawWriteSteps()[3] = %q, want it to mention the OpenClaw skill manifests", got[3])
+	if !strings.Contains(got[3], "memory-guard") || !strings.Contains(got[4], "skills") {
+		t.Fatalf("openClawWriteSteps() = %#v, want plugin then retained skills", got)
 	}
 }
 

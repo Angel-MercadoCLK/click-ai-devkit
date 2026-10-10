@@ -318,6 +318,19 @@ func runInstall(cmd *cobra.Command) error {
 			}); err != nil {
 				return err
 			}
+		case installer.StepActionRetireLegacyOpenClawSkills:
+			var warnings []string
+			err := r.RunStep("Retirando skills heredadas de OpenClaw…", "Skills heredadas de OpenClaw revisadas", func() error {
+				var retireErr error
+				warnings, retireErr = installer.RetireLegacyOpenClawSkills(cfg)
+				return retireErr
+			})
+			for _, warning := range warnings {
+				fmt.Fprintln(out, r.Warn(warning))
+			}
+			if err != nil {
+				return err
+			}
 		}
 	}
 
