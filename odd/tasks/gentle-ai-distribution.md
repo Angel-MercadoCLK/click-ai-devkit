@@ -102,7 +102,18 @@ Base: `fix/memory-guard-mutation-coverage` @ 9c6825f (unpushed). Branch: `feat/g
 - Test isolation leak: `TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump` runs doctor against the real `~/.codex/AGENTS.md` and ambient `openclaw`, violating the isolated-home rule; it fails on any machine with OpenClaw installed.
 
 ## Next step
-T04 — transfer Engram/Context7 ownership to gentle-ai while preserving the Click Engram Cloud layer. T03a is closed locally; push destination/credential confirmation remains pending.
+Re-slice original T04 commit `2eb9b81` into smaller reviewable work units on `feat/gentle-ai-distribution-review-slices`, starting with read-only preflight helpers and their tests. Original branch `feat/gentle-ai-distribution` remains unchanged as backup. User explicitly requested splitting after two native context-budget refusals. T05–T11 remain paused until the split reviews are resolved.
+
+## T04 review-splitting recovery
+- Authorization: user requested splitting to obtain native review; no functionality expansion, reporting, review disable, remote operation or push authorized by this request.
+- Original complete implementation: `2eb9b81aa70346df9874bd6555119bcdee0af065`, base `5db94c4`, 38 files / 2281 changed lines. Full suite/build/vet passed on that original; native START twice returned `lens_context_budget_exceeded` before creating authority. No native approval exists.
+- Accepted product decision remains: install/update use standard process-home target paths only; reject unsupported selected overrides before mutation. Preserve D51 and coupled tests when their slice lands.
+- Route: delegated Luna high for reapplying coherent original patch units; parent reviews each returned unit before committing. Strict TDD remains on for new behavior, but this operation reorders already-tested code and must not invent historical RED. Preserve original root-guard RED evidence gap.
+- Planned dependency chain (one honest slicing pass; exact coupled hunks may move to keep builds/tests coherent): S1 read-only registration/root preflight capability + tests; S2 transport-aware doctor + temporary direct agent aliases; S3 standard-root enforcement + hermetic CLI fixture prerequisites and D51; S4 shared MCP ownership transfer + lifecycle integration tests; S5 Cloud executable resolution + final integration. Cloud may move before S4 only if verified compatible with both intermediate states.
+- Each source unit must compile, run its focused checks and preserve tests with behavior. No duplicate registration may be enabled at an intermediate boundary. Native evidence limits are undocumented; line count alone cannot prove a slice fits. Do not truncate source/evidence or change review settings to force admission.
+- Final acceptance: tracked source/test/docs tree matches original `2eb9b81` byte-for-byte, excluding this recovery task document, unless a separately justified change is authorized. Full suite/build/vet and final equality check required. Keep the original branch intact; no reset, force-push or remote actions.
+- S1: pending. Checks: `go test ./internal/installer -run 'TestPreflightGentleAIRegistrations|TestValidateGentleAIDestinationRoots' -count=1`, `go build ./...`, `go vet ./...`, `git diff --check`. Runtime harness: temporary roots/config files; no upstream execution. Rollback: remove the two unused preflight helper/test files before any dependent slice.
+- Current review base: `5db94c4`; recording this plan is a passive docs-only commit before S1. Candidate consent must be collected for each newly selected medium/high review candidate.
 
 ## Resumed T03a verification (2026-10-09)
 - Writer/verifier: GPT-6 Luna high. Existing four-file implementation preserved; no additional behavior changes needed. Normalized with gofmt before verification.
