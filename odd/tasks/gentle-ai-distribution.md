@@ -14,7 +14,7 @@ Detailed pre-condensation history is immutable in commit `363f18c` at this path;
 - User reaffirmed “granted a todo” for remaining review candidates; use exact provider-issued grants/bindings. This is not remote, scope-expansion, merge or release authority. Original full T09b2 candidate was granted but refused before review authority (`lens_context_budget_exceeded`); it was reconstructed into four reviewed slices.
 - Strict TDD (AGENTS.md D13), runner `go test ./...`; required build/vet/diff checks. Spanish dev-facing CLI/TUI strings (D10); technical artifacts English, except existing README convention is Spanish. Use temporary homes only; never touch `.engram/config.json`. No `git add -A`.
 - Pin: stable gentle-ai v4.0.0, qualified checksum, `GENTLE_AI_NO_SELF_UPDATE=1`. Unix uses checksum-qualified release archive. Windows has no upstream release binary for v3.5–v4.0.0; approved path is `go install github.com/gentleman-programming/gentle-ai/v4/cmd/gentle-ai@v4.0.0` using Go checksum DB (Go >=1.25.10). Click remains a Scoop package; no Scoop dependency.
-- D49 final preset is `full-gentleman`, components `engram,skills,context7,permissions`, persona `neutral`, agents `claude-code,codex,openclaw`; exclude `sdd,gga,theme,claude-theme,opencode-gentle-logo`.
+- D49 final preset is `full-gentleman`; actual install component tokens are `engram,skills,context7,permissions,persona`, with `--persona neutral`, agents `claude-code,codex,openclaw`; exclude `sdd,gga,theme,claude-theme,opencode-gentle-logo`. The explicit persona component is verified in `GentleAIInstallArgs`, not a new policy change.
 - Engram Cloud (D40–D50) remains Click-owned and layered over upstream Engram. Uninstall removes Click local enrollment only; shared upstream Engram/Context7 stay. Current Cloud token is preserved by rollback.
 - Pin drift: doctor reports non-pinned installs; install/update re-pin and explain (may downgrade user-selected newer versions). D48 permits the Windows Go-install path. D51: pinned upstream resolves standard process-home targets, so reject nonstandard selected roots before mutation; user accepted this limitation. Do not redirect to or inspect the real home.
 - D52 (user-confirmed): permissions entirely upstream-owned; Click keeps guard/policy and adds no permission writer or allow/deny/ask lists. Supersedes only D48's extra-permissions clause.
@@ -34,7 +34,7 @@ Detailed pre-condensation history is immutable in commit `363f18c` at this path;
 | T08 | done T08a `0f6af6e` + correction `6d227c5`; T08b `68d1357` | Durable safe Click SDD plugin retirement and scoped teardown. |
 | T09 | done T09a `d69df87`; T09b1 `a1dcd96`; T09b2 S1–S4 `3c2e9ec`,`fd6edae`,`a3d548d`,`4573142` | Hash-qualified legacy OpenClaw cleanup; generic agent-builder retained; retired Click SDD source removed. |
 | T10 | done T10a `f4b16a9`; T10b `4263d91`; T10c `25907b0` | Managed pin doctor, ownership-aware rollback, partial-run qualification. |
-| T11a–b | pending; see plan | Current docs/metadata refresh; hermetic Windows smoke lifecycle audit and actual Windows execution when available. |
+| T11a–b | T11a done `de3de2b`; T11b pending | Current docs/metadata refreshed; hermetic Windows smoke lifecycle and actual Windows execution remain. |
 
 Acceptance: pinned upstream plus Click layer, no Click click-sdd artifacts, safe migration, guard covering persistent Engram tools, honest pin/health diagnostics, and rollback of proven Click-owned content only. T08 scoped backup and T10 rollback are verified with mocks; live upstream effects are not claimed.
 
@@ -91,11 +91,15 @@ Original source `2eb9b81aa70346df9874bd6555119bcdee0af065` based on `5db94c4`, 3
 
 Route both broad doc/test slices as delegated work; one writer at a time, parent review, strict TDD for any code/test behavior. No SDD, live home, credential, network download or remote action is authorized by this tracker. T11 remains incomplete until actual Windows smoke execution is observed.
 
-### T11a — [ ] current ownership docs and status history
+### T11a — [x] current ownership docs and status history
 
 Refresh only directly relevant human-facing documentation/metadata, then run final docs/source consistency checks. Candidate files: `README.md` (retain its existing Spanish convention), `AGENTS.md`, `CLAUDE.md`, documentation index, current Codex and portability runbooks, stale marketplace/status descriptions, and historical reports that state retired Click SDD/model/permission or duplicate-MCP behavior is current. Keep historical reports identifiable as historical; do not erase valid decisions or rewrite locked decision history. Make AGENTS/CLAUDE and the current runbooks the clear source of truth. Document the pinned upstream/Click ownership split, components/preset, standard-home restriction, rollback boundary, no live Windows evidence, and unsupported role mapping. Keep links and copy consistent; avoid T11 scope creep into unrelated docs. Advisory forecast: roughly 400–900 changed lines, to be counted from the actual scoped diff.
 
 **Acceptance/checks:** review every edited claim against current source and D48–D53; no instruction invokes removed Click SDD assets or promises Click model selection/permission writing/shared-MCP deletion; README remains Spanish; historical facts remain dated and labeled; run link/reference checks, `git diff --check`, `go test ./...`, `go build ./...`, `go vet ./...` where code-facing docs need consistency. No fake Windows pass.
+
+T11a closure: source `de3de2b`, 19 paths, 333 additions/328 deletions (661 authored lines), includes new documentation index and coupled release-documentation contract test. Luna high writer, parent readback/spot test and independent Sol audit; restored accidentally omitted contributor conventions and corrected inventory attribution to Claude Code before freeze. Full tests/build/vet/diff, JSON parse and local-link checks passed. Initial full suite exposed the obsolete model-writing assertion, then corrected test passed; no production behavior change. README remains Spanish; historical artifacts labeled, not rewritten. Rollback is these docs/metadata/contract-test paths together.
+
+Native medium slice `16fa864..de3de2b` also closes pending T10c; 21 paths/1054 native changed lines, due `slice_budget_reached`. Lineage `review-59e3910d9b31acea`, consolidated findings empty, exact acknowledgement consumed `sha256:310d3249813015f5709a60e15f08b07da1a99681db449dd83be70117a879b1ee`, target `sha256:8d24220c8ff1b960b168d96d086cfcc40d1fa7f2c6c383c31d3e19fb044ccbd3`, authority burned. No correction or trailing STATUS. `16fa864` is no longer pending; reviewed boundary is `de3de2b`. No Windows/live/remote claim. Passive tracker closure may advance the next base without losing any pending executable slice.
 
 ### T11b — [ ] hermetic Windows package-smoke qualification
 
