@@ -189,6 +189,193 @@ func TestWiring(t *testing.T) {
 		}
 	})
 
+	// A fatal install failure is not an automatic restore: the deferred manifest must describe
+	// the partial state so the user can explicitly roll back only Click-owned content later.
+	t.Run("install late failure records restorable partial state and preserves current foreign data on rollback", func(t *testing.T) {
+		seedResolvableEngram(t)
+		seedResolvableClickBinary(t)
+		claudeHome, codexHome, stateHome := t.TempDir(), t.TempDir(), t.TempDir()
+		claudeCfg := installer.Config{ClaudeHome: claudeHome}
+		codexCfg := installer.Config{CodexHome: codexHome}
+		if err := os.MkdirAll(claudeHome, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(codexHome, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		claudeBefore := "User-owned Claude introduction\n"
+		codexBefore := "User-owned Codex introduction\n"
+		if err := os.WriteFile(claudeCfg.ClaudeMDPath(), []byte(claudeBefore), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(codexCfg.CodexAgentsMDPath(), []byte(codexBefore), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		settingsBefore := `{"env":{"ENGRAM_CLOUD_TOKEN":"snapshot-cloud-token"},"hooks":{"PreToolUse":[{"matcher":"foreign","hooks":[{"type":"command","command":"foreign-before"}]}]},"custom":"snapshot-foreign"}`
+		if err := os.WriteFile(claudeCfg.SettingsPath(), []byte(settingsBefore), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(codexCfg.CodexConfigPath(), []byte("model = 'user-model'\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		runner := newTestCommandRunner(claudeHome)
+		t.Cleanup(installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner }))
+		lookup := cliFakeBinaryLookup{resolved: map[string]string{
+			"claude": "/fixture/claude", "codex": "/fixture/codex", "git": "/fixture/git",
+		}}
+		const injectedFailure = "injected late Codex guidance failure"
+		guidanceCalls := 0
+		t.Cleanup(SetSyncCodexGuidanceFuncForTests(func(installer.Config) error {
+			guidanceCalls++
+			return errors.New(injectedFailure)
+		}))
+
+		out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "install", "--non-interactive")
+		if err == nil || !strings.Contains(err.Error(), injectedFailure) {
+			t.Fatalf("install error = %v, output:\n%s; want the injected late Codex-guidance failure", err, out)
+		}
+		if guidanceCalls != 1 {
+			t.Fatalf("Codex guidance calls = %d, want exactly one reached late failure", guidanceCalls)
+		}
+		if has, hasErr := installer.HasManagedBlock(claudeCfg.ClaudeMDPath()); hasErr != nil || !has {
+			t.Fatalf("Claude Click guidance after late failure: present=%t error=%v, want installed Click-owned block before explicit rollback", has, hasErr)
+		}
+		codexGuidanceAfterFailure, readErr := os.ReadFile(codexCfg.CodexAgentsMDPath())
+		if readErr != nil || string(codexGuidanceAfterFailure) != codexBefore {
+			t.Fatalf("Codex guidance after failure = %q (error %v), want unchanged user content because injected sync failed", codexGuidanceAfterFailure, readErr)
+		}
+		settingsAfterInstall, readErr := os.ReadFile(claudeCfg.SettingsPath())
+		if readErr != nil || !strings.Contains(string(settingsAfterInstall), installer.MemoryGuardCommand) {
+			t.Fatalf("settings after late failure = %q (error %v), want newly installed Click guard before explicit rollback", settingsAfterInstall, readErr)
+		}
+		codexAfterInstall, readErr := os.ReadFile(codexCfg.CodexConfigPath())
+		if readErr != nil || !strings.Contains(string(codexAfterInstall), "mcp_servers") {
+			t.Fatalf("Codex native config after install = %q (error %v), want upstream MCP write before injected late failure", codexAfterInstall, readErr)
+		}
+
+		// The real deferred recorder runs despite the fatal return. Validate its hashes against
+		// the actual partial files, not a seam counter or a pre-run snapshot approximation.
+		installHome := filepath.Join(filepath.Dir(claudeHome), ".gentle-ai-test-home-"+filepath.Base(claudeHome))
+		installCfg := installer.Config{
+			ClaudeHome:     filepath.Join(installHome, ".claude"),
+			CodexHome:      filepath.Join(installHome, ".codex"),
+			ClickStateHome: stateHome,
+		}
+		if found, snapshotErr := installer.HasRestorableSnapshot(installCfg); snapshotErr != nil || !found {
+			t.Fatalf("HasRestorableSnapshot() = %t, %v; want restorable partial-run snapshot", found, snapshotErr)
+		}
+		manifestRaw, readErr := os.ReadFile(filepath.Join(installCfg.BackupDir(), "latest", "manifest.json"))
+		if readErr != nil {
+			t.Fatalf("read post-run manifest: %v", readErr)
+		}
+		var manifest struct {
+			Entries []struct {
+				OriginalPath        string `json:"originalPath"`
+				ExpectedPostRunHash string `json:"expectedPostRunHash"`
+			} `json:"entries"`
+		}
+		if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+			t.Fatalf("decode post-run manifest: %v", err)
+		}
+		for _, entry := range []struct {
+			originalPath string
+			currentPath  string
+			name         string
+		}{
+			{installCfg.ClaudeMDPath(), claudeCfg.ClaudeMDPath(), "Claude managed guidance"},
+			{installCfg.SettingsPath(), claudeCfg.SettingsPath(), "Claude settings"},
+			{installCfg.CodexAgentsMDPath(), codexCfg.CodexAgentsMDPath(), "Codex guidance"},
+			{installCfg.CodexConfigPath(), codexCfg.CodexConfigPath(), "Codex native config"},
+		} {
+			var recorded string
+			for _, candidate := range manifest.Entries {
+				if candidate.OriginalPath == entry.originalPath {
+					recorded = candidate.ExpectedPostRunHash
+					break
+				}
+			}
+			current, readErr := os.ReadFile(entry.currentPath)
+			if readErr != nil || recorded == "" || recorded != installer.CanonicalContentHash(string(current)) {
+				t.Fatalf("%s post-run hash = %q, current hash %q (read error %v); want actual deferred hash", entry.name, recorded, installer.CanonicalContentHash(string(current)), readErr)
+			}
+		}
+
+		// A snapshot is bookkeeping, not evidence that install completed successfully. Doctor
+		// must still report the failed Codex guidance step as unhealthy.
+		doctorOut, doctorErr := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "doctor")
+		codexGuidanceFailureLine := false
+		for _, line := range strings.Split(doctorOut, "\n") {
+			if strings.Contains(line, "Codex AGENTS.md:") && strings.Contains(line, "bloque gestionado ausente") {
+				codexGuidanceFailureLine = true
+				break
+			}
+		}
+		if doctorErr == nil || !codexGuidanceFailureLine {
+			t.Fatalf("doctor error=%v output:\n%s; want unhealthy missing Codex guidance despite the snapshot", doctorErr, doctorOut)
+		}
+
+		// Introduce newer user-owned content after the failed install. Rollback may remove only
+		// the newly-installed Click block/guard; current Cloud, foreign hooks, prose, and native
+		// Codex configuration remain authoritative.
+		claudeCurrent, readErr := os.ReadFile(claudeCfg.ClaudeMDPath())
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		claudeCurrent = append(claudeCurrent, []byte("User text added after failed install\n")...)
+		if err := os.WriteFile(claudeCfg.ClaudeMDPath(), claudeCurrent, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var settings map[string]any
+		settingsBeforeRollback, readErr := os.ReadFile(claudeCfg.SettingsPath())
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if err := json.Unmarshal(settingsBeforeRollback, &settings); err != nil {
+			t.Fatal(err)
+		}
+		env := settings["env"].(map[string]any)
+		env["ENGRAM_CLOUD_TOKEN"] = "current-synthetic-cloud-token"
+		settings["custom"] = "current foreign value"
+		hooks := settings["hooks"].(map[string]any)
+		hooks["SessionStart"] = []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "foreign-current-session-hook"}}}}
+		currentSettings, marshalErr := json.Marshal(settings)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if err := os.WriteFile(claudeCfg.SettingsPath(), currentSettings, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		codexCurrent := []byte("model = 'current-user-model'\n\n[mcp_servers.foreign]\ncommand = 'preserve-me'\n")
+		if err := os.WriteFile(codexCfg.CodexConfigPath(), codexCurrent, 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		rollbackOut, rollbackErr := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "rollback", "--yes")
+		if rollbackErr != nil {
+			t.Fatalf("explicit rollback error = %v, output:\n%s", rollbackErr, rollbackOut)
+		}
+		claudeAfter, readErr := os.ReadFile(claudeCfg.ClaudeMDPath())
+		if readErr != nil || string(claudeAfter) != "User-owned Claude introduction\nUser text added after failed install\n" {
+			t.Fatalf("Claude Markdown after rollback = %q (error %v), want current user prose with only Click block removed", claudeAfter, readErr)
+		}
+		settingsAfter, readErr := os.ReadFile(claudeCfg.SettingsPath())
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var restoredSettings map[string]any
+		if err := json.Unmarshal(settingsAfter, &restoredSettings); err != nil {
+			t.Fatal(err)
+		}
+		if restoredSettings["env"].(map[string]any)["ENGRAM_CLOUD_TOKEN"] != "current-synthetic-cloud-token" || restoredSettings["custom"] != "current foreign value" || strings.Contains(string(settingsAfter), installer.MemoryGuardCommand) || !strings.Contains(string(settingsAfter), "foreign-before") || !strings.Contains(string(settingsAfter), "foreign-current-session-hook") {
+			t.Fatalf("settings after rollback did not preserve current foreign/Cloud data while removing Click guard: %s", settingsAfter)
+		}
+		codexAfterRollback, readErr := os.ReadFile(codexCfg.CodexConfigPath())
+		if readErr != nil || !bytes.Equal(codexAfterRollback, codexCurrent) {
+			t.Fatalf("Codex native config after rollback = %q (error %v), want exact current bytes %q", codexAfterRollback, readErr, codexCurrent)
+		}
+	})
+
 	// Test (c): uninstall's call happens after pruning and before the final report
 	t.Run("uninstall call happens after pruning and before report", func(t *testing.T) {
 		claudeHome := t.TempDir()
