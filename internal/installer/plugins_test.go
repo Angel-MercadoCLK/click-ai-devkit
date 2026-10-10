@@ -42,70 +42,9 @@ func TestManagedPluginNamesExcludesRetiredClickSDD(t *testing.T) {
 	}
 }
 
-func TestClickSDDPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
-	assertPluginStructure(t, filepath.Join("plugins", "click-sdd"), "click-sdd", []string{
-		filepath.Join("agents", "click-reviewer.md"),
-		filepath.Join("agents", "click-memory-curator.md"),
-		filepath.Join("agents", "click-explore.md"),
-		filepath.Join("agents", "click-apply.md"),
-		filepath.Join("agents", "click-archive.md"),
-		filepath.Join("agents", "click-onboard.md"),
-		filepath.Join("agents", "click-jd-judge-a.md"),
-		filepath.Join("agents", "click-jd-judge-b.md"),
-		filepath.Join("agents", "click-jd-fix-agent.md"),
-		filepath.Join("agents", "click-review-risk.md"),
-		filepath.Join("agents", "click-review-readability.md"),
-		filepath.Join("agents", "click-review-reliability.md"),
-		filepath.Join("agents", "click-review-resilience.md"),
-		filepath.Join("agents", "click-review-refuter.md"),
-	})
-
-	retiredAgentPaths := []string{
-		filepath.Join("agents", "click-orchestrator.md"),
-		filepath.Join("agents", "click-prd-writer.md"),
-		filepath.Join("agents", "click-architect.md"),
-		filepath.Join("agents", "click-elicitor.md"),
-	}
-	for _, relPath := range retiredAgentPaths {
-		path := filepath.Join("..", "..", "plugins", "click-sdd", relPath)
-		if _, err := os.Stat(path); err == nil {
-			t.Errorf("retired Click SDD role path %s still exists", relPath)
-		} else if !os.IsNotExist(err) {
-			t.Errorf("Stat(%s) error = %v, want path absent", path, err)
-		}
-	}
-
-	retiredSkillPaths := []string{
-		filepath.Join("skills", "_shared", "result-contract.md"),
-		filepath.Join("skills", "agent-builder", "SKILL.md"),
-		filepath.Join("skills", "apply", "SKILL.md"),
-		filepath.Join("skills", "archive", "SKILL.md"),
-		filepath.Join("skills", "clickdev", "SKILL.md"),
-		filepath.Join("skills", "clickhola", "SKILL.md"),
-		filepath.Join("skills", "design", "SKILL.md"),
-		filepath.Join("skills", "explore", "SKILL.md"),
-		filepath.Join("skills", "jd-fix-agent", "SKILL.md"),
-		filepath.Join("skills", "jd-judge-a", "SKILL.md"),
-		filepath.Join("skills", "jd-judge-b", "SKILL.md"),
-		filepath.Join("skills", "onboard", "SKILL.md"),
-		filepath.Join("skills", "propose", "SKILL.md"),
-		filepath.Join("skills", "spec", "SKILL.md"),
-		filepath.Join("skills", "tasks", "SKILL.md"),
-		filepath.Join("skills", "verify", "SKILL.md"),
-	}
-	for _, relPath := range retiredSkillPaths {
-		path := filepath.Join("..", "..", "plugins", "click-sdd", relPath)
-		if _, err := os.Stat(path); err == nil {
-			t.Errorf("retired Click SDD skill path %s still exists", relPath)
-		} else if !os.IsNotExist(err) {
-			t.Errorf("Stat(%s) error = %v, want path absent", path, err)
-		}
-	}
-
-	for _, plugin := range ManagedPluginNames() {
-		if plugin == "click-sdd" {
-			t.Fatal("retired click-sdd must remain absent from the active managed plugin roster")
-		}
+func TestClickSDDPluginSourceIsRetired(t *testing.T) {
+	if _, err := os.Stat(filepath.Join("..", "..", "plugins", "click-sdd")); !os.IsNotExist(err) {
+		t.Fatalf("plugins/click-sdd still exists, want retired source tree absent: %v", err)
 	}
 }
 
@@ -126,6 +65,13 @@ func TestClickReviewPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
 		filepath.Join("skills", "pr-review", "SKILL.md"),
 		filepath.Join("skills", "pre-merge-checklist", "SKILL.md"),
 	})
+
+	checklist := string(mustReadRepoFile(t, "plugins", "click-review", "skills", "pre-merge-checklist", "SKILL.md"))
+	for _, policy := range []string{"policy numbers", "claim identifiers", "customer identifiers", "monetary business data", "memory policy"} {
+		if !strings.Contains(checklist, policy) {
+			t.Errorf("retained pre-merge checklist is missing Click insurance/data policy %q", policy)
+		}
+	}
 }
 
 func TestInstalledPluginPath_UsesRegistryInstallPath(t *testing.T) {

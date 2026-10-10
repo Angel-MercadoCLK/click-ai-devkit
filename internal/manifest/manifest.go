@@ -1,12 +1,9 @@
-// Package manifest defines the embedded release manifest that click reads to know what
-// "this click-ai-devkit release" means: the click-sdd/click-memory/click-review plugin
-// versions and the pinned Engram version. The manifest is embedded into the binary at build
-// time (go:embed) so `click doctor` and `click update` never need a network call to know what
-// they should install — see tech-spec.md §2.3.
+// Package manifest defines the embedded release metadata and qualified upstream tool pin used
+// by click. The manifest is embedded into the binary at build time (go:embed), so Click's local
+// lifecycle decisions do not need a network call — see tech-spec.md §2.3.
 //
-// There is deliberately no .claude-plugin/marketplace.json anywhere in this repo (D16,
-// implementation-plan.md Phase 0 DoD): this manifest is the only source of truth for install
-// content.
+// The Claude marketplace manifest separately describes retained Click plugins. Workflow and
+// model configuration are owned by gentle-ai, not by a Click plugin entry.
 package manifest
 
 import (

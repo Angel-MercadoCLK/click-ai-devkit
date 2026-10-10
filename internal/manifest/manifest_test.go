@@ -33,7 +33,10 @@ func TestLoad_ParsesEmbeddedManifest(t *testing.T) {
 		t.Error("Engram.Source is empty, want a placeholder value")
 	}
 
-	wantPlugins := []string{"click-sdd", "click-memory", "click-review", "click-skills"}
+	wantPlugins := []string{"click-memory", "click-review", "click-skills"}
+	if len(m.Plugins) != len(wantPlugins) {
+		t.Fatalf("Plugins contains %d entries, want only retained Click plugins %v", len(m.Plugins), wantPlugins)
+	}
 	for _, name := range wantPlugins {
 		p, ok := m.Plugins[name]
 		if !ok {
