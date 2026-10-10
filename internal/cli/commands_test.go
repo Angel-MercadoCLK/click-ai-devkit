@@ -524,7 +524,8 @@ func (r *testCommandRunner) writeSettings() error {
 			existingSettings = map[string]any{}
 		}
 	}
-	// Set/replace only the keys this runner owns
+	// This fake models the external CLI's plugin-config handling as a complete replacement.
+	// Tests must not infer that legacy plugin-owned options survive real marketplace operations.
 	existingSettings["enabledPlugins"] = enabled
 	existingSettings["pluginConfigs"] = pluginConfigs
 
@@ -1068,11 +1069,9 @@ func TestInstallCommand_FreshInstall_NoBackupCreated(t *testing.T) {
 	}
 }
 
-// TestInstallCommand_MigratesStaleModelsBeforeOverwriting guards the D8 "never clobber a working
-// setup without a backup" safety net for `click install`, consistent with `click update`: if
-// models.json is stale (pre-taxonomy-realignment), `click install` must back it up to
-// models.json.bak before overwriting it with fresh new-taxonomy defaults.
-func TestInstallCommand_MigratesStaleModelsBeforeOverwriting(t *testing.T) {
+// TestInstallCommand_PreservesStaleModels guards that retired model artifacts are not migrated or
+// regenerated during install.
+func TestInstallCommand_PreservesStaleModels(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1100,20 +1099,12 @@ func TestInstallCommand_MigratesStaleModelsBeforeOverwriting(t *testing.T) {
 		t.Fatalf("install command error = %v", err)
 	}
 
-	backup, err := os.ReadFile(cfg.ModelsPath() + ".bak")
-	if err != nil {
-		t.Fatalf("ReadFile(models.json.bak) error = %v, want the stale file backed up before overwrite", err)
+	got, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil || !bytes.Equal(got, legacyRaw) {
+		t.Fatalf("models.json = %q (err %v), want original stale bytes preserved", got, err)
 	}
-	if string(backup) != string(legacyRaw) {
-		t.Fatalf("models.json.bak = %q, want verbatim legacy content %q", backup, legacyRaw)
-	}
-
-	stale, err := installer.IsStale(cfg)
-	if err != nil {
-		t.Fatalf("IsStale() error = %v", err)
-	}
-	if stale {
-		t.Fatal("models.json is still stale after `click install`, want migrated to current schema")
+	if _, err := os.Stat(cfg.ModelsPath() + ".bak"); !os.IsNotExist(err) {
+		t.Fatalf("models.json.bak stat error = %v, want no migration backup", err)
 	}
 }
 
@@ -1274,13 +1265,9 @@ func TestUpdateCommand_ResyncsPluginsAndWritesEngramPin(t *testing.T) {
 	}
 }
 
-// TestUpdateCommand_PersistsModelsJson is a regression test for an asymmetry bug: `click install`
-// both applies AND saves models.json (installer.SaveModels), but `click update` only re-applied
-// the per-phase model routing config without re-persisting it to disk. On a home where
-// models.json was never written (e.g. install predates this feature, or the file was lost),
-// `click update` must still leave models.json present and readable afterward, exactly like
-// `click install` does.
-func TestUpdateCommand_PersistsModelsJson(t *testing.T) {
+// TestUpdateCommand_DoesNotCreateRetiredModelsJson verifies that update does not create the
+// retired Click-owned model artifact when none exists.
+func TestUpdateCommand_DoesNotCreateRetiredModelsJson(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1291,24 +1278,149 @@ func TestUpdateCommand_PersistsModelsJson(t *testing.T) {
 	}
 	t.Setenv("CLICK_ENGRAM_BINARY_PATH", binaryPath)
 
-	// No prior `click install` ran, so models.json does not exist yet — exercises update's own
-	// fallback-to-defaults path (installer.LoadModels found=false), which must still persist.
+	// No prior install ran, so models.json is absent. Update must leave that state unchanged rather
+	// than generating Click-owned model defaults.
 	if _, err := execRoot(t, home, "update"); err != nil {
 		t.Fatalf("update command error = %v", err)
 	}
 
-	got, found, err := installer.LoadModels(installer.Config{ClaudeHome: home})
+	if _, err := os.Stat(installer.Config{ClaudeHome: home}.ModelsPath()); !os.IsNotExist(err) {
+		t.Fatalf("models.json stat error = %v, want no Click model artifact created", err)
+	}
+}
+
+func TestInstallAndUpdate_PreserveLegacyClaudeModelArtifacts(t *testing.T) {
+	for _, command := range []string{"install", "update"} {
+		t.Run(command, func(t *testing.T) {
+			home := t.TempDir()
+			cfg := installer.Config{ClaudeHome: home}
+			if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			original := []byte("legacy user-owned model data: keep byte-for-byte")
+			if err := os.WriteFile(cfg.ModelsPath(), original, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			settings := []byte(`{"model":"user-default"}`)
+			if err := os.WriteFile(cfg.SettingsPath(), settings, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			runner := newTestCommandRunner(home)
+			restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+			defer restoreRunner()
+
+			if _, err := execRoot(t, home, command); err != nil {
+				t.Fatalf("%s command error = %v", command, err)
+			}
+			got, err := os.ReadFile(cfg.ModelsPath())
+			if err != nil {
+				t.Fatalf("ReadFile(models.json) error = %v", err)
+			}
+			if !bytes.Equal(got, original) {
+				t.Fatalf("models.json = %q, want preserved bytes %q", got, original)
+			}
+			if _, err := os.Stat(cfg.ModelsPath() + ".bak"); !os.IsNotExist(err) {
+				t.Fatalf("models.json.bak stat error = %v, want no migration backup", err)
+			}
+			var gotSettings map[string]any
+			if err := readJSONFile(cfg.SettingsPath(), &gotSettings); err != nil {
+				t.Fatalf("read settings.json: %v", err)
+			}
+			if gotSettings["model"] != "user-default" {
+				t.Fatalf("settings model = %#v, want preserved native model", gotSettings["model"])
+			}
+			for _, command := range runner.commands {
+				if strings.Contains(command, "--config") {
+					t.Fatalf("runner command %q contains retired model config flags", command)
+				}
+			}
+		})
+	}
+}
+
+func TestRetiredClaudeProfileFlagRejectsBeforeInstallOrUpdateWrites(t *testing.T) {
+	for _, command := range []string{"install", "update"} {
+		t.Run(command, func(t *testing.T) {
+			home, stateHome := t.TempDir(), t.TempDir()
+			runner := newTestCommandRunner(home)
+			restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+			defer restoreRunner()
+
+			out, err := execRootWithStateHome(t, home, stateHome, command, "--profile", "quality")
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "perfil") || !strings.Contains(strings.ToLower(err.Error()), "gentle-ai") {
+				t.Fatalf("%s --profile error = %v, output %q; want actionable Spanish deprecation error", command, err, out)
+			}
+			if len(runner.commands) != 0 {
+				t.Fatalf("runner.commands = %#v, want no commands before retired flag rejection", runner.commands)
+			}
+			if _, found, loadErr := installer.LoadTargetSelection(installer.Config{ClickStateHome: stateHome}); loadErr != nil || found {
+				t.Fatalf("target selection = (found=%t, err=%v), want no persisted state", found, loadErr)
+			}
+			if has, snapshotErr := installer.HasRunSnapshot(installer.Config{ClaudeHome: home, ClickStateHome: stateHome}); snapshotErr != nil || has {
+				t.Fatalf("run snapshot = (present=%t, err=%v), want rejection before snapshot", has, snapshotErr)
+			}
+		})
+	}
+}
+
+func TestRetiredClaudeProfileFlagIsHiddenFromInstallAndUpdateHelp(t *testing.T) {
+	for name, command := range map[string]*cobra.Command{
+		"install": newInstallCommand(),
+		"update":  newUpdateCommand(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			flag := command.Flags().Lookup(profileFlag)
+			if flag == nil || !flag.Hidden {
+				t.Fatalf("%s --profile flag = %#v, want hidden compatibility flag", name, flag)
+			}
+		})
+	}
+}
+
+func readJSONFile(path string, target any) error {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("LoadModels() error = %v", err)
+		return err
 	}
-	if !found {
-		t.Fatal("LoadModels() found = false after `click update`, want true — update must persist models.json like install does")
+	return json.Unmarshal(data, target)
+}
+
+func TestOpenClawOnlyUpdateDoesNotReadClaudeModelsOrRewriteLegacyProfile(t *testing.T) {
+	claudeHome, stateHome, openClawHome := t.TempDir(), t.TempDir(), t.TempDir()
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"openclaw": "/usr/bin/openclaw"}}
+	cfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome, OpenClawHome: openClawHome}
+	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, OpenClaw: true}); err != nil {
+		t.Fatal(err)
 	}
-	want := modelconfig.Defaults()
-	for phase, model := range want {
-		if got[phase] != model {
-			t.Errorf("persisted models[%s] = %q, want default %q", phase, got[phase], model)
-		}
+	if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	models := []byte("not valid JSON: must not be read")
+	if err := os.WriteFile(cfg.ModelsPath(), models, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.OpenClawModelProfilePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	profile := []byte("legacy OpenClaw profile metadata: preserve exactly")
+	if err := os.WriteFile(cfg.OpenClawModelProfilePath(), profile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, openClawHome, t.TempDir(), lookup, "update")
+	if err != nil {
+		t.Fatalf("OpenClaw-only update error = %v, output %q", err, out)
+	}
+	gotModels, readErr := os.ReadFile(cfg.ModelsPath())
+	if readErr != nil || !bytes.Equal(gotModels, models) {
+		t.Fatalf("models.json = %q (err %v), want exact preservation without migration or rewrite", gotModels, readErr)
+	}
+	gotProfile, readErr := os.ReadFile(cfg.OpenClawModelProfilePath())
+	if readErr != nil || !bytes.Equal(gotProfile, profile) {
+		t.Fatalf("OpenClaw model-profile.json = %q (err %v), want exact preservation", gotProfile, readErr)
 	}
 }
 
@@ -1337,26 +1449,7 @@ func TestInstallCommand_IssuesMarketplaceCommandsInOrder(t *testing.T) {
 	want := []string{
 		"claude plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins",
 		"claude plugin marketplace update click-ai-devkit",
-		"claude plugin install click-sdd@click-ai-devkit" +
-			" --config orchestration_profile=balanced" +
-			" --config explore_model=sonnet" +
-			" --config propose_model=opus" +
-			" --config spec_model=sonnet" +
-			" --config design_model=opus" +
-			" --config tasks_model=sonnet" +
-			" --config apply_model=sonnet" +
-			" --config verify_model=opus" +
-			" --config archive_model=haiku" +
-			" --config onboard_model=haiku" +
-			" --config jd_judge_a_model=sonnet" +
-			" --config jd_judge_b_model=sonnet" +
-			" --config jd_fix_agent_model=sonnet" +
-			" --config review_risk_model=sonnet" +
-			" --config review_readability_model=sonnet" +
-			" --config review_reliability_model=sonnet" +
-			" --config review_resilience_model=sonnet" +
-			" --config review_refuter_model=sonnet" +
-			" --config default_model=sonnet",
+		"claude plugin install click-sdd@click-ai-devkit",
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",
 		"claude plugin install click-skills@click-ai-devkit",
@@ -1366,14 +1459,11 @@ func TestInstallCommand_IssuesMarketplaceCommandsInOrder(t *testing.T) {
 	}
 }
 
-// TestInstallCommand_NonTTY_DoesNotHangAndResolvesToBalanced guards the CRITICAL non-TTY/CI safety
-// contract (design D4): a non-interactive `click install` with no --profile flag must return
-// immediately — never block waiting for interactive input — and must persist the "balanced" profile
-// label alongside its (Defaults()-equal) per-phase map. execRoot always wires stdin/stdout to a
-// bytes.Buffer (never a real terminal), so isNonInteractiveInstall's TTY check already forces the
-// non-interactive branch on every test in this file; this test makes that safety property explicit
-// with its own elapsed-time assertion instead of relying on it implicitly.
-func TestInstallCommand_NonTTY_DoesNotHangAndResolvesToBalanced(t *testing.T) {
+// TestInstallCommand_NonTTY_ReturnsWithoutCreatingModelArtifact guards the non-TTY/CI safety
+// contract: install returns without waiting for interactive input and no longer creates Click-owned
+// model artifacts. execRoot uses buffers rather than a real terminal, so this test makes the
+// non-blocking behavior explicit with its own elapsed-time assertion.
+func TestInstallCommand_NonTTY_ReturnsWithoutCreatingModelArtifact(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1387,25 +1477,14 @@ func TestInstallCommand_NonTTY_DoesNotHangAndResolvesToBalanced(t *testing.T) {
 		t.Fatalf("install command took %s on a non-TTY buffer, want it to return immediately without blocking on interactive input", elapsed)
 	}
 
-	profile, models, found, err := installer.LoadModelsWithProfile(installer.Config{ClaudeHome: home})
-	if err != nil {
-		t.Fatalf("LoadModelsWithProfile() error = %v", err)
-	}
-	if !found {
-		t.Fatal("LoadModelsWithProfile() found = false after install, want true")
-	}
-	if profile != modelconfig.ProfileBalanced {
-		t.Fatalf("persisted profile = %q, want %q", profile, modelconfig.ProfileBalanced)
-	}
-	if !reflect.DeepEqual(models, modelconfig.Defaults()) {
-		t.Fatalf("persisted models = %#v, want Defaults() %#v", models, modelconfig.Defaults())
+	if _, err := os.Stat(installer.Config{ClaudeHome: home}.ModelsPath()); !os.IsNotExist(err) {
+		t.Fatalf("models.json stat error = %v, want no Click model artifact created", err)
 	}
 }
 
-// TestInstallCommand_ProfileFlag_NonInteractive_PersistsChosenProfile guards --profile's
-// non-interactive contract: the flag selects a built-in preset with no prompt, and BOTH the emitted
-// --config flags AND the persisted models.json profile field must reflect it.
-func TestInstallCommand_ProfileFlag_NonInteractive_PersistsChosenProfile(t *testing.T) {
+// TestInstallCommand_ProfileFlag_NonInteractive_RejectsRetiredSelection verifies that install
+// rejects the retired Click profile selector before invoking any command.
+func TestInstallCommand_ProfileFlag_NonInteractive_RejectsRetiredSelection(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1413,68 +1492,29 @@ func TestInstallCommand_ProfileFlag_NonInteractive_PersistsChosenProfile(t *test
 	restoreSource := installer.SetMarketplaceSourceForTests("https://github.com/Angel-MercadoCLK/click-ai-devkit")
 	defer restoreSource()
 
-	if _, err := execRoot(t, home, "install", "--profile", "cost-saver"); err != nil {
-		t.Fatalf("install command error = %v", err)
+	_, err := execRoot(t, home, "install", "--profile", "cost-saver")
+	if err == nil || !strings.Contains(err.Error(), "Configure Models") {
+		t.Fatalf("install --profile error = %v, want actionable deprecation", err)
 	}
-
-	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
-		" --config orchestration_profile=cost-saver" +
-		" --config explore_model=haiku" +
-		" --config propose_model=opus" +
-		" --config spec_model=haiku" +
-		" --config design_model=opus" +
-		" --config tasks_model=haiku" +
-		" --config apply_model=haiku" +
-		" --config verify_model=opus" +
-		" --config archive_model=haiku" +
-		" --config onboard_model=haiku" +
-		" --config jd_judge_a_model=haiku" +
-		" --config jd_judge_b_model=haiku" +
-		" --config jd_fix_agent_model=haiku" +
-		" --config review_risk_model=haiku" +
-		" --config review_readability_model=haiku" +
-		" --config review_reliability_model=haiku" +
-		" --config review_resilience_model=haiku" +
-		" --config review_refuter_model=haiku" +
-		" --config default_model=haiku"
-	if !contains(runner.commands, wantCommand) {
-		t.Fatalf("install command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
-	}
-
-	profile, _, found, err := installer.LoadModelsWithProfile(installer.Config{ClaudeHome: home})
-	if err != nil {
-		t.Fatalf("LoadModelsWithProfile() error = %v", err)
-	}
-	if !found {
-		t.Fatal("LoadModelsWithProfile() found = false after install, want true")
-	}
-	if profile != modelconfig.ProfileCostSaver {
-		t.Fatalf("persisted profile = %q, want %q", profile, modelconfig.ProfileCostSaver)
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want rejection before any command", runner.commands)
 	}
 }
 
-// TestInstallCommand_ProfileFlag_UnknownValue_FallsBackToBalanced guards that an unrecognized
-// --profile value never hangs or errors — it silently falls back to balanced, matching
-// modelconfig.ResolveProfile's own fallback rule.
-func TestInstallCommand_ProfileFlag_UnknownValue_FallsBackToBalanced(t *testing.T) {
+// TestInstallCommand_ProfileFlag_UnknownValue_StillRejectsRetiredSelection verifies that an
+// unknown value does not bypass deprecation rejection or invoke any command.
+func TestInstallCommand_ProfileFlag_UnknownValue_StillRejectsRetiredSelection(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 
-	if _, err := execRoot(t, home, "install", "--profile", "not-a-real-profile"); err != nil {
-		t.Fatalf("install command error = %v", err)
+	_, err := execRoot(t, home, "install", "--profile", "not-a-real-profile")
+	if err == nil || !strings.Contains(err.Error(), "Configure Models") {
+		t.Fatalf("install --profile error = %v, want actionable deprecation", err)
 	}
-
-	profile, _, found, err := installer.LoadModelsWithProfile(installer.Config{ClaudeHome: home})
-	if err != nil {
-		t.Fatalf("LoadModelsWithProfile() error = %v", err)
-	}
-	if !found {
-		t.Fatal("LoadModelsWithProfile() found = false after install, want true")
-	}
-	if profile != modelconfig.ProfileBalanced {
-		t.Fatalf("persisted profile = %q, want %q (unknown --profile falls back)", profile, modelconfig.ProfileBalanced)
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want rejection before any command", runner.commands)
 	}
 }
 
@@ -1570,11 +1610,9 @@ func TestResolveInstallModels_Interactive_ThreadsProfileFlagAsInitialSelection(t
 	}
 }
 
-// TestInstallCommand_NonTTY_PersistsDefaultModels guards D25's persistence contract for the
-// non-interactive path (which every test in this file exercises, since execRoot writes to a
-// bytes.Buffer, not a real terminal): a plain `click install` with no flags must still write
-// models.json with the five defaults, so `click doctor`/`click update` have something to read.
-func TestInstallCommand_NonTTY_PersistsDefaultModels(t *testing.T) {
+// TestInstallCommand_NonTTY_DoesNotCreateModelArtifact verifies that a plain install leaves the
+// retired Click-owned models.json artifact absent.
+func TestInstallCommand_NonTTY_DoesNotCreateModelArtifact(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1584,31 +1622,14 @@ func TestInstallCommand_NonTTY_PersistsDefaultModels(t *testing.T) {
 		t.Fatalf("install command error = %v", err)
 	}
 
-	got, found, err := installer.LoadModels(installer.Config{ClaudeHome: home})
-	if err != nil {
-		t.Fatalf("LoadModels() error = %v", err)
-	}
-	if !found {
-		t.Fatal("LoadModels() found = false after install, want true")
-	}
-	want := modelconfig.Defaults()
-	for phase, model := range want {
-		if got[phase] != model {
-			t.Errorf("persisted models[%s] = %q, want default %q", phase, got[phase], model)
-		}
+	if _, err := os.Stat(installer.Config{ClaudeHome: home}.ModelsPath()); !os.IsNotExist(err) {
+		t.Fatalf("models.json stat error = %v, want no Click model artifact created", err)
 	}
 }
 
-// TestUpdateCommand_ReappliesPersistedModels guards the "click update re-passes the same --config
-// flags" contract: a non-default model selection saved by a previous install must be re-emitted
-// verbatim on the next update, not silently reset to defaults. The custom map is persisted via
-// SaveModelsWithProfile with an explicit "custom" label (C1 fix): the previous version of this test
-// persisted it via the profile-dropping SaveModels(cfg, custom) and then asserted
-// orchestration_profile=balanced was re-emitted — that assertion pinned the C1 bug (configure-models
-// silently erasing the persisted profile label) instead of guarding correct behavior. update.go
-// itself only re-emits whatever label LoadModelsWithProfile returns, so a correctly persisted
-// "custom" label must round-trip as "custom", not get silently relabeled to "balanced".
-func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
+// TestUpdateCommand_PreservesLegacyModelsWithoutApplyingThem verifies that update neither emits
+// retired model configuration arguments nor changes an existing models.json artifact.
+func TestUpdateCommand_PreservesLegacyModelsWithoutApplyingThem(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1641,6 +1662,11 @@ func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
 	if err := installer.SaveModelsWithProfile(installer.Config{ClaudeHome: home}, modelconfig.ProfileCustom, custom); err != nil {
 		t.Fatalf("SaveModelsWithProfile() error = %v", err)
 	}
+	cfg := installer.Config{ClaudeHome: home}
+	originalModels, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) before update: %v", err)
+	}
 
 	if _, err := execRoot(t, home, "update"); err != nil {
 		t.Fatalf("update command error = %v", err)
@@ -1666,17 +1692,23 @@ func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
 		" --config review_resilience_model=opus" +
 		" --config review_refuter_model=sonnet" +
 		" --config default_model=haiku"
-	if !contains(runner.commands, wantCommand) {
-		t.Fatalf("update command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
+	if contains(runner.commands, wantCommand) {
+		t.Fatalf("update command sequence = %#v, unexpectedly reapplied retired model settings %q", runner.commands, wantCommand)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "--config") {
+			t.Fatalf("update emitted retired model config arguments in %q", command)
+		}
+	}
+	gotModels, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil || !bytes.Equal(gotModels, originalModels) {
+		t.Fatalf("models.json after update = %q (err %v), want exact preservation", gotModels, err)
 	}
 }
 
-// TestUpdateCommand_MigratesStaleModelsBeforeReapplying guards the confirmed migration wiring: if
-// models.json is stale (pre-taxonomy-realignment), `click update` must back it up to
-// models.json.bak and regenerate fresh new-taxonomy defaults BEFORE re-emitting --config flags —
-// never re-emitting the old invented-taxonomy keys, and never silently carrying forward the old
-// per-phase overrides.
-func TestUpdateCommand_MigratesStaleModelsBeforeReapplying(t *testing.T) {
+// TestUpdateCommand_PreservesStaleModelsWithoutMigration verifies that update leaves stale legacy
+// model bytes untouched, does not create a migration backup, and emits no retired model arguments.
+func TestUpdateCommand_PreservesStaleModelsWithoutMigration(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1709,97 +1741,51 @@ func TestUpdateCommand_MigratesStaleModelsBeforeReapplying(t *testing.T) {
 		t.Fatalf("update command error = %v", err)
 	}
 
-	if _, err := os.Stat(cfg.ModelsPath() + ".bak"); err != nil {
-		t.Fatalf("Stat(models.json.bak) error = %v, want the stale file backed up before regen", err)
+	got, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil || !bytes.Equal(got, legacyRaw) {
+		t.Fatalf("models.json = %q (err %v), want original stale bytes preserved", got, err)
 	}
-
-	stale, err := installer.IsStale(cfg)
-	if err != nil {
-		t.Fatalf("IsStale() error = %v", err)
+	if _, err := os.Stat(cfg.ModelsPath() + ".bak"); !os.IsNotExist(err) {
+		t.Fatalf("models.json.bak stat error = %v, want no migration backup", err)
 	}
-	if stale {
-		t.Fatal("models.json is still stale after `click update`, want migrated to current schema")
-	}
-
-	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
-		" --config orchestration_profile=balanced" +
-		" --config explore_model=sonnet" +
-		" --config propose_model=opus" +
-		" --config spec_model=sonnet" +
-		" --config design_model=opus" +
-		" --config tasks_model=sonnet" +
-		" --config apply_model=sonnet" +
-		" --config verify_model=opus" +
-		" --config archive_model=haiku" +
-		" --config onboard_model=haiku" +
-		" --config jd_judge_a_model=sonnet" +
-		" --config jd_judge_b_model=sonnet" +
-		" --config jd_fix_agent_model=sonnet" +
-		" --config review_risk_model=sonnet" +
-		" --config review_readability_model=sonnet" +
-		" --config review_reliability_model=sonnet" +
-		" --config review_resilience_model=sonnet" +
-		" --config review_refuter_model=sonnet" +
-		" --config default_model=sonnet"
-	if !contains(runner.commands, wantCommand) {
-		t.Fatalf("update command sequence = %#v, want it to contain fresh-defaults command %q", runner.commands, wantCommand)
+	for _, command := range runner.commands {
+		if strings.Contains(command, "--config") {
+			t.Fatalf("update emitted retired model config arguments in %q", command)
+		}
 	}
 }
 
-// TestUpdateCommand_ReappliesPersistedProfile guards the "active profile re-applied on update" spec
-// scenario: a non-balanced profile chosen at install time must be re-emitted (and re-persisted)
-// verbatim on the next `click update`, with no interactive prompt.
-func TestUpdateCommand_ReappliesPersistedProfile(t *testing.T) {
+// TestUpdateCommand_PreservesLegacyProfileArtifact guards update's non-ownership of legacy model
+// state while still syncing the non-model runtime assets.
+func TestUpdateCommand_PreservesLegacyProfileArtifact(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
-
-	if _, err := execRoot(t, home, "install", "--profile", "quality"); err != nil {
-		t.Fatalf("install command error = %v", err)
+	cfg := installer.Config{ClaudeHome: home}
+	if err := installer.SaveModelsWithProfile(cfg, modelconfig.ProfileQuality, modelconfig.ResolveProfile(string(modelconfig.ProfileQuality)).Models); err != nil {
+		t.Fatalf("SaveModelsWithProfile() error = %v", err)
+	}
+	before, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) before update: %v", err)
 	}
 
 	if _, err := execRoot(t, home, "update"); err != nil {
 		t.Fatalf("update command error = %v", err)
 	}
-
-	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
-		" --config orchestration_profile=quality" +
-		" --config explore_model=opus" +
-		" --config propose_model=opus" +
-		" --config spec_model=opus" +
-		" --config design_model=opus" +
-		" --config tasks_model=opus" +
-		" --config apply_model=opus" +
-		" --config verify_model=opus" +
-		" --config archive_model=haiku" +
-		" --config onboard_model=haiku" +
-		" --config jd_judge_a_model=opus" +
-		" --config jd_judge_b_model=opus" +
-		" --config jd_fix_agent_model=opus" +
-		" --config review_risk_model=opus" +
-		" --config review_readability_model=opus" +
-		" --config review_reliability_model=opus" +
-		" --config review_resilience_model=opus" +
-		" --config review_refuter_model=opus" +
-		" --config default_model=opus"
-	if !contains(runner.commands, wantCommand) {
-		t.Fatalf("update command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
+	after, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("models.json after update = %q (err %v), want exact preservation", after, err)
 	}
-
-	profile, _, found, err := installer.LoadModelsWithProfile(installer.Config{ClaudeHome: home})
-	if err != nil {
-		t.Fatalf("LoadModelsWithProfile() error = %v", err)
-	}
-	if !found {
-		t.Fatal("LoadModelsWithProfile() found = false after update, want true")
-	}
-	if profile != modelconfig.ProfileQuality {
-		t.Fatalf("persisted profile after update = %q, want %q", profile, modelconfig.ProfileQuality)
+	for _, command := range runner.commands {
+		if strings.Contains(command, "--config") {
+			t.Fatalf("update emitted retired model config arguments in %q", command)
+		}
 	}
 }
 
-func TestUpdateCommand_NormalizesPartialProfileModelsJson(t *testing.T) {
+func TestUpdateCommand_PreservesPartialLegacyModelsJson(t *testing.T) {
 	seedResolvableEngram(t)
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
@@ -1811,34 +1797,18 @@ func TestUpdateCommand_NormalizesPartialProfileModelsJson(t *testing.T) {
 	if err := installer.SaveModelsWithProfile(cfg, modelconfig.ProfileCostSaver, partial); err != nil {
 		t.Fatalf("SaveModelsWithProfile(partial cost-saver) error = %v", err)
 	}
+	before, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) before update: %v", err)
+	}
 
 	if _, err := execRoot(t, home, "update"); err != nil {
 		t.Fatalf("update command error = %v", err)
 	}
 
-	profile, got, found, err := installer.LoadModelsWithProfile(cfg)
-	if err != nil {
-		t.Fatalf("LoadModelsWithProfile() error = %v", err)
-	}
-	if !found {
-		t.Fatal("LoadModelsWithProfile() found = false after update, want true")
-	}
-	if profile != modelconfig.ProfileCostSaver {
-		t.Fatalf("persisted profile after update = %q, want %q", profile, modelconfig.ProfileCostSaver)
-	}
-	if len(got) != len(modelconfig.Phases) {
-		t.Fatalf("persisted models has %d phases, want %d: %#v", len(got), len(modelconfig.Phases), got)
-	}
-	for _, phase := range []modelconfig.Phase{
-		modelconfig.PhaseReviewRisk,
-		modelconfig.PhaseReviewReadability,
-		modelconfig.PhaseReviewReliability,
-		modelconfig.PhaseReviewResilience,
-		modelconfig.PhaseReviewRefuter,
-	} {
-		if got[phase] != "haiku" {
-			t.Fatalf("persisted models[%s] = %q, want haiku from active cost-saver profile", phase, got[phase])
-		}
+	after, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("models.json after update = %q (err %v), want partial legacy model artifact preserved", after, err)
 	}
 }
 
@@ -1888,14 +1858,18 @@ func TestDoctorCommand_ReportsConfiguredModels(t *testing.T) {
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
-
 	if _, err := execRoot(t, home, "install"); err != nil {
 		t.Fatalf("install command error = %v", err)
 	}
 
+	models := modelconfig.Defaults()
+	if err := installer.SaveModels(installer.Config{ClaudeHome: home}, models); err != nil {
+		t.Fatalf("SaveModels() error = %v", err)
+	}
+
 	out, err := execRoot(t, home, "doctor")
 	if err != nil {
-		t.Fatalf("doctor command error = %v", err)
+		t.Fatalf("doctor command error = %v, output:\n%s", err, out)
 	}
 	if !strings.Contains(out, "Modelos por fase de click-sdd") {
 		t.Fatalf("doctor output = %q, want it to report configured models", out)
@@ -1914,14 +1888,17 @@ func TestDoctorCommand_ReportsActiveProfile(t *testing.T) {
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
-
-	if _, err := execRoot(t, home, "install", "--profile", "cost-saver"); err != nil {
+	if _, err := execRoot(t, home, "install"); err != nil {
 		t.Fatalf("install command error = %v", err)
+	}
+
+	if err := installer.SaveModelsWithProfile(installer.Config{ClaudeHome: home}, modelconfig.ProfileCostSaver, nil); err != nil {
+		t.Fatalf("SaveModelsWithProfile() error = %v", err)
 	}
 
 	out, err := execRoot(t, home, "doctor")
 	if err != nil {
-		t.Fatalf("doctor command error = %v", err)
+		t.Fatalf("doctor command error = %v, output:\n%s", err, out)
 	}
 	if !strings.Contains(out, "Perfil de orquestación: cost-saver") {
 		t.Fatalf("doctor output = %q, want it to report the active profile cost-saver", out)
@@ -1937,18 +1914,21 @@ func TestDoctorCommand_DoesNotMutateModelsJson(t *testing.T) {
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
-
-	if _, err := execRoot(t, home, "install", "--profile", "quality"); err != nil {
+	if _, err := execRoot(t, home, "install"); err != nil {
 		t.Fatalf("install command error = %v", err)
 	}
+
 	cfg := installer.Config{ClaudeHome: home}
+	if err := installer.SaveModelsWithProfile(cfg, modelconfig.ProfileQuality, modelconfig.ResolveProfile(string(modelconfig.ProfileQuality)).Models); err != nil {
+		t.Fatalf("SaveModelsWithProfile() error = %v", err)
+	}
 	before, err := os.ReadFile(cfg.ModelsPath())
 	if err != nil {
 		t.Fatalf("ReadFile(models.json) error = %v", err)
 	}
 
-	if _, err := execRoot(t, home, "doctor"); err != nil {
-		t.Fatalf("doctor command error = %v", err)
+	if out, err := execRoot(t, home, "doctor"); err != nil {
+		t.Fatalf("doctor command error = %v, output:\n%s", err, out)
 	}
 
 	after, err := os.ReadFile(cfg.ModelsPath())

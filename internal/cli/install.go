@@ -18,10 +18,6 @@ import (
 // yesFlag / nonInteractiveFlag both select detected targets and skip every TUI. They use explicit
 // safe defaults and preserve an existing Codex model unless the user supplies --codex-model.
 //
-// profileFlag lets a non-interactive/scripted install pick a built-in orchestration profile
-// (design D4) without going through the interactive profile-select TUI; an empty or unrecognized
-// value falls back to "balanced" (modelconfig.ResolveProfile's own fallback rule).
-//
 // skipOpenClawFlag is the explicit escape hatch for omitting a detected OpenClaw target.
 const (
 	yesFlag                     = "yes"
@@ -43,9 +39,10 @@ func newInstallCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().Bool("dry-run", false, "Mostrar el plan sin ejecutar comandos ni modificar archivos")
-	cmd.Flags().Bool(yesFlag, false, "Skip the interactive model-selection screen; install click-sdd with default per-phase models")
+	cmd.Flags().Bool(yesFlag, false, "Omitir pantallas interactivas y confirmar la instalación")
 	cmd.Flags().Bool(nonInteractiveFlag, false, "Alias for --yes")
-	cmd.Flags().String(profileFlag, "", "Perfil de orquestación a usar (balanced/cost-saver/quality); default balanced. En instalación no interactiva selecciona el preset directamente; en la interactiva sólo precarga el editor por fase inicial.")
+	cmd.Flags().String(profileFlag, "", "")
+	_ = cmd.Flags().MarkHidden(profileFlag)
 	cmd.Flags().Bool(skipOpenClawFlag, false, "Omitir la integración con OpenClaw aunque se detecte openclaw en este equipo")
 	cmd.Flags().String(codexModelFlag, "", "Referencia de modelo nativa de Codex, por ejemplo gpt-5.6")
 	cmd.Flags().String(openClawModelFlag, "", "Referencia provider/model nativa de OpenClaw")
@@ -54,7 +51,19 @@ func newInstallCommand() *cobra.Command {
 	return cmd
 }
 
+func profileFlagWasSet(cmd *cobra.Command) bool {
+	flag := cmd.Flags().Lookup(profileFlag)
+	return flag != nil && flag.Changed
+}
+
+func retiredClaudeProfileError() error {
+	return fmt.Errorf("la selección de perfiles Click fue retirada; configura los modelos en gentle-ai con Configure Models")
+}
+
 func runInstall(cmd *cobra.Command) error {
+	if profileFlagWasSet(cmd) {
+		return retiredClaudeProfileError()
+	}
 	out := cmd.OutOrStdout()
 	r := rendererFor(cmd, out)
 
@@ -107,19 +116,6 @@ func runInstall(cmd *cobra.Command) error {
 	codexTier := resolveInstallCodexTier(cmd, selection, out, r)
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	nonInteractive := isNonInteractiveInstall(cmd, out)
-	profile := modelconfig.ProfileName("")
-	var models map[modelconfig.Phase]string
-	if selection.Claude {
-		profileFlagValue, _ := cmd.Flags().GetString(profileFlag)
-		var cancelled bool
-		profile, models, cancelled, err = resolveInstallModels(cmd, out, r, cfg, nonInteractive, profileFlagValue, runInstallSelectTUI)
-		if err != nil {
-			return err
-		}
-		if cancelled {
-			return nil
-		}
-	}
 	native := resolveNativeModels(cmd, selection, out, r)
 	codexNativeModel := selection.Codex && native.Codex.Primary != ""
 	openClawNativeModel := selection.OpenClaw && native.OpenClaw.Primary != ""
@@ -193,10 +189,6 @@ func runInstall(cmd *cobra.Command) error {
 	if err := installer.SaveTargetSelection(cfg, selection); err != nil {
 		return err
 	}
-	if _, err := installer.MigrateIfStale(cfg); err != nil {
-		return err
-	}
-
 	for _, action := range plan.InstallActionKinds() {
 		switch action {
 		case installer.StepActionSyncGentleAI:
@@ -204,7 +196,7 @@ func runInstall(cmd *cobra.Command) error {
 			continue
 		case installer.StepActionSyncMarketplacePlugins:
 			if err := r.RunStep("Registrando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins registrados en Claude Code", func() error {
-				return installer.SyncMarketplacePlugins(models, profile)
+				return installer.SyncMarketplacePlugins(nil)
 			}); err != nil {
 				return err
 			}
@@ -267,12 +259,6 @@ func runInstall(cmd *cobra.Command) error {
 		case installer.StepActionRegisterMemoryGuard:
 			if err := r.RunStep("Registrando memory-guard…", "memory-guard registrado", func() error {
 				return installer.RegisterMemoryGuardHook(cfg)
-			}); err != nil {
-				return err
-			}
-		case installer.StepActionSaveModels:
-			if err := r.RunStep("Guardando modelos por fase de click-sdd…", "Modelos por fase guardados", func() error {
-				return installer.SaveModelsWithProfile(cfg, profile, models)
 			}); err != nil {
 				return err
 			}
@@ -339,12 +325,6 @@ func runInstall(cmd *cobra.Command) error {
 		case installer.StepActionSyncOpenClawSkills:
 			if err := r.RunStep("Sincronizando skills de Click en OpenClaw…", "Skills de Click sincronizados en OpenClaw", func() error {
 				return installer.SyncOpenClawSkills(cfg)
-			}); err != nil {
-				return err
-			}
-		case installer.StepActionSyncOpenClawModelProfile:
-			if err := r.RunStep("Guardando metadatos de modelos para OpenClaw…", "Metadatos de modelos guardados", func() error {
-				return installer.SyncOpenClawModelProfile(cfg, profile, models)
 			}); err != nil {
 				return err
 			}

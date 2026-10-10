@@ -19,7 +19,6 @@ func TestBuildTargetPlan_TargetFirstOrderAndSharedProjections(t *testing.T) {
 	want := []string{
 		"gentle-ai",
 		"Claude Code",
-		"Claude model/profile",
 		"Codex CLI",
 		"Codex model profile",
 		"Codex native model",
@@ -35,6 +34,32 @@ func TestBuildTargetPlan_TargetFirstOrderAndSharedProjections(t *testing.T) {
 	}
 	if !strings.Contains(plan.CapabilitiesSummary(), "Codex") || !strings.Contains(plan.CapabilitiesSummary(), "OpenClaw") || !strings.Contains(plan.CapabilitiesSummary(), "Claude Code") {
 		t.Fatalf("CapabilitiesSummary() = %q, want every selected target explained", plan.CapabilitiesSummary())
+	}
+}
+
+func TestBuildTargetPlan_ClaudeHasNoModelLifecycleOwnership(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	plan := BuildTargetPlan(cfg, TargetSelection{Configured: true, Claude: true}, PlanOptions{})
+
+	for _, step := range plan.Steps {
+		if step.ID == "claude-models" || step.Label == "Claude model/profile" {
+			t.Fatalf("Claude plan contains retired model step: %+v", step)
+		}
+	}
+	for _, path := range plan.SnapshotPaths() {
+		if path == cfg.ModelsPath() {
+			t.Fatalf("Claude plan snapshots legacy model artifact %q", path)
+		}
+	}
+	for _, check := range plan.DoctorCheckKinds() {
+		if check == DoctorCheckModelsConfig || check == DoctorCheckAppliedPluginConfig {
+			t.Fatalf("Claude plan retains retired model doctor check %q", check)
+		}
+	}
+	for _, action := range append(append(plan.InstallActionKinds(), plan.UpdateActionKinds()...), plan.UninstallActionKinds()...) {
+		if action == StepActionSaveModels || action == StepActionRemoveModels {
+			t.Fatalf("Claude plan retains retired model action %q", action)
+		}
 	}
 }
 
@@ -127,10 +152,10 @@ func TestBuildTargetPlan_OpenClawDelegatesMCPRegistration(t *testing.T) {
 
 	plan := BuildTargetPlan(cfg, selection, PlanOptions{})
 
-	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.InstallActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("InstallActionKinds() = %#v, want %#v", got, want)
 	}
-	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills, StepActionSyncOpenClawModelProfile}; !reflect.DeepEqual(got, want) {
+	if got, want := plan.UpdateActionKinds(), []StepActionKind{StepActionSyncGentleAI, StepActionSyncOpenClawWorkspace, StepActionSyncOpenClawPlugin, StepActionSyncOpenClawSkills}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("UpdateActionKinds() = %#v, want %#v", got, want)
 	}
 	if got, want := plan.UninstallActionKinds(), []StepActionKind{StepActionStripOpenClawWorkspace, StepActionRemoveOpenClawPlugin, StepActionRemoveOpenClawSkills, StepActionRemoveOpenClawModelProfile, StepActionRemoveTargetSelection}; !reflect.DeepEqual(got, want) {
@@ -163,13 +188,11 @@ func TestBuildTargetPlan_OpenClawNativeModelFlag_GatesNativeMutationAction(t *te
 	}
 }
 
-// TestBuildTargetPlan_ClaudeExposesModelsAndCloudTeardown closes the two orphaned-file gaps: the
-// claude-models step wrote models.json with no reversal at all, and the engram-cloud step re-synced
-// engram-cloud.json with no reversal either (RemoveEngramCloudState existed but was reachable only
-// from the zero-caller legacy installer.Uninstall). Both files survived `click uninstall` forever.
-// Order follows step order, which is what UninstallActionKinds concatenates — there is no separate
-// uninstall ordering slice, unlike installActionOrder/updateActionOrder.
-func TestBuildTargetPlan_ClaudeExposesModelsAndCloudTeardown(t *testing.T) {
+// TestBuildTargetPlan_ClaudePreservesModelLifecycleBoundary verifies that Click's Claude target
+// plan removes only its Engram Cloud state and does not manage legacy model artifacts during
+// install/update/uninstall. Order follows step order, which is what UninstallActionKinds
+// concatenates — there is no separate uninstall ordering slice, unlike installActionOrder/updateActionOrder.
+func TestBuildTargetPlan_ClaudePreservesModelLifecycleBoundary(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	selection := TargetSelection{Configured: true, Claude: true}
 
@@ -177,7 +200,6 @@ func TestBuildTargetPlan_ClaudeExposesModelsAndCloudTeardown(t *testing.T) {
 
 	want := []StepActionKind{
 		StepActionRemoveMarketplacePlugins,
-		StepActionRemoveModels,
 		StepActionRemoveEngramCloudSessionSync,
 		StepActionRemoveEngramCloudState,
 		StepActionStripClaudeManagedBlock,
@@ -188,10 +210,10 @@ func TestBuildTargetPlan_ClaudeExposesModelsAndCloudTeardown(t *testing.T) {
 		t.Fatalf("UninstallActionKinds() = %#v, want %#v", got, want)
 	}
 
-	// The new teardown actions must NOT leak into the forward directions: install/update still write
-	// models.json and re-sync the cloud record, they never remove them.
+	// Cloud teardown must not leak into the forward directions; model artifacts are no longer
+	// created or removed by Click.
 	for _, action := range append(plan.InstallActionKinds(), plan.UpdateActionKinds()...) {
-		if action == StepActionRemoveModels || action == StepActionRemoveEngramCloudState {
+		if action == StepActionRemoveModels || action == StepActionSaveModels || action == StepActionRemoveEngramCloudState || action == StepActionSyncOpenClawModelProfile {
 			t.Fatalf("teardown action %q leaked into the install/update action set", action)
 		}
 	}

@@ -129,6 +129,14 @@ func execRootWithOpenClaw(t *testing.T, claudeHome, openClawHome string, args ..
 func TestInstallCommand_OpenClawDetected_WritesAgentsAndSoul(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+	if err := os.MkdirAll(filepath.Dir(cfg.OpenClawModelProfilePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyProfile := []byte("existing OpenClaw model metadata remains user-owned")
+	if err := os.WriteFile(cfg.OpenClawModelProfilePath(), legacyProfile, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	runner := newTestCommandRunner(claudeHome)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
@@ -141,7 +149,6 @@ func TestInstallCommand_OpenClawDetected_WritesAgentsAndSoul(t *testing.T) {
 		t.Errorf("install output = %q, want it to mention OpenClaw when detected", out)
 	}
 
-	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
 	agentsRaw, err := os.ReadFile(cfg.OpenClawAgentsMDPath())
 	if err != nil {
 		t.Fatalf("ReadFile(AGENTS.md) error = %v, want it written when OpenClaw is detected", err)
@@ -172,11 +179,8 @@ func TestInstallCommand_OpenClawDetected_WritesAgentsAndSoul(t *testing.T) {
 		}
 	}
 	profileRaw, err := os.ReadFile(cfg.OpenClawModelProfilePath())
-	if err != nil {
-		t.Fatalf("ReadFile(model-profile.json) error = %v, want portable recommendation written", err)
-	}
-	if !strings.Contains(string(profileRaw), `"schema_version": 2`) || !strings.Contains(string(profileRaw), `"profile": "balanced"`) {
-		t.Fatalf("model-profile.json content = %q, want the shared versioned balanced profile", profileRaw)
+	if err != nil || !bytes.Equal(profileRaw, legacyProfile) {
+		t.Fatalf("model-profile.json = %q (err %v), want legacy metadata preserved exactly", profileRaw, err)
 	}
 }
 

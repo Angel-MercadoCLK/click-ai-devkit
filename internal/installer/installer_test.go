@@ -59,26 +59,7 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 	wantCommands := []string{
 		"claude plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins",
 		"claude plugin marketplace update " + marketplaceName,
-		"claude plugin install click-sdd@click-ai-devkit" +
-			" --config orchestration_profile=balanced" +
-			" --config explore_model=sonnet" +
-			" --config propose_model=opus" +
-			" --config spec_model=sonnet" +
-			" --config design_model=opus" +
-			" --config tasks_model=sonnet" +
-			" --config apply_model=sonnet" +
-			" --config verify_model=opus" +
-			" --config archive_model=haiku" +
-			" --config onboard_model=haiku" +
-			" --config jd_judge_a_model=sonnet" +
-			" --config jd_judge_b_model=sonnet" +
-			" --config jd_fix_agent_model=sonnet" +
-			" --config review_risk_model=sonnet" +
-			" --config review_readability_model=sonnet" +
-			" --config review_reliability_model=sonnet" +
-			" --config review_resilience_model=sonnet" +
-			" --config review_refuter_model=sonnet" +
-			" --config default_model=sonnet",
+		"claude plugin install click-sdd@click-ai-devkit",
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",
 		"claude plugin install click-skills@click-ai-devkit",

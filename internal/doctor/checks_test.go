@@ -121,17 +121,17 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	report := Run(cfg)
 
-	// 14 base checks now that the Claude plugin registries check joins the foundational checks,
+	// 12 base checks after removing the retired Claude model ownership checks,
 	// standalone PATH-based detection check (openclaw-target-support PR-A).
-	const wantChecks = 14 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 12 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (git, openclaw, openclaw native model action, click binary, claude, click plugin registries, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, models.json schema, click-sdd applied plugin config, engram plugin, engram subagent visibility, engram binary, engram PATH persistence, engram cloud enrollment, engram cloud session sync, context7 MCP, memory-guard hook)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d without retired model checks", len(report.Checks), wantChecks)
 	}
 }
 
 func TestRun_CheckCountIncludesEngramCloudSessionSync(t *testing.T) {
 	report := Run(installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()})
-	const wantChecks = 14 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 12 + EngramChecksCount + Context7ChecksCount
 	if got := len(report.Checks); got != wantChecks {
 		t.Fatalf("Run() check count = %d, want %d including engram cloud session sync", got, wantChecks)
 	}
@@ -906,26 +906,13 @@ func seedUnresolvableClickBinary(t *testing.T) func() {
 	})
 }
 
-// TestCheckModelsConfig_AbsentFile_ReportsHealthy guards the "absent = healthy" contract from the
-// taxonomy-migration spec: a home where `click install` never ran must not be flagged unhealthy for
-// models.json — it just means defaults will be generated on the next install/update.
+// TestCheckModelsConfig_AbsentFile_ReportsHealthy verifies that the legacy model-schema check treats
+// an absent models.json as healthy; Click no longer creates that artifact during install/update.
 func TestCheckModelsConfig_AbsentFile_ReportsHealthy(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
-
-	report := Run(cfg)
-
-	var checked bool
-	for _, c := range report.Checks {
-		if c.Name != "models.json schema" {
-			continue
-		}
-		checked = true
-		if !c.Healthy {
-			t.Fatalf("checkModelsConfig reports unhealthy for an absent models.json: %s", c.Detail)
-		}
-	}
-	if !checked {
-		t.Fatal(`Run() did not include a "models.json schema" check`)
+	check := checkModelsConfig(cfg)
+	if !check.Healthy {
+		t.Fatalf("checkModelsConfig reports unhealthy for an absent models.json: %s", check.Detail)
 	}
 }
 
@@ -946,20 +933,9 @@ func TestCheckModelsConfig_StaleFile_ReportsUnhealthy(t *testing.T) {
 		t.Fatalf("WriteFile(legacy models.json) error = %v", err)
 	}
 
-	report := Run(cfg)
-
-	var checked bool
-	for _, c := range report.Checks {
-		if c.Name != "models.json schema" {
-			continue
-		}
-		checked = true
-		if c.Healthy {
-			t.Fatal("checkModelsConfig reports healthy for a stale legacy models.json, want unhealthy")
-		}
-	}
-	if !checked {
-		t.Fatal(`Run() did not include a "models.json schema" check`)
+	check := checkModelsConfig(cfg)
+	if check.Healthy {
+		t.Fatal("checkModelsConfig reports healthy for a stale legacy models.json, want unhealthy")
 	}
 
 	rawAfter, err := os.ReadFile(cfg.ModelsPath())

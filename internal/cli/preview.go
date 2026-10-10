@@ -46,7 +46,6 @@ func openClawWriteSteps(cfg installer.Config) []string {
 		"Limpiando configuración inválida heredada de OpenClaw…",
 		"Instalando plugin de memory-guard para OpenClaw…",
 		"Sincronizando skills de Click en OpenClaw…",
-		"Guardando recomendación de modelos para OpenClaw…",
 	}
 }
 
@@ -96,10 +95,6 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 			return "Re-registrando memory-guard…"
 		}
 		return "Registrando memory-guard…"
-	case installer.StepActionSaveModels:
-		return "Guardando modelos por fase de click-sdd…"
-	case installer.StepActionRemoveModels:
-		return "Quitando modelos por fase de click-sdd…"
 	case installer.StepActionRemoveEngramCloudState:
 		return "Quitando registro local de Engram Cloud…"
 	case installer.StepActionSyncCodexGuidance:
@@ -120,11 +115,6 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 		return "Instalando plugin de memory-guard para OpenClaw…"
 	case installer.StepActionSyncOpenClawSkills:
 		return "Sincronizando skills de Click en OpenClaw…"
-	case installer.StepActionSyncOpenClawModelProfile:
-		if options.engramVersion != "" {
-			return "Guardando recomendación de modelos para OpenClaw…"
-		}
-		return "Guardando metadatos de modelos para OpenClaw…"
 	case installer.StepActionConfigureOpenClawNativeModel:
 		return "Configurando modelo nativo de OpenClaw mediante su CLI (selección explícita)…"
 	default:
@@ -146,7 +136,7 @@ func renderWritePlan(out io.Writer, r *ui.Renderer, cfg installer.Config, plan i
 		filepath.Join(cfg.BackupDir(), "latest"),
 	)))
 	if cfg.OpenClawHome != "" {
-		fmt.Fprintln(out, r.Info(fmt.Sprintf("OpenClaw recibe configuración nativa mediante su CLI; los metadatos locales se guardan en %s.", cfg.OpenClawModelProfilePath())))
+		fmt.Fprintln(out, r.Info("Los metadatos de modelos existentes de OpenClaw se conservan sin regenerarlos."))
 	}
 	if cfg.CodexHome != "" {
 		fmt.Fprintln(out, r.Info(fmt.Sprintf("Codex recibe orientación en %s; config.toml sólo cambia con selección explícita.", cfg.CodexAgentsMDPath())))

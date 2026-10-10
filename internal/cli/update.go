@@ -7,7 +7,6 @@ import (
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
-	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +26,8 @@ func newUpdateCommand() *cobra.Command {
 	cmd.Flags().Bool("dry-run", false, "Mostrar el plan sin ejecutar comandos ni modificar archivos")
 	cmd.Flags().Bool(yesFlag, false, "Omitir toda pantalla interactiva y confirmar la actualización automáticamente")
 	cmd.Flags().Bool(nonInteractiveFlag, false, "Alias de --yes")
+	cmd.Flags().String(profileFlag, "", "")
+	_ = cmd.Flags().MarkHidden(profileFlag)
 	cmd.Flags().Bool(skipOpenClawFlag, false, "Omitir la integración con OpenClaw aunque se detecte openclaw en este equipo")
 	cmd.Flags().String(codexModelFlag, "", "Referencia de modelo nativa de Codex, por ejemplo gpt-5.6")
 	cmd.Flags().Bool(persistEngramCloudTokenFlag, false, "Autorizar almacenamiento de ENGRAM_CLOUD_TOKEN en ~/.claude/settings.json con permisos 0600 (requiere consentimiento explícito)")
@@ -34,6 +35,9 @@ func newUpdateCommand() *cobra.Command {
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
+	if profileFlagWasSet(cmd) {
+		return retiredClaudeProfileError()
+	}
 	out := cmd.OutOrStdout()
 	r := rendererFor(cmd, out)
 
@@ -158,33 +162,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Confirmed migration behavior for the real-SDD-taxonomy realignment: a stale (pre-realignment
-	// or otherwise outdated schema_version) models.json is backed up to models.json.bak FIRST,
-	// then fully regenerated with new-taxonomy defaults — old per-phase overrides are never
-	// preserved/merged (D8). A missing or already-current file is a no-op here.
-	if _, err := installer.MigrateIfStale(cfg); err != nil {
-		return err
-	}
-
-	// Re-apply whatever per-phase models AND active orchestration profile `click install` saved
-	// (D25 / design D4), so `click update` never silently resets a developer's choice back to
-	// defaults, and never silently drops the profile label back to "balanced" either. A
-	// models.json-less home (installed before this feature existed, or never installed) falls back
-	// to balanced + Defaults(). No interactive prompt here — update always re-applies, it never asks.
-	profile := modelconfig.ProfileName("")
-	var models map[modelconfig.Phase]string
-	if selection.Claude || selection.OpenClaw {
-		found := false
-		profile, models, found, err = installer.LoadModelsWithProfile(cfg)
-		if err != nil {
-			return err
-		}
-		if !found {
-			profile = modelconfig.ProfileBalanced
-		}
-		models = modelconfig.ResolveForProfile(string(profile), models)
-	}
-
 	// Re-apply the previously chosen Codex tier, or default to "recommended" if none was saved yet.
 	codexTier := "recommended"
 	if selection.Codex {
@@ -202,13 +179,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			continue
 		case installer.StepActionSyncMarketplacePlugins:
 			if err := r.RunStep("Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins sincronizados en Claude Code", func() error {
-				return installer.SyncMarketplacePlugins(models, profile)
-			}); err != nil {
-				return err
-			}
-		case installer.StepActionSaveModels:
-			if err := r.RunStep("Guardando modelos por fase de click-sdd…", "Modelos por fase guardados", func() error {
-				return installer.SaveModelsWithProfile(cfg, profile, models)
+				return installer.SyncMarketplacePlugins(nil)
 			}); err != nil {
 				return err
 			}
@@ -305,12 +276,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		case installer.StepActionSyncOpenClawSkills:
 			if err := r.RunStep("Sincronizando skills de Click en OpenClaw…", "Skills de Click sincronizados en OpenClaw", func() error {
 				return installer.SyncOpenClawSkills(cfg)
-			}); err != nil {
-				return err
-			}
-		case installer.StepActionSyncOpenClawModelProfile:
-			if err := r.RunStep("Guardando recomendación de modelos para OpenClaw…", "Recomendación de modelos para OpenClaw guardada", func() error {
-				return installer.SyncOpenClawModelProfile(cfg, profile, models)
 			}); err != nil {
 				return err
 			}

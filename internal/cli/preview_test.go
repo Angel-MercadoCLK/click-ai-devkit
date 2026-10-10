@@ -23,7 +23,6 @@ func TestInstallWriteSteps_OpenClawAbsent_IncludesGentleAIAndLocalSteps(t *testi
 		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
 		"Actualizando CLAUDE.md…",
 		"Registrando memory-guard…",
-		"Guardando modelos por fase de click-sdd…",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("installWriteSteps() = %#v, want exactly %d steps", got, len(want))
@@ -42,8 +41,8 @@ func TestInstallWriteSteps_OpenClawAbsent_IncludesGentleAIAndLocalSteps(t *testi
 func TestInstallWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := installWriteSteps(cfg, false)
-	if len(got) != 9 {
-		t.Fatalf("installWriteSteps() = %#v, want 9 steps (gentle-ai + Click Claude/OpenClaw layers)", got)
+	if len(got) != 7 {
+		t.Fatalf("installWriteSteps() = %#v, want 7 steps (gentle-ai + Click Claude/OpenClaw layers)", got)
 	}
 	for _, step := range got[5:] {
 		if !strings.Contains(step, "OpenClaw") {
@@ -64,7 +63,6 @@ func TestInstallWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
 		"Enrolando Engram Cloud…",
 		"Actualizando CLAUDE.md…",
 		"Registrando memory-guard…",
-		"Guardando modelos por fase de click-sdd…",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("installWriteSteps() = %#v, want exactly %d steps", got, len(want))
@@ -93,8 +91,8 @@ func TestInstallWriteSteps_CloudNotConfigured_NoCloudStep(t *testing.T) {
 func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := installWriteSteps(cfg, true)
-	if len(got) != 11 {
-		t.Fatalf("installWriteSteps() = %#v, want 11 steps (gentle-ai + Click Claude/OpenClaw layers + Cloud)", got)
+	if len(got) != 9 {
+		t.Fatalf("installWriteSteps() = %#v, want 9 steps (gentle-ai + Click Claude/OpenClaw layers + Cloud)", got)
 	}
 	if got[2] != "Configurando Engram Cloud Session Sync en settings.json…" {
 		t.Fatalf("installWriteSteps()[2] = %q, want the cloud session-sync configure step after upstream provisioning", got[2])
@@ -114,8 +112,8 @@ func TestInstallWriteSteps_OpenClawAndCloudPresent_AppendsBoth(t *testing.T) {
 func TestUpdateWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()}
 	got := updateWriteSteps("0.1.1", cfg, false, false)
-	if len(got) != 9 {
-		t.Fatalf("updateWriteSteps() = %#v, want 9 steps (gentle-ai + Click Claude/OpenClaw layers)", got)
+	if len(got) != 7 {
+		t.Fatalf("updateWriteSteps() = %#v, want 7 steps (gentle-ai + Click Claude/OpenClaw layers)", got)
 	}
 	for _, step := range got[5:] {
 		if !strings.Contains(step, "OpenClaw") {
@@ -128,8 +126,8 @@ func TestUpdateWriteSteps_OpenClawPresent_AppendsFourOpenClawSteps(t *testing.T)
 // foundation guard, mirroring TestInstallWriteSteps_OpenClawAbsent_IncludesGentleAIAndLocalSteps.
 func TestUpdateWriteSteps_OpenClawAbsent_IncludesGentleAIAndLocalSteps(t *testing.T) {
 	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, false, false)
-	if len(got) != 5 {
-		t.Fatalf("updateWriteSteps() = %#v, want exactly 5 steps when OpenClaw is absent", got)
+	if len(got) != 4 {
+		t.Fatalf("updateWriteSteps() = %#v, want exactly 4 steps when OpenClaw is absent", got)
 	}
 }
 
@@ -141,7 +139,6 @@ func TestUpdateWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
 	want := []string{
 		"Verificando gentle-ai: conservar el pin si coincide; instalar si falta o volver a fijarlo si difiere (puede degradar una versión más reciente)…",
 		"Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…",
-		"Guardando modelos por fase de click-sdd…",
 		"Actualizando CLAUDE.md…",
 		"Re-registrando memory-guard…",
 		"Configurando Engram Cloud Session Sync en settings.json…",
@@ -179,7 +176,7 @@ func TestOpenClawWriteSteps_Absent_ReturnsNil(t *testing.T) {
 // config.toml mutation step — the native write is neither listed nor run without the explicit flag.
 func TestCodexWriteSteps_NoFlag_ListsGuidanceButNotNativeModelStep(t *testing.T) {
 	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir()}, false)
-	if len(got) != 7 || got[5] != "Actualizando AGENTS.md de Codex…" || got[6] != "Guardando perfil de modelos de Codex (referencia)…" {
+	if len(got) != 6 || got[4] != "Actualizando AGENTS.md de Codex…" || got[5] != "Guardando perfil de modelos de Codex (referencia)…" {
 		t.Fatalf("installWriteSteps() = %#v, want Click Codex guidance and profile only, with no native-model step without the flag", got)
 	}
 	for _, step := range got {
@@ -195,7 +192,7 @@ func TestCodexWriteSteps_WithFlag_AppendsNativeModelStep(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir()}
 	selection := installer.TargetSelection{Configured: true, Claude: true, Codex: true}
 	got := installWriteStepsForSelection(cfg, false, selection, true, false)
-	if len(got) != 8 || got[5] != "Actualizando AGENTS.md de Codex…" || got[6] != "Guardando perfil de modelos de Codex (referencia)…" || got[7] != "Configurando modelo nativo de Codex en config.toml (selección explícita)…" {
+	if len(got) != 7 || got[4] != "Actualizando AGENTS.md de Codex…" || got[5] != "Guardando perfil de modelos de Codex (referencia)…" || got[6] != "Configurando modelo nativo de Codex en config.toml (selección explícita)…" {
 		t.Fatalf("installWriteStepsForSelection() = %#v, want Click Codex guidance/profile and explicit native-model steps appended", got)
 	}
 }
@@ -205,17 +202,14 @@ func TestCodexWriteSteps_WithFlag_AppendsNativeModelStep(t *testing.T) {
 // the click-owned skill manifests.
 func TestOpenClawWriteSteps_Present_IncludesPluginAndSkillSteps(t *testing.T) {
 	got := openClawWriteSteps(installer.Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir()})
-	if len(got) != 5 {
-		t.Fatalf("openClawWriteSteps() = %#v, want exactly 5 steps", got)
+	if len(got) != 4 {
+		t.Fatalf("openClawWriteSteps() = %#v, want exactly 4 steps", got)
 	}
 	if !strings.Contains(got[2], "memory-guard") {
 		t.Fatalf("openClawWriteSteps()[2] = %q, want it to mention the memory-guard plugin install", got[2])
 	}
 	if !strings.Contains(got[3], "skills") {
 		t.Fatalf("openClawWriteSteps()[3] = %q, want it to mention the OpenClaw skill manifests", got[3])
-	}
-	if !strings.Contains(got[4], "modelos") {
-		t.Fatalf("openClawWriteSteps()[4] = %q, want it to mention the model recommendation", got[4])
 	}
 }
 

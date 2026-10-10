@@ -399,14 +399,10 @@ func TestUninstallCommand_PreservesLegacyEngramState(t *testing.T) {
 	}
 }
 
-// TestUninstallCommand_RemovesModelsAndEngramCloudState is the orphaned-files regression: click's own
-// models.json (written by StepActionSaveModels) and engram-cloud.json (written by
-// StepActionSyncEngramCloud) both survived `click uninstall` forever — the claude-models step had no
-// UninstallActions and no reverser existed at all, and the engram-cloud step had no UninstallActions
-// either even though RemoveEngramCloudState already existed (its only caller was the zero-caller
-// legacy installer.Uninstall). This drives both teardowns through the real run loop and proves the
-// files are actually gone, with the Spanish step labels surfaced.
-func TestUninstallCommand_RemovesModelsAndEngramCloudState(t *testing.T) {
+// TestUninstallCommand_PreservesModelsAndRemovesEngramCloudState verifies that uninstall leaves
+// legacy user-owned model artifacts and native model settings untouched while removing Click's
+// local Engram Cloud enrollment record.
+func TestUninstallCommand_PreservesModelsAndRemovesEngramCloudState(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 
@@ -414,8 +410,20 @@ func TestUninstallCommand_RemovesModelsAndEngramCloudState(t *testing.T) {
 	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
 		t.Fatalf("SaveTargetSelection() error = %v", err)
 	}
-	if err := installer.SaveModelsWithProfile(cfg, "", nil); err != nil {
-		t.Fatalf("SaveModelsWithProfile() error = %v", err)
+	legacyModels := []byte("legacy models are user-owned after retirement")
+	legacyBackup := []byte("legacy backup must remain untouched")
+	if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.ModelsPath(), legacyModels, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.ModelsPath()+".bak", legacyBackup, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	modelSettings := []byte(`{"model":"native-user-model"}`)
+	if err := os.WriteFile(cfg.SettingsPath(), modelSettings, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(cfg.EngramCloudStatePath(), []byte(`{"enrolled":true,"project":"click-ai-devkit"}`), 0o644); err != nil {
 		t.Fatalf("WriteFile(engram-cloud.json) error = %v", err)
@@ -430,14 +438,21 @@ func TestUninstallCommand_RemovesModelsAndEngramCloudState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("uninstall command error = %v, want nil, output:\n%s", err, out)
 	}
-	if _, statErr := os.Stat(cfg.ModelsPath()); !os.IsNotExist(statErr) {
-		t.Fatalf("Stat(models.json) error = %v, want click uninstall to remove its own models.json", statErr)
+	if got, readErr := os.ReadFile(cfg.ModelsPath()); readErr != nil || !bytes.Equal(got, legacyModels) {
+		t.Fatalf("models.json = %q (err %v), want exact legacy preservation", got, readErr)
+	}
+	if got, readErr := os.ReadFile(cfg.ModelsPath() + ".bak"); readErr != nil || !bytes.Equal(got, legacyBackup) {
+		t.Fatalf("models.json.bak = %q (err %v), want exact legacy backup preservation", got, readErr)
+	}
+	var gotSettings map[string]any
+	if err := readJSONFile(cfg.SettingsPath(), &gotSettings); err != nil {
+		t.Fatalf("read settings.json after uninstall: %v", err)
+	}
+	if gotSettings["model"] != "native-user-model" {
+		t.Fatalf("settings model = %#v, want native model preserved", gotSettings["model"])
 	}
 	if _, statErr := os.Stat(cfg.EngramCloudStatePath()); !os.IsNotExist(statErr) {
 		t.Fatalf("Stat(engram-cloud.json) error = %v, want click uninstall to remove its own Engram Cloud record", statErr)
-	}
-	if !strings.Contains(out, "Modelos por fase eliminados") {
-		t.Fatalf("uninstall output = %q, want the models teardown success label", out)
 	}
 	if !strings.Contains(out, "Registro local de Engram Cloud eliminado") {
 		t.Fatalf("uninstall output = %q, want the Engram Cloud teardown success label", out)
@@ -446,9 +461,9 @@ func TestUninstallCommand_RemovesModelsAndEngramCloudState(t *testing.T) {
 
 // TestUninstallCommand_NoEngramCloudEnrollment_SkipsCloudTeardown is the complement: a machine that
 // never enrolled in Engram Cloud has no engram-cloud.json, so the cloud teardown step must not even
-// be listed — while models.json is still removed. This pins the presence-based gate: uninstall must
+// be listed, while legacy models.json remains untouched. This pins the presence-based gate: uninstall must
 // NOT key the cloud step off EngramCloudConfigured, which needs ENGRAM_CLOUD_TOKEN still exported.
-func TestUninstallCommand_NoEngramCloudEnrollment_RemovesSessionSync(t *testing.T) {
+func TestUninstallCommand_NoEngramCloudEnrollment_PreservesModelsAndRemovesSessionSync(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 
@@ -456,8 +471,12 @@ func TestUninstallCommand_NoEngramCloudEnrollment_RemovesSessionSync(t *testing.
 	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
 		t.Fatalf("SaveTargetSelection() error = %v", err)
 	}
-	if err := installer.SaveModelsWithProfile(cfg, "", nil); err != nil {
-		t.Fatalf("SaveModelsWithProfile() error = %v", err)
+	legacyModels := []byte("legacy models remain when Cloud was never enrolled")
+	if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.ModelsPath(), legacyModels, 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	runner := newTestCommandRunner(claudeHome)
@@ -469,8 +488,8 @@ func TestUninstallCommand_NoEngramCloudEnrollment_RemovesSessionSync(t *testing.
 	if err != nil {
 		t.Fatalf("uninstall command error = %v, want nil, output:\n%s", err, out)
 	}
-	if _, statErr := os.Stat(cfg.ModelsPath()); !os.IsNotExist(statErr) {
-		t.Fatalf("Stat(models.json) error = %v, want models.json removed even with no cloud enrollment", statErr)
+	if got, readErr := os.ReadFile(cfg.ModelsPath()); readErr != nil || !bytes.Equal(got, legacyModels) {
+		t.Fatalf("models.json = %q (err %v), want exact legacy preservation", got, readErr)
 	}
 	if !strings.Contains(out, "Sincroniz") {
 		t.Fatalf("uninstall output = %q, want session-sync removal even with no enrollment record", out)

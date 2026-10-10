@@ -26,17 +26,6 @@ func allExpectedAppliedOptions() map[string]string {
 	return options
 }
 
-func findCheck(t *testing.T, report Report, name string) CheckResult {
-	t.Helper()
-	for _, c := range report.Checks {
-		if c.Name == name {
-			return c
-		}
-	}
-	t.Fatalf("Run() did not include a %q check", name)
-	return CheckResult{}
-}
-
 // TestCheckAppliedPluginConfig_AllKeysPresent_ReportsHealthy covers the fully-healthy case: every
 // expected key (derived from modelconfig.Phases + modelconfig.ProfileConfigKey) is present in the
 // applied pluginConfigs options.
@@ -44,11 +33,18 @@ func TestCheckAppliedPluginConfig_AllKeysPresent_ReportsHealthy(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 	seedAppliedPluginConfigOptions(t, cfg, allExpectedAppliedOptions())
 
-	report := Run(cfg)
-
-	check := findCheck(t, report, appliedPluginConfigCheckName)
+	check := checkAppliedPluginConfig(cfg)
 	if !check.Healthy {
 		t.Fatalf("checkAppliedPluginConfig reports unhealthy with all keys applied: %s", check.Detail)
+	}
+}
+
+func TestRunDoesNotAdvertiseRetiredClaudeModelChecks(t *testing.T) {
+	report := Run(installer.Config{ClaudeHome: t.TempDir()})
+	for _, check := range report.Checks {
+		if check.Name == appliedPluginConfigCheckName || check.Name == "models.json schema" {
+			t.Fatalf("Run() check %q still treats retired Click model configuration as active ownership", check.Name)
+		}
 	}
 }
 
@@ -79,9 +75,7 @@ func TestCheckAppliedPluginConfig_IncidentReplay_MissingReviewKeys_ReportsUnheal
 	}
 	seedAppliedPluginConfigOptions(t, cfg, applied)
 
-	report := Run(cfg)
-
-	check := findCheck(t, report, appliedPluginConfigCheckName)
+	check := checkAppliedPluginConfig(cfg)
 	if check.Healthy {
 		t.Fatal("checkAppliedPluginConfig reports healthy with 5 review_*_model keys missing, want unhealthy")
 	}
@@ -101,9 +95,7 @@ func TestCheckAppliedPluginConfig_IncidentReplay_MissingReviewKeys_ReportsUnheal
 func TestCheckAppliedPluginConfig_SettingsMissing_ReportsUnhealthy(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir()}
 
-	report := Run(cfg)
-
-	check := findCheck(t, report, appliedPluginConfigCheckName)
+	check := checkAppliedPluginConfig(cfg)
 	if check.Healthy {
 		t.Fatal("checkAppliedPluginConfig reports healthy on a fresh ClaudeHome with no settings.json, want unhealthy")
 	}
@@ -120,9 +112,7 @@ func TestCheckAppliedPluginConfig_PluginConfigsAbsent_ReportsUnhealthy(t *testin
 		t.Fatalf("WriteFile(SettingsPath) error = %v", err)
 	}
 
-	report := Run(cfg)
-
-	check := findCheck(t, report, appliedPluginConfigCheckName)
+	check := checkAppliedPluginConfig(cfg)
 	if check.Healthy {
 		t.Fatal("checkAppliedPluginConfig reports healthy with no pluginConfigs key, want unhealthy")
 	}
@@ -139,9 +129,7 @@ func TestCheckAppliedPluginConfig_MalformedJSON_ReportsUnhealthy(t *testing.T) {
 		t.Fatalf("WriteFile(SettingsPath) error = %v", err)
 	}
 
-	report := Run(cfg)
-
-	check := findCheck(t, report, appliedPluginConfigCheckName)
+	check := checkAppliedPluginConfig(cfg)
 	if check.Healthy {
 		t.Fatal("checkAppliedPluginConfig reports healthy for a malformed settings.json, want unhealthy")
 	}

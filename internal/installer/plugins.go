@@ -514,26 +514,10 @@ func SetMarketplaceSourceForTests(source string) func() {
 // install the click-managed plugins (see managedPlugins). This is the real activation path — copying loose plugin
 // folders never loaded anything in Claude Code.
 //
-// models is the resolved per-phase click-sdd model selection (D25): it is always run through
-// modelconfig.ResolveForProfile first, so a nil or partial map still installs click-sdd with a
-// fully self-describing --config flag set (the profile's defaults fill any gap). click-memory and
-// click-review never receive --config flags — they have no userConfig schema.
-//
-// profile is trailing-variadic, not a required second positional argument (design D3's literal
-// signature would be SyncMarketplacePlugins(profile, models)): this is the single canonical sync
-// function — Line B's separate SyncMarketplacePluginsForProfile wrapper is deliberately NOT
-// reintroduced — but PR2b's scope explicitly forbids touching internal/cli/{install,update}.go,
-// which both call SyncMarketplacePlugins(models) today. A trailing variadic keeps that exact 1-arg
-// call compiling unchanged (defaulting to the balanced profile) while giving PR3 a real 2-arg call
-// (SyncMarketplacePlugins(models, profile)) to wire the actual selected profile through once it
-// migrates those two call sites. At most the first variadic value is used; an empty ProfileName
-// behaves the same as omitting it.
-func SyncMarketplacePlugins(models map[modelconfig.Phase]string, profile ...modelconfig.ProfileName) error {
-	name := modelconfig.ProfileBalanced
-	if len(profile) > 0 && profile[0] != "" {
-		name = profile[0]
-	}
-	resolved := modelconfig.ResolveForProfile(string(name), models)
+// SyncMarketplacePlugins installs Click's plugin assets without assigning models. Model selection
+// belongs to the upstream runtime; the legacy arguments are retained for source compatibility and
+// deliberately ignored.
+func SyncMarketplacePlugins(_ map[modelconfig.Phase]string, _ ...modelconfig.ProfileName) error {
 	runner := commandRunnerFactory()
 	var sparsePaths []string
 	if usesSparseCheckout(marketplaceSource) {
@@ -555,34 +539,11 @@ func SyncMarketplacePlugins(models map[modelconfig.Phase]string, profile ...mode
 		return err
 	}
 	for _, plugin := range managedPlugins {
-		var extraArgs []string
-		if plugin == "click-sdd" {
-			extraArgs = clickSDDConfigArgs(name, resolved)
-		}
-		if err := installMarketplacePlugin(runner, plugin, extraArgs...); err != nil {
+		if err := installMarketplacePlugin(runner, plugin); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// clickSDDConfigArgs builds the `--config <key>=<value>` flag pairs for
-// `claude plugin install click-sdd@click-ai-devkit`: FIRST the active orchestration profile
-// (modelconfig.ProfileConfigKey, design D3), THEN one `--config <phase>_model=<alias>` pair per
-// phase in modelconfig.Phases order (verified against the real CLI in Step 0: repeated
-// `--config key=value` flags land in settings.json's
-// pluginConfigs["click-sdd@click-ai-devkit"].options).
-func clickSDDConfigArgs(profile modelconfig.ProfileName, resolved map[modelconfig.Phase]string) []string {
-	args := make([]string, 0, len(modelconfig.Phases)*2+2)
-	args = append(args, "--config", modelconfig.ProfileConfigKey+"="+string(profile))
-	for _, phase := range modelconfig.Phases {
-		model, ok := resolved[phase]
-		if !ok || model == "" {
-			continue
-		}
-		args = append(args, "--config", phase.ConfigKey()+"="+model)
-	}
-	return args
 }
 
 // RemoveMarketplacePlugins uninstalls all click-managed plugins (see managedPlugins) and removes the marketplace.
