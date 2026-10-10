@@ -122,15 +122,16 @@ func TestClickOrchestrator_NamesEveryDedicatedAgent(t *testing.T) {
 	}
 }
 
-// TestDefaultManagedContent_IsSelfContained guards Decision 4 (design doc): the managed CLAUDE.md
-// block must stay free of any reference to gentle-ai's own orchestrator asset paths, so a machine
-// with no gentle-ai installed still gets a fully self-contained ClickOrchestrator activation.
-func TestDefaultManagedContent_IsSelfContained(t *testing.T) {
-	forbidden := []string{"gentle-ai", "sdd-orchestrator-workflow", "~/.claude"}
-	for _, substr := range forbidden {
-		if strings.Contains(DefaultManagedContent, substr) {
-			t.Errorf("DefaultManagedContent contains forbidden substring %q, want none (gentle-ai-free)", substr)
+// TestDefaultManagedContent_DelegatesWorkflowToGentleAI guards the current distribution boundary:
+// Click's managed guidance must not revive its retired orchestration instructions.
+func TestDefaultManagedContent_DelegatesWorkflowToGentleAI(t *testing.T) {
+	for _, obsolete := range []string{"ClickOrchestrator", "click-sdd", "sdd-orchestrator-workflow"} {
+		if strings.Contains(DefaultManagedContent, obsolete) {
+			t.Errorf("DefaultManagedContent contains retired workflow reference %q", obsolete)
 		}
+	}
+	if !strings.Contains(DefaultManagedContent, "gentle-ai") || !strings.Contains(DefaultManagedContent, "ODD") {
+		t.Fatal("DefaultManagedContent must direct workflow ownership to gentle-ai's ODD")
 	}
 }
 
