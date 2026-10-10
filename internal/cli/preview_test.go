@@ -20,7 +20,7 @@ func TestInstallWriteSteps_OpenClawAbsent_IncludesGentleAIAndLocalSteps(t *testi
 	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir()}, false)
 	want := []string{
 		"Verificando gentle-ai: conservar el pin si coincide; instalar si falta o volver a fijarlo si difiere (puede degradar una versión más reciente)…",
-		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
+		"Retirando click-sdd y registrando click-memory, click-review y click-skills…",
 		"Actualizando CLAUDE.md…",
 		"Registrando memory-guard…",
 	}
@@ -58,7 +58,7 @@ func TestInstallWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
 	got := installWriteSteps(installer.Config{ClaudeHome: t.TempDir()}, true)
 	want := []string{
 		"Verificando gentle-ai: conservar el pin si coincide; instalar si falta o volver a fijarlo si difiere (puede degradar una versión más reciente)…",
-		"Registrando plugins click-sdd, click-memory, click-review y click-skills…",
+		"Retirando click-sdd y registrando click-memory, click-review y click-skills…",
 		"Configurando Engram Cloud Session Sync en settings.json…",
 		"Enrolando Engram Cloud…",
 		"Actualizando CLAUDE.md…",
@@ -138,7 +138,7 @@ func TestUpdateWriteSteps_CloudConfigured_AddsCloudStep(t *testing.T) {
 	got := updateWriteSteps("0.1.1", installer.Config{ClaudeHome: t.TempDir()}, true)
 	want := []string{
 		"Verificando gentle-ai: conservar el pin si coincide; instalar si falta o volver a fijarlo si difiere (puede degradar una versión más reciente)…",
-		"Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…",
+		"Retirando click-sdd y sincronizando click-memory, click-review y click-skills…",
 		"Actualizando CLAUDE.md…",
 		"Re-registrando memory-guard…",
 		"Configurando Engram Cloud Session Sync en settings.json…",

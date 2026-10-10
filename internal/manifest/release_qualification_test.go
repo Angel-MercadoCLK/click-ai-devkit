@@ -9,6 +9,30 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestWindowsPackageSmokeUsesHermeticStandardHomesAndRestoresEnvironment(t *testing.T) {
+	path := filepath.Join("..", "..", "scripts", "windows-package-smoke.ps1")
+	script, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", path, err)
+	}
+	text := string(script)
+	for _, expected := range []string{
+		"$originalEnvironment = @{",
+		"$env:HOME = $smokeRoot",
+		"$env:USERPROFILE = $smokeRoot",
+		"$env:XDG_CONFIG_HOME = Join-Path $smokeRoot '.config'",
+		"$env:CLICK_CLAUDE_HOME = $claudeHome",
+		"$env:CODEX_HOME = $codexHome",
+		"} finally {",
+		"$env:USERPROFILE = $originalEnvironment.UserProfile",
+		"Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("Windows package smoke script missing hermetic environment contract %q", expected)
+		}
+	}
+}
+
 type workflowFile struct {
 	Jobs map[string]workflowJob `yaml:"jobs"`
 }

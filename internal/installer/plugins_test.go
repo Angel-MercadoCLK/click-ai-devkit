@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -25,8 +26,19 @@ func TestMarketplaceManifest_Parses(t *testing.T) {
 	if manifest.Name != marketplaceName {
 		t.Fatalf("marketplace name = %q, want %q", manifest.Name, marketplaceName)
 	}
-	if len(manifest.Plugins) != 4 {
-		t.Fatalf("marketplace plugins = %d, want 4", len(manifest.Plugins))
+	wantPlugins := []string{"click-memory", "click-review", "click-skills"}
+	gotPlugins := make([]string, 0, len(manifest.Plugins))
+	for _, plugin := range manifest.Plugins {
+		gotPlugins = append(gotPlugins, plugin.Name)
+	}
+	if !reflect.DeepEqual(gotPlugins, wantPlugins) {
+		t.Fatalf("marketplace plugins = %#v, want active plugins %#v", gotPlugins, wantPlugins)
+	}
+}
+
+func TestManagedPluginNamesExcludesRetiredClickSDD(t *testing.T) {
+	if got, want := ManagedPluginNames(), []string{"click-memory", "click-review", "click-skills"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ManagedPluginNames() = %#v, want %#v", got, want)
 	}
 }
 
@@ -138,8 +150,8 @@ func TestListClickPlugins_DistinguishesEnabledFromDisabled(t *testing.T) {
 	for _, s := range statuses {
 		byName[s.Name] = s
 	}
-	if sdd := byName["click-sdd"]; !sdd.Installed || !sdd.Enabled {
-		t.Fatalf("click-sdd = %+v, want Installed && Enabled", sdd)
+	if _, present := byName["click-sdd"]; present {
+		t.Fatalf("ListClickPlugins() reports retired click-sdd: %+v", byName["click-sdd"])
 	}
 	if mem := byName["click-memory"]; !mem.Installed || mem.Enabled {
 		t.Fatalf("click-memory = %+v, want Installed but NOT Enabled (registered but disabled)", mem)

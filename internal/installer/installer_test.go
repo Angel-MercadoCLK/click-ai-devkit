@@ -57,9 +57,9 @@ func TestInstall_RegistersPluginsAndWritesManagedState(t *testing.T) {
 	}
 
 	wantCommands := []string{
+		"claude plugin list --json",
 		"claude plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins",
 		"claude plugin marketplace update " + marketplaceName,
-		"claude plugin install click-sdd@click-ai-devkit",
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",
 		"claude plugin install click-skills@click-ai-devkit",

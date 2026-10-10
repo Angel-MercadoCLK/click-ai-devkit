@@ -25,7 +25,7 @@ const (
 	ClickSDDPluginID = "click-sdd@" + marketplaceName
 )
 
-var managedPlugins = []string{"click-sdd", "click-memory", "click-review", "click-skills"}
+var managedPlugins = []string{"click-memory", "click-review", "click-skills"}
 
 // ClickPluginStatus reports registry state for one plugin managed by Click.
 type ClickPluginStatus struct {
@@ -510,15 +510,18 @@ func SetMarketplaceSourceForTests(source string) func() {
 	return func() { marketplaceSource = old }
 }
 
-// SyncMarketplacePlugins uses the official Claude Code plugin CLI to register the marketplace and
-// install the click-managed plugins (see managedPlugins). This is the real activation path — copying loose plugin
-// folders never loaded anything in Claude Code.
+// SyncMarketplacePlugins retires a legacy user-scoped Click SDD plugin before registering the
+// marketplace and installing the remaining Click-managed plugins. This is the real activation path —
+// copying loose plugin folders never loaded anything in Claude Code.
 //
 // SyncMarketplacePlugins installs Click's plugin assets without assigning models. Model selection
 // belongs to the upstream runtime; the legacy arguments are retained for source compatibility and
 // deliberately ignored.
-func SyncMarketplacePlugins(_ map[modelconfig.Phase]string, _ ...modelconfig.ProfileName) error {
+func SyncMarketplacePlugins(cfg Config, _ map[modelconfig.Phase]string, _ ...modelconfig.ProfileName) error {
 	runner := commandRunnerFactory()
+	if _, err := retireLegacyClickSDDWithRunner(cfg, runner); err != nil {
+		return err
+	}
 	var sparsePaths []string
 	if usesSparseCheckout(marketplaceSource) {
 		sparsePaths = []string{".claude-plugin", "plugins"}
@@ -546,16 +549,51 @@ func SyncMarketplacePlugins(_ map[modelconfig.Phase]string, _ ...modelconfig.Pro
 	return nil
 }
 
-// RemoveMarketplacePlugins uninstalls all click-managed plugins (see managedPlugins) and removes the marketplace.
-func RemoveMarketplacePlugins() error {
+// RemoveMarketplacePlugins retires only the exact legacy user-scoped Click SDD installation, then
+// uninstalls the remaining Click-managed plugins. It intentionally keeps the marketplace registered
+// because removing it can cascade into plugins installed at other scopes.
+func RemoveMarketplacePlugins(cfg Config) error {
 	runner := commandRunnerFactory()
-	for _, plugin := range managedPlugins {
-		if err := uninstallMarketplacePlugin(runner, plugin); err != nil {
-			return err
+	if _, err := retireLegacyClickSDDWithRunner(cfg, runner); err != nil {
+		return err
+	}
+	return removeUserScopedMarketplacePlugins(runner)
+}
+
+func removeUserScopedMarketplacePlugins(runner CommandRunner) error {
+	if runner == nil {
+		return fmt.Errorf("installer: no se puede retirar plugins de Click sin un ejecutor de Claude")
+	}
+	output, err := runner.Output(pluginCLIBinary, "plugin", "list", "--json")
+	if err != nil {
+		return &safeRetirementError{message: "installer: no se pudo consultar la lista de plugins de Claude; no se retiraron plugins de Click", cause: err}
+	}
+	installations, err := parseClaudePluginInventory(output)
+	if err != nil {
+		return err
+	}
+
+	userCounts := make(map[string]int, len(managedPlugins))
+	for _, installation := range installations {
+		for _, plugin := range managedPlugins {
+			if installation.ID == plugin+"@"+marketplaceName && installation.Scope == clickSDDRetirementScope {
+				userCounts[plugin]++
+			}
 		}
 	}
-	if err := removeMarketplace(runner, marketplaceName); err != nil {
-		return err
+	for plugin, count := range userCounts {
+		if count > 1 {
+			return fmt.Errorf("installer: la lista de plugins de Claude contiene instalaciones de usuario ambiguas de %s; no se retiraron plugins de Click", plugin)
+		}
+	}
+
+	for _, plugin := range managedPlugins {
+		if userCounts[plugin] == 0 {
+			continue
+		}
+		if err := runner.Run(pluginCLIBinary, "plugin", "uninstall", plugin+"@"+marketplaceName, "--scope", clickSDDRetirementScope, "--keep-data"); err != nil {
+			return &safeRetirementError{message: fmt.Sprintf("installer: Claude no pudo retirar %s de la instalación de usuario; los retiros anteriores pueden haberse completado y no se revirtieron automáticamente", plugin), cause: err}
+		}
 	}
 	return nil
 }
@@ -859,6 +897,16 @@ func (f *fakeCommandRunner) Output(name string, args ...string) ([]byte, error) 
 	key := name + " " + strings.Join(args, " ")
 	if out, ok := f.lookup[key]; ok {
 		return out, nil
+	}
+	if name == pluginCLIBinary && len(args) == 3 && args[0] == "plugin" && args[1] == "list" && args[2] == "--json" {
+		installations := make([]claudePluginInstallation, 0, len(f.plugins))
+		for pluginID, installed := range f.plugins {
+			if installed {
+				installations = append(installations, claudePluginInstallation{ID: pluginID, Scope: clickSDDRetirementScope})
+			}
+		}
+		data, err := json.Marshal(installations)
+		return data, err
 	}
 	if filepath.Base(name) == "openclaw" && len(args) == 3 && args[0] == "config" && args[1] == "set" && args[2] == "--help" {
 		return []byte("config set agents.defaults.model.primary agents.defaults.model.fallbacks --strict-json"), nil

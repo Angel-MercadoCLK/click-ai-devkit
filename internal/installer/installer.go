@@ -1,7 +1,8 @@
-// Package installer owns the logic that installs and reverses click-ai-devkit's Claude Code
-// plugin(s) into a developer's Claude Code setup (Config.ClaudeHome).
+// Package installer owns the logic that installs and reverses click-ai-devkit's managed Claude Code
+// plugins into a developer's Claude Code setup (Config.ClaudeHome), including safe retirement of
+// the legacy Click SDD plugin.
 //
-// v0.2 foundation installs the real click-sdd, click-memory, and click-review plugins through the
+// v0.2 foundation installs Click's active plugins through the
 // native `claude plugin` marketplace flow while keeping the CLI thin: it patches the managed
 // CLAUDE.md block and wires the memory-guard hook.
 package installer
@@ -20,7 +21,7 @@ import (
 // internal/cli's job (installer.SaveModels), matching how RegisterMemoryGuardHook et al. are also
 // orchestrated from the cli layer rather than bundled here.
 func Install(cfg Config, models map[modelconfig.Phase]string) error {
-	if err := SyncMarketplacePlugins(models); err != nil {
+	if err := SyncMarketplacePlugins(cfg, models); err != nil {
 		return err
 	}
 	if err := WriteManagedBlock(cfg.ClaudeMDPath(), DefaultManagedContent); err != nil {
@@ -53,7 +54,7 @@ func EngramCloudPartiallyConfigured(cfg Config, m *manifest.Manifest) bool {
 // The Click-local Engram Cloud enrollment record is still removed offline without unenrolling the
 // shared project.
 func Uninstall(cfg Config) error {
-	if err := RemoveMarketplacePlugins(); err != nil {
+	if err := RemoveMarketplacePlugins(cfg); err != nil {
 		return err
 	}
 	if err := StripManagedBlock(cfg.ClaudeMDPath()); err != nil {

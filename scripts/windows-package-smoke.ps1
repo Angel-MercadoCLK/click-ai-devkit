@@ -51,6 +51,19 @@ $codexHelper = Join-Path $binRoot 'codex-helper.ps1'
 $codexEngramRegisteredMarker = Join-Path $smokeRoot 'codex-engram-registered.marker'
 $openClawEngramMCPMarker = Join-Path $smokeRoot 'openclaw-engram-mcp.marker'
 
+$originalEnvironment = @{
+  Path = $env:PATH
+  Home = $env:HOME
+  UserProfile = $env:USERPROFILE
+  XdgConfigHome = $env:XDG_CONFIG_HOME
+  ClickClaudeHome = $env:CLICK_CLAUDE_HOME
+  ClickOpenClawHome = $env:CLICK_OPENCLAW_HOME
+  CodexHome = $env:CODEX_HOME
+  ClickEngramBinaryPath = $env:CLICK_ENGRAM_BINARY_PATH
+}
+
+try {
+
 New-Item -ItemType Directory -Path $packageRoot, $extractRoot, $binRoot, $claudeHome, $openClawHome, $codexHome | Out-Null
 
 # Real-repro regression guard: a live OpenClaw instance's own `validate config` proved
@@ -107,6 +120,7 @@ New-CmdStub -Path $engramBinary -Lines @(
   'exit /b 0'
 )
 New-CmdStub -Path (Join-Path $binRoot 'claude.cmd') -Lines @(
+  'if "%1 %2 %3"=="plugin list --json" echo []',
   'echo %*>>"' + $claudeLog + '"',
   'exit /b 0'
 )
@@ -140,10 +154,15 @@ exit 0
 [System.IO.File]::WriteAllText((Join-Path $binRoot 'openclaw.cmd'), '@powershell -NoProfile -ExecutionPolicy Bypass -File "' + $openClawHelper + '" %*' + "`r`n")
 
 $env:PATH = "$binRoot;$env:PATH"
+$env:HOME = $smokeRoot
+$env:USERPROFILE = $smokeRoot
+$env:XDG_CONFIG_HOME = Join-Path $smokeRoot '.config'
 $env:CLICK_CLAUDE_HOME = $claudeHome
 $env:CLICK_OPENCLAW_HOME = $openClawHome
 $env:CODEX_HOME = $codexHome
 $env:CLICK_ENGRAM_BINARY_PATH = $engramBinary
+
+[System.IO.File]::WriteAllText((Join-Path $codexHome 'config.toml'), "model = 'codex-native-sentinel'`r`n")
 
 $versionOutput = & $clickExe --version
 Assert-Contains -Actual $versionOutput -Expected $ExpectedVersion -Context 'click --version output'
@@ -152,41 +171,20 @@ $targetsOutput = & $clickExe targets --no-color
 Assert-Contains -Actual $targetsOutput -Expected 'Claude Code: detectado' -Context 'click targets output'
 Assert-Contains -Actual $targetsOutput -Expected 'OpenClaw: detectado' -Context 'click targets output'
 Assert-Contains -Actual $targetsOutput -Expected 'Codex: detectado' -Context 'click targets output'
-Assert-Contains -Actual $targetsOutput -Expected 'modelo nativo de config.toml' -Context 'click targets output'
-
-& $clickExe configure-openclaw-model openai/gpt-5.6-sol google/gemini-2.5-pro | Out-Null
-$openClawCalls = Get-Content -LiteralPath $openClawLog -Raw
-Assert-Contains -Actual $openClawCalls -Expected 'config set agents.defaults.model.primary openai/gpt-5.6-sol' -Context 'openclaw command log'
-Assert-Contains -Actual $openClawCalls -Expected 'config set agents.defaults.model.fallbacks ["google/gemini-2.5-pro"] --strict-json' -Context 'openclaw command log'
 
 # No --skip-openclaw here: that flag PERSISTS OpenClaw=false to targets.json (install.go saves the
 # resolved selection), which would make the later `update` call below skip OpenClaw too even
 # without repeating the flag — defeating the openclaw.json healing assertion after `update`.
-& $clickExe install --yes --profile balanced --codex-model gpt-5.6 | Out-Null
+& $clickExe install --yes | Out-Null
 $codexAgents = Get-Content -LiteralPath (Join-Path $codexHome 'AGENTS.md') -Raw
 $codexConfig = Get-Content -LiteralPath (Join-Path $codexHome 'config.toml') -Raw
 Assert-Contains -Actual $codexAgents -Expected 'This block is managed by click' -Context 'Codex AGENTS.md'
-# ConfigureCodexModel now uses github.com/pelletier/go-toml/v2, which serializes simple strings as
-# TOML literal (single-quoted) strings, e.g. model = 'gpt-5.6'. Assert quote-agnostically: the root
-# `model =` assignment and the gpt-5.6 value must both be present, regardless of the quote char.
-Assert-Contains -Actual $codexConfig -Expected 'model =' -Context 'Codex config.toml'
-Assert-Contains -Actual $codexConfig -Expected 'gpt-5.6' -Context 'Codex config.toml'
+Assert-Contains -Actual $codexConfig -Expected "model = 'codex-native-sentinel'" -Context 'preserved Codex native model'
 
-# Codex model-profile (click-owned REFERENCE file, never Codex's own config) written on install with
-# the non-interactive default tier `recommended`.
-$codexProfilePath = Join-Path $codexHome 'click-ai-devkit\model-profile.json'
-if (-not (Test-Path -LiteralPath $codexProfilePath)) {
-  throw 'SaveCodexModelProfile did not write the Codex model-profile.json during install'
-}
-$codexProfile = Get-Content -Raw -LiteralPath $codexProfilePath | ConvertFrom-Json
-if ($codexProfile.tier -ne 'recommended') {
-  throw "Codex model-profile tier = '$($codexProfile.tier)', want 'recommended' (non-interactive default)"
-}
-
-# Claude models.json (click-owned per-phase model + profile selection) written on install.
+# Click no longer creates legacy model-selection artifacts.
 $modelsPath = Join-Path $claudeHome 'click-ai-devkit\models.json'
-if (-not (Test-Path -LiteralPath $modelsPath)) {
-  throw 'SaveModelsWithProfile did not write models.json during install'
+if (Test-Path -LiteralPath $modelsPath) {
+  throw 'click install unexpectedly created the retired models.json artifact'
 }
 
 # First-time Engram registration with Codex: get (not-yet-registered) then add, exact real syntax.
@@ -210,7 +208,12 @@ if (-not (Test-Path -LiteralPath $openClawEngramMCPMarker)) {
 $claudeCalls = Get-Content -LiteralPath $claudeLog -Raw
 Assert-Contains -Actual $claudeCalls -Expected 'plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins' -Context 'claude command log'
 Assert-Contains -Actual $claudeCalls -Expected 'plugin marketplace update click-ai-devkit' -Context 'claude command log'
-Assert-Contains -Actual $claudeCalls -Expected 'plugin install click-sdd@click-ai-devkit' -Context 'claude command log'
+foreach ($plugin in @('click-memory', 'click-review', 'click-skills')) {
+  Assert-Contains -Actual $claudeCalls -Expected "plugin install $plugin@click-ai-devkit" -Context 'claude command log'
+}
+if ($claudeCalls.Contains('plugin install click-sdd@click-ai-devkit')) {
+  throw 'click install unexpectedly reinstalled the retired click-sdd plugin'
+}
 
 # Idempotent Codex re-run: get now succeeds (already registered), add must NOT run again.
 $codexCallsAfterUpdate = (Get-Content -LiteralPath $codexLog -Raw).Substring($codexCallsAfterInstall.Length)
@@ -280,4 +283,14 @@ if (Test-Path -LiteralPath $modelsPath) {
   throw "click uninstall left the Claude models.json behind"
 }
 
-Remove-Item -LiteralPath $smokeRoot -Recurse -Force
+} finally {
+  $env:PATH = $originalEnvironment.Path
+  $env:HOME = $originalEnvironment.Home
+  $env:USERPROFILE = $originalEnvironment.UserProfile
+  $env:XDG_CONFIG_HOME = $originalEnvironment.XdgConfigHome
+  $env:CLICK_CLAUDE_HOME = $originalEnvironment.ClickClaudeHome
+  $env:CLICK_OPENCLAW_HOME = $originalEnvironment.ClickOpenClawHome
+  $env:CODEX_HOME = $originalEnvironment.CodexHome
+  $env:CLICK_ENGRAM_BINARY_PATH = $originalEnvironment.ClickEngramBinaryPath
+  Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
+}

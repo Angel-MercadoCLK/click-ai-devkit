@@ -68,9 +68,9 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 		return "Verificando gentle-ai: conservar el pin si coincide; instalar si falta o volver a fijarlo si difiere (puede degradar una versión más reciente)…"
 	case installer.StepActionSyncMarketplacePlugins:
 		if options.updateMode {
-			return "Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…"
+			return "Retirando click-sdd y sincronizando click-memory, click-review y click-skills…"
 		}
-		return "Registrando plugins click-sdd, click-memory, click-review y click-skills…"
+		return "Retirando click-sdd y registrando click-memory, click-review y click-skills…"
 	case installer.StepActionSyncEngram:
 		if options.engramVersion != "" {
 			return fmt.Sprintf("Sincronizando Engram (pin %s)…", options.engramVersion)

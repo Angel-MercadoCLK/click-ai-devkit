@@ -3,6 +3,8 @@ package installer
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -25,7 +27,173 @@ func (r *failingMarketplaceRunner) Run(name string, args ...string) error {
 }
 
 func (r *failingMarketplaceRunner) Output(name string, args ...string) ([]byte, error) {
-	return nil, nil
+	return []byte("[]"), nil
+}
+
+type inventoryMarketplaceRunner struct {
+	listOutput []byte
+	calls      []commandInvocation
+	err        error
+	failAt     int
+	runCount   int
+}
+
+func (r *inventoryMarketplaceRunner) Output(name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, commandInvocation{Name: name, Args: append([]string(nil), args...)})
+	return append([]byte(nil), r.listOutput...), nil
+}
+
+func (r *inventoryMarketplaceRunner) Run(name string, args ...string) error {
+	r.calls = append(r.calls, commandInvocation{Name: name, Args: append([]string(nil), args...)})
+	r.runCount++
+	if r.failAt == 0 || r.runCount == r.failAt {
+		return r.err
+	}
+	return nil
+}
+
+func TestRemoveMarketplacePlugins_RemovesOnlyExactUserInstallationsAndKeepsData(t *testing.T) {
+	home, state := t.TempDir(), t.TempDir()
+	runner := &inventoryMarketplaceRunner{listOutput: []byte(`[
+		{"id":"click-memory@click-ai-devkit","scope":"project","projectPath":"/project"},
+		{"id":"click-review@click-ai-devkit","scope":"user"},
+		{"id":"click-skills@click-ai-devkit","scope":"user"},
+		{"id":"click-skills@click-ai-devkit","scope":"synced"}
+	]`)}
+	restore := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restore()
+	if err := RemoveMarketplacePlugins(Config{ClaudeHome: home, ClickStateHome: state}); err != nil {
+		t.Fatalf("RemoveMarketplacePlugins() error = %v", err)
+	}
+
+	var uninstallCalls []commandInvocation
+	for _, call := range runner.calls {
+		if len(call.Args) > 1 && call.Args[0] == "plugin" && call.Args[1] == "uninstall" {
+			uninstallCalls = append(uninstallCalls, call)
+		}
+		if len(call.Args) >= 3 && call.Args[0] == "plugin" && call.Args[1] == "marketplace" && call.Args[2] == "remove" {
+			t.Fatalf("marketplace removal can cascade across scopes: %#v", call.Args)
+		}
+	}
+	want := [][]string{
+		{"plugin", "uninstall", "click-review@click-ai-devkit", "--scope", "user", "--keep-data"},
+		{"plugin", "uninstall", "click-skills@click-ai-devkit", "--scope", "user", "--keep-data"},
+	}
+	if len(uninstallCalls) != len(want) {
+		t.Fatalf("uninstall calls = %#v, want only user-scoped review/skills (foreign-only memory and absent SDD skipped)", uninstallCalls)
+	}
+	for i, expected := range want {
+		if !reflect.DeepEqual(uninstallCalls[i].Args, expected) {
+			t.Errorf("uninstall call %d = %#v, want %#v", i, uninstallCalls[i].Args, expected)
+		}
+	}
+}
+
+func TestRemoveMarketplacePlugins_ScopesEveryUserPluginRemovalAndKeepsData(t *testing.T) {
+	runner := &inventoryMarketplaceRunner{listOutput: []byte(`[
+		{"id":"click-memory@click-ai-devkit","scope":"user"},
+		{"id":"click-review@click-ai-devkit","scope":"user"},
+		{"id":"click-skills@click-ai-devkit","scope":"user"}
+	]`)}
+	restore := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restore()
+
+	if err := RemoveMarketplacePlugins(Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}); err != nil {
+		t.Fatalf("RemoveMarketplacePlugins() error = %v", err)
+	}
+	want := map[string]bool{
+		"click-memory": false,
+		"click-review": false,
+		"click-skills": false,
+	}
+	for _, call := range runner.calls {
+		if len(call.Args) < 3 || call.Args[0] != "plugin" || call.Args[1] != "uninstall" {
+			continue
+		}
+		plugin := strings.TrimSuffix(strings.TrimPrefix(call.Args[2], "click-"), "@click-ai-devkit")
+		name := "click-" + plugin
+		if _, ok := want[name]; !ok {
+			t.Fatalf("unexpected plugin removal: %#v", call.Args)
+		}
+		if !reflect.DeepEqual(call.Args, []string{"plugin", "uninstall", call.Args[2], "--scope", "user", "--keep-data"}) {
+			t.Errorf("%s removal args = %#v, want user scope and --keep-data", name, call.Args)
+		}
+		want[name] = true
+	}
+	for plugin, removed := range want {
+		if !removed {
+			t.Errorf("%s was not removed, want exact user installation removed", plugin)
+		}
+	}
+}
+
+func TestRemoveMarketplacePlugins_RejectsAmbiguousUserEntriesBeforeRemovingAny(t *testing.T) {
+	runner := &inventoryMarketplaceRunner{listOutput: []byte(`[
+		{"id":"click-review@click-ai-devkit","scope":"user"},
+		{"id":"click-review@click-ai-devkit","scope":"user"},
+		{"id":"click-skills@click-ai-devkit","scope":"user"}
+	]`)}
+	restore := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restore()
+
+	err := RemoveMarketplacePlugins(Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "ambigu") {
+		t.Fatalf("RemoveMarketplacePlugins() error = %v, want safe ambiguity error", err)
+	}
+	for _, call := range runner.calls {
+		if len(call.Args) > 1 && call.Args[0] == "plugin" && call.Args[1] == "uninstall" {
+			t.Fatalf("ambiguous inventory caused a partial uninstall: %#v", runner.calls)
+		}
+	}
+}
+
+func TestRemoveMarketplacePlugins_SanitizesRunnerOutputAndPreservesCause(t *testing.T) {
+	secretOutput := errors.New("plugin failed with private configuration token-123")
+	runner := &inventoryMarketplaceRunner{
+		listOutput: []byte(`[{"id":"click-review@click-ai-devkit","scope":"user"}]`),
+		err:        secretOutput,
+	}
+	restore := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restore()
+
+	err := RemoveMarketplacePlugins(Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()})
+	if !errors.Is(err, secretOutput) {
+		t.Fatalf("RemoveMarketplacePlugins() error = %v, want wrapped cause", err)
+	}
+	if strings.Contains(err.Error(), "private configuration token-123") {
+		t.Fatalf("RemoveMarketplacePlugins() leaked runner output: %v", err)
+	}
+}
+
+func TestRemoveMarketplacePlugins_SecondFailureDoesNotClaimPreviousRemovalWasUndone(t *testing.T) {
+	runnerCause := errors.New("private runner detail")
+	runner := &inventoryMarketplaceRunner{
+		listOutput: []byte(`[
+			{"id":"click-memory@click-ai-devkit","scope":"user"},
+			{"id":"click-review@click-ai-devkit","scope":"user"}
+		]`),
+		err:    runnerCause,
+		failAt: 2,
+	}
+	restore := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restore()
+
+	err := RemoveMarketplacePlugins(Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()})
+	if !errors.Is(err, runnerCause) {
+		t.Fatalf("RemoveMarketplacePlugins() error = %v, want wrapped runner cause", err)
+	}
+	if strings.Contains(err.Error(), "no se modificaron otros plugins de Click") {
+		t.Fatalf("error falsely implied prior removals were undone: %v", err)
+	}
+	var removals []commandInvocation
+	for _, call := range runner.calls {
+		if len(call.Args) > 1 && call.Args[0] == "plugin" && call.Args[1] == "uninstall" {
+			removals = append(removals, call)
+		}
+	}
+	if len(removals) != 2 || removals[0].Args[2] != "click-memory@click-ai-devkit" || removals[1].Args[2] != "click-review@click-ai-devkit" {
+		t.Fatalf("uninstall attempts = %#v, want memory completed before review failure", removals)
+	}
 }
 
 func TestSyncMarketplacePlugins_DiagnosesCommandFailures(t *testing.T) {
@@ -87,7 +255,7 @@ func TestSyncMarketplacePlugins_DiagnosesCommandFailures(t *testing.T) {
 			restoreSource := SetMarketplaceSourceForTests("https://example.invalid/click-ai-devkit")
 			defer restoreSource()
 
-			err := SyncMarketplacePlugins(nil)
+			err := SyncMarketplacePlugins(Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}, nil)
 			if err == nil {
 				t.Fatal("SyncMarketplacePlugins() error = nil, want diagnostic failure")
 			}
@@ -153,11 +321,12 @@ func TestSyncMarketplacePlugins_DoesNotAssignClickSDDModels(t *testing.T) {
 		modelconfig.PhaseDefault:           "sonnet",
 	}
 
-	if err := SyncMarketplacePlugins(models, modelconfig.ProfileCostSaver); err != nil {
+	if err := SyncMarketplacePlugins(cfg, models, modelconfig.ProfileCostSaver); err != nil {
 		t.Fatalf("SyncMarketplacePlugins() error = %v", err)
 	}
 
 	want := []commandInvocation{
+		{Name: "claude", Args: []string{"plugin", "list", "--json"}},
 		{Name: "claude", Args: []string{
 			"plugin", "marketplace", "add", "https://github.com/Angel-MercadoCLK/click-ai-devkit",
 			"--sparse", ".claude-plugin", "plugins",
@@ -165,13 +334,97 @@ func TestSyncMarketplacePlugins_DoesNotAssignClickSDDModels(t *testing.T) {
 		{Name: "claude", Args: []string{
 			"plugin", "marketplace", "update", marketplaceName,
 		}},
-		{Name: "claude", Args: []string{"plugin", "install", "click-sdd@click-ai-devkit"}},
 		{Name: "claude", Args: []string{"plugin", "install", "click-memory@click-ai-devkit"}},
 		{Name: "claude", Args: []string{"plugin", "install", "click-review@click-ai-devkit"}},
 		{Name: "claude", Args: []string{"plugin", "install", "click-skills@click-ai-devkit"}},
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("runner.commands = %#v, want %#v", runner.commands, want)
+	}
+}
+
+func TestSyncMarketplacePlugins_RetiresLegacySDDBeforeMarketplaceAndInstallsRemainingPlugins(t *testing.T) {
+	claudeHome, stateHome := t.TempDir(), t.TempDir()
+	cfg := Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	settings := `{"pluginConfigs":{"click-sdd@click-ai-devkit":{"options":{"legacy":"value"}}}}`
+	if err := os.WriteFile(cfg.SettingsPath(), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &sddRetirementRunner{listOutput: []byte(`[{"id":"click-sdd@click-ai-devkit","scope":"user"}]`)}
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreSource := SetMarketplaceSourceForTests("https://example.invalid/click-ai-devkit")
+	defer restoreSource()
+
+	if err := SyncMarketplacePlugins(cfg, nil); err != nil {
+		t.Fatalf("SyncMarketplacePlugins() error = %v", err)
+	}
+	want := []commandInvocation{
+		{Name: "claude", Args: []string{"plugin", "list", "--json"}},
+		{Name: "claude", Args: []string{"plugin", "uninstall", ClickSDDPluginID, "--scope", "user", "--keep-data"}},
+		{Name: "claude", Args: []string{"plugin", "marketplace", "add", "https://example.invalid/click-ai-devkit", "--sparse", ".claude-plugin", "plugins"}},
+		{Name: "claude", Args: []string{"plugin", "marketplace", "update", marketplaceName}},
+		{Name: "claude", Args: []string{"plugin", "install", "click-memory@click-ai-devkit"}},
+		{Name: "claude", Args: []string{"plugin", "install", "click-review@click-ai-devkit"}},
+		{Name: "claude", Args: []string{"plugin", "install", "click-skills@click-ai-devkit"}},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("runner.commands = %#v, want %#v", runner.commands, want)
+	}
+	backups, err := filepath.Glob(filepath.Join(stateHome, clickSDDRetirementDir, "click-sdd-*.json"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("retirement backups = %#v, err = %v; want exactly one durable backup", backups, err)
+	}
+}
+
+func TestSyncMarketplacePlugins_RetirementFailureStopsBeforeMarketplaceMutation(t *testing.T) {
+	claudeHome, stateParent := t.TempDir(), t.TempDir()
+	stateHome := filepath.Join(stateParent, "state-file")
+	if err := os.WriteFile(stateHome, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := os.WriteFile(cfg.SettingsPath(), []byte(`{"pluginConfigs":{"click-sdd@click-ai-devkit":{"options":{"legacy":"value"}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &sddRetirementRunner{listOutput: []byte(`[{"id":"click-sdd@click-ai-devkit","scope":"user"}]`)}
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+	restoreSource := SetMarketplaceSourceForTests("https://example.invalid/click-ai-devkit")
+	defer restoreSource()
+
+	if err := SyncMarketplacePlugins(cfg, nil); err == nil {
+		t.Fatal("SyncMarketplacePlugins() error = nil; want retirement backup failure")
+	}
+	if len(runner.commands) != 1 || !reflect.DeepEqual(runner.commands[0].Args, []string{"plugin", "list", "--json"}) {
+		t.Fatalf("commands before retirement failure = %#v; want only read-only inventory", runner.commands)
+	}
+}
+
+func TestRemoveMarketplacePlugins_RetiresOnlyUserSDDAndNeverRemovesMarketplace(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	runner := &sddRetirementRunner{listOutput: []byte(`[
+		{"id":"click-sdd@click-ai-devkit","scope":"project","projectPath":"/project"},
+		{"id":"click-sdd@click-ai-devkit","scope":"user"},
+		{"id":"click-memory@click-ai-devkit","scope":"project","projectPath":"/project"},
+		{"id":"click-review@click-ai-devkit","scope":"user"},
+		{"id":"click-skills@click-ai-devkit","scope":"user"}
+	]`)}
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	if err := RemoveMarketplacePlugins(cfg); err != nil {
+		t.Fatalf("RemoveMarketplacePlugins() error = %v", err)
+	}
+	want := []commandInvocation{
+		{Name: "claude", Args: []string{"plugin", "list", "--json"}},
+		{Name: "claude", Args: []string{"plugin", "uninstall", ClickSDDPluginID, "--scope", "user", "--keep-data"}},
+		{Name: "claude", Args: []string{"plugin", "list", "--json"}},
+		{Name: "claude", Args: []string{"plugin", "uninstall", "click-review@click-ai-devkit", "--scope", "user", "--keep-data"}},
+		{Name: "claude", Args: []string{"plugin", "uninstall", "click-skills@click-ai-devkit", "--scope", "user", "--keep-data"}},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("runner.commands = %#v, want scoped cleanup without marketplace removal %#v", runner.commands, want)
 	}
 }
 
@@ -198,7 +451,7 @@ func TestSyncMarketplacePlugins_RefreshesMarketplaceBeforeInstalling(t *testing.
 	restoreSource := SetMarketplaceSourceForTests("https://github.com/Angel-MercadoCLK/click-ai-devkit")
 	defer restoreSource()
 
-	if err := SyncMarketplacePlugins(nil); err != nil {
+	if err := SyncMarketplacePlugins(cfg, nil); err != nil {
 		t.Fatalf("SyncMarketplacePlugins(nil) error = %v", err)
 	}
 
@@ -237,12 +490,13 @@ func TestSyncMarketplacePlugins_UsesNativeModelSelection(t *testing.T) {
 	restoreSource := SetMarketplaceSourceForTests("https://github.com/Angel-MercadoCLK/click-ai-devkit")
 	defer restoreSource()
 
-	if err := SyncMarketplacePlugins(nil); err != nil {
+	if err := SyncMarketplacePlugins(cfg, nil); err != nil {
 		t.Fatalf("SyncMarketplacePlugins(nil) error = %v", err)
 	}
 
-	wantClickSDD := commandInvocation{Name: "claude", Args: []string{"plugin", "install", "click-sdd@click-ai-devkit"}}
-	if !reflect.DeepEqual(runner.commands[2], wantClickSDD) {
-		t.Fatalf("runner.commands[2] = %#v, want %#v", runner.commands[2], wantClickSDD)
+	for _, cmd := range runner.commands {
+		if len(cmd.Args) >= 3 && cmd.Args[0] == "plugin" && cmd.Args[1] == "install" && cmd.Args[2] == "click-sdd@click-ai-devkit" {
+			t.Fatalf("SyncMarketplacePlugins() installed retired click-sdd: %#v", cmd)
+		}
 	}
 }

@@ -77,26 +77,24 @@ const (
 type DoctorCheckKind string
 
 const (
-	DoctorCheckClaude                   DoctorCheckKind = "claude"
-	DoctorCheckOpenClaw                 DoctorCheckKind = "openclaw"
-	DoctorCheckOpenClawNativeModel      DoctorCheckKind = "openclaw-native-model"
-	DoctorCheckClickPluginRegistries    DoctorCheckKind = "click-plugin-registries"
-	DoctorCheckClickSDDPlugin           DoctorCheckKind = "click-sdd-plugin"
-	DoctorCheckClickMemoryPlugin        DoctorCheckKind = "click-memory-plugin"
-	DoctorCheckClickReviewPlugin        DoctorCheckKind = "click-review-plugin"
-	DoctorCheckClickSkillsPlugin        DoctorCheckKind = "click-skills-plugin"
-	DoctorCheckClaudeManagedBlock       DoctorCheckKind = "claude-managed-block"
-	DoctorCheckMemoryGuard              DoctorCheckKind = "memory-guard"
-	DoctorCheckModelsConfig             DoctorCheckKind = "models-config"
-	DoctorCheckAppliedPluginConfig      DoctorCheckKind = "applied-plugin-config"
-	DoctorCheckEngramPlugin             DoctorCheckKind = "engram-plugin"
-	DoctorCheckEngramSubagentVisibility DoctorCheckKind = "engram-subagent-visibility"
-	DoctorCheckEngramBinary             DoctorCheckKind = "engram-binary"
-	DoctorCheckEngramPath               DoctorCheckKind = "engram-path"
-	DoctorCheckEngramCloud              DoctorCheckKind = "engram-cloud"
-	DoctorCheckEngramCloudSessionSync   DoctorCheckKind = "engram-cloud-session-sync"
-	DoctorCheckContext7                 DoctorCheckKind = "context7"
-	DoctorCheckCodexGuidance            DoctorCheckKind = "codex-guidance"
+	DoctorCheckClaude                 DoctorCheckKind = "claude"
+	DoctorCheckOpenClaw               DoctorCheckKind = "openclaw"
+	DoctorCheckOpenClawNativeModel    DoctorCheckKind = "openclaw-native-model"
+	DoctorCheckClickPluginRegistries  DoctorCheckKind = "click-plugin-registries"
+	DoctorCheckClickMemoryPlugin      DoctorCheckKind = "click-memory-plugin"
+	DoctorCheckClickReviewPlugin      DoctorCheckKind = "click-review-plugin"
+	DoctorCheckClickSkillsPlugin      DoctorCheckKind = "click-skills-plugin"
+	DoctorCheckClaudeManagedBlock     DoctorCheckKind = "claude-managed-block"
+	DoctorCheckMemoryGuard            DoctorCheckKind = "memory-guard"
+	DoctorCheckModelsConfig           DoctorCheckKind = "models-config"
+	DoctorCheckAppliedPluginConfig    DoctorCheckKind = "applied-plugin-config"
+	DoctorCheckEngramPlugin           DoctorCheckKind = "engram-plugin"
+	DoctorCheckEngramBinary           DoctorCheckKind = "engram-binary"
+	DoctorCheckEngramPath             DoctorCheckKind = "engram-path"
+	DoctorCheckEngramCloud            DoctorCheckKind = "engram-cloud"
+	DoctorCheckEngramCloudSessionSync DoctorCheckKind = "engram-cloud-session-sync"
+	DoctorCheckContext7               DoctorCheckKind = "context7"
+	DoctorCheckCodexGuidance          DoctorCheckKind = "codex-guidance"
 )
 
 func (p TargetPlan) StepLabels() []string {
@@ -242,7 +240,7 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 		steps = append(steps, Step{ID: "gentle-ai", Target: PlanTargetShared, Label: "gentle-ai", InstallActions: []StepActionKind{StepActionSyncGentleAI}, UpdateActions: []StepActionKind{StepActionSyncGentleAI}})
 	}
 	if selection.Claude {
-		claudeRuntime := Step{ID: "claude-runtime", Target: PlanTargetClaude, Label: "Claude Code", Snapshot: []SnapshotDecl{snapshot(cfg.ClaudeMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.SettingsPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UpdateActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UninstallActions: []StepActionKind{StepActionRemoveMarketplacePlugins}, DoctorChecks: []DoctorCheckKind{DoctorCheckClaude, DoctorCheckClickPluginRegistries, DoctorCheckClickSDDPlugin, DoctorCheckClickMemoryPlugin, DoctorCheckClickReviewPlugin, DoctorCheckClickSkillsPlugin, DoctorCheckClaudeManagedBlock, DoctorCheckEngramPlugin, DoctorCheckEngramSubagentVisibility, DoctorCheckEngramBinary, DoctorCheckEngramPath, DoctorCheckContext7}}
+		claudeRuntime := Step{ID: "claude-runtime", Target: PlanTargetClaude, Label: "Claude Code", Snapshot: []SnapshotDecl{snapshot(cfg.ClaudeMDPath(), DriftPolicyManagedContentVeto), snapshot(cfg.SettingsPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UpdateActions: []StepActionKind{StepActionSyncMarketplacePlugins}, UninstallActions: []StepActionKind{StepActionRemoveMarketplacePlugins}, DoctorChecks: []DoctorCheckKind{DoctorCheckClaude, DoctorCheckClickPluginRegistries, DoctorCheckClickMemoryPlugin, DoctorCheckClickReviewPlugin, DoctorCheckClickSkillsPlugin, DoctorCheckClaudeManagedBlock, DoctorCheckEngramPlugin, DoctorCheckEngramBinary, DoctorCheckEngramPath, DoctorCheckContext7}}
 		if !options.CloudResolvable {
 			claudeRuntime.UninstallActions = append(claudeRuntime.UninstallActions, StepActionRemoveEngramCloudSessionSync, StepActionRemoveEngramCloudState)
 		}

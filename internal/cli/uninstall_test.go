@@ -37,7 +37,10 @@ func execRootWithLookupAndState(t *testing.T, claudeHome, stateHome string, look
 // Used to prove Finding 2(b)'s resilience contract (every OTHER step still runs to completion) and
 // Finding 2(a)'s friendly-message wrapping (the raw failure gets ClaudeMissingMessage attached) end
 // to end, without depending on a real missing claude binary.
-type failingClaudeRunner struct{ commands []string }
+type failingClaudeRunner struct {
+	commands        []string
+	pluginInventory []byte
+}
 
 func (r *failingClaudeRunner) Run(name string, args ...string) error {
 	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
@@ -49,6 +52,12 @@ func (r *failingClaudeRunner) Run(name string, args ...string) error {
 
 func (r *failingClaudeRunner) Output(name string, args ...string) ([]byte, error) {
 	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
+	if name == "claude" && len(args) == 3 && args[0] == "plugin" && args[1] == "list" && args[2] == "--json" {
+		if r.pluginInventory != nil {
+			return append([]byte(nil), r.pluginInventory...), nil
+		}
+		return []byte("[]"), nil
+	}
 	return []byte{}, nil
 }
 
@@ -105,6 +114,66 @@ func TestUninstallCommand_DoesNotRunLegacySharedTeardown(t *testing.T) {
 	}
 }
 
+func TestUninstallCommand_RetiresOnlyUserClickSDDAndKeepsMarketplace(t *testing.T) {
+	claudeHome, stateHome := t.TempDir(), t.TempDir()
+	cfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	if err := os.WriteFile(cfg.SettingsPath(), []byte(`{"pluginConfigs":{"click-sdd@click-ai-devkit":{"options":{"legacy":"preserved-in-backup"}}}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(settings.json) error = %v", err)
+	}
+	runner := newTestCommandRunner(claudeHome)
+	runner.pluginInventory = []byte(`[
+		{"id":"click-sdd@click-ai-devkit","scope":"project","projectPath":"/project"},
+		{"id":"click-sdd@click-ai-devkit","scope":"user"},
+		{"id":"click-sdd@click-ai-devkit","scope":"synced"},
+		{"id":"click-memory@click-ai-devkit","scope":"project","projectPath":"/project"},
+		{"id":"click-review@click-ai-devkit","scope":"user"},
+		{"id":"click-skills@click-ai-devkit","scope":"user"}
+	]`)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	_, err := execRootWithLookupAndState(t, claudeHome, stateHome,
+		cliFakeBinaryLookup{resolved: map[string]string{"claude": "/usr/bin/claude", "git": "/usr/bin/git"}}, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall command error = %v", err)
+	}
+	userRetirements := 0
+	userScopedRemovals := map[string]bool{}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "plugin uninstall click-sdd@click-ai-devkit") {
+			userRetirements++
+			if command != "claude plugin uninstall click-sdd@click-ai-devkit --scope user --keep-data" {
+				t.Errorf("click-sdd uninstall command = %q, want exact user scope with --keep-data", command)
+			}
+		}
+		if strings.Contains(command, "plugin marketplace remove") {
+			t.Errorf("uninstall removed the marketplace and could cascade into other scopes: %q", command)
+		}
+		for _, plugin := range []string{"click-memory", "click-review", "click-skills"} {
+			want := "claude plugin uninstall " + plugin + "@click-ai-devkit --scope user --keep-data"
+			if command == want {
+				userScopedRemovals[plugin] = true
+			}
+			if strings.HasPrefix(command, "claude plugin uninstall "+plugin+"@click-ai-devkit") && command != want {
+				t.Errorf("plugin removal did not preserve data and user scope: %q", command)
+			}
+		}
+	}
+	if userRetirements != 1 {
+		t.Fatalf("user-scoped click-sdd retirements = %d, want one; commands = %#v", userRetirements, runner.commands)
+	}
+	if userScopedRemovals["click-memory"] || !userScopedRemovals["click-review"] || !userScopedRemovals["click-skills"] {
+		t.Fatalf("remaining Click plugin removals = %#v, want foreign-only memory skipped and user review/skills removed", userScopedRemovals)
+	}
+	backups, globErr := filepath.Glob(filepath.Join(stateHome, "retired-plugin-options", "click-sdd-*.json"))
+	if globErr != nil || len(backups) != 1 {
+		t.Fatalf("retirement backups = %#v, err = %v; want durable backup after full uninstall", backups, globErr)
+	}
+}
+
 // TestUninstallCommand_ContinuesEveryStepAfterAnEarlierOneFails is Finding 2's core regression test,
 // now asserting the CORRECTED resilient-continue contract: `click uninstall` must be RESILIENT and
 // FORWARD-ONLY, never fail-fast and never rollback. Before the fix, runUninstall returned
@@ -128,6 +197,7 @@ func TestUninstallCommand_ContinuesEveryStepAfterAnEarlierOneFails(t *testing.T)
 	}
 
 	runner := &failingClaudeRunner{}
+	runner.pluginInventory = []byte(`[{"id":"click-memory@click-ai-devkit","scope":"user"}]`)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 
@@ -206,6 +276,9 @@ func TestUninstallCommand_ClaudeMissing_StillRunsEveryStepAndReportsFriendlyMess
 	}
 
 	runner := &failingClaudeRunner{}
+	runner.pluginInventory = []byte(`[{
+		"id":"click-memory@click-ai-devkit","scope":"user"
+	}]`)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 	missingClaude := cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git"}}

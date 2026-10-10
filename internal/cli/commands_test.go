@@ -307,10 +307,11 @@ func execRootWithStateHome(t *testing.T, claudeHome, stateHome string, args ...s
 }
 
 type testCommandRunner struct {
-	home          string
-	commands      []string
-	plugins       map[string]bool
-	pluginConfigs map[string]map[string]string
+	home            string
+	commands        []string
+	plugins         map[string]bool
+	pluginConfigs   map[string]map[string]string
+	pluginInventory []byte
 }
 
 func newTestCommandRunner(home string) *testCommandRunner {
@@ -436,6 +437,12 @@ func (r *testCommandRunner) removeMCPServer(name string) error {
 func (r *testCommandRunner) Output(name string, args ...string) ([]byte, error) {
 	home := r.homeDir()
 	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
+	if name == "claude" && len(args) == 3 && args[0] == "plugin" && args[1] == "list" && args[2] == "--json" {
+		if r.pluginInventory != nil {
+			return append([]byte(nil), r.pluginInventory...), nil
+		}
+		return []byte("[]"), nil
+	}
 	if name == "go" && len(args) == 2 && args[0] == "env" {
 		switch args[1] {
 		case "GOBIN":
@@ -564,8 +571,8 @@ func TestInstallCommand_Succeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install command error = %v, output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "click-sdd") {
-		t.Errorf("install output = %q, want it to mention the click-sdd plugin step", out)
+	if !strings.Contains(out, "Retirando click-sdd") {
+		t.Errorf("install output = %q, want it to mention legacy click-sdd retirement", out)
 	}
 	if !strings.Contains(out, "click-memory") {
 		t.Errorf("install output = %q, want it to mention the click-memory plugin step", out)
@@ -1118,7 +1125,7 @@ func TestUpdateCommand_CodexGuidanceFailure_RollsBackCodexConfig(t *testing.T) {
 	}
 }
 
-func TestDoctorCommand_ReportsMissingCacheEntryThenUpdateRestoresHealth(t *testing.T) {
+func TestDoctorCommand_IgnoresStaleRetiredClickSDDRegistryEntry(t *testing.T) {
 	seedResolvableEngram(t)
 	seedResolvableClickBinary(t)
 	home := t.TempDir()
@@ -1139,9 +1146,7 @@ func TestDoctorCommand_ReportsMissingCacheEntryThenUpdateRestoresHealth(t *testi
 		t.Fatalf("json.Unmarshal(installed_plugins.json) error = %v", err)
 	}
 	plugins := registry["plugins"].(map[string]any)
-	entries := plugins[installer.ClickSDDPluginID].([]any)
-	entry := entries[0].(map[string]any)
-	entry["installPath"] = filepath.Join(home, "plugins", "cache", "click-ai-devkit", "click-sdd-stale", "0.1.0")
+	plugins[installer.ClickSDDPluginID] = []any{map[string]any{"installPath": filepath.Join(home, "plugins", "cache", "click-ai-devkit", "click-sdd-stale", "0.1.0")}}
 	updated, err := json.Marshal(registry)
 	if err != nil {
 		t.Fatalf("json.Marshal(installed_plugins.json) error = %v", err)
@@ -1151,23 +1156,11 @@ func TestDoctorCommand_ReportsMissingCacheEntryThenUpdateRestoresHealth(t *testi
 	}
 
 	doctorOut, doctorErr := execRoot(t, home, "doctor")
-	if doctorErr == nil {
-		t.Fatalf("doctor error = nil for a registered cache path with missing agent files, output:\n%s", doctorOut)
+	if strings.Contains(doctorOut, "click-sdd") {
+		t.Fatalf("doctor output = %q, want stale retired click-sdd registry state ignored", doctorOut)
 	}
-	if !strings.Contains(doctorOut, "caché registrada") || !strings.Contains(doctorOut, "obsoleta o incompleta") {
-		t.Fatalf("doctor output = %q, want the actual missing-cache diagnostic", doctorOut)
-	}
-
-	updateOut, updateErr := execRoot(t, home, "update")
-	if updateErr != nil {
-		t.Fatalf("update command error = %v, output:\n%s", updateErr, updateOut)
-	}
-	freshDoctorOut, freshDoctorErr := execRoot(t, home, "doctor")
-	if freshDoctorErr != nil {
-		t.Fatalf("doctor after update error = %v, want healthy report after the refreshed session, output:\n%s", freshDoctorErr, freshDoctorOut)
-	}
-	if !strings.Contains(freshDoctorOut, "Engram subagent visibility") {
-		t.Fatalf("doctor after update output = %q, want the refreshed Engram visibility check", freshDoctorOut)
+	if doctorErr != nil && strings.Contains(doctorOut, "click-sdd") {
+		t.Fatalf("doctor failed because of retired click-sdd state: %v\n%s", doctorErr, doctorOut)
 	}
 }
 
@@ -1599,13 +1592,12 @@ func TestInstallCommand_IssuesMarketplaceCommandsInOrder(t *testing.T) {
 	want := []string{
 		"claude plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins",
 		"claude plugin marketplace update click-ai-devkit",
-		"claude plugin install click-sdd@click-ai-devkit",
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",
 		"claude plugin install click-skills@click-ai-devkit",
 	}
-	if !reflect.DeepEqual(runner.commands[:6], want) {
-		t.Fatalf("runner.commands[:6] = %#v, want %#v", runner.commands[:6], want)
+	if !reflect.DeepEqual(runner.commands[:6], append([]string{"claude plugin list --json"}, want...)) {
+		t.Fatalf("runner.commands[:6] = %#v, want retirement preflight then active plugins %#v", runner.commands[:6], append([]string{"claude plugin list --json"}, want...))
 	}
 }
 

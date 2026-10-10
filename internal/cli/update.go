@@ -153,8 +153,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			// Already completed before Click-owned state writes; never run it twice.
 			continue
 		case installer.StepActionSyncMarketplacePlugins:
-			if err := r.RunStep("Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins sincronizados en Claude Code", func() error {
-				return installer.SyncMarketplacePlugins(nil)
+			if err := r.RunStep("Retirando click-sdd y sincronizando click-memory, click-review y click-skills…", "Plugins de Click sincronizados en Claude Code", func() error {
+				return installer.SyncMarketplacePlugins(cfg, nil)
 			}); err != nil {
 				return err
 			}

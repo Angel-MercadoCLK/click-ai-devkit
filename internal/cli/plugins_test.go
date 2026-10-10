@@ -22,7 +22,7 @@ func TestPluginsCommand_ListsManagedStateAndStagingWithoutWriting(t *testing.T) 
 	}
 	for _, want := range []string{
 		"Plugins gestionados por Click",
-		"click-sdd: no conocido en el registro; no instalado",
+		"click-memory: no conocido en el registro; no instalado",
 		"Staging local para futuros plugins: " + filepath.Join(home, "click-ai-devkit", "plugins"),
 		"Agregar un plugin al staging no lo instala ni lo activa",
 	} {
@@ -48,24 +48,22 @@ func TestPluginsCommand_DistinguishesEnabledFromDisabled(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "plugins"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	sddID := "click-sdd@click-ai-devkit"
 	memID := "click-memory@click-ai-devkit"
 	writeJSONFileForTest(t, filepath.Join(home, "plugins", "installed_plugins.json"), map[string]any{
 		"plugins": map[string]any{
-			sddID: []map[string]any{{"installPath": ""}},
 			memID: []map[string]any{{"installPath": ""}},
 		},
 	})
 	writeJSONFileForTest(t, filepath.Join(home, "settings.json"), map[string]any{
-		"enabledPlugins": map[string]bool{sddID: true, memID: false},
+		"enabledPlugins": map[string]bool{memID: false},
 	})
 
 	out, err := execRoot(t, home, "plugins")
 	if err != nil {
 		t.Fatalf("plugins error = %v, output = %s", err, out)
 	}
-	if !strings.Contains(out, "click-sdd: no conocido en el registro; instalado y habilitado") {
-		t.Errorf("plugins output missing enabled status for click-sdd:\n%s", out)
+	if strings.Contains(out, "click-sdd") {
+		t.Errorf("plugins output reports retired click-sdd as Click-managed:\n%s", out)
 	}
 	if !strings.Contains(out, "click-memory: no conocido en el registro; registrado pero deshabilitado — ejecute `click update`") {
 		t.Errorf("plugins output missing registered-but-disabled status for click-memory:\n%s", out)

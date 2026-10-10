@@ -197,8 +197,8 @@ func runUninstall(cmd *cobra.Command) error {
 	for _, action := range plan.UninstallActionKinds() {
 		switch action {
 		case installer.StepActionRemoveMarketplacePlugins:
-			runStep("Plugins de Claude Code", "Quitando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins eliminados de Claude Code", true, func() error {
-				return installer.RemoveMarketplacePlugins()
+			runStep("Plugins de Claude Code", "Retirando click-sdd y quitando click-memory, click-review y click-skills…", "Plugins de Click procesados; el catálogo se conserva para proteger otras instalaciones", true, func() error {
+				return installer.RemoveMarketplacePlugins(cfg)
 			})
 		case installer.StepActionStripOpenClawWorkspace:
 			runStep("AGENTS.md y SOUL.md de OpenClaw", "Limpiando AGENTS.md y SOUL.md de OpenClaw…", "Bloques gestionados de AGENTS.md y SOUL.md de OpenClaw eliminados", false, func() error {

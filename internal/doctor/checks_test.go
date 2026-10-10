@@ -90,6 +90,16 @@ func TestRun_AfterInstall_ReportsHealthy(t *testing.T) {
 	}
 }
 
+func TestRun_DoesNotRequireRetiredClickSDDOrItsAgentAssets(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	report := Run(cfg)
+	for _, check := range report.Checks {
+		if check.Name == "Plugin click-sdd" || check.Name == "Engram subagent visibility" {
+			t.Errorf("Run() includes retired click-sdd health dependency: %+v", check)
+		}
+	}
+}
+
 func TestRun_DoesNotReportRetiredOpenClawModelAction(t *testing.T) {
 	t.Cleanup(installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
 		return fakeGitLookup{resolved: map[string]string{}}
@@ -133,9 +143,9 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	report := Run(cfg)
 
-	// 11 base checks after retiring model-specific ownership checks,
+	// 10 base checks after retiring the Click SDD plugin and its dependent visibility check,
 	// standalone PATH-based detection check (openclaw-target-support PR-A).
-	const wantChecks = 11 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 10 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
 		t.Fatalf("Run() returned %d checks, want %d without retired model checks", len(report.Checks), wantChecks)
 	}
@@ -143,7 +153,7 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 
 func TestRun_CheckCountIncludesEngramCloudSessionSync(t *testing.T) {
 	report := Run(installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()})
-	const wantChecks = 11 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 10 + EngramChecksCount + Context7ChecksCount
 	if got := len(report.Checks); got != wantChecks {
 		t.Fatalf("Run() check count = %d, want %d including engram cloud session sync", got, wantChecks)
 	}
@@ -1375,7 +1385,6 @@ func seedInstalledState(t *testing.T, cfg installer.Config) {
 	registry := pluginsRegistry{
 		Version: 2,
 		Plugins: map[string][]map[string]any{
-			"click-sdd@click-ai-devkit":    {{"installPath": filepath.Join(cfg.ClaudeHome, "plugins", "cache", "click-ai-devkit", "click-sdd", "0.1.0")}},
 			"click-memory@click-ai-devkit": {{}},
 			"click-review@click-ai-devkit": {{}},
 			"click-skills@click-ai-devkit": {{}},
@@ -1394,14 +1403,10 @@ func seedInstalledState(t *testing.T, cfg installer.Config) {
 	}
 	settings := map[string]any{
 		"enabledPlugins": map[string]bool{
-			"click-sdd@click-ai-devkit":    true,
 			"click-memory@click-ai-devkit": true,
 			"click-review@click-ai-devkit": true,
 			"click-skills@click-ai-devkit": true,
 			installer.EngramPluginID:       true,
-		},
-		"pluginConfigs": map[string]any{
-			installer.ClickSDDPluginID: map[string]any{"options": allExpectedAppliedOptions()},
 		},
 	}
 	settingsData, err := json.Marshal(settings)
@@ -1412,12 +1417,30 @@ func seedInstalledState(t *testing.T, cfg installer.Config) {
 		t.Fatalf("WriteFile(settings.json) error = %v", err)
 	}
 	engramPath := filepath.Join(cfg.ClaudeHome, "plugins", "cache", "engram", "engram", "0.1.1")
-	writeJSON(t, filepath.Join(engramPath, ".mcp.json"), map[string]any{
+	engramMCP, err := json.Marshal(map[string]any{
 		"mcpServers": map[string]any{"engram": map[string]any{"command": "engram", "args": []string{"mcp", "--tools=agent"}}},
 	})
-	clickSDDPath := filepath.Join(cfg.ClaudeHome, "plugins", "cache", "click-ai-devkit", "click-sdd", "0.1.0")
-	for agent, tools := range engramAgentToolRequirements {
-		writeFile(t, filepath.Join(clickSDDPath, "agents", agent+".md"), "---\ntools: "+strings.Join(tools, ", ")+"\n---\n")
+	if err != nil {
+		t.Fatalf("json.Marshal(Engram MCP config) error = %v", err)
+	}
+	if err := os.MkdirAll(engramPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(Engram cache) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(engramPath, ".mcp.json"), engramMCP, 0o600); err != nil {
+		t.Fatalf("WriteFile(Engram .mcp.json) error = %v", err)
+	}
+}
+
+func TestCheckClickPluginRegistriesReportsCurrentManagedPluginCount(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	seedInstalledState(t, cfg)
+
+	check := checkClickPluginRegistries(cfg)
+	if !check.Healthy {
+		t.Fatalf("checkClickPluginRegistries() = %#v, want healthy fixture", check)
+	}
+	if !strings.Contains(check.Detail, "3 plugins administrados") {
+		t.Fatalf("healthy registry detail = %q, want current count of 3 managed plugins", check.Detail)
 	}
 }
 

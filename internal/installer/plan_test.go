@@ -73,6 +73,16 @@ func TestBuildTargetPlan_DelegatesEngramAndContext7LifecycleToGentleAI(t *testin
 	}
 }
 
+func TestBuildTargetPlan_DoesNotRequireRetiredClickSDDOrAgentAssets(t *testing.T) {
+	selection := TargetSelection{Configured: true, Claude: true}
+	plan := BuildTargetPlan(Config{ClaudeHome: t.TempDir()}, selection, PlanOptions{})
+	for _, check := range plan.DoctorCheckKinds() {
+		if string(check) == "click-sdd-plugin" || string(check) == "engram-subagent-visibility" {
+			t.Errorf("DoctorCheckKinds() retains retired Click SDD dependency %q", check)
+		}
+	}
+}
+
 func TestBuildTargetPlan_CodexOnlySkipsClaudeOwnedSteps(t *testing.T) {
 	cfg := Config{CodexHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	selection := TargetSelection{Configured: true, Codex: true}

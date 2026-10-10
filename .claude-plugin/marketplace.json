@@ -8,17 +8,6 @@
   },
   "plugins": [
     {
-      "name": "click-sdd",
-      "description": "Click Seguros SDD workflow plugin for Claude Code.",
-      "version": "0.1.0",
-      "author": {
-        "name": "Click Seguros"
-      },
-      "source": "./plugins/click-sdd",
-      "category": "productivity",
-      "homepage": "https://github.com/Angel-MercadoCLK/click-ai-devkit"
-    },
-    {
       "name": "click-memory",
       "description": "Click Seguros memory policy and curation plugin for Claude Code.",
       "version": "0.1.0",
