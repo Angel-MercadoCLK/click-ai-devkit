@@ -3,6 +3,7 @@ package installer
 import (
 	"encoding/json"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -180,6 +181,83 @@ func TestUnregisterMemoryGuardHook_RemovesLegacyAndCurrentEntries(t *testing.T) 
 	if len(entries) != 1 || entries[0].(map[string]any)["matcher"] != "Bash" {
 		t.Fatalf("uninstall must keep only the foreign entry, got %v", entries)
 	}
+}
+
+func TestMemoryGuardLifecycle_PreservesUpstreamHooksAndPermissionLists(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	permissions := map[string]any{
+		"allow": []any{"Read", "mcp__plugin_engram_engram__mem_search"},
+		"deny":  []any{"Bash"},
+		"ask":   []any{"Edit"},
+	}
+	upstreamHook := map[string]any{"type": "command", "command": "gentle-ai engram lifecycle"}
+	sharedForeignHook := map[string]any{"type": "command", "command": "audit-extra"}
+	foreignHook := map[string]any{"type": "command", "command": "other-tool"}
+	upstreamEntry := map[string]any{
+		"matcher": "mcp__plugin_engram_engram__mem_search",
+		"hooks":   []any{upstreamHook},
+	}
+	sharedLegacyEntry := legacyGuardEntry(sharedForeignHook)
+	foreignEntry := map[string]any{"matcher": "Bash", "hooks": []any{foreignHook}}
+	writeSettingsJSON(t, cfg, map[string]any{
+		"permissions": permissions,
+		"customSettings": map[string]any{
+			"feature": "preserve",
+			"enabled": true,
+		},
+		"hooks": map[string]any{"PreToolUse": []any{upstreamEntry, sharedLegacyEntry, foreignEntry}},
+	})
+
+	assertPreserved := func(stage string, wantHooks []any) {
+		t.Helper()
+		settings := readSettingsJSON(t, cfg)
+		if !reflect.DeepEqual(settings["permissions"], permissions) {
+			t.Fatalf("permissions after %s = %#v, want exact allow/deny/ask values %#v", stage, settings["permissions"], permissions)
+		}
+		if !reflect.DeepEqual(settings["customSettings"], map[string]any{"feature": "preserve", "enabled": true}) {
+			t.Fatalf("unrelated customSettings after %s = %#v, want preserved", stage, settings["customSettings"])
+		}
+		gotHooks := getPreToolUseEntries(settings)
+		if !reflect.DeepEqual(gotHooks, wantHooks) {
+			t.Fatalf("PreToolUse hooks after %s = %#v, want %#v", stage, gotHooks, wantHooks)
+		}
+	}
+
+	if err := RegisterMemoryGuardHook(cfg); err != nil {
+		t.Fatalf("RegisterMemoryGuardHook() legacy upgrade error = %v", err)
+	}
+	registeredHooks := []any{
+		upstreamEntry,
+		map[string]any{"matcher": MemoryGuardLegacyToolMatcher, "hooks": []any{sharedForeignHook}},
+		foreignEntry,
+		map[string]any{"matcher": MemoryGuardToolMatcher(), "hooks": []any{map[string]any{"type": "command", "command": MemoryGuardCommand}}},
+	}
+	assertPreserved("legacy upgrade", registeredHooks)
+	first, err := os.ReadFile(cfg.SettingsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RegisterMemoryGuardHook(cfg); err != nil {
+		t.Fatalf("RegisterMemoryGuardHook() re-register error = %v", err)
+	}
+	assertPreserved("re-registration", registeredHooks)
+	second, err := os.ReadFile(cfg.SettingsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(second) != string(first) {
+		t.Fatalf("re-registration changed settings bytes:\nfirst: %s\nsecond: %s", first, second)
+	}
+
+	if err := UnregisterMemoryGuardHook(cfg); err != nil {
+		t.Fatalf("UnregisterMemoryGuardHook() error = %v", err)
+	}
+	assertPreserved("unregistration", []any{
+		upstreamEntry,
+		map[string]any{"matcher": MemoryGuardLegacyToolMatcher, "hooks": []any{sharedForeignHook}},
+		foreignEntry,
+	})
 }
 
 func TestManagedSettingsProjectionHash_TreatsLegacyGuardEntryAsOwned(t *testing.T) {
