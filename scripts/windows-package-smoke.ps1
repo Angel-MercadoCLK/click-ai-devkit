@@ -25,6 +25,9 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or
 
 function Assert-Contains {
   param([string]$Actual, [string]$Expected, [string]$Context)
+  if ([string]::IsNullOrEmpty($Actual)) {
+    throw "$Context produced no output; expected '$Expected'."
+  }
   if (-not $Actual.Contains($Expected)) {
     throw "$Context did not contain '$Expected'. Actual: $Actual"
   }
@@ -288,8 +291,11 @@ update suffix sentinel
   if ($LASTEXITCODE -ne 0) { throw "click uninstall reported a teardown failure ($LASTEXITCODE)" }
 
   foreach ($path in @((Join-Path $homeClaude 'CLAUDE.md'), (Join-Path $homeCodex 'AGENTS.md'), (Join-Path $homeOpenClaw 'workspace\AGENTS.md'))) {
-    if ((Test-Path -LiteralPath $path) -and (Get-Content -Raw -LiteralPath $path).Contains('managed by click')) {
-      throw "click uninstall left Click-managed guidance in $path"
+    if (Test-Path -LiteralPath $path) {
+      $guidance = [System.IO.File]::ReadAllText($path)
+      if ($guidance.Contains('managed by click')) {
+        throw "click uninstall left Click-managed guidance in $path"
+      }
     }
   }
   $remainingPlugins = Get-Content -LiteralPath $pluginState -Raw | ConvertFrom-Json
@@ -350,6 +356,19 @@ update suffix sentinel
       $retirementBackup.pluginConfig.options.sentinel -ne 'preserve') {
     throw 'Retirement backup did not preserve the exact Click SDD user plugin options'
   }
+} catch {
+  $scriptLine = $null
+  if ($null -ne $_.InvocationInfo) {
+    $scriptLine = $_.InvocationInfo.ScriptLineNumber
+  }
+  if ($null -eq $scriptLine -or $scriptLine -eq 0) {
+    $scriptLine = 'unknown'
+  }
+  [Console]::Error.WriteLine("Windows package smoke failed at script line $scriptLine.")
+  if (-not [string]::IsNullOrEmpty($_.ScriptStackTrace)) {
+    [Console]::Error.WriteLine($_.ScriptStackTrace)
+  }
+  throw
 } finally {
   foreach ($name in $environmentNames) {
     [System.Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process')

@@ -164,6 +164,13 @@ Bounded delegated Luna-high correction: add a failing regression for the smoke f
 
 Local T11c-MCP evidence: Luna high added `TestMergeClaudeMCPProducesPinnedPreflightCompatibleConfig`, observed rejection of the old HTTP shape before correcting the fixture, then GREEN. The regression invokes production preflight read-only and checks unrelated MCP/root content preservation. Focused fixture/manifest tests, full Go tests, build, vet, diff check and fixture Windows cross-compilation passed; parent readback and focused rerun passed. Only fake dependency configuration changes; no production ownership rule changed. Hosted smoke rerun pending.
 
+### T11c-PS — [ ] diagnose nullable PowerShell file reads
+
+<!-- click:allow-secret public GitHub Actions run/job identifiers, not personal data or credentials. -->
+Third hosted run [38114600931](https://github.com/Angel-MercadoCLK/click-ai-devkit/actions/runs/38114600931), head `f1d4792`, passed both OS test suites and package build. Smoke failed with a null-valued method call; the runner hid the internal script line. The earlier Context7 conflict no longer appeared. Source shows an unsafe direct `(Get-Content -Raw ...).Contains(...)` after uninstall, where a legitimately empty retained guidance file is possible; this is a hypothesis until rerun diagnostics localize it.
+
+Bounded delegated correction: make the teardown text read null-safe without accepting remaining managed content; add explicit contextual failure for empty required assertion inputs and a script error location/stack diagnostic. Preserve all lifecycle assertions, safety guard, finally cleanup and nonzero failure. Add focused contract regressions before changing the script, then full checks and native risk assessment. Parent owns memory, commit and remote; no real-profile execution, merge or release.
+
 ## Historical tracker source
 
 The complete original narrative before this compaction is at immutable commit `363f18c:odd/tasks/gentle-ai-distribution.md`; `55c523b` remains an earlier detailed history locator. If exact historical proof is needed, read that version; do not silently promote an abbreviated hash or a historical warning into a current approval.

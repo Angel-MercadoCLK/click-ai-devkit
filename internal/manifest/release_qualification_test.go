@@ -130,6 +130,30 @@ func TestWindowsPackageSmokeUsesHermeticLifecycleAndRestoresEnvironment(t *testi
 	}
 }
 
+func TestWindowsPackageSmokeHandlesEmptyGuidanceAndReportsScriptLocation(t *testing.T) {
+	path := filepath.Join("..", "..", "scripts", "windows-package-smoke.ps1")
+	script, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", path, err)
+	}
+	text := string(script)
+	for _, expected := range []string{
+		"$guidance = [System.IO.File]::ReadAllText($path)",
+		"if ($guidance.Contains('managed by click'))",
+		"if ([string]::IsNullOrEmpty($Actual))",
+		"$_.InvocationInfo.ScriptLineNumber",
+		"$_.ScriptStackTrace",
+		"if (-not $Actual.Contains($Expected))",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("Windows package smoke missing nullable-output diagnostic contract %q", expected)
+		}
+	}
+	if strings.Contains(text, "(Get-Content -Raw -LiteralPath $path).Contains('managed by click')") {
+		t.Fatal("empty managed guidance must be read as a non-null string before searching")
+	}
+}
+
 func TestWindowsSmokeGoFixtureEnforcesPinnedProvisioningAndStagesItsBinary(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 	goBinary := filepath.Join(t.TempDir(), "go-fixture")
