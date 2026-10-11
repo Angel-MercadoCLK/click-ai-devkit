@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -25,45 +26,26 @@ func TestMarketplaceManifest_Parses(t *testing.T) {
 	if manifest.Name != marketplaceName {
 		t.Fatalf("marketplace name = %q, want %q", manifest.Name, marketplaceName)
 	}
-	if len(manifest.Plugins) != 4 {
-		t.Fatalf("marketplace plugins = %d, want 4", len(manifest.Plugins))
+	wantPlugins := []string{"click-memory", "click-review", "click-skills"}
+	gotPlugins := make([]string, 0, len(manifest.Plugins))
+	for _, plugin := range manifest.Plugins {
+		gotPlugins = append(gotPlugins, plugin.Name)
+	}
+	if !reflect.DeepEqual(gotPlugins, wantPlugins) {
+		t.Fatalf("marketplace plugins = %#v, want active plugins %#v", gotPlugins, wantPlugins)
 	}
 }
 
-func TestClickSDDPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
-	assertPluginStructure(t, filepath.Join("plugins", "click-sdd"), "click-sdd", []string{
-		filepath.Join("agents", "click-orchestrator.md"),
-		filepath.Join("agents", "click-prd-writer.md"),
-		filepath.Join("agents", "click-architect.md"),
-		filepath.Join("agents", "click-reviewer.md"),
-		filepath.Join("agents", "click-memory-curator.md"),
-		filepath.Join("agents", "click-elicitor.md"),
-		filepath.Join("agents", "click-explore.md"),
-		filepath.Join("agents", "click-apply.md"),
-		filepath.Join("agents", "click-archive.md"),
-		filepath.Join("agents", "click-onboard.md"),
-		filepath.Join("agents", "click-jd-judge-a.md"),
-		filepath.Join("agents", "click-jd-judge-b.md"),
-		filepath.Join("agents", "click-jd-fix-agent.md"),
-		filepath.Join("agents", "click-review-risk.md"),
-		filepath.Join("agents", "click-review-readability.md"),
-		filepath.Join("agents", "click-review-reliability.md"),
-		filepath.Join("agents", "click-review-resilience.md"),
-		filepath.Join("agents", "click-review-refuter.md"),
-		filepath.Join("skills", "explore", "SKILL.md"),
-		filepath.Join("skills", "propose", "SKILL.md"),
-		filepath.Join("skills", "spec", "SKILL.md"),
-		filepath.Join("skills", "design", "SKILL.md"),
-		filepath.Join("skills", "tasks", "SKILL.md"),
-		filepath.Join("skills", "apply", "SKILL.md"),
-		filepath.Join("skills", "verify", "SKILL.md"),
-		filepath.Join("skills", "archive", "SKILL.md"),
-		filepath.Join("skills", "onboard", "SKILL.md"),
-		filepath.Join("skills", "jd-judge-a", "SKILL.md"),
-		filepath.Join("skills", "jd-judge-b", "SKILL.md"),
-		filepath.Join("skills", "jd-fix-agent", "SKILL.md"),
-		filepath.Join("skills", "agent-builder", "SKILL.md"),
-	})
+func TestManagedPluginNamesExcludesRetiredClickSDD(t *testing.T) {
+	if got, want := ManagedPluginNames(), []string{"click-memory", "click-review", "click-skills"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ManagedPluginNames() = %#v, want %#v", got, want)
+	}
+}
+
+func TestClickSDDPluginSourceIsRetired(t *testing.T) {
+	if _, err := os.Stat(filepath.Join("..", "..", "plugins", "click-sdd")); !os.IsNotExist(err) {
+		t.Fatalf("plugins/click-sdd still exists, want retired source tree absent: %v", err)
+	}
 }
 
 func TestClickMemoryPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
@@ -83,6 +65,13 @@ func TestClickReviewPlugin_ManifestAndFilesAreStructurallyValid(t *testing.T) {
 		filepath.Join("skills", "pr-review", "SKILL.md"),
 		filepath.Join("skills", "pre-merge-checklist", "SKILL.md"),
 	})
+
+	checklist := string(mustReadRepoFile(t, "plugins", "click-review", "skills", "pre-merge-checklist", "SKILL.md"))
+	for _, policy := range []string{"policy numbers", "claim identifiers", "customer identifiers", "monetary business data", "memory policy"} {
+		if !strings.Contains(checklist, policy) {
+			t.Errorf("retained pre-merge checklist is missing Click insurance/data policy %q", policy)
+		}
+	}
 }
 
 func TestInstalledPluginPath_UsesRegistryInstallPath(t *testing.T) {
@@ -138,8 +127,8 @@ func TestListClickPlugins_DistinguishesEnabledFromDisabled(t *testing.T) {
 	for _, s := range statuses {
 		byName[s.Name] = s
 	}
-	if sdd := byName["click-sdd"]; !sdd.Installed || !sdd.Enabled {
-		t.Fatalf("click-sdd = %+v, want Installed && Enabled", sdd)
+	if _, present := byName["click-sdd"]; present {
+		t.Fatalf("ListClickPlugins() reports retired click-sdd: %+v", byName["click-sdd"])
 	}
 	if mem := byName["click-memory"]; !mem.Installed || mem.Enabled {
 		t.Fatalf("click-memory = %+v, want Installed but NOT Enabled (registered but disabled)", mem)

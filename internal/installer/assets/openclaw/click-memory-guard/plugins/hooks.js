@@ -9,7 +9,7 @@
  * discarded on the next sync.
  *
  * Anti-corruption adapter (OCG-2/OCG-3): this file NEVER reimplements internal/guard's scanning
- * logic. It only (1) recognizes an OpenClaw call to Engram's mem_save tool, (2) rewrites it into the
+ * logic. It only (1) recognizes an OpenClaw call to any Engram tool that persists content (mem_save, mem_update, ...), (2) rewrites it into the
  * exact `preToolUsePayload` JSON shape internal/cli/memoryguard.go's runMemoryGuard already expects,
  * (3) spawns the existing, already-tested `click memory-guard` binary with that JSON on stdin, and
  * (4) maps its exit-code/stdout back to OpenClaw's block/allow semantics. Fail-closed throughout
@@ -20,34 +20,46 @@
 
 const { spawn } = require('node:child_process');
 
-// ENGRAM_TOOL_NAME_CANDIDATES — VERIFY-AT-APPLY (design #1666, "Verify-at-apply-time" item 1): the
-// exact tool name OpenClaw's before_tool_call hook sees for the Engram MCP server's mem_save tool is
-// UNCONFIRMED (no live OpenClaw runtime was available to this apply session). The primary candidate,
-// `mcp__engram__mem_save`, is a DOCUMENTED BEST GUESS assuming OpenClaw follows the common
-// `mcp__<server>__<tool>` MCP tool-naming convention — NOT Claude Code's plugin-wrapped
-// `mcp__plugin_<plugin>_<server>__<tool>` scheme, because there is no plugin-marketplace wrapping
-// layer on the OpenClaw side the way there is for Claude Code's engram@engram plugin. NOTE: the
-// premise that OpenClaw registers Engram as a raw top-level "mcpServers" entry was WRONG — real
-// `validate config` evidence proved OpenClaw's schema has no such key, and
-// internal/installer/openclaw.go's SyncOpenClawMCPConfig no longer writes it (cleanup-only now,
-// pending OpenClaw's confirmed native MCP registration mechanism). This candidate list is kept as a
-// best guess until that mechanism is confirmed and wired. The other two candidates from the design
-// are also checked, so a small naming variance doesn't silently disable scanning.
-//
-// The explicit list documents known variants; isEngramMemSaveTool also has a conservative fallback
-// for names that still identify both Engram and mem_save.
-const ENGRAM_TOOL_NAME_CANDIDATES = [
-  'mcp__engram__mem_save',
-  'engram__mem_save',
-  'engram.mem_save',
+// PERSISTING_ENGRAM_TOOLS is this adapter's copy of internal/guard's persisting-tool set
+// (guard.PersistingEngramTools in tools.go — the single source of truth). hooks.js cannot import Go,
+// so internal/guard/tools_openclaw_test.go fails the build if the two lists ever drift. Read-only
+// Engram tools (mem_search, mem_context, mem_get_observation, ...) are deliberately absent.
+const PERSISTING_ENGRAM_TOOLS = [
+  'mem_capture_passive',
+  'mem_compare',
+  'mem_judge',
+  'mem_save',
+  'mem_save_prompt',
+  'mem_session_end',
+  'mem_session_summary',
+  'mem_update',
 ];
 
-// CANONICAL_TOOL_NAME is the exact string internal/installer/hooksettings.go's
-// MemoryGuardToolMatcher expects — Claude Code's own plugin-scoped tool name. Rewriting every
-// matched OpenClaw call to this value (OCG-3) means click memory-guard's Go matcher never has to
-// learn OpenClaw's own naming — the redundant Go-side check in evaluateMemoryGuard stays a harmless
-// safety net, never the actual gate.
-const CANONICAL_TOOL_NAME = 'mcp__plugin_engram_engram__mem_save';
+// ENGRAM_TOOL_PREFIXES — VERIFY-AT-APPLY (design #1666, "Verify-at-apply-time" item 1): the exact
+// tool name OpenClaw's before_tool_call hook sees for the Engram MCP server's tools is UNCONFIRMED
+// (no live OpenClaw runtime was available, and OpenClaw enforcement has NOT been verified at
+// runtime). `mcp__engram__<tool>` is a DOCUMENTED BEST GUESS assuming OpenClaw follows the common
+// `mcp__<server>__<tool>` MCP naming convention; Claude Code's plugin-wrapped
+// `mcp__plugin_engram_engram__<tool>` is accepted too, along with the `engram__<tool>` and
+// `engram.<tool>` variants from the original design. NOTE: the premise that OpenClaw registers
+// Engram as a raw top-level "mcpServers" entry was WRONG — real `validate config` evidence proved
+// OpenClaw's schema has no such key, and internal/installer/openclaw.go's SyncOpenClawMCPConfig no
+// longer writes it (cleanup-only now). The prefix list is a best guess until that mechanism is
+// confirmed; resolvePersistingTool also has a conservative fallback for names that still identify
+// both Engram and a persisting tool.
+const ENGRAM_TOOL_PREFIXES = [
+  'mcp__plugin_engram_engram__',
+  'mcp__engram__',
+  'engram__',
+  'engram.',
+];
+
+// CANONICAL_TOOL_PREFIX is the plugin-scoped prefix Claude Code uses
+// (internal/installer/hooksettings.go's MemoryGuardToolMatcher accepts it). Rewriting every matched
+// OpenClaw call to CANONICAL_TOOL_PREFIX + <the same tool> (OCG-3) means click memory-guard's Go
+// side never has to learn OpenClaw's own naming — the Go-side tool check stays a harmless safety
+// net, never the actual gate.
+const CANONICAL_TOOL_PREFIX = 'mcp__plugin_engram_engram__';
 
 // CLICK_BIN is templated at install/update time by openclawplugin.go's SyncOpenClawPlugin: the
 // absolute path from os.Executable() (OCG-5), with backslashes doubled and single quotes escaped so
@@ -60,19 +72,38 @@ const CLICK_BIN = '{{CLICK_BIN}}';
 
 // SPAWN_TIMEOUT_MS bounds how long this adapter waits for `click memory-guard` before treating the
 // call as failed (fail-closed) — protects against a hung child process silently blocking every
-// mem_save call forever, while still failing CLOSED (never open) when the timeout fires.
+// persisting Engram call forever, while still failing CLOSED (never open) when the timeout fires.
 const SPAWN_TIMEOUT_MS = 10000;
 
-// isEngramMemSaveTool reports whether toolName matches an explicit candidate or its lowercase form
-// contains both "engram" and "mem_save". This is the ONLY function that decides whether a call gets
-// scanned at all (threat-matrix row "Tool-name bypass"). The fallback fails safe toward scanning
-// novel Engram mem_save naming variants while requiring both markers to avoid scanning unrelated
-// tools.
-function isEngramMemSaveTool(toolName) {
-  if (typeof toolName !== 'string') return false;
-  if (ENGRAM_TOOL_NAME_CANDIDATES.indexOf(toolName) !== -1) return true;
+// resolvePersistingTool returns the bare persisting Engram tool name (e.g. 'mem_update') that
+// toolName refers to, or null when the call must not be scanned. An exact `<prefix><tool>` match
+// wins; otherwise a conservative fallback applies: a lowercase name containing "engram" AND a
+// persisting tool name resolves to the LONGEST such tool (so mem_save_prompt is never collapsed into
+// mem_save). The fallback fails safe toward scanning novel Engram naming variants while requiring
+// both markers to avoid scanning unrelated tools.
+function resolvePersistingTool(toolName) {
+  if (typeof toolName !== 'string') return null;
+  for (const prefix of ENGRAM_TOOL_PREFIXES) {
+    if (toolName.indexOf(prefix) === 0) {
+      const bare = toolName.slice(prefix.length);
+      if (PERSISTING_ENGRAM_TOOLS.indexOf(bare) !== -1) return bare;
+    }
+  }
   const lowerToolName = toolName.toLowerCase();
-  return lowerToolName.indexOf('engram') !== -1 && lowerToolName.indexOf('mem_save') !== -1;
+  if (lowerToolName.indexOf('engram') === -1) return null;
+  let best = null;
+  for (const tool of PERSISTING_ENGRAM_TOOLS) {
+    if (lowerToolName.indexOf(tool) !== -1 && (best === null || tool.length > best.length)) {
+      best = tool;
+    }
+  }
+  return best;
+}
+
+// isPersistingEngramTool is the ONLY predicate that decides whether a call gets scanned at all
+// (threat-matrix row "Tool-name bypass").
+function isPersistingEngramTool(toolName) {
+  return resolvePersistingTool(toolName) !== null;
 }
 
 // buildPreToolUsePayload maps an OpenClaw before_tool_call event to the EXACT JSON shape
@@ -89,11 +120,14 @@ function isEngramMemSaveTool(toolName) {
 // (title/content/type/...) exactly as OpenClaw received it from the calling agent, mirroring how
 // Claude Code's own PreToolUse hook receives tool_input.
 function buildPreToolUsePayload(event) {
+  const tool = resolvePersistingTool(event && event.tool_name);
   return {
     session_id: (event && event.session_id) || '',
     cwd: (event && event.cwd) || '',
     hook_event_name: 'PreToolUse',
-    tool_name: CANONICAL_TOOL_NAME,
+    // Unreachable fallback (callers only build payloads for recognized tools): keep the raw name so
+    // the Go side, which only scans persisting tools, never silently treats it as a scanned tool.
+    tool_name: tool === null ? (event && event.tool_name) : CANONICAL_TOOL_PREFIX + tool,
     tool_input: event ? event.tool_input : undefined,
   };
 }
@@ -224,10 +258,11 @@ async function beforeToolCall(event, deps) {
   const spawnFn = deps && deps.spawnFn;
   const toolName = event && event.tool_name;
 
-  // Threat-matrix row "Tool-name bypass": a tool that is NOT the engram mem_save call is allowed
-  // through untouched — this adapter must never scan unrelated tool calls. The engram tool itself,
-  // by contrast, is ALWAYS scanned below; there is no code path that lets it through unchecked.
-  if (!isEngramMemSaveTool(toolName)) {
+  // Threat-matrix row "Tool-name bypass": a tool that is NOT a persisting Engram call is allowed
+  // through untouched — this adapter must never scan unrelated tool calls. A persisting Engram
+  // tool, by contrast, is ALWAYS scanned below; there is no code path that lets it through
+  // unchecked.
+  if (!isPersistingEngramTool(toolName)) {
     return { block: false };
   }
 
@@ -236,7 +271,7 @@ async function beforeToolCall(event, deps) {
   try {
     payloadJSON = JSON.stringify(payload);
   } catch (marshalErr) {
-    // Fail-closed even when the payload itself cannot be serialized — an engram mem_save call must
+    // Fail-closed even when the payload itself cannot be serialized — a persisting engram call must
     // never slip through just because its tool_input is unusual (e.g. contains a circular
     // reference or a BigInt).
     return { block: true, reason: 'click memory-guard: unable to build scan payload' };
@@ -253,10 +288,12 @@ module.exports = {
   beforeToolCall: beforeToolCall,
   before_tool_call: beforeToolCall,
   default: beforeToolCall,
-  ENGRAM_TOOL_NAME_CANDIDATES: ENGRAM_TOOL_NAME_CANDIDATES,
-  CANONICAL_TOOL_NAME: CANONICAL_TOOL_NAME,
+  PERSISTING_ENGRAM_TOOLS: PERSISTING_ENGRAM_TOOLS,
+  ENGRAM_TOOL_PREFIXES: ENGRAM_TOOL_PREFIXES,
+  CANONICAL_TOOL_PREFIX: CANONICAL_TOOL_PREFIX,
   CLICK_BIN: CLICK_BIN,
-  isEngramMemSaveTool: isEngramMemSaveTool,
+  resolvePersistingTool: resolvePersistingTool,
+  isPersistingEngramTool: isPersistingEngramTool,
   buildPreToolUsePayload: buildPreToolUsePayload,
   runClickMemoryGuard: runClickMemoryGuard,
 };

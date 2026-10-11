@@ -2,6 +2,10 @@
 
 > Status: draft v0.1. Grounded in `00-decisions-and-open-questions.md` (D1–D20).
 
+> **Historical scope baseline.** The old SDD engine and ownership statements below are retained for
+> traceability, not as current scope. See D48–D53 and [`README.md`](README.md) for the current
+> Gentle AI and Click boundaries.
+
 ## 1. In scope vs out of scope
 
 ### In scope (v0.1)

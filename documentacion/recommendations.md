@@ -2,6 +2,10 @@
 
 # click-ai-devkit — Recommendations
 
+> **Historical planning recommendations.** These proposals predate D48–D53 and are not current
+> implementation instructions. Use [`README.md`](README.md) and `00-decisions-and-open-questions.md`
+> for the current distribution and ownership contracts.
+
 > Audience: decision-makers and engineers closing out v0.1 planning. This document does not
 > re-litigate locked decisions or re-derive scope — it reads `00-decisions-and-open-questions.md`,
 > `implementation-plan.md`, `tech-spec.md`, `mvp-scope.md`, and `adoption-plan.md` as ground truth

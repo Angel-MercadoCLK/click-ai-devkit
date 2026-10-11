@@ -163,13 +163,13 @@ func TestConfigureTargetsMenuItemIsActiveAndDispatchable(t *testing.T) {
 	}
 }
 
-func TestConfigureOpenClawModelMenuItemRequiresExplicitRefs(t *testing.T) {
-	idx := firstItemIndexWhere(t, func(it Item) bool { return it.Action == ActionConfigureOpenClawModel })
-	if !Items[idx].Active || Items[idx].Label != "Configurar modelo nativo de OpenClaw" {
-		t.Fatalf("configure OpenClaw model item = %+v, want active Spanish menu row", Items[idx])
-	}
-	if got := ActionArgs(ActionConfigureOpenClawModel); len(got) != 1 || got[0] != "configure-openclaw-model" {
-		t.Fatalf("ActionArgs(configure OpenClaw model) = %v, want command without guessed model refs", got)
+func TestDefaultMenuOmitsRetiredModelSelectors(t *testing.T) {
+	for _, retired := range []string{"configure-models", "configure-openclaw-model"} {
+		for _, item := range DefaultItems() {
+			if item.Action == retired || strings.Contains(item.Label, "Configurar modelo") {
+				t.Errorf("default menu contains retired model selector: %+v", item)
+			}
+		}
 	}
 }
 
@@ -189,33 +189,6 @@ func TestModel_View_RendersGroupedSections(t *testing.T) {
 		if !strings.Contains(view, heading) {
 			t.Fatalf("View() missing grouped heading %q:\n%s", heading, view)
 		}
-	}
-}
-
-func TestModel_View_UnavailableNativeActionUsesUnavailableSuffix(t *testing.T) {
-	defer setItemsForTest(t, []Item{{Label: "Configurar modelo nativo de OpenClaw", Action: ActionConfigureOpenClawModel, Group: "Configuración", Hint: "OpenClaw native model action is unavailable.", InactiveLabel: "no disponible", Active: false}})()
-
-	view := NewModel().View()
-	if !strings.Contains(view, "Configurar modelo nativo de OpenClaw (no disponible)") {
-		t.Fatalf("View() missing unavailable suffix for the native OpenClaw action:\n%s", view)
-	}
-}
-
-func TestModel_Update_EnterOnUnavailableItemShowsGuidanceAndDoesNotQuit(t *testing.T) {
-	defer setItemsForTest(t, []Item{{Label: "Configurar modelo nativo de OpenClaw", Action: ActionConfigureOpenClawModel, Group: "Configuración", Hint: "OpenClaw native model action is unavailable until the contract is qualified.", InactiveLabel: "no disponible", Active: false}})()
-
-	m := NewModel()
-	m.Cursor = 0
-
-	m, cmd := updateModel(m, keyMsg("enter"))
-	if m.Chosen != "" {
-		t.Fatalf("Chosen = %q after selecting an unavailable item, want empty", m.Chosen)
-	}
-	if !strings.Contains(m.StatusMsg, "contract is qualified") {
-		t.Fatalf("StatusMsg = %q, want the unavailable guidance", m.StatusMsg)
-	}
-	if cmd != nil {
-		t.Fatal("Update(enter) on an unavailable item returned a non-nil tea.Cmd, want nil")
 	}
 }
 
@@ -347,16 +320,15 @@ func TestModel_View_InertItemsShowComingSoonSuffix(t *testing.T) {
 
 func TestActionArgs_MapsEachActiveDispatchableAction(t *testing.T) {
 	cases := map[string][]string{
-		ActionInstall:         {"install"},
-		ActionUpdate:          {"update"},
-		ActionConfigureModels: {"configure-models"},
-		ActionAgentBuilder:    {"agent-builder"},
-		ActionDoctor:          {"doctor"},
-		ActionTargets:         {"targets"},
-		ActionUninstall:       {"uninstall"},
-		ActionManageBackups:   {"manage-backups"},
-		ActionRollback:        {"rollback"},
-		ActionPlugins:         {"plugins"},
+		ActionInstall:       {"install"},
+		ActionUpdate:        {"update"},
+		ActionAgentBuilder:  {"agent-builder"},
+		ActionDoctor:        {"doctor"},
+		ActionTargets:       {"targets"},
+		ActionUninstall:     {"uninstall"},
+		ActionManageBackups: {"manage-backups"},
+		ActionRollback:      {"rollback"},
+		ActionPlugins:       {"plugins"},
 	}
 	for action, want := range cases {
 		got := ActionArgs(action)
@@ -375,6 +347,14 @@ func TestActionArgs_QuitAndUnknownReturnNil(t *testing.T) {
 	for _, action := range []string{ActionQuit, "", "not-a-real-action"} {
 		if got := ActionArgs(action); got != nil {
 			t.Errorf("ActionArgs(%q) = %v, want nil", action, got)
+		}
+	}
+}
+
+func TestActionArgs_RetiredModelSelectorsDoNotDispatch(t *testing.T) {
+	for _, action := range []string{"configure-models", "configure-openclaw-model"} {
+		if got := ActionArgs(action); got != nil {
+			t.Errorf("ActionArgs(%q) = %v, want nil for retired model selector", action, got)
 		}
 	}
 }

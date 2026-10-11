@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -19,14 +20,14 @@ func installWriteSteps(cfg installer.Config, cloudResolvable bool) []string {
 	return actionLabels(plan.InstallActionKinds(), actionLabelOptions{})
 }
 
-func installWriteStepsForSelection(cfg installer.Config, cloudResolvable bool, selection installer.TargetSelection, codexNativeModel, openClawNativeModel bool) []string {
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel, OpenClawNativeModel: openClawNativeModel})
+func installWriteStepsForSelection(cfg installer.Config, cloudResolvable bool, selection installer.TargetSelection) []string {
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable})
 	return actionLabels(plan.InstallActionKinds(), actionLabelOptions{})
 }
 
-func updateWriteSteps(engramVersion string, cfg installer.Config, cloudResolvable, codexNativeModel bool) []string {
+func updateWriteSteps(engramVersion string, cfg installer.Config, cloudResolvable bool) []string {
 	selection := installer.TargetSelection{Configured: true, Claude: cfg.ClaudeHome != "", OpenClaw: cfg.OpenClawHome != "", Codex: cfg.CodexHome != ""}
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable})
 	return actionLabels(plan.UpdateActionKinds(), actionLabelOptions{engramVersion: engramVersion, updateMode: true})
 }
 
@@ -35,17 +36,17 @@ func updateWriteSteps(engramVersion string, cfg installer.Config, cloudResolvabl
 // shared per-target write-step builder reused by both installWriteSteps and updateWriteSteps
 // (task 2.18's REFACTOR) so the two commands' preview lists can never drift from each other for the
 // OpenClaw portion either. Order matches where install.go/update.go actually run these writes:
-// LAST, after every other write step, mirroring how they're appended here.
+// before OpenClaw synchronization, so legacy workflow paths cannot be refreshed after retirement.
 func openClawWriteSteps(cfg installer.Config) []string {
 	if cfg.OpenClawHome == "" {
 		return nil
 	}
 	return []string{
+		"Retirando skills heredadas de OpenClaw…",
 		"Actualizando AGENTS.md y SOUL.md de OpenClaw…",
 		"Limpiando configuración inválida heredada de OpenClaw…",
 		"Instalando plugin de memory-guard para OpenClaw…",
 		"Sincronizando skills de Click en OpenClaw…",
-		"Guardando recomendación de modelos para OpenClaw…",
 	}
 }
 
@@ -64,11 +65,13 @@ func actionLabels(kinds []installer.StepActionKind, options actionLabelOptions) 
 
 func actionLabel(kind installer.StepActionKind, options actionLabelOptions) string {
 	switch kind {
+	case installer.StepActionSyncGentleAI:
+		return "Verificando gentle-ai: conservar el pin si coincide; instalar si falta o volver a fijarlo si difiere (puede degradar una versión más reciente)…"
 	case installer.StepActionSyncMarketplacePlugins:
 		if options.updateMode {
-			return "Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…"
+			return "Retirando click-sdd y sincronizando click-memory, click-review y click-skills…"
 		}
-		return "Registrando plugins click-sdd, click-memory, click-review y click-skills…"
+		return "Retirando click-sdd y registrando click-memory, click-review y click-skills…"
 	case installer.StepActionSyncEngram:
 		if options.engramVersion != "" {
 			return fmt.Sprintf("Sincronizando Engram (pin %s)…", options.engramVersion)
@@ -93,20 +96,12 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 			return "Re-registrando memory-guard…"
 		}
 		return "Registrando memory-guard…"
-	case installer.StepActionSaveModels:
-		return "Guardando modelos por fase de click-sdd…"
-	case installer.StepActionRemoveModels:
-		return "Quitando modelos por fase de click-sdd…"
 	case installer.StepActionRemoveEngramCloudState:
 		return "Quitando registro local de Engram Cloud…"
 	case installer.StepActionSyncCodexGuidance:
 		return "Actualizando AGENTS.md de Codex…"
 	case installer.StepActionSyncCodexMCP:
 		return "Registrando Engram en Codex (MCP)…"
-	case installer.StepActionSaveCodexModelProfile:
-		return "Guardando perfil de modelos de Codex (referencia)…"
-	case installer.StepActionConfigureCodexNativeModel:
-		return "Configurando modelo nativo de Codex en config.toml (selección explícita)…"
 	case installer.StepActionSyncOpenClawWorkspace:
 		return "Actualizando AGENTS.md y SOUL.md de OpenClaw…"
 	case installer.StepActionSyncOpenClawMCP:
@@ -117,13 +112,8 @@ func actionLabel(kind installer.StepActionKind, options actionLabelOptions) stri
 		return "Instalando plugin de memory-guard para OpenClaw…"
 	case installer.StepActionSyncOpenClawSkills:
 		return "Sincronizando skills de Click en OpenClaw…"
-	case installer.StepActionSyncOpenClawModelProfile:
-		if options.engramVersion != "" {
-			return "Guardando recomendación de modelos para OpenClaw…"
-		}
-		return "Guardando metadatos de modelos para OpenClaw…"
-	case installer.StepActionConfigureOpenClawNativeModel:
-		return "Configurando modelo nativo de OpenClaw mediante su CLI (selección explícita)…"
+	case installer.StepActionRetireLegacyOpenClawSkills:
+		return "Retirando skills heredadas de OpenClaw…"
 	default:
 		return string(kind)
 	}
@@ -143,13 +133,21 @@ func renderWritePlan(out io.Writer, r *ui.Renderer, cfg installer.Config, plan i
 		filepath.Join(cfg.BackupDir(), "latest"),
 	)))
 	if cfg.OpenClawHome != "" {
-		fmt.Fprintln(out, r.Info(fmt.Sprintf("OpenClaw recibe configuración nativa mediante su CLI; los metadatos locales se guardan en %s.", cfg.OpenClawModelProfilePath())))
+		fmt.Fprintln(out, r.Info("Los metadatos de modelos existentes de OpenClaw se conservan sin regenerarlos."))
 	}
 	if cfg.CodexHome != "" {
-		fmt.Fprintln(out, r.Info(fmt.Sprintf("Codex recibe orientación en %s; config.toml sólo cambia con selección explícita.", cfg.CodexAgentsMDPath())))
+		fmt.Fprintln(out, r.Info(fmt.Sprintf("Codex recibe orientación en %s; los cambios de MCP no reemplazan los modelos configurados.", cfg.CodexAgentsMDPath())))
 	}
 	if _, err := os.Stat(cfg.TargetSelectionPath()); err == nil {
 		fmt.Fprintln(out, r.Info(fmt.Sprintf("La selección persistente de runtimes se conserva en %s.", cfg.TargetSelectionPath())))
+	}
+	if args := installer.GentleAIInstallArgs(plan.Selection); len(args) > 0 {
+		// Render only: even a version probe would execute upstream before consent.
+		if m, err := manifest.Load(); err == nil {
+			fmt.Fprintln(out, r.Info("Versión fijada de gentle-ai: "+m.GentleAI.Version+"."))
+		}
+		fmt.Fprintln(out, r.Info("Se usará el binario gentle-ai gestionado por Click en ~/.click/bin, no otro binario del PATH."))
+		fmt.Fprintln(out, r.Info("Comando previsto: GENTLE_AI_NO_SELF_UPDATE=1 gentle-ai "+strings.Join(args, " ")))
 	}
 	fmt.Fprintln(out, r.Info("Se aplicarán los siguientes cambios, en este orden:"))
 	for i, step := range steps {
@@ -195,8 +193,14 @@ func confirmProceed(reader *bufio.Reader, out io.Writer, r *ui.Renderer) (bool, 
 //
 // Returns a shared *bufio.Reader that can be used for subsequent prompts (like consent prompt) to
 // consume input in order from a single buffer, avoiding buffered input loss. When nonInteractive is
-// true, returns nil.
+// true, returns nil. --dry-run always renders without confirmation, snapshots or writes.
 func confirmAndSnapshot(cmd *cobra.Command, out io.Writer, r *ui.Renderer, cfg installer.Config, plan installer.TargetPlan, nonInteractive bool, steps []string) (bool, *bufio.Reader, error) {
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	if dryRun {
+		renderWritePlan(out, r, cfg, plan, steps)
+		fmt.Fprintln(out, r.Info("Simulación completada; no se ejecutaron comandos de instalación ni se modificaron archivos."))
+		return false, nil, nil
+	}
 	if !nonInteractive {
 		renderWritePlan(out, r, cfg, plan, steps)
 		reader := bufio.NewReader(cmd.InOrStdin())

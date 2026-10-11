@@ -7,6 +7,60 @@ import (
 	"testing"
 )
 
+func TestSyncCodexGuidance_UsesUpstreamWorkflowAndPreservesUserSections(t *testing.T) {
+	cfg := Config{CodexHome: t.TempDir()}
+	path := cfg.CodexAgentsMDPath()
+	userBefore := "# User Codex rules\nKeep before.\n"
+	upstreamBefore := "<!-- gentle-ai:codex-guidance:start -->\nUpstream Codex policy stays intact.\n<!-- gentle-ai:codex-guidance:end -->\n"
+	upstreamAfter := "\n<!-- gentle-ai:codex-runtime -->\nUpstream Codex runtime note stays intact.\n<!-- /gentle-ai:codex-runtime -->\n"
+	userAfter := "\nKeep after.\n"
+	prefix, suffix := userBefore+upstreamBefore, upstreamAfter+userAfter
+	old := prefix + joinLines(buildManagedBlock("Use Click's portable SDD workflow and click-sdd.")) + suffix
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncCodexGuidance(cfg); err != nil {
+		t.Fatalf("SyncCodexGuidance() refresh error = %v", err)
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok, err := ManagedBlockBody(path)
+	if err != nil || !ok {
+		t.Fatalf("ManagedBlockBody() = %q, %v, %v; want managed block", body, ok, err)
+	}
+	for _, obsolete := range []string{"portable SDD workflow", "click-sdd", "explore, propose, spec, design, tasks, apply, verify, and archive"} {
+		if strings.Contains(body, obsolete) {
+			t.Errorf("managed Codex guidance contains obsolete workflow %q", obsolete)
+		}
+	}
+	for _, retained := range []string{"gentle-ai", "ODD", "Click does not manage Codex model choices", "click update", "click uninstall"} {
+		if !strings.Contains(body, retained) {
+			t.Errorf("managed Codex guidance missing retained content %q", retained)
+		}
+	}
+	for _, obsolete := range []string{"selected during installation", "configures Codex models"} {
+		if strings.Contains(body, obsolete) {
+			t.Errorf("managed Codex guidance retains retired model-selection claim %q", obsolete)
+		}
+	}
+	expected := prefix + joinLines(buildManagedBlock(DefaultCodexAgentsContent)) + suffix
+	if string(first) != expected {
+		t.Fatalf("refresh changed surrounding or upstream guidance:\nwant: %q\n got: %q", expected, first)
+	}
+	if err := SyncCodexGuidance(cfg); err != nil {
+		t.Fatalf("SyncCodexGuidance() second run error = %v", err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil || string(second) != string(first) {
+		t.Fatalf("second sync changed guidance: first=%q second=%q err=%v", first, second, err)
+	}
+}
+
 func TestStripCodexGuidance_LeavesEmptyFileWhenOnlyBlock(t *testing.T) {
 	claudeHome := t.TempDir()
 	codexHome := t.TempDir()

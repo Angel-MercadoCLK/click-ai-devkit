@@ -32,13 +32,13 @@ func TestTargetsCommand_ReportsSupportedDetectionAndTruthfulCapabilities(t *test
 	report := out.String()
 	for _, want := range []string{
 		"Claude Code: detectado",
-		"flujo completo de plugins, SDD y modelos",
+		"flujo ODD y plugins de Click",
 		"OpenClaw: detectado",
-		"SDD portable, Engram, memory guard y recomendación de modelos",
-		"no aplica modelos nativamente allí",
+		"flujo ODD, Engram y memory guard; Click ya no ofrece selectores de modelo",
+		"herramientas de gentle-ai para roles compatibles y la configuración nativa de OpenClaw",
 		"Codex: detectado",
 		"AGENTS.md gestionado",
-		"no modifica config.toml ni el modelo",
+		"Click no ofrece un selector de modelo para Codex",
 		"Otros runtimes: no soportados todavía",
 	} {
 		if !strings.Contains(report, want) {

@@ -1,62 +1,63 @@
 # click-ai-devkit — contributor guide
 
-`click-ai-devkit` is a Go CLI (`click`) that installs Click Seguros's Claude Code system
-(orchestrator, SDD flow, plugins, memory-guard, pinned Engram) into a developer's `~/.claude`,
-plus the supported OpenClaw-native workflow and Codex `AGENTS.md` guidance when those targets are
-selected. See `documentacion/portability-runbook.md` and `documentacion/codex-target.md`.
+`click-ai-devkit` is a Go installer/manager for Click Seguros guidance and tooling. It layers
+Click-specific business and memory policy, a Claude memory guard, and Engram Cloud enrollment on
+the pinned `gentle-ai` v4.0.0 distribution. Gentle AI owns ODD/RDD workflow, runtime adapters,
+permissions, model selection, Engram lifecycle, and shared Engram/Context7 configuration. Click
+ships three Claude plugins: `click-memory`, `click-review`, and `click-skills`; it no longer ships
+or manages a Click SDD plugin. See `documentacion/README.md` for the current documentation map.
 
-## Build & test
+## Build and test
 
-```
+```sh
 go build ./...
 go test ./...
 ```
 
-**STRICT TDD is mandatory for any Go change.** Write a failing test first (red), then the
-minimal implementation to make it pass (green). Do not skip this — see D13 in
+**Strict TDD is mandatory for any Go change.** Add a focused failing test first, observe RED,
+implement the minimum change, observe GREEN, then refactor. Decision D13 is in
 `documentacion/00-decisions-and-open-questions.md`.
 
-Tests must never touch the real `~/.claude`. Use the `CLICK_CLAUDE_HOME` env var override
-(`t.Setenv("CLICK_CLAUDE_HOME", t.TempDir())`) — see `internal/installer/config.go` and its
-tests for the established pattern.
+Tests must never touch real `~/.claude`, `~/.codex`, or `~/.openclaw` state. Tests that invoke the
+pinned Gentle AI installer isolate `HOME`, `USERPROFILE`, and `XDG_CONFIG_HOME` in `t.TempDir()` and
+use its standard `.claude`, `.codex`, and `.openclaw` subdirectories. Do not set target-root overrides
+in these integration fixtures; the pinned v4.0.0 adapters resolve destinations from process home.
+An isolated regression may assert that a nonstandard configured target is rejected before snapshot,
+provisioning, runner, or configuration writes.
+Other Click-only tests may use target-root overrides where useful.
 
-## Language
+## Language and decisions
 
-Docs, README, code, code comments, commit messages, and PR descriptions are in English. Per D10
-(`documentacion/00-decisions-and-open-questions.md`), dev-facing CLI/TUI **string literals** — the
-text a developer actually sees when running `click` (menu labels, prompts, flag help,
-`click doctor`/`click install` output, etc.) — are Spanish, matching the shipped UI. Do not write
-new dev-facing strings in English or translate existing Spanish ones; do not contradict D10.
+Technical artifacts, code, comments, and documentation default to English. Preserve the existing
+Spanish README convention. Developer-facing CLI/TUI string literals are Spanish, per D10. Read the
+locked decisions before changing behavior; D48–D53 define current distribution and ownership. The
+current contracts and runbooks are linked from
+`documentacion/README.md`.
+
+## Ownership boundaries
+
+- Gentle AI v4.0.0 is pinned and checksum-qualified. The selected target roots must be the standard
+  process-home directories; reject incompatible overrides before mutation (D51).
+- Install/update use the `full-gentleman` preset with `engram,skills,context7,permissions,persona`
+  and the `neutral` persona, limited to selected Claude Code, Codex, and OpenClaw targets (D49).
+- Gentle AI owns permission configuration and allow/deny/ask lists. Click retains its guard and
+  insurance-data policies but does not write permission lists (D52).
+- Click retires model selection and preserves existing model/profile artifacts and native settings.
+  Do not infer role mappings or edit private Gentle AI state (D53).
+- Click owns its business/memory guidance, Claude memory guard and three retained Claude plugins,
+  Codex's managed `AGENTS.md` block, OpenClaw's managed workspace/`clickhola` content, and Click's
+  Engram Cloud enrollment. Gentle AI owns shared Engram/Context7 registration and configuration.
+  Uninstall must preserve shared upstream state.
+- Rollback restores only verifiably Click-owned content. It preserves the current Cloud token,
+  surrounding user content, shared native configuration, and unknown/unqualified paths.
+
+## Claude plugins
+
+The Claude marketplace manifest contains exactly `click-memory`, `click-review`, and `click-skills`.
+Keep `.claude-plugin/marketplace.json`, `internal/installer/plugins.go`, the relevant doctor checks,
+and their tests consistent when changing plugin lifecycle behavior. Do not add Claude plugin
+registration to Codex or OpenClaw.
 
 ## Commits
 
-Conventional commits. No AI attribution in commit messages.
-
-## Decisions
-
-The locked decisions live in `documentacion/00-decisions-and-open-questions.md` (see that file for
-the current range). Read it before changing behavior or docs — do not contradict a locked decision.
-
-In particular: ship and maintain `.claude-plugin/marketplace.json` because Claude Code loads the
-Click plugins through its native `claude plugin` registry flow (D24 supersedes D16). OpenClaw and
-Codex use their own documented target boundaries; do not copy Claude plugin registration into them.
-
-## Plugins
-
-The four plugins (`plugins/click-sdd/`, `plugins/click-memory/`, `plugins/click-review/`,
-`plugins/click-skills/`) are
-served through the repo marketplace manifest. When adding or changing plugin files, keep
-`.claude-plugin/marketplace.json` and the native `claude plugin` install flow consistent.
-(`internal/installer/plugins.go`), the relevant `internal/doctor` check, and their tests
-together — these four stay in sync by convention, not by a generated check.
-
-## SDD phase taxonomy
-
-The real SDD phase chain is 18 phases (was 13 before the 5 review-lens roles landed):
-`default`, `explore`, `propose`, `spec`, `design`, `tasks`, `apply`, `verify`, `archive`,
-`onboard`, `jd-judge-a`, `jd-judge-b`, `jd-fix-agent`, `review-risk`, `review-readability`,
-`review-reliability`, `review-resilience`, `review-refuter`. Each has a `<phase>_model` config key
-in `plugins/click-sdd/.claude-plugin/plugin.json` — see
-`plugins/click-sdd/agents/click-orchestrator.md` for the routing rules. Do not reintroduce the
-deprecated 5-phase taxonomy (`orchestrator`/`prd_writer`/`architect`/`reviewer`/`memory_curator`
-as phase keys) in any new agent, skill, or config file.
+Use Conventional Commits. Never add `Co-Authored-By` or other AI attribution to commits.

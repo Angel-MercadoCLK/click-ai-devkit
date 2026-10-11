@@ -1,43 +1,45 @@
 # click-ai-devkit
 
-CLI en Go (`click`) que instala y gestiona el kit de desarrollo de Click Seguros para Claude Code,
-con soporte adicional para OpenClaw y Codex en sus límites nativos documentados.
+CLI en Go (`click`) que instala y gestiona las herramientas de desarrollo de Click Seguros sobre
+gentle-ai v4.0.0. Gentle AI es dueño del flujo ODD/RDD, permisos, modelos, adaptadores de runtime y
+la configuración compartida de Engram/Context7; Click conserva sus políticas de negocio/memoria,
+la guardia de memoria, tres plugins de Claude Code y la inscripción de Engram Cloud.
 
 ## Qué es / qué hace
 
-`click-ai-devkit` es un instalador y gestor de línea de comandos, escrito en Go, que deja
-configurado el flujo SDD (Spec-Driven Development) interno de la compañía: un orquestador propio
-(`ClickOrchestrator`), agentes y skills especializados, una guardia de memoria determinística, y
-una instancia de Engram (memoria persistente) integrada y fijada a una versión concreta.
+`click-ai-devkit` es un instalador y gestor, no un motor de orquestación propio. Provisiona la
+versión fijada de Gentle AI para los runtimes seleccionados y sincroniza contenido específico de
+Click. Claude Code recibe `click-memory`, `click-review` y `click-skills`; Codex recibe un bloque
+gestionado de `AGENTS.md`; OpenClaw recibe el contenido Click que mantiene este proyecto.
 
-El CLI en sí es deliberadamente delgado: no es el "cerebro" de la orquestación, sino la
-herramienta que registra, actualiza y desinstala el sistema mediante el flujo nativo de Claude Code,
-y escribe la guía/archivos soportados para OpenClaw y Codex sin asumir APIs nativas no verificadas.
-`click doctor` comprueba en cualquier momento que el estado gestionado sigue siendo consistente.
+Click mantiene políticas de negocio/memoria, la guardia de memoria y la inscripción de Engram Cloud.
+Gentle AI es dueño del flujo ODD/RDD, permisos, selección de modelos, adaptadores de runtime y
+configuración compartida de Engram/Context7. `click doctor` ofrece diagnósticos de solo lectura.
 
 ## Requisitos
 
-- **Sistema operativo:** el flujo de instalación soportado y probado es **Windows**, vía Scoop.
-  GoReleaser también publica binarios para macOS y Linux en cada release (ver sección
-  [Instalación](#instalación)), pero hoy no existe un gestor de paquetes (brew, apt, etc.)
-  integrado para esas plataformas; el tap de Homebrew está contemplado pero diferido (ver
-  `.goreleaser.yaml`).
+- **Sistema operativo:** Click se distribuye para Windows mediante Scoop y publica artefactos de
+  release para macOS/Linux. La provisión de gentle-ai v4.0.0 en Windows requiere Go **1.25.10 o
+  posterior**: no hay binario Windows upstream para este pin y Click usa el módulo/tag fijados con
+  `go install`. El smoke del paquete se ejecutó correctamente en un runner desechable de Windows;
+  los CLIs externos se probaron con fixtures offline, sin aprovisionamiento upstream en vivo.
 - **[Scoop](https://scoop.sh/):** gestor de paquetes para Windows usado para instalar y actualizar
   `click`.
 - **Git:** imprescindible por dos motivos independientes:
   - Scoop actualiza sus buckets con `git pull`; si Scoop no tiene git en el PATH,
     `scoop update click` sigue leyendo el manifiesto local desactualizado y reporta la versión
     ya instalada como "la última", aunque exista un release más reciente.
-  - `click install` y `click update` usan git internamente (a través de
-    `claude plugin marketplace add`) para registrar el marketplace de plugins de Click.
+  - Cuando Claude Code está seleccionado, `click install` y `click update` usan Git para agregar el
+    marketplace mediante `claude plugin marketplace add`.
 
   > **Importante:** si una versión nueva de `click` no aparece al actualizar, instale git primero
   > (`scoop install git`) y luego ejecute `scoop update; scoop update click`. Esto es un
-  > requisito propio de Scoop, independiente del git que `click install`/`click update` necesitan
-  > para registrar el marketplace de plugins.
+  > requisito propio de Scoop, independiente de Git, que Click necesita para registrar el
+  > marketplace cuando Claude Code está seleccionado.
 
-- **Go 1.25+ (opcional):** solo necesario si se quiere compilar `click` desde el código fuente en
-  lugar de instalar el binario publicado.
+- **Go 1.25.10+ en Windows:** necesario para que Click provisione gentle-ai v4.0.0.
+- **Go 1.25+ (otras plataformas):** solo necesario si se quiere compilar `click` desde el código
+  fuente en lugar de instalar el binario publicado.
 
 ## Instalación
 
@@ -49,6 +51,11 @@ repositorio de bucket aparte:
 scoop bucket add click https://github.com/Angel-MercadoCLK/click-ai-devkit
 scoop install click
 ```
+
+**Rutas de runtimes:** gentle-ai v4.0.0 resuelve sus destinos desde el home del proceso y no ofrece
+flags para rutas por target. Si un target seleccionado está configurado fuera de `~/.claude`,
+`~/.codex` o `~/.openclaw`, Click lo rechaza antes de crear respaldos o ejecutar provisionamiento;
+no redirige la operación ni inspecciona el home real (D51).
 
 ### Compilar desde el código fuente
 
@@ -65,40 +72,37 @@ mismo punto de entrada (`cmd/click/`) que usa el proceso de release oficial.
 
 | Comando | Qué hace |
 |---|---|
-| `click` (sin argumentos, en una TTY) | Lanza el menú interactivo (`internal/menu`) para llegar a instalar/actualizar/diagnosticar/desinstalar/configurar modelos sin memorizar flags. Fuera de una TTY, o con `--no-interactive`, imprime la ayuda en su lugar. |
-| `click install` | Registra el marketplace de Click con `claude plugin marketplace add`, instala los plugins `click-sdd`, `click-memory`, `click-review` y `click-skills` vía el CLI nativo `claude plugin`, escribe/actualiza el bloque gestionado de `CLAUDE.md`, registra el hook `memory-guard` (PreToolUse) y permite elegir los modelos por fase (o un perfil de orquestación) de forma interactiva. Acepta `--yes`/`--non-interactive` para saltar el TUI y `--profile` para fijar el perfil (`balanced`/`cost-saver`/`quality`) sin interacción. |
-| `click update` | Vuelve a sincronizar los cuatro plugins, reescribe el bloque gestionado de `CLAUDE.md`, re-registra el hook `memory-guard` y sincroniza el pin de Engram a la versión fijada en el manifiesto de release. |
-| `click doctor` | Chequeo de salud de solo lectura: verifica que los cuatro plugins estén realmente registrados en Claude Code, que exista el bloque gestionado de `CLAUDE.md`, y que el hook `memory-guard` esté registrado. Nunca modifica el estado. |
-| `click plugins` | Lista los cuatro plugins gestionados, su estado en los registros de Claude Code y el repositorio/staging local. Es solo lectura: dejar archivos allí no los instala ni los activa. |
+| `click` (sin argumentos, en una TTY) | Lanza el menú interactivo para instalar, actualizar, diagnosticar, detectar runtimes o desinstalar. No ofrece selectores de modelos. Fuera de una TTY imprime la ayuda. |
+| `click install` | Provisiona/configura gentle-ai v4.0.0 para los runtimes seleccionados; si Claude Code está seleccionado, sincroniza sus tres plugins, el bloque gestionado de `CLAUDE.md` y el hook `memory-guard`. Configura Engram Cloud cuando corresponde. `--yes`/`--non-interactive` omiten pantallas interactivas. Los flags de modelos/perfil retirados se rechazan antes de modificar el estado. |
+| `click update` | Actualiza los componentes gentle-ai seleccionados y sincroniza el contenido Click administrado, incluida la inscripción Cloud cuando corresponde. No administra elecciones de modelos. |
+| `click doctor` | Diagnóstico de solo lectura del pin gentle-ai y del contenido/integraciones Click seleccionados. No instala ni repara estado. |
+| `click plugins` | Lista los tres plugins Claude gestionados y el staging local. Es solo lectura. |
 | `click targets` | Detecta Claude Code, OpenClaw y Codex y resume las capacidades soportadas de cada target. |
-| `click configure-targets` | Selector interactivo (TUI) de los runtimes que Click debe instalar/actualizar (Claude Code siempre primario; OpenClaw y Codex opcionales). Persiste la elección en `targets.json`. Fuera de una TTY imprime una guía y no cambia nada. |
-| `click configure-openclaw-model` | Configura el modelo nativo de OpenClaw (`<provider/model>` + fallbacks opcionales) delegando en el CLI oficial de OpenClaw, sin editar su config a mano. Sin argumentos imprime la guía de uso. |
-| `click uninstall` | Revierte todo lo que `install`/`update` escribieron: desinstala los cuatro plugins vía el CLI nativo `claude plugin`, quita el registro del marketplace de Click, elimina el bloque gestionado de `CLAUDE.md`, da de baja el hook `memory-guard`, y quita la configuración/estado de Engram y Context7 si `click` los llegó a instalar. Idempotente. |
+| `click configure-targets` | Selector interactivo (TUI) de Claude Code, Codex y OpenClaw. Persiste la selección en `targets.json`; gentle-ai solo recibe los runtimes seleccionados. |
+| `click configure-openclaw-model` | Comando de compatibilidad retirado; devuelve una deprecación sin modificar configuración. Use la configuración nativa de OpenClaw. |
+| `click uninstall` | Quita el contenido Click gestionado y desinstala solo plugins Click presentes en el ámbito de usuario, conservando sus datos. Preserva la configuración compartida de Gentle AI (incluidos Engram/Context7) y contenido ajeno. No elimina el marketplace ni desregistra dependencias compartidas. |
+| `click rollback --yes` | Restaura del último snapshot solo el contenido cuya propiedad Click puede verificarse; preserva el token Cloud actual, texto/configuración ajenos, estado compartido y rutas sin prueba suficiente. |
 | `click agent-builder` | Asistente interactivo (TUI) para crear un agente propio de Claude Code, personal o compartible, guiando al desarrollador paso a paso hasta generar y colocar el archivo `.md` del agente. |
-| `click manage-backups` | Comando de solo flags (oculto de `--help`, alcanzable desde el menú) para inspeccionar, restaurar (`--restore`) o eliminar (`--delete`) la copia de seguridad de `models.json` que genera una migración de configuración obsoleta. |
-| `click configure-models` | Reabre el selector interactivo de modelos por fase (18 fases, o un perfil de orquestación completo) sin pasar por una instalación/actualización completa, preservando el perfil actualmente guardado. Oculto de `--help`, se alcanza principalmente desde el menú interactivo. |
+| `click manage-backups` | Comando de compatibilidad para inspeccionar/restaurar/eliminar respaldos históricos de modelos; Click ya no los genera ni administra durante install/update. |
+| `click configure-models` | Comando de compatibilidad retirado; devuelve una deprecación sin abrir el TUI ni cambiar configuración. Para roles compatibles, use Configure Models de gentle-ai. Click no define una interfaz de selección de modelos para OpenClaw. |
 | `click --version` | Imprime la versión del CLI, inyectada en tiempo de compilación vía `ldflags` (`internal/version`). |
 
 ## Qué se instala
 
-- Cuatro plugins de Claude Code registrados a través del flujo nativo de marketplace/registro:
-  `click-sdd` (el flujo SDD, sus agentes y sus 18 fases configurables por modelo), `click-memory`
-  (política y curación de memoria), `click-review` (revisión de PR y checklist de pre-merge) y
-  `click-skills` (skills de ingeniería de Click Seguros para backend .NET, frontend Next.js/React
-  y móvil Ionic/Capacitor).
+- Tres plugins de Claude Code (`click-memory`, `click-review` y `click-skills`) registrados por el
+  flujo nativo de marketplace. Click ya no incluye el plugin `click-sdd` ni un orquestador propio.
 - Un bloque gestionado en `~/.claude/CLAUDE.md`, delimitado por marcadores, para poder insertarlo,
   reemplazarlo o eliminarlo por completo sin tocar el resto del archivo.
 - La entrada del hook `memory-guard` (PreToolUse) en `~/.claude/settings.json`.
-- Engram instalado como plugin de Claude Code (`engram@engram`), de forma idempotente y
-  respetuosa con una instalación previa; su binario se provee vía `go install` cuando falta. Un
-  pequeño archivo de estado de `click` registra qué instaló `click` exactamente, para que
-  `uninstall` nunca elimine un Engram que el desarrollador ya tenía instalado por su cuenta.
-- Context7 registrado como MCP HTTP de ámbito de usuario vía `claude mcp add` — también
-  idempotente y respetuoso con una configuración previa.
-- OpenClaw receives the portable SDD assets, memory guard, and native model writes only through the
-  qualified `click configure-openclaw-model` CLI flow documented in
-  [`documentacion/portability-runbook.md`](documentacion/portability-runbook.md).
-- Codex updates `AGENTS.md` and changes the root `model` key in `config.toml` only when an explicit native model was selected. Click never changes credentials, providers, or table-scoped `model` keys. See [`documentacion/codex-target.md`](documentacion/codex-target.md).
+- Gentle AI v4.0.0 con el preset `full-gentleman`, los runtimes seleccionados, los componentes
+  `engram,skills,context7,permissions,persona` y la persona `neutral` (D49). Gentle AI es dueño del
+  binario/registro de Engram y de Context7; Click no duplica esas entradas.
+- OpenClaw recibe la guía del workspace administrada por Click y la skill `clickhola`; Codex recibe
+  el bloque Click de `AGENTS.md`. Click no escribe modelos nativos en esos runtimes. Consulte el
+  [runbook de portabilidad](documentacion/portability-runbook.md) y el [target Codex](documentacion/codex-target.md).
+- Un hook `memory-guard` de Click y la inscripción opcional de Engram Cloud. El rollback preserva
+  el token Cloud actual; uninstall quita solo la inscripción local de Click y conserva el registro
+  y la configuración compartidos upstream.
 
 ## El menú interactivo
 
@@ -107,7 +111,6 @@ Ejecutar `click` sin argumentos en una terminal interactiva abre un menú visual
 
 - Iniciar instalación
 - Actualizar herramientas
-- Configurar modelos
 - Ejecutar diagnóstico
 - Plugins
 - Detectar runtimes compatibles
@@ -122,33 +125,43 @@ que existe como subcomando de `click` (por ejemplo, "Iniciar instalación" ejecu
 install`), así que el menú es una capa de descubrimiento, no un camino paralelo. Fuera de una TTY
 (scripts, CI) `click` sin argumentos imprime la ayuda en vez de intentar abrir el menú.
 
-### Update notifications
+### Avisos de actualización
 
-When running `click` interactively (no arguments, in a TTY), the CLI automatically checks GitHub for a newer release at most once per 24 hours. If an update is available, it prints a notification in Spanish before the menu appears with upgrade guidance specific to how click was installed:
+Al ejecutar `click` de forma interactiva (sin argumentos, en una TTY), el CLI consulta GitHub como
+máximo una vez cada 24 horas para detectar una versión nueva. Si existe, muestra un aviso en español
+antes del menú y las instrucciones de actualización según la instalación:
 
 ```
 Hay una nueva versión de click disponible: v{latest} (tienes v{current}).
 [i] La instalación está gestionada por Scoop desde el bucket <bucket>.
 [i] Para actualizar, ejecuta: scoop update; scoop update click
 
-or
+o
 
 [i] La nueva versión debe descargarse manualmente.
 [i] Visita: https://github.com/Angel-MercadoCLK/click-ai-devkit/releases/latest
 ```
 
-Note: `click update` syncs the devkit (plugins, Engram, skills, etc.) rather than the binary itself. Binary updates follow the path shown in the notification.
+Nota: `click update` sincroniza el devkit (plugins y componentes de Gentle AI), no el binario `click`.
+Actualice el binario por la vía indicada en el aviso.
 
-- The cache file lives at `<CLICK_STATE_HOME>/update-check.json` (normally `~/.config/click-ai-devkit/update-check.json` on Linux/macOS, `%AppData%\click-ai-devkit\update-check.json` on Windows).
-- Dev builds (`version == "dev"`) never check for updates.
-- Set `CLICK_NO_SELF_UPDATE=1` to disable the check entirely.
-- The check uses GitHub's Releases API with a 2s timeout; `GITHUB_TOKEN` or `GH_TOKEN` can increase rate limits but are never required.
-- All failures (network, cache, parsing) are silent and never block the menu — the CLI continues to operate normally regardless of update check results.
+- El caché vive en `<CLICK_STATE_HOME>/update-check.json` (normalmente `~/.config/click-ai-devkit/update-check.json` en Linux/macOS y `%AppData%\click-ai-devkit\update-check.json` en Windows).
+- Las compilaciones de desarrollo (`version == "dev"`) no consultan actualizaciones.
+- `CLICK_NO_SELF_UPDATE=1` desactiva esta consulta.
+- La consulta usa la API de Releases de GitHub con un límite de 2 segundos; `GITHUB_TOKEN` o `GH_TOKEN` pueden aumentar el límite, pero no son obligatorios.
+- Los errores de red, caché o análisis son silenciosos y no bloquean el menú.
 
 ## memory-guard
 
-`memory-guard` es un hook PreToolUse de Claude Code que intercepta cada llamada a `mem_save`
-antes de que pueda llegar a Engram. Es:
+`memory-guard` es un hook PreToolUse de Claude Code que intercepta cada llamada a una herramienta
+de Engram que persiste contenido (`mem_save`, `mem_update`, `mem_save_prompt`,
+`mem_session_summary`, `mem_session_end`, `mem_capture_passive`, `mem_judge`, `mem_compare`), tanto
+con el nombre del plugin (`mcp__plugin_engram_engram__*`) como con el del servidor MCP independiente
+(`mcp__engram__*`), antes de que pueda llegar a Engram. Las herramientas de solo lectura
+(`mem_search`, `mem_context`, `mem_get_observation`, ...) no se escanean. La lista vive en
+`internal/guard/tools.go`; `click update` migra un hook antiguo que solo cubría `mem_save`, y
+`click doctor` lo marca como desactualizado hasta entonces. El plugin de OpenClaw aplica la misma
+lista, pero esa aplicación no se ha verificado en un runtime real de OpenClaw. Es:
 
 - **Solo bloqueo:** si el contenido coincide con un patrón prohibido, la llamada se deniega por
   completo; todavía no existe una ruta de redacción/edición parcial (está contemplada, pero sin
@@ -163,10 +176,10 @@ antes de que pueda llegar a Engram. Es:
 ## Estructura del repositorio
 
 - `cmd/click/` — punto de entrada del CLI.
-- `internal/cli/` — árbol de comandos de cobra (install/update/doctor/uninstall/agent-builder/
-  manage-backups/configure-models/memory-guard).
-- `internal/installer/` — lógica de instalación/desinstalación: plugins, bloque de `CLAUDE.md`,
-  registro del hook, configuración de MCP de Engram y Context7.
+- `internal/cli/` — comandos Cobra de instalación, actualización, diagnóstico, desinstalación y
+  utilidades de Click; los selectores de modelos se conservan solo como mensajes de deprecación.
+- `internal/installer/` — provisionamiento de Gentle AI y sincronización/rollback del contenido
+  Click propio.
 - `internal/doctor/` — chequeos de salud de solo lectura.
 - `internal/guard/` — el motor de coincidencia de patrones de memory-guard.
 - `internal/audit/` — logging de auditoría solo-hash para las decisiones de la guardia.
@@ -174,29 +187,28 @@ antes de que pueda llegar a Engram. Es:
   motores disponibles, validación y escritura del archivo final.
 - `internal/manifest/` — el manifiesto de release embebido (pines de versión de plugins y Engram).
 - `internal/menu/` — el menú interactivo permanente (`click` sin argumentos en una TTY).
-- `internal/modelconfig/` — la taxonomía de 18 fases por modelo, sus valores por defecto y los
-  perfiles de orquestación.
-- `internal/ui/` — pantallas compartidas de TUI en bubbletea (selección de modelo, selección de
-  perfil, utilidades de render).
+- `internal/modelconfig/` — compatibilidad con artefactos históricos de modelos; no es una interfaz
+  activa de selección ni propiedad del runtime.
+- `internal/ui/` — pantallas TUI compartidas y utilidades de render.
 - `internal/version/` — metadatos de versión inyectados en tiempo de compilación vía `ldflags`.
 - `internal/crossplatformlint/` — comprobaciones de lint específicas para mantener el código
   compatible entre plataformas (Windows/macOS/Linux).
-- `plugins/` — los árboles de código fuente de los cuatro plugins servidos por el marketplace de
-  Click (`click-sdd`, `click-memory`, `click-review`, `click-skills`).
+- `plugins/` — los árboles de código fuente de los tres plugins servidos por el marketplace de
+  Click (`click-memory`, `click-review`, `click-skills`).
 - `bucket/` — el manifiesto de Scoop (`click.json`), publicado automáticamente por GoReleaser en
   cada release.
 
 ## Documentación adicional
 
-La documentación de planeación y diseño vive en [`documentacion/`](documentacion/), entre otros:
+La documentación vigente e histórica se organiza en [`documentacion/README.md`](documentacion/README.md):
 
-- [`documentacion/implementation-plan.md`](documentacion/implementation-plan.md) — plan de
-  construcción e historial de slices.
-- [`documentacion/tech-spec.md`](documentacion/tech-spec.md) — especificación técnica.
+- [`documentacion/implementation-plan.md`](documentacion/implementation-plan.md) — plan histórico
+  de construcción.
+- [`documentacion/tech-spec.md`](documentacion/tech-spec.md) — especificación técnica histórica.
 - [`documentacion/00-decisions-and-open-questions.md`](documentacion/00-decisions-and-open-questions.md)
   — registro de decisiones (incluida D13, el mandato de TDD estricto) y preguntas abiertas.
 - [`documentacion/vision.md`](documentacion/vision.md), [`documentacion/architecture.md`](documentacion/architecture.md),
-  [`documentacion/prd.md`](documentacion/prd.md) — visión, arquitectura y PRD del proyecto.
+  [`documentacion/prd.md`](documentacion/prd.md) — visión, arquitectura y PRD históricos.
 - [`documentacion/codex-target.md`](documentacion/codex-target.md) — límites y flujo del target Codex.
 - [`documentacion/portability-runbook.md`](documentacion/portability-runbook.md) — validación del flujo portable y OpenClaw.
 
@@ -213,8 +225,8 @@ una prueba que falla, luego la implementación mínima para que pase. Ver la dec
 
 ## Release metadata and current contracts
 
-Current release metadata lives in `bucket/click.json`, `internal/manifest/manifest.yaml`, and `click --version`. Use those three sources together when validating Scoop metadata, packaged binary version output, and release notes.
+Release data has independent sources: GoReleaser injects the CLI version from the release tag via `ldflags`; `internal/manifest/manifest.yaml` embeds runtime dependency pins; and `bucket/click.json` describes the currently published Scoop artifact. Validate Scoop version, archive URL, and SHA-256 against one another, and validate the packaged CLI version independently.
 
-`click update` depends on Scoop's bucket refresh plus Git availability. If Scoop reports that the
-installed version is already current while a newer tag exists, run `scoop update`, confirm Git is
-installed, and retry `scoop update click` before assuming the release is unavailable.
+Para actualizar el binario de `click` mediante Scoop, la actualización del bucket requiere Git. Si
+Scoop indica que la versión instalada ya es la última mientras existe una etiqueta más nueva,
+ejecute `scoop update`, confirme que Git está instalado y vuelva a intentar `scoop update click`.

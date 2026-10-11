@@ -1,5 +1,9 @@
 # click-ai-devkit — Hardening Roadmap
 
+> **Historical roadmap snapshot.** This tracks the v0.4.3 hardening sequence and is not the current
+> distribution plan or implementation status. Current contracts are in D48–D53 and
+> [`README.md`](../README.md).
+
 ## Status (as of the v0.4.3 cut)
 
 - **Tier 1 — DONE** (PR #31, PR #32/checkClaude).

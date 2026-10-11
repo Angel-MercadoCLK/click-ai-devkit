@@ -1,5 +1,9 @@
 > Status: draft v0.1. Grounded in `00-decisions-and-open-questions.md` (D1–D20).
 
+> **Historical implementation plan.** This records the original v0.1 build, not the current
+> distribution architecture. Current behavior and ownership are defined by D48–D53 and
+> [`README.md`](README.md); do not use old Click SDD/model/permission tasks as current work.
+
 # click-ai-devkit — Implementation Plan
 
 > Audience: engineers building click-ai-devkit. Turns `tech-spec.md` into an ordered, executable

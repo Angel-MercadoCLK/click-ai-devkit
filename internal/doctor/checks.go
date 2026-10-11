@@ -6,15 +6,19 @@
 package doctor
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/guard"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
@@ -24,10 +28,12 @@ const engramCloudImportOutcomeStaleAfter = 7 * 24 * time.Hour
 
 var engramCloudSessionSyncNow = time.Now
 
+var managedGentleAIVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
+
 // EngramChecksCount is the number of doctor checks contributed by Engram, kept as an exported
 // constant so other packages/tests documenting Run()'s total check count don't have to hardcode a
 // magic number that silently drifts if a check is added or removed here.
-const EngramChecksCount = 6
+const EngramChecksCount = 5
 
 // Context7ChecksCount is the number of doctor checks contributed by Context7, kept as an exported
 // constant for the same reason as EngramChecksCount.
@@ -60,8 +66,13 @@ func (r Report) Healthy() bool {
 func Run(cfg installer.Config) Report {
 	selection := installer.TargetSelection{Configured: true, Claude: cfg.ClaudeHome != "", OpenClaw: cfg.OpenClawHome != "", Codex: cfg.CodexHome != ""}
 	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{})
-	checks := []CheckResult{checkGit(cfg), checkOpenClaw(cfg), checkOpenClawNativeModelAction(cfg), checkClickBinary(cfg)}
+	checks := []CheckResult{checkGit(cfg), checkOpenClaw(cfg), checkClickBinary(cfg), checkManagedGentleAI()}
 	for _, kind := range plan.DoctorCheckKinds() {
+		// OpenClaw is an optional capability diagnostic for every report, including when
+		// the target is selected. Do not report the same PATH result twice.
+		if kind == installer.DoctorCheckOpenClaw {
+			continue
+		}
 		checks = append(checks, doctorCheckResult(cfg, kind))
 	}
 	if selection.Claude {
@@ -70,18 +81,127 @@ func Run(cfg installer.Config) Report {
 	return Report{Checks: checks}
 }
 
+var managedGentleAIProvisionerFactory = installer.NewGentleAIProvisioner
+
+func SetManagedGentleAIProvisionerFactoryForTests(factory func() installer.GentleAIProvisioner) func() {
+	previous := managedGentleAIProvisionerFactory
+	managedGentleAIProvisionerFactory = factory
+	return func() { managedGentleAIProvisionerFactory = previous }
+}
+
+func checkManagedGentleAI() CheckResult {
+	const name = "gentle-ai administrado"
+	manifestPin, err := manifest.Load()
+	if err != nil || !managedGentleAIVersionPattern.MatchString(manifestPin.GentleAI.Version) {
+		return CheckResult{Name: name, Healthy: false, Detail: "el pin de gentle-ai incluido en Click no es válido; reinstale o actualice Click"}
+	}
+
+	provisioner := managedGentleAIProvisionerFactory()
+	path, err := provisioner.ManagedPath()
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo resolver la ruta administrada de gentle-ai; revise su directorio personal y ejecute `click update`"}
+	}
+	for _, directory := range []string{filepath.Dir(filepath.Dir(path)), filepath.Dir(path)} {
+		info, err := provisioner.Lstat(directory)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			return CheckResult{Name: name, Healthy: false, Detail: "gentle-ai no está instalado en la ruta administrada de Click; ejecute `click install` o `click update`"}
+		case err != nil:
+			return CheckResult{Name: name, Healthy: false, Detail: "no se pudo inspeccionar el directorio administrado de gentle-ai; revise los permisos de ~/.click/bin y ejecute `click update`"}
+		case !info.IsDir():
+			return CheckResult{Name: name, Healthy: false, Detail: "la ruta administrada de gentle-ai contiene un directorio inseguro; revise ~/.click/bin y ejecute `click update`"}
+		}
+	}
+	info, err := provisioner.Lstat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return CheckResult{Name: name, Healthy: false, Detail: "gentle-ai no está instalado en la ruta administrada de Click; ejecute `click install` o `click update`"}
+	case err != nil:
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo inspeccionar el binario administrado de gentle-ai; revise los permisos de ~/.click/bin y ejecute `click update`"}
+	case !info.Mode().IsRegular() || (provisioner.GOOS != "windows" && info.Mode().Perm()&0o111 == 0):
+		return CheckResult{Name: name, Healthy: false, Detail: "el binario administrado de gentle-ai no es un archivo regular ejecutable; revise ~/.click/bin y ejecute `click update`"}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	probe, err := provisioner.ProbeVersion(ctx, path, manifestPin.GentleAI.Version)
+	if err != nil {
+		if err.Error() == "gentle-ai: salida de versión no válida" {
+			return CheckResult{Name: name, Healthy: false, Detail: "gentle-ai devolvió una salida de versión no válida; ejecute `click update`"}
+		}
+		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+			return CheckResult{Name: name, Healthy: false, Detail: "la consulta de versión de gentle-ai superó el tiempo límite; ejecute `click update`"}
+		}
+		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo consultar la versión de gentle-ai; revise el binario administrado y ejecute `click update`"}
+	}
+	if probe.MatchesPin {
+		return CheckResult{Name: name, Healthy: true, Detail: "gentle-ai " + probe.Version + " coincide con el pin calificado " + manifestPin.GentleAI.Version}
+	}
+	if gentleAIPreRelease(probe.Version) || gentleAIPreRelease(manifestPin.GentleAI.Version) {
+		return CheckResult{Name: name, Healthy: false, Detail: "la versión preliminar de gentle-ai no coincide con el pin calificado " + manifestPin.GentleAI.Version + "; ejecute `click update`"}
+	}
+	comparison := compareGentleAIVersion(probe.Version, manifestPin.GentleAI.Version)
+	if comparison < 0 {
+		return CheckResult{Name: name, Healthy: false, Detail: "la versión administrada de gentle-ai es más antigua que el pin calificado " + manifestPin.GentleAI.Version + "; ejecute `click update`"}
+	}
+	if comparison > 0 {
+		return CheckResult{Name: name, Healthy: false, Detail: "la versión administrada de gentle-ai es más reciente que el pin calificado " + manifestPin.GentleAI.Version + "; ejecute `click update`"}
+	}
+	return CheckResult{Name: name, Healthy: false, Detail: "la versión de gentle-ai no coincide exactamente con el pin calificado " + manifestPin.GentleAI.Version + "; ejecute `click update`"}
+}
+
+func gentleAIPreRelease(value string) bool {
+	value, _, _ = strings.Cut(value, "+")
+	_, prerelease, found := strings.Cut(value, "-")
+	return found && prerelease != ""
+}
+
+func compareGentleAIVersion(left, right string) int {
+	leftCore, leftPrerelease := splitGentleAIVersion(left)
+	rightCore, rightPrerelease := splitGentleAIVersion(right)
+	for i := range leftCore {
+		l, lErr := strconv.Atoi(leftCore[i])
+		r, rErr := strconv.Atoi(rightCore[i])
+		if lErr != nil || rErr != nil {
+			return 0
+		}
+		if l < r {
+			return -1
+		}
+		if l > r {
+			return 1
+		}
+	}
+	if leftPrerelease == rightPrerelease {
+		return 0
+	}
+	if leftPrerelease {
+		return -1
+	}
+	return 1
+}
+
+func splitGentleAIVersion(value string) ([3]string, bool) {
+	var core [3]string
+	value = strings.TrimPrefix(value, "v")
+	value, _, _ = strings.Cut(value, "+")
+	value, prerelease, _ := strings.Cut(value, "-")
+	parts := strings.Split(value, ".")
+	if len(parts) != len(core) {
+		return core, prerelease != ""
+	}
+	copy(core[:], parts)
+	return core, prerelease != ""
+}
+
 func doctorCheckResult(cfg installer.Config, kind installer.DoctorCheckKind) CheckResult {
 	switch kind {
 	case installer.DoctorCheckClaude:
 		return checkClaude(cfg)
 	case installer.DoctorCheckOpenClaw:
 		return checkOpenClaw(cfg)
-	case installer.DoctorCheckOpenClawNativeModel:
-		return checkOpenClawNativeModelAction(cfg)
 	case installer.DoctorCheckClickPluginRegistries:
 		return checkClickPluginRegistries(cfg)
-	case installer.DoctorCheckClickSDDPlugin:
-		return checkPlugin(cfg)
 	case installer.DoctorCheckClickMemoryPlugin:
 		return checkMemoryPlugin(cfg)
 	case installer.DoctorCheckClickReviewPlugin:
@@ -98,8 +218,6 @@ func doctorCheckResult(cfg installer.Config, kind installer.DoctorCheckKind) Che
 		return checkAppliedPluginConfig(cfg)
 	case installer.DoctorCheckEngramPlugin:
 		return checkEngramPlugin(cfg)
-	case installer.DoctorCheckEngramSubagentVisibility:
-		return checkEngramSubagentVisibility(cfg)
 	case installer.DoctorCheckEngramBinary:
 		return checkEngramBinary(cfg)
 	case installer.DoctorCheckEngramPath:
@@ -115,148 +233,6 @@ func doctorCheckResult(cfg installer.Config, kind installer.DoctorCheckKind) Che
 	default:
 		return CheckResult{Name: string(kind), Healthy: false, Detail: "doctor check kind no soportado"}
 	}
-}
-
-// engramAgentToolRequirements is the repository's static contract for click-sdd agents that claim
-// memory operations. Elicitor and review lenses intentionally do not appear: their documented roles
-// do not require Engram access.
-var engramAgentToolRequirements = map[string][]string{
-	"click-apply":          {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save", "mcp__plugin_engram_engram__mem_update"},
-	"click-architect":      {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save"},
-	"click-archive":        {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save"},
-	"click-explore":        {"mcp__plugin_engram_engram__mem_save"},
-	"click-jd-fix-agent":   {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_update"},
-	"click-jd-judge-a":     {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation"},
-	"click-jd-judge-b":     {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation"},
-	"click-memory-curator": {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation"},
-	"click-onboard":        {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save", "mcp__plugin_engram_engram__mem_update"},
-	"click-orchestrator":   {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save", "mcp__plugin_engram_engram__mem_update"},
-	"click-prd-writer":     {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save"},
-	"click-reviewer":       {"mcp__plugin_engram_engram__mem_search", "mcp__plugin_engram_engram__mem_get_observation", "mcp__plugin_engram_engram__mem_save"},
-}
-
-func checkEngramSubagentVisibility(cfg installer.Config) CheckResult {
-	const name = "Engram subagent visibility"
-	installed, err := installer.HasInstalledPluginID(cfg, installer.EngramPluginID)
-	if err != nil {
-		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo verificar el registro/habilitación de Engram: " + err.Error()}
-	}
-	if !installed {
-		return CheckResult{Name: name, Healthy: false, Detail: "Engram no está registrado y habilitado en Claude Code — ejecute `click install` o `click update`"}
-	}
-
-	engramPath, found, err := installer.InstalledPluginPath(cfg, installer.EngramPluginID)
-	if err != nil {
-		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo leer la ruta de caché de Engram: " + err.Error()}
-	}
-	if !found {
-		return CheckResult{Name: name, Healthy: false, Detail: "Engram está registrado, pero su ruta de caché no se puede resolver de forma segura desde installed_plugins.json; no se adivinan rutas. Actualice/reinstale el plugin y reinicie Claude Code"}
-	}
-
-	mcpData, err := os.ReadFile(filepath.Join(engramPath, ".mcp.json"))
-	if err != nil {
-		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo verificar el .mcp.json de Engram en la caché registrada: " + err.Error() + " — ejecute `click update` y reinicie Claude Code"}
-	}
-	var mcp struct {
-		MCPServers map[string]struct {
-			Command string   `json:"command"`
-			Args    []string `json:"args"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(mcpData, &mcp); err != nil {
-		return CheckResult{Name: name, Healthy: false, Detail: "el .mcp.json de Engram es ilegible: " + err.Error()}
-	}
-	server, ok := mcp.MCPServers["engram"]
-	if !ok || server.Command != "engram" || !sameStrings(server.Args, []string{"mcp", "--tools=agent"}) {
-		return CheckResult{Name: name, Healthy: false, Detail: "el .mcp.json de Engram no contiene el servidor engram con command=engram y args=[mcp --tools=agent]"}
-	}
-
-	clickSDDPath, found, err := installer.InstalledPluginPath(cfg, installer.ClickSDDPluginID)
-	if err != nil {
-		return CheckResult{Name: name, Healthy: false, Detail: "no se pudo leer la ruta de caché de click-sdd: " + err.Error()}
-	}
-	if !found {
-		return CheckResult{Name: name, Healthy: false, Detail: "click-sdd está registrado, pero su ruta de caché no se puede resolver de forma segura desde installed_plugins.json; no se adivinan rutas. Ejecute `click update`"}
-	}
-	for agent, requiredTools := range engramAgentToolRequirements {
-		agentPath := filepath.Join(clickSDDPath, "agents", agent+".md")
-		data, err := os.ReadFile(agentPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				if _, dirErr := os.Stat(clickSDDPath); os.IsNotExist(dirErr) {
-					if known, present := releaseAgentAssetStatus(agent); known && !present {
-						return CheckResult{Name: name, Healthy: false, Detail: "el paquete de la versión instalada no contiene el agente " + agent + " y tampoco está presente en el asset del paquete fuente. Falta " + agentPath + "; ejecute `click update` o reinstale el plugin"}
-					}
-					return CheckResult{Name: name, Healthy: false, Detail: "la caché registrada de click-sdd está obsoleta o incompleta; falta " + agentPath + ". El registro apunta a una ruta inexistente; Actualice con `click update` y reinicie Claude Code"}
-				}
-				return CheckResult{Name: name, Healthy: false, Detail: "la caché registrada de click-sdd está desactualizada; falta " + agentPath + ". El registro del plugin está presente, pero el paquete instalado no contiene este agente. Actualice con `click update` y reinicie Claude Code para refrescar la caché"}
-			}
-			return CheckResult{Name: name, Healthy: false, Detail: "no se pudo verificar el agente " + agent + " en la caché de click-sdd: " + err.Error()}
-		}
-		tools := frontmatterTools(string(data))
-		for _, required := range requiredTools {
-			if !containsString(tools, required) {
-				return CheckResult{Name: name, Healthy: false, Detail: "el agente " + agent + " no declara la herramienta Engram requerida " + required}
-			}
-		}
-	}
-
-	return CheckResult{Name: name, Healthy: true, Detail: "prerrequisitos estáticos saludables: plugin Engram habilitado, .mcp.json y herramientas de agentes verificados; la propagación Agent-a-agent anidada no puede probarse estáticamente y requiere una sesión nueva de Claude y un diagnóstico en vivo"}
-}
-
-// releaseAgentAssetStatus only treats a repository checkout as authoritative. In an installed
-// binary the source tree is unavailable, so an absent cache entry must be diagnosed as stale or
-// incomplete rather than falsely blaming the release package.
-func releaseAgentAssetStatus(agent string) (known, present bool) {
-	workingDir, err := os.Getwd()
-	if err != nil {
-		return false, false
-	}
-	for current := filepath.Clean(workingDir); ; current = filepath.Dir(current) {
-		root := filepath.Join(current, "plugins", "click-sdd", "agents")
-		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
-			_, assetErr := os.Stat(filepath.Join(root, agent+".md"))
-			return true, assetErr == nil
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return false, false
-		}
-	}
-}
-
-func frontmatterTools(content string) []string {
-	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(line, "tools:") {
-			parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(line, "tools:")), ",")
-			for i := range parts {
-				parts[i] = strings.TrimSpace(parts[i])
-			}
-			return parts
-		}
-	}
-	return nil
-}
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
-func sameStrings(actual, expected []string) bool {
-	if len(actual) != len(expected) {
-		return false
-	}
-	for i := range actual {
-		if actual[i] != expected[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func checkClickPluginRegistries(cfg installer.Config) CheckResult {
@@ -301,7 +277,7 @@ func checkClickPluginRegistries(cfg installer.Config) CheckResult {
 	return CheckResult{
 		Name:    name,
 		Healthy: true,
-		Detail:  "registro de marketplace correcto y 4 plugins administrados presentes; la frescura de la caché interna de Claude requiere una actualización real del CLI",
+		Detail:  "registro de marketplace correcto y " + strconv.Itoa(len(installer.ManagedPluginNames())) + " plugins administrados presentes; la frescura de la caché interna de Claude requiere una actualización real del CLI",
 	}
 }
 
@@ -363,15 +339,6 @@ func checkOpenClaw(cfg installer.Config) CheckResult {
 	return CheckResult{Name: name, Healthy: true, Detail: "no detectado (objetivo opcional, sin instalación de OpenClaw en este equipo)"}
 }
 
-func checkOpenClawNativeModelAction(cfg installer.Config) CheckResult {
-	const name = "OpenClaw native model action"
-	status := installer.OpenClawNativeModelActionStatus()
-	if status.Available {
-		return CheckResult{Name: name, Healthy: true, Detail: status.Detail}
-	}
-	return CheckResult{Name: name, Healthy: true, Detail: status.Detail}
-}
-
 func checkCodexGuidance(cfg installer.Config) CheckResult {
 	const name = "Codex AGENTS.md"
 	if cfg.CodexHome == "" {
@@ -385,19 +352,6 @@ func checkCodexGuidance(cfg installer.Config) CheckResult {
 		return CheckResult{Name: name, Healthy: false, Detail: "bloque gestionado ausente en " + cfg.CodexAgentsMDPath() + " — ejecute `click update`"}
 	}
 	return CheckResult{Name: name, Healthy: true, Detail: "bloque gestionado presente en " + cfg.CodexAgentsMDPath()}
-}
-
-func checkPlugin(cfg installer.Config) CheckResult {
-	const name = "plugin click-sdd"
-
-	ok, err := installer.HasInstalledPlugin(cfg, "click-sdd")
-	if err != nil {
-		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
-	}
-	if !ok {
-		return CheckResult{Name: name, Healthy: false, Detail: "no registrado en Claude Code"}
-	}
-	return CheckResult{Name: name, Healthy: true, Detail: "registrado y habilitado"}
 }
 
 func checkMemoryPlugin(cfg installer.Config) CheckResult {
@@ -511,15 +465,23 @@ func checkClaudeMD(cfg installer.Config) CheckResult {
 	}
 }
 
-// checkEngramPlugin reports whether the engram@engram plugin is registered and enabled — the
-// mechanism confirmed in Step 0 (spike-e-engram-install.md) that actually wires Engram's tools
-// into a Claude Code session. It does not care whether click or the developer installed it.
+// checkEngramPlugin reports whether Engram is available through the legacy enabled plugin or the
+// direct MCP server registered by the pinned gentle-ai installer.
 func checkEngramPlugin(cfg installer.Config) CheckResult {
 	const name = "plugin engram"
 
 	ok, err := installer.HasInstalledPluginID(cfg, installer.EngramPluginID)
 	if err != nil {
 		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	if !ok {
+		ok, err = installer.HasGentleAIEngramMCP(cfg)
+		if err != nil {
+			return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+		}
+		if ok {
+			return CheckResult{Name: name, Healthy: true, Detail: "MCP directo registrado por gentle-ai"}
+		}
 	}
 	if !ok {
 		return CheckResult{Name: name, Healthy: false, Detail: "no registrado en Claude Code"}
@@ -785,7 +747,7 @@ func checkContext7(cfg installer.Config) CheckResult {
 	if !ok {
 		return CheckResult{Name: name, Healthy: false, Detail: "no registrado como servidor MCP de usuario"}
 	}
-	return CheckResult{Name: name, Healthy: true, Detail: "registrado (scope user, https://mcp.context7.com/mcp)"}
+	return CheckResult{Name: name, Healthy: true, Detail: "servidor MCP de usuario registrado"}
 }
 
 // checkModelsConfig reports whether cfg.ModelsPath() holds a stale (pre-taxonomy-realignment or
@@ -883,17 +845,42 @@ func expectedClickSDDConfigKeys() []string {
 	return keys
 }
 
+// checkMemoryGuardHook probes the Click guard hook by behavior, not by comparing strings: the
+// registered matcher, compiled as a regular expression, must match every persisting Engram tool under
+// both MCP name forms and none of the representative read-only tools (guard.VerifyToolMatcher). A
+// hook that is registered but would not fire for a persisting tool is as dangerous as a missing one,
+// so it fails with the remedy `click update` (D10).
 func checkMemoryGuardHook(cfg installer.Config) CheckResult {
 	const name = "memory-guard hook"
 
-	ok, err := installer.HasMemoryGuardHook(cfg)
+	matchers, err := installer.RegisteredMemoryGuardMatchers(cfg)
 	if err != nil {
 		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
 	}
-	if !ok {
+	if len(matchers) == 0 {
 		return CheckResult{Name: name, Healthy: false, Detail: "hook PreToolUse ausente en " + cfg.SettingsPath()}
 	}
-	return CheckResult{Name: name, Healthy: true, Detail: "hook PreToolUse registrado"}
+
+	var firstProbeErr error
+	for _, matcher := range matchers {
+		probeErr := guard.VerifyToolMatcher(matcher)
+		if probeErr == nil {
+			return CheckResult{Name: name, Healthy: true, Detail: "hook PreToolUse registrado; el matcher cubre todas las herramientas de Engram que persisten contenido"}
+		}
+		if firstProbeErr == nil {
+			firstProbeErr = probeErr
+		}
+	}
+
+	outdated, err := installer.HasLegacyMemoryGuardHook(cfg)
+	if err != nil {
+		return CheckResult{Name: name, Healthy: false, Detail: err.Error()}
+	}
+	state := "con un matcher que no protege"
+	if outdated {
+		state = "desactualizado"
+	}
+	return CheckResult{Name: name, Healthy: false, Detail: "hook PreToolUse " + state + " en " + cfg.SettingsPath() + ": " + firstProbeErr.Error() + " — ejecute `click update`"}
 }
 
 // ClickBinaryMissingMessage is the actionable Spanish message shown when checkClickBinary cannot
@@ -903,10 +890,10 @@ func checkMemoryGuardHook(cfg installer.Config) CheckResult {
 // installer/hooksettings.go) — Claude Code itself resolves that command on PATH when it spawns the
 // hook process. checkMemoryGuardHook above only confirms the hook ENTRY exists in settings.json; it
 // says nothing about whether the command it names can actually run. On a machine where click is not
-// on the PATH Claude Code's own process sees, the hook silently never fires: every mem_save payload
+// on the PATH Claude Code's own process sees, the hook silently never fires: every persisting Engram tool payload (mem_save, mem_update, ...)
 // flows straight into persistent memory with zero secrets/PII scanning, and nothing else in this
 // package would ever surface it.
-const ClickBinaryMissingMessage = "el binario click no está en el PATH visible para Claude Code. El hook memory-guard está registrado como el comando \"click memory-guard\" (resuelto por PATH cuando Claude Code lo ejecuta), así que si click no resuelve ahí el hook nunca se dispara y mem_save queda sin el escaneo de secretos/PII, sin ningún aviso. Verifique la instalación de click y asegúrese de que el comando click esté disponible en el PATH; luego reinicie Claude Code para que la sesión lo vea."
+const ClickBinaryMissingMessage = "el binario click no está en el PATH visible para Claude Code. El hook memory-guard está registrado como el comando \"click memory-guard\" (resuelto por PATH cuando Claude Code lo ejecuta), así que si click no resuelve ahí el hook nunca se dispara y las herramientas de Engram que persisten contenido (mem_save, mem_update, ...) quedan sin el escaneo de secretos/PII, sin ningún aviso. Verifique la instalación de click y asegúrese de que el comando click esté disponible en el PATH; luego reinicie Claude Code para que la sesión lo vea."
 
 // clickBinaryLookup resolves the click binary on the live PATH. It is a package-level var — not a
 // direct exec.LookPath call — so checkClickBinary's tests can override it deterministically,

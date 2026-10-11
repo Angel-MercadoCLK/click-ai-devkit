@@ -2,6 +2,10 @@
 
 # click-ai-devkit — Technical Specification
 
+> **Historical technical proposal.** This v0.1 specification predates the current Gentle AI
+> integration. D48–D53 and [`README.md`](README.md) define current behavior; old Click-owned SDD,
+> model-selection, permission-list, and shared MCP descriptions are not current contracts.
+
 > Audience: engineers building click-ai-devkit itself. This document specifies *how* the locked
 > decisions (D1–D20) and requirements (`requirements.md` FR-001–FR-060, NFR-001–NFR-012) get built.
 > It does not re-litigate product framing (`prd.md`, `vision.md`) or re-derive scope

@@ -27,7 +27,7 @@ Memory safety is enforced by two layers:
    - `click memory-guard` PreToolUse hook
    - `internal/guard/patterns.yaml`
 
-   This hook scans every `mem_save` payload before it reaches Engram. It is independent of model intent.
+   This hook scans the payload of every Engram tool that persists content (`mem_save`, `mem_update`, `mem_save_prompt`, `mem_session_summary`, `mem_session_end`, `mem_capture_passive`, `mem_judge`, `mem_compare`) before it reaches Engram, under both the plugin (`mcp__plugin_engram_engram__*`) and standalone (`mcp__engram__*`) tool names. Read-only tools such as `mem_search` are not scanned. It is independent of model intent. The tool list is defined in `internal/guard/tools.go`. The OpenClaw plugin applies the same list, but OpenClaw enforcement has not been verified at runtime.
 
 ## v0.1 behavior
 

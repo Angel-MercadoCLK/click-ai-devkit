@@ -13,7 +13,7 @@ import (
 // can't silently drop a section the rest of the product (and any agent reading this
 // file later) expects to exist.
 var finalMarkdownRequiredHeadings = []string{
-	"# Role", "## Tasks", "## Triggers", "## Hard Rules", "## SDD Integration",
+	"# Role", "## Tasks", "## Triggers", "## Hard Rules",
 	"## Tone", "## Domain Knowledge", "## Good Output",
 }
 

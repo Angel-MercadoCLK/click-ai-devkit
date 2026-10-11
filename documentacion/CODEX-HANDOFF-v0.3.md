@@ -6,10 +6,10 @@
 > [`codex-target.md`](codex-target.md), and [`portability-runbook.md`](portability-runbook.md) for
 > current behavior.
 >
-> Current boundaries: Claude Code remains the native plugin workflow; OpenClaw uses portable SDD
-> assets and documented native model CLI configuration; Codex receives `AGENTS.md` guidance only;
-> other runtimes are not supported; and Plugins is read-only inventory/staging, not arbitrary
-> activation.
+> The following boundaries were accurate for this historical handoff only. They have been
+> superseded by D48–D53: Gentle AI now owns ODD/RDD, model selection, permissions, and shared
+> Engram/Context7 lifecycle; Click no longer ships `click-sdd` and does not provide an OpenClaw
+> model selector. Use the current `README.md`, `codex-target.md`, and `portability-runbook.md` above.
 
 You (Codex) will implement the features below on `click-ai-devkit`, a Go 1.24.2
 cobra/bubbletea CLI that installs and manages a Claude Code ecosystem (plugins,

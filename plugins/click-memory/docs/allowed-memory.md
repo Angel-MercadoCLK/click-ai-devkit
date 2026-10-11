@@ -16,7 +16,7 @@ Store decisions about system structure, boundaries, or integration choices.
 Store technical approach decisions that explain how a feature was implemented.
 
 **Example:**
-"The Click SDD flow keeps the curator agent in `click-sdd` while memory policy mechanics live in `click-memory`."
+"The memory guard enforces write-time checks while the memory policy defines which content may be stored."
 
 ### Conventions
 

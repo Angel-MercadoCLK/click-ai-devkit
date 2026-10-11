@@ -125,7 +125,7 @@ func TestSnapshotRun_MissingSource_RecordsNoPriorStateMarker(t *testing.T) {
 // TestRestoreRun_RestoresBothFilesByteForByte guards the "Successful restore" scenario: after
 // SnapshotRun, editing both files, then RestoreRun, both files must come back byte-for-byte to
 // their snapshotted content.
-func TestRestoreRun_RestoresBothFilesByteForByte(t *testing.T) {
+func TestRestoreRun_PreservesForeignDocumentAndSettingsContent(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "original CLAUDE.md\n")
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
@@ -145,16 +145,16 @@ func TestRestoreRun_RestoresBothFilesByteForByte(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(CLAUDE.md) error = %v", err)
 	}
-	if string(gotClaude) != "original CLAUDE.md\n" {
-		t.Fatalf("CLAUDE.md after RestoreRun() = %q, want the original snapshotted content %q", gotClaude, "original CLAUDE.md\n")
+	if string(gotClaude) != "edited CLAUDE.md\n" {
+		t.Fatalf("CLAUDE.md after RestoreRun() = %q, want foreign current content preserved", gotClaude)
 	}
 
 	gotSettings, err := os.ReadFile(cfg.SettingsPath())
 	if err != nil {
 		t.Fatalf("ReadFile(settings.json) error = %v", err)
 	}
-	if string(gotSettings) != `{"original":true}` {
-		t.Fatalf("settings.json after RestoreRun() = %q, want the original snapshotted content %q", gotSettings, `{"original":true}`)
+	if string(gotSettings) != `{"edited":true}` {
+		t.Fatalf("settings.json after RestoreRun() = %q, want current non-Click content preserved", gotSettings)
 	}
 }
 
@@ -162,7 +162,7 @@ func TestRestoreRun_RestoresBothFilesByteForByte(t *testing.T) {
 // half of restore: when a file did NOT exist at snapshot time (Existed=false), RestoreRun must
 // remove any file that has since appeared at that original path, rather than leaving it in place
 // or fabricating content.
-func TestRestoreRun_ExistedFalseRemovesOriginal(t *testing.T) {
+func TestRestoreRun_ExistedFalsePreservesForeignDocument(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	// Neither file exists at snapshot time -> both entries are no-prior-state markers.
 	if err := SnapshotRun(cfg); err != nil {
@@ -170,14 +170,14 @@ func TestRestoreRun_ExistedFalseRemovesOriginal(t *testing.T) {
 	}
 
 	// Simulate a file having since been created at the original path.
-	writeTestFile(t, cfg.ClaudeMDPath(), "created after snapshot, must be removed on restore\n")
+	writeTestFile(t, cfg.ClaudeMDPath(), "foreign content created after snapshot\n")
 
 	if err := RestoreRun(cfg); err != nil {
 		t.Fatalf("RestoreRun() error = %v, want nil", err)
 	}
 
-	if _, err := os.Stat(cfg.ClaudeMDPath()); !os.IsNotExist(err) {
-		t.Fatalf("Stat(CLAUDE.md) after RestoreRun() error = %v, want os.IsNotExist (Existed=false must remove it)", err)
+	if got := string(mustReadFile(t, cfg.ClaudeMDPath())); got != "foreign content created after snapshot\n" {
+		t.Fatalf("CLAUDE.md after RestoreRun() = %q, want foreign content preserved", got)
 	}
 }
 
@@ -543,7 +543,7 @@ func TestSnapshotDrift_ManagedContentVeto_EditOutsideMarkers_NoVeto(t *testing.T
 // veto; only edits to click's owned hook entry may.
 func TestSnapshotDrift_ManagedContentVeto_SettingsUnrelatedKey_NoVeto(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
-	owned := `{"hooks":{"PreToolUse":[{"matcher":"` + MemoryGuardToolMatcher + `","hooks":[{"type":"command","command":"` + MemoryGuardCommand + `"}]}]},"other":true}`
+	owned := `{"hooks":{"PreToolUse":[{"matcher":"` + MemoryGuardToolMatcher() + `","hooks":[{"type":"command","command":"` + MemoryGuardCommand + `"}]}]},"other":true}`
 	writeTestFile(t, cfg.ClaudeMDPath(), managedBlockMD("managed v1"))
 	writeTestFile(t, cfg.SettingsPath(), owned)
 	if err := SnapshotRun(cfg); err != nil {
@@ -551,7 +551,7 @@ func TestSnapshotDrift_ManagedContentVeto_SettingsUnrelatedKey_NoVeto(t *testing
 	}
 
 	// Unrelated-key churn: no veto.
-	writeTestFile(t, cfg.SettingsPath(), `{"hooks":{"PreToolUse":[{"matcher":"`+MemoryGuardToolMatcher+`","hooks":[{"type":"command","command":"`+MemoryGuardCommand+`"}]}]},"other":false,"claude-code-churn":123}`)
+	writeTestFile(t, cfg.SettingsPath(), `{"hooks":{"PreToolUse":[{"matcher":"`+MemoryGuardToolMatcher()+`","hooks":[{"type":"command","command":"`+MemoryGuardCommand+`"}]}]},"other":false,"claude-code-churn":123}`)
 	report, err := SnapshotDrift(cfg)
 	if err != nil {
 		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
@@ -561,7 +561,7 @@ func TestSnapshotDrift_ManagedContentVeto_SettingsUnrelatedKey_NoVeto(t *testing
 	}
 
 	// Edit to the click-owned hook itself: veto.
-	writeTestFile(t, cfg.SettingsPath(), `{"hooks":{"PreToolUse":[{"matcher":"`+MemoryGuardToolMatcher+`","hooks":[{"type":"command","command":"hand-edited command"}]}]},"other":true}`)
+	writeTestFile(t, cfg.SettingsPath(), `{"hooks":{"PreToolUse":[{"matcher":"`+MemoryGuardToolMatcher()+`","hooks":[{"type":"command","command":"hand-edited command"}]}]},"other":true}`)
 	report, err = SnapshotDrift(cfg)
 	if err != nil {
 		t.Fatalf("SnapshotDrift() error = %v, want nil", err)
@@ -575,7 +575,7 @@ func TestSnapshotDrift_ManagedContentVeto_SettingsUnrelatedKey_NoVeto(t *testing
 // vetoes on ANY content change, with no managed-slice scoping.
 func TestSnapshotDrift_WholeFileVeto_AnyEdit_Vetoes(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
-	strictPath := filepath.Join(cfg.ClaudeHome, "strict.txt")
+	strictPath := cfg.EngramStatePath()
 	writeTestFile(t, strictPath, "strict original\n")
 	writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
 		OriginalPath: strictPath,
@@ -599,9 +599,9 @@ func TestSnapshotDrift_WholeFileVeto_AnyEdit_Vetoes(t *testing.T) {
 // TestSnapshotDrift_NonVeto_Edit_WarnsButNeverVetoes guards the non-veto policy: an edited non-veto
 // file (matching neither the pre-run backup nor the post-run baseline) never vetoes, but must be
 // surfaced in WarnableNonVeto so the rollback command can warn and ask for consent.
-func TestSnapshotDrift_NonVeto_Edit_WarnsButNeverVetoes(t *testing.T) {
+func TestSnapshotDrift_SharedNativeConfigIsSkipped(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
-	sharedPath := filepath.Join(cfg.ClaudeHome, "shared.txt")
+	sharedPath := cfg.Context7ConfigPath()
 	writeTestFile(t, sharedPath, "shared original\n")
 	writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
 		OriginalPath: sharedPath,
@@ -620,8 +620,8 @@ func TestSnapshotDrift_NonVeto_Edit_WarnsButNeverVetoes(t *testing.T) {
 	if len(report.Vetoes) != 0 {
 		t.Fatalf("SnapshotDrift().Vetoes = %v, want empty (non-veto entries never veto)", report.Vetoes)
 	}
-	if len(report.WarnableNonVeto) != 1 || report.WarnableNonVeto[0] != sharedPath {
-		t.Fatalf("SnapshotDrift().WarnableNonVeto = %v, want exactly [%s]", report.WarnableNonVeto, sharedPath)
+	if len(report.Skipped) != 1 || report.Skipped[0] != sharedPath {
+		t.Fatalf("SnapshotDrift().Skipped = %v, want exactly [%s]", report.Skipped, sharedPath)
 	}
 }
 
@@ -641,7 +641,7 @@ func TestSnapshotDrift_MatchesEitherBaseline_Safe(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
-			path := filepath.Join(cfg.ClaudeHome, "file.txt")
+			path := cfg.EngramStatePath()
 			writeTestFile(t, path, tc.current)
 			entry := manifestEntry{
 				OriginalPath: path,
@@ -671,7 +671,7 @@ func TestSnapshotDrift_MatchesEitherBaseline_Safe(t *testing.T) {
 // is drift.
 func TestSnapshotDrift_NoPostRunHash_ComparesAgainstPreRunOnly(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
-	path := filepath.Join(cfg.ClaudeHome, "file.txt")
+	path := cfg.EngramStatePath()
 	writeTestFile(t, path, "edited\n")
 	writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
 		OriginalPath: path,
@@ -696,7 +696,7 @@ func TestSnapshotDrift_NoPostRunHash_ComparesAgainstPreRunOnly(t *testing.T) {
 // present entry vetoes, and nothing is ever merely warnable.
 func TestSnapshotDrift_LegacyManifest_StrictWholeFileBehavior(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
-	path := filepath.Join(cfg.ClaudeHome, "legacy.txt")
+	path := cfg.EngramStatePath()
 	writeTestFile(t, path, "edited after snapshot\n")
 	if err := os.MkdirAll(snapshotLatestDir(cfg), 0o755); err != nil {
 		t.Fatalf("MkdirAll(latest) error = %v", err)
@@ -758,10 +758,11 @@ func TestSnapshotDrift_ManagedContentVeto_MatchesPostRunManagedBaseline_NoVeto(t
 
 // --- Per-target snapshot generalization (openclaw-target-support, tasks 2.9-2.12) ---
 
-// TestSnapshotRun_OpenClawPresent_CapturesNineFiles is task 2.9's RED test extended by PR4: when
-// cfg.OpenClawHome is populated, SnapshotRun must capture all 9 files (2 Claude + 3 OpenClaw +
-// 2 click-memory-guard plugin files + 2 click-owned OpenClaw skill manifests). Count bumped from
-// The test's setup deliberately does NOT write the plugin or skill files
+// TestSnapshotRun_OpenClawPresent_CapturesPortableFiles verifies the selected Click and native
+// configuration paths are included in a new snapshot while retired model-only files are omitted.
+// When cfg.OpenClawHome is populated, SnapshotRun captures the Claude and OpenClaw files plus
+// click-memory-guard plugin files and click-owned OpenClaw skill manifests. The test's setup
+// deliberately does NOT write the plugin or skill files
 // (SyncOpenClawPlugin/SyncOpenClawSkills are never called here), so their entries are expected as
 // no-prior-state markers, exactly like a first-ever install would produce.
 func TestSnapshotRun_OpenClawPresent_CapturesPortableFiles(t *testing.T) {
@@ -780,25 +781,20 @@ func TestSnapshotRun_OpenClawPresent_CapturesPortableFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSnapshotManifest() error = %v", err)
 	}
-	wantEntryCount := 2 + 3 + 1 + len(openClawPluginRelPaths) + len(openClawSkillRelPaths)
+	wantEntryCount := 2 + 3 + len(openClawPluginRelPaths) + len(openClawSkillRelPaths)
 	if len(manifest.Entries) != wantEntryCount {
 		t.Fatalf("manifest.Entries = %#v, want exactly %d entries", manifest.Entries, wantEntryCount)
 	}
 
 	wantPaths := map[string]bool{
-		cfg.ClaudeMDPath():             false,
-		cfg.SettingsPath():             false,
-		cfg.OpenClawAgentsMDPath():     false,
-		cfg.OpenClawSoulMDPath():       false,
-		cfg.OpenClawMCPConfigPath():    false,
-		cfg.OpenClawModelProfilePath(): false,
+		cfg.ClaudeMDPath():          false,
+		cfg.SettingsPath():          false,
+		cfg.OpenClawAgentsMDPath():  false,
+		cfg.OpenClawSoulMDPath():    false,
+		cfg.OpenClawMCPConfigPath(): false,
 		filepath.Join(cfg.OpenClawPluginDir(), "plugins", "hooks.js"):   false,
 		filepath.Join(cfg.OpenClawPluginDir(), "plugin.json"):           false,
 		filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md"): false,
-		filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md"):  false,
-	}
-	for _, rel := range openClawSkillRelPaths[2:] {
-		wantPaths[filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel))] = false
 	}
 	for _, e := range manifest.Entries {
 		if _, ok := wantPaths[e.OriginalPath]; !ok {
@@ -813,22 +809,237 @@ func TestSnapshotRun_OpenClawPresent_CapturesPortableFiles(t *testing.T) {
 	}
 }
 
-func TestRestoreRun_OpenClawModelProfile_RestoresPortableArtifact(t *testing.T) {
+func TestRestoreRun_RetiredOpenClawSkillRestoresPreRemovalBytes(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
-	writeTestFile(t, cfg.OpenClawModelProfilePath(), `{"schema_version":2,"profile":"balanced","models":{"explore":"sonnet"}}`)
-	if err := SnapshotRun(cfg); err != nil {
-		t.Fatalf("SnapshotRun() error = %v", err)
+	const rel = "click-sdd/SKILL.md"
+	legacyBytes, err := os.ReadFile("testdata/legacy-openclaw-skills/click-sdd.txt")
+	if err != nil {
+		t.Fatalf("ReadFile(pinned legacy skill fixture) error = %v", err)
 	}
-	writeTestFile(t, cfg.OpenClawModelProfilePath(), `{"schema_version":2,"profile":"quality","models":{"explore":"opus"}}`)
+	original := string(legacyBytes)
+	path := filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel))
+	writeTestFile(t, path, original)
+
+	plan := BuildTargetPlan(cfg, TargetSelection{Configured: true, OpenClaw: true}, PlanOptions{})
+	if err := SnapshotTargetPlan(cfg, plan); err != nil {
+		t.Fatalf("SnapshotTargetPlan() error = %v", err)
+	}
+	warnings, err := retireLegacyOpenClawSkills(cfg, retiredOpenClawSkills)
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("retireLegacyOpenClawSkills() = (%#v, %v), want no warnings/error", warnings, err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("retired file still exists after cleanup: %v", err)
+	}
 	if err := RestoreRun(cfg); err != nil {
 		t.Fatalf("RestoreRun() error = %v", err)
 	}
-	got, err := os.ReadFile(cfg.OpenClawModelProfilePath())
-	if err != nil {
-		t.Fatalf("ReadFile(model-profile.json) error = %v", err)
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != original {
+		t.Fatalf("restored retired skill = %q, %v; want original bytes %q", got, err, original)
 	}
-	if string(got) != `{"schema_version":2,"profile":"balanced","models":{"explore":"sonnet"}}` {
-		t.Fatalf("restored model profile = %q, want original artifact", got)
+}
+
+func TestPrepareRestore_PreservesModifiedOrNoPriorRetiredSkill(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	path := filepath.Join(cfg.OpenClawSkillsDir(), "click-sdd", "SKILL.md")
+	legacy, err := os.ReadFile("testdata/legacy-openclaw-skills/click-sdd.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, path, "user-modified legacy skill\n")
+	writeTestFile(t, filepath.Join(snapshotLatestDir(cfg), "retired.md"), string(legacy))
+	writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
+		OriginalPath: path, BackupFile: "retired.md", Existed: true, DriftPolicy: DriftPolicyWholeFileVeto,
+	}}})
+	prepared, err := PrepareRestore(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPreparedRestore(prepared); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustReadFile(t, path)); got != "user-modified legacy skill\n" {
+		t.Fatalf("modified retired skill = %q, want it preserved", got)
+	}
+	if len(prepared.Drift.Skipped) != 1 || prepared.Drift.Skipped[0] != path {
+		t.Fatalf("skipped paths = %v, want modified legacy skill [%s]", prepared.Drift.Skipped, path)
+	}
+
+	writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
+		OriginalPath: path, Existed: false, DriftPolicy: DriftPolicyWholeFileVeto,
+	}}})
+	prepared, err = PrepareRestore(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPreparedRestore(prepared); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(mustReadFile(t, path)); got != "user-modified legacy skill\n" {
+		t.Fatalf("no-prior retired skill = %q, want no deletion authority", got)
+	}
+}
+
+func TestSnapshotDrift_SettingsTokenPresenceDoesNotVetoLegacyPostRunHash(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	matcher := MemoryGuardToolMatcher()
+	backup := `{"hooks":{"PreToolUse":[{"matcher":"` + matcher + `","hooks":[{"type":"command","command":"` + MemoryGuardCommand + `"}]}]},"custom":"before"}`
+	current := `{"env":{"ENGRAM_CLOUD_TOKEN":"current-secret"},"hooks":{"PreToolUse":[{"matcher":"` + matcher + `","hooks":[{"type":"command","command":"` + MemoryGuardCommand + `"}]}]},"custom":"after"}`
+	writeTestFile(t, cfg.SettingsPath(), current)
+	writeTestFile(t, filepath.Join(snapshotLatestDir(cfg), "settings.json"), backup)
+	writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
+		OriginalPath: cfg.SettingsPath(), BackupFile: "settings.json", Existed: true,
+		DriftPolicy:                DriftPolicyManagedContentVeto,
+		ExpectedPostRunManagedHash: managedSettingsProjectionHash(backup),
+	}}})
+	report, err := SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Vetoes) != 0 {
+		t.Fatalf("token presence alone vetoed rollback against a historical hash: %+v", report)
+	}
+	writeTestFile(t, cfg.SettingsPath(), strings.ReplaceAll(current, MemoryGuardCommand, "foreign-edited-guard"))
+	report, err = SnapshotDrift(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Vetoes) != 1 || report.Vetoes[0] != cfg.SettingsPath() {
+		t.Fatalf("Click guard drift should still veto: %+v", report)
+	}
+}
+
+func TestSnapshotTargetPlan_DoesNotFollowRetiredSkillSymlink(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	outside := filepath.Join(t.TempDir(), "foreign-skill.md")
+	writeTestFile(t, outside, "foreign bytes\n")
+	link := filepath.Join(cfg.OpenClawSkillsDir(), "click-sdd", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	plan := BuildTargetPlan(cfg, TargetSelection{Configured: true, OpenClaw: true}, PlanOptions{})
+	if err := SnapshotTargetPlan(cfg, plan); err != nil {
+		t.Fatalf("SnapshotTargetPlan() error = %v", err)
+	}
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range manifest.Entries {
+		if entry.OriginalPath == link {
+			t.Fatalf("manifest included symlink path %s; want it excluded instead of following or marking absent", link)
+		}
+	}
+	if got, err := os.ReadFile(outside); err != nil || string(got) != "foreign bytes\n" {
+		t.Fatalf("foreign symlink target = %q, %v; want unchanged", got, err)
+	}
+}
+
+func TestSnapshotTargetPlan_OmitsNoPriorMarkersForAbsentRetiredSkills(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	plan := BuildTargetPlan(cfg, TargetSelection{Configured: true, OpenClaw: true}, PlanOptions{})
+	if err := SnapshotTargetPlan(cfg, plan); err != nil {
+		t.Fatalf("SnapshotTargetPlan() error = %v", err)
+	}
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range manifest.Entries {
+		if isRetiredOpenClawSkillPath(cfg, entry.OriginalPath) {
+			t.Fatalf("absent retired path %s received a no-prior marker; rollback must not delete later user content", entry.OriginalPath)
+		}
+	}
+}
+
+func TestRestoreRun_HistoricalModelArtifactsRemainRestorable(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	cases := []struct {
+		name       string
+		path       string
+		backupName string
+		before     string
+		modified   string
+	}{
+		{
+			name:       "Claude models.json",
+			path:       cfg.ModelsPath(),
+			backupName: "models.json",
+			before:     `{"schema_version":2,"profile":"balanced","models":{"explore":"sonnet"}}`,
+			modified:   `{"schema_version":2,"profile":"quality","models":{"explore":"opus"}}`,
+		},
+		{
+			name:       "Codex model profile",
+			path:       cfg.CodexModelProfilePath(),
+			backupName: "codex-model-profile.json",
+			before:     `{"schema_version":1,"profile":"balanced","model":"sonnet"}`,
+			modified:   `{"schema_version":1,"profile":"quality","model":"opus"}`,
+		},
+		{
+			name:       "OpenClaw model profile",
+			path:       cfg.OpenClawModelProfilePath(),
+			backupName: "openclaw-model-profile.json",
+			before:     `{"schema_version":2,"profile":"balanced","models":{"explore":"sonnet"}}`,
+			modified:   `{"schema_version":2,"profile":"quality","models":{"explore":"opus"}}`,
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			writeTestFile(t, tt.path, tt.before)
+			writeTestFile(t, filepath.Join(snapshotLatestDir(cfg), tt.backupName), tt.before)
+			writeManifestDirect(t, cfg, runManifest{Entries: []manifestEntry{{
+				OriginalPath: tt.path,
+				BackupFile:   tt.backupName,
+				Existed:      true,
+				DriftPolicy:  DriftPolicyWholeFileVeto,
+			}}})
+			writeTestFile(t, tt.path, tt.modified)
+			if err := RestoreRun(cfg); err != nil {
+				t.Fatalf("RestoreRun() error = %v", err)
+			}
+			got, err := os.ReadFile(tt.path)
+			if err != nil {
+				t.Fatalf("ReadFile(%s) error = %v", tt.path, err)
+			}
+			if string(got) != tt.before {
+				t.Fatalf("restored historical artifact = %q, want %q", got, tt.before)
+			}
+		})
+	}
+}
+
+func TestSnapshotRun_OmitsLegacyModelArtifactsAndKeepsNativeMCPConfigs(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir(), CodexHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	for _, path := range []string{cfg.ModelsPath(), cfg.CodexModelProfilePath(), cfg.OpenClawModelProfilePath()} {
+		writeTestFile(t, path, `{"legacy":"value"}`)
+	}
+	for _, path := range []string{cfg.CodexConfigPath(), cfg.OpenClawMCPConfigPath()} {
+		writeTestFile(t, path, `{}`)
+	}
+	if err := SnapshotRun(cfg); err != nil {
+		t.Fatalf("SnapshotRun() error = %v", err)
+	}
+	manifest, err := loadSnapshotManifest(cfg)
+	if err != nil {
+		t.Fatalf("loadSnapshotManifest() error = %v", err)
+	}
+	paths := make(map[string]bool, len(manifest.Entries))
+	for _, entry := range manifest.Entries {
+		paths[entry.OriginalPath] = true
+	}
+	for _, path := range []string{cfg.ModelsPath(), cfg.CodexModelProfilePath(), cfg.OpenClawModelProfilePath()} {
+		if paths[path] {
+			t.Errorf("SnapshotRun() includes retired model-only artifact %q", path)
+		}
+	}
+	for _, path := range []string{cfg.CodexConfigPath(), cfg.OpenClawMCPConfigPath()} {
+		if !paths[path] {
+			t.Errorf("SnapshotRun() omits native configuration %q required for MCP rollback", path)
+		}
 	}
 }
 
@@ -853,11 +1064,9 @@ func TestSnapshotRun_OpenClawAbsent_CapturesOnlyClaudeFiles(t *testing.T) {
 	}
 }
 
-// TestRestoreRun_OpenClawFilesPresent_RestoresAllFiles is task 2.11's RED test: after SnapshotRun
-// with OpenClaw files present, editing ALL 5 files, then RestoreRun, all 5 must come back
-// byte-for-byte to their snapshotted content — proving RestoreRun needs no cfg.OpenClawHome-aware
-// change of its own, since it replays whatever paths SnapshotRun recorded in the manifest.
-func TestRestoreRun_OpenClawFilesPresent_RestoresAllFiles(t *testing.T) {
+// TestRestoreRun_OpenClawFilesPresent_PreservesForeignContent verifies that rollback does not
+// replace Click-managed documents without valid markers or OpenClaw's native MCP configuration.
+func TestRestoreRun_OpenClawFilesPresent_PreservesForeignContent(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir(), OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	writeTestFile(t, cfg.ClaudeMDPath(), "claude original\n")
 	writeTestFile(t, cfg.SettingsPath(), `{"original":true}`)
@@ -880,11 +1089,11 @@ func TestRestoreRun_OpenClawFilesPresent_RestoresAllFiles(t *testing.T) {
 	}
 
 	checks := map[string]string{
-		cfg.ClaudeMDPath():          "claude original\n",
-		cfg.SettingsPath():          `{"original":true}`,
-		cfg.OpenClawAgentsMDPath():  "agents original\n",
-		cfg.OpenClawSoulMDPath():    "soul original\n",
-		cfg.OpenClawMCPConfigPath(): `{"mcpServers":{}}`,
+		cfg.ClaudeMDPath():          "claude EDITED\n",
+		cfg.SettingsPath():          `{"edited":true}`,
+		cfg.OpenClawAgentsMDPath():  "agents EDITED\n",
+		cfg.OpenClawSoulMDPath():    "soul EDITED\n",
+		cfg.OpenClawMCPConfigPath(): `{"edited":true}`,
 	}
 	for path, want := range checks {
 		got, err := os.ReadFile(path)
@@ -1237,36 +1446,21 @@ func TestBuildTargetPlan_AllSnapshotDeclarationsHaveKnownPolicy(t *testing.T) {
 			options:     PlanOptions{CloudResolvable: true},
 			description: "Claude target with cloud config",
 		},
-		{
-			name:        "Claude-with-native-model",
-			selection:   TargetSelection{Claude: true},
-			options:     PlanOptions{CodexNativeModel: true},
-			description: "Claude target with native model option (no effect on Claude)",
-		},
+
 		{
 			name:        "Codex-only",
 			selection:   TargetSelection{Codex: true},
 			options:     PlanOptions{},
-			description: "Codex target only, no native model",
+			description: "Codex target only",
 		},
-		{
-			name:        "Codex-with-native-model",
-			selection:   TargetSelection{Codex: true},
-			options:     PlanOptions{CodexNativeModel: true},
-			description: "Codex target with native model mutation",
-		},
+
 		{
 			name:        "OpenClaw-only",
 			selection:   TargetSelection{OpenClaw: true},
 			options:     PlanOptions{},
-			description: "OpenClaw target only, no native model",
+			description: "OpenClaw target only",
 		},
-		{
-			name:        "OpenClaw-with-native-model",
-			selection:   TargetSelection{OpenClaw: true},
-			options:     PlanOptions{OpenClawNativeModel: true},
-			description: "OpenClaw target with native model mutation",
-		},
+
 		{
 			name:        "Claude-and-Codex",
 			selection:   TargetSelection{Claude: true, Codex: true},
@@ -1284,12 +1478,6 @@ func TestBuildTargetPlan_AllSnapshotDeclarationsHaveKnownPolicy(t *testing.T) {
 			selection:   TargetSelection{Claude: true, Codex: true, OpenClaw: true},
 			options:     PlanOptions{CloudResolvable: true},
 			description: "All targets with cloud config",
-		},
-		{
-			name:        "All-targets-all-native-models",
-			selection:   TargetSelection{Claude: true, Codex: true, OpenClaw: true},
-			options:     PlanOptions{CloudResolvable: true, CodexNativeModel: true, OpenClawNativeModel: true},
-			description: "All targets with cloud and all native models",
 		},
 	}
 

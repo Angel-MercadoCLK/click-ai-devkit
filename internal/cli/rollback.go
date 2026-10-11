@@ -10,7 +10,7 @@ import (
 
 // rollbackForceFlag lets a developer explicitly override the refuse-by-default hand-edit guard
 // (spec install-rollback Decision 3) and restore anyway. It bypasses VETOES only — a pending
-// shared-file (non-veto) warning still requires separate consent via --yes or an interactive "y".
+// warning for an eligible Click-owned legacy artifact still requires --yes or an interactive "y".
 const rollbackForceFlag = "force"
 
 // newRollbackCommand backs `click rollback`: restores the last run-start snapshot
@@ -23,20 +23,20 @@ const rollbackForceFlag = "force"
 //
 // --yes/--non-interactive are rollback-local (bound HERE, not root-persistent), mirroring how
 // install.go/update.go declare their own. NOTE the semantics differ from install's: for rollback,
-// --non-interactive is NOT an alias for --yes — consent for overwriting shared (non-veto) files
-// must come from --yes or an interactive answer, never from merely being non-interactive.
+// --non-interactive is NOT an alias for --yes — any eligible legacy-artifact warning requires
+// --yes or an interactive answer, never from merely being non-interactive.
 func newRollbackCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "rollback",
 		Short:  "Restaurar los archivos gestionados por click desde el último respaldo de instalación/actualización",
-		Long:   "Rollback restaura la instantánea general y puede revertir también cambios realizados por el CLI externo `claude` desde la última ejecución de instalación o actualización, no solo cambios de Click.",
+		Long:   "Rollback restaura contenido Click cuya propiedad puede verificarse. Conserva las configuraciones nativas compartidas y las rutas históricas cuya propiedad no puede confirmarse.",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRollback(cmd)
 		},
 	}
 	cmd.Flags().Bool(rollbackForceFlag, false, "Sobrescribir aunque los archivos se hayan editado manualmente desde el respaldo")
-	cmd.Flags().Bool(yesFlag, false, "Confirmar la restauración sin preguntar, incluso si archivos compartidos tienen cambios posteriores al respaldo")
+	cmd.Flags().Bool(yesFlag, false, "Confirmar sin preguntar cualquier advertencia de restauración")
 	cmd.Flags().Bool(nonInteractiveFlag, false, "No preguntar: rechazar si la restauración requiere confirmación (para scripts/CI; combinar con --yes para confirmar)")
 	return cmd
 }
@@ -45,11 +45,10 @@ func newRollbackCommand() *cobra.Command {
 //  1. no restorable snapshot -> report cleanly, no error, no fabricated content.
 //  2. click-owned content drifted since the snapshot (veto) and no --force -> refuse, name the
 //     drifted files, zero writes (spec Decision 3: refuse-by-default).
-//  3. shared (non-veto) files drifted -> warn by name, then require consent: an interactive "y",
-//     or --yes. Non-interactive without --yes refuses BEFORE any write; a declined confirmation
-//     cancels cleanly (nil error, zero writes). --force alone does NOT grant this consent.
-//  4. otherwise -> ApplyPreparedRestore, restoring EVERY manifest entry (restore coverage is not
-//     ownership-scoped, only veto scope is), leaving the snapshot intact for a future rollback.
+//  3. shared native configs and unknown historical roots are reported and skipped regardless of
+//     --force/--yes; they never enter the write plan.
+//  4. otherwise -> ApplyPreparedRestore applies only the prepared exact-owned transformations and
+//     leaves the snapshot intact for a future rollback.
 func runRollback(cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
 	r := rendererFor(cmd, out)
@@ -73,7 +72,15 @@ func runRollback(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	cfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: clickStateHome}
+	codexHome, err := installer.ResolveCodexHome()
+	if err != nil {
+		return err
+	}
+	openClawHome, err := installer.ResolveOpenClawHome()
+	if err != nil {
+		return err
+	}
+	cfg := installer.Config{ClaudeHome: claudeHome, CodexHome: codexHome, OpenClawHome: openClawHome, ClickStateHome: clickStateHome}
 
 	restorable, err := installer.HasRestorableSnapshot(cfg)
 	if err != nil {
@@ -89,6 +96,12 @@ func runRollback(cmd *cobra.Command) error {
 		return err
 	}
 	report := prepared.Drift
+	if len(report.Skipped) > 0 {
+		fmt.Fprintln(out, r.Info("Se conservaron las configuraciones compartidas o rutas históricas sin propiedad Click verificable:"))
+		for _, path := range report.Skipped {
+			fmt.Fprintf(out, "  - %s\n", path)
+		}
+	}
 
 	if !force && len(report.Vetoes) > 0 {
 		fmt.Fprintln(out, r.Warn("Los siguientes archivos se editaron manualmente desde el respaldo; rollback rechazado:"))
@@ -100,7 +113,7 @@ func runRollback(cmd *cobra.Command) error {
 	}
 
 	if len(report.WarnableNonVeto) > 0 {
-		fmt.Fprintln(out, r.Warn("Advertencia: rollback sobrescribirá cambios posteriores en estos archivos compartidos:"))
+		fmt.Fprintln(out, r.Warn("Advertencia: estos archivos gestionados cambiaron desde el respaldo y pueden sobrescribirse:"))
 		for _, path := range report.WarnableNonVeto {
 			fmt.Fprintf(out, "  - %s\n", path)
 		}
@@ -121,21 +134,10 @@ func runRollback(cmd *cobra.Command) error {
 			}
 		}
 	}
-
 	if err := installer.ApplyPreparedRestore(prepared); err != nil {
 		return err
 	}
 	fmt.Fprintln(out, r.Success("Archivos gestionados por click restaurados desde el último respaldo."))
 
-	// A restored settings.json backup has ENGRAM_CLOUD_TOKEN's value permanently redacted (NFR-6):
-	// left as-is, the literal placeholder would sit in the live file as a garbage token, silently
-	// breaking every subsequent Engram Cloud sync. Fix it up now, non-fatally: rollback's main job
-	// already succeeded above.
-	repaired, repairErr := installer.RepairRedactedEngramCloudTokenAfterRestore(cfg)
-	if repairErr != nil {
-		fmt.Fprintln(out, r.Warn("No se pudo limpiar el token de Engram Cloud redactado tras la restauración: "+repairErr.Error()))
-	} else if repaired {
-		fmt.Fprintln(out, r.Warn("El respaldo restaurado no conservaba el token de Engram Cloud (no se puede recuperar tras un rollback); vuelva a ejecutar `click install`/`click update` para reconsentir el token si desea reactivar la sincronización en la nube."))
-	}
 	return nil
 }

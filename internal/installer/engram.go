@@ -35,7 +35,7 @@ const (
 	// `claude plugin marketplace add https://github.com/Gentleman-Programming/engram` derives the
 	// marketplace name "engram" from the repo, then `claude plugin install engram@engram`
 	// registers it under exactly this id. This is also what makes the memory-guard hook's matcher
-	// (mcp__plugin_engram_engram__mem_save) correct: Claude Code's plugin-provided MCP tool
+	// (mcp__plugin_engram_engram__<tool>) correct: Claude Code's plugin-provided MCP tool
 	// naming is mcp__plugin_<plugin>_<server>__<tool>, and both the plugin name and its bundled
 	// MCP server key are "engram" — confirmed by this session's own available tool names.
 	EngramPluginID = engramPluginName + "@" + engramMarketplaceName

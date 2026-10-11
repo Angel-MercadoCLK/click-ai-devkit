@@ -3,11 +3,9 @@ package cli
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
-	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -24,15 +22,26 @@ func newUpdateCommand() *cobra.Command {
 	// defaults, same meaning as install's — the two commands' escape hatch must not drift. The help
 	// text is worded for THIS command (and in Spanish, like update's other flags): install's copy
 	// says "instalar", which would be wrong on an update.
+	cmd.Flags().Bool("dry-run", false, "Mostrar el plan sin ejecutar comandos ni modificar archivos")
 	cmd.Flags().Bool(yesFlag, false, "Omitir toda pantalla interactiva y confirmar la actualización automáticamente")
 	cmd.Flags().Bool(nonInteractiveFlag, false, "Alias de --yes")
+	cmd.Flags().String(profileFlag, "", "")
+	_ = cmd.Flags().MarkHidden(profileFlag)
 	cmd.Flags().Bool(skipOpenClawFlag, false, "Omitir la integración con OpenClaw aunque se detecte openclaw en este equipo")
-	cmd.Flags().String(codexModelFlag, "", "Referencia de modelo nativa de Codex, por ejemplo gpt-5.6")
+	cmd.Flags().String(codexModelFlag, "", "")
+	cmd.Flags().String(openClawModelFlag, "", "")
+	cmd.Flags().StringSlice(openClawFallbackFlag, nil, "")
+	_ = cmd.Flags().MarkHidden(codexModelFlag)
+	_ = cmd.Flags().MarkHidden(openClawModelFlag)
+	_ = cmd.Flags().MarkHidden(openClawFallbackFlag)
 	cmd.Flags().Bool(persistEngramCloudTokenFlag, false, "Autorizar almacenamiento de ENGRAM_CLOUD_TOKEN en ~/.claude/settings.json con permisos 0600 (requiere consentimiento explícito)")
 	return cmd
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
+	if retiredModelFlagsWereSet(cmd) {
+		return retiredModelConfigurationError()
+	}
 	out := cmd.OutOrStdout()
 	r := rendererFor(cmd, out)
 
@@ -54,6 +63,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Narrow persisted intent by availability for this run; never enable an excluded
+	// target before building the upstream selection and the local action plan.
+	selection.Codex = selection.Codex && cfg.CodexHome != ""
+	selection.OpenClaw = selection.OpenClaw && cfg.OpenClawHome != ""
 	if selection.Claude {
 		claudeHome, resolveErr := installer.ResolveClaudeHome()
 		if resolveErr != nil {
@@ -68,42 +81,29 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Native-model config mirrors `click install`: no prompt, and a native mutation only when the
-	// developer explicitly passes --codex-model. Without it, Codex keeps running the portable SDD
-	// against the model it already has configured, and OpenClaw keeps the provider/model already
-	// connected — so the native-model write is neither listed nor run. Print a Spanish info line for
-	// each detected target making the resulting behavior explicit.
-	codexModelValue, _ := cmd.Flags().GetString(codexModelFlag)
-	codexModel := strings.TrimSpace(codexModelValue)
-	codexNativeModel := selection.Codex && codexModel != ""
-	if selection.Codex {
-		if codexNativeModel {
-			fmt.Fprintln(out, r.Info("Codex: modelo nativo configurado explícitamente: "+codexModel+"."))
-		} else {
-			fmt.Fprintln(out, r.Info("Codex usa su modelo nativo ya configurado; el SDD portable corre con ese default."))
-		}
-	}
-	if selection.OpenClaw {
-		fmt.Fprintln(out, r.Info("OpenClaw usa el proveedor/modelo que ya conectaste; el SDD portable corre con ese default."))
-	}
-
 	m, err := manifest.Load()
 	if err != nil {
 		return err
 	}
 	cloudResolvable := installer.EngramCloudConfigured(cfg, m) || installer.EngramCloudPartiallyConfigured(cfg, m)
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel})
+	if err := preflightGentleAI(cfg, selection); err != nil {
+		return err
+	}
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable})
 
 	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
-	// snapshot — all BEFORE MigrateIfStale/step 1 below (the first external `claude` subprocess
-	// invocation). A decline here means zero writes: nothing below this point has run yet.
-	proceed, sharedReader, err := confirmAndSnapshot(cmd, out, r, cfg, plan, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg, cloudResolvable, codexNativeModel))
+	// snapshot before the first external `claude` subprocess invocation. A decline here means zero
+	// writes: nothing below this point has run yet.
+	proceed, sharedReader, err := confirmAndSnapshot(cmd, out, r, cfg, plan, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg, cloudResolvable))
 	if err != nil {
 		return err
 	}
 	if !proceed {
-		fmt.Fprintln(out, r.Info("Actualización cancelada."))
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		if !dryRun {
+			fmt.Fprintln(out, r.Info("Actualización cancelada."))
+		}
 		return nil
 	}
 
@@ -139,54 +139,22 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// Confirmed migration behavior for the real-SDD-taxonomy realignment: a stale (pre-realignment
-	// or otherwise outdated schema_version) models.json is backed up to models.json.bak FIRST,
-	// then fully regenerated with new-taxonomy defaults — old per-phase overrides are never
-	// preserved/merged (D8). A missing or already-current file is a no-op here.
-	if _, err := installer.MigrateIfStale(cfg); err != nil {
-		return err
-	}
-
-	// Re-apply whatever per-phase models AND active orchestration profile `click install` saved
-	// (D25 / design D4), so `click update` never silently resets a developer's choice back to
-	// defaults, and never silently drops the profile label back to "balanced" either. A
-	// models.json-less home (installed before this feature existed, or never installed) falls back
-	// to balanced + Defaults(). No interactive prompt here — update always re-applies, it never asks.
-	profile := modelconfig.ProfileName("")
-	var models map[modelconfig.Phase]string
-	if selection.Claude || selection.OpenClaw {
-		found := false
-		profile, models, found, err = installer.LoadModelsWithProfile(cfg)
-		if err != nil {
+	// The mandatory upstream foundation must succeed before Click persists selection
+	// or migrates models. The run-start snapshot and deferred recording are already armed.
+	if len(installer.GentleAIInstallArgs(selection)) > 0 {
+		if err := runGentleAIStep(cmd, out, r, m, cfg, selection); err != nil {
 			return err
-		}
-		if !found {
-			profile = modelconfig.ProfileBalanced
-		}
-		models = modelconfig.ResolveForProfile(string(profile), models)
-	}
-
-	// Re-apply the previously chosen Codex tier, or default to "recommended" if none was saved yet.
-	codexTier := "recommended"
-	if selection.Codex {
-		if savedTier, found, loadErr := installer.LoadCodexModelProfile(cfg); loadErr != nil {
-			return loadErr
-		} else if found {
-			codexTier = savedTier
 		}
 	}
 
 	for _, action := range plan.UpdateActionKinds() {
 		switch action {
+		case installer.StepActionSyncGentleAI:
+			// Already completed before Click-owned state writes; never run it twice.
+			continue
 		case installer.StepActionSyncMarketplacePlugins:
-			if err := r.RunStep("Re-sincronizando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins sincronizados en Claude Code", func() error {
-				return installer.SyncMarketplacePlugins(models, profile)
-			}); err != nil {
-				return err
-			}
-		case installer.StepActionSaveModels:
-			if err := r.RunStep("Guardando modelos por fase de click-sdd…", "Modelos por fase guardados", func() error {
-				return installer.SaveModelsWithProfile(cfg, profile, models)
+			if err := r.RunStep("Retirando click-sdd y sincronizando click-memory, click-review y click-skills…", "Plugins de Click sincronizados en Claude Code", func() error {
+				return installer.SyncMarketplacePlugins(cfg, nil)
 			}); err != nil {
 				return err
 			}
@@ -286,10 +254,17 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			}); err != nil {
 				return err
 			}
-		case installer.StepActionSyncOpenClawModelProfile:
-			if err := r.RunStep("Guardando recomendación de modelos para OpenClaw…", "Recomendación de modelos para OpenClaw guardada", func() error {
-				return installer.SyncOpenClawModelProfile(cfg, profile, models)
-			}); err != nil {
+		case installer.StepActionRetireLegacyOpenClawSkills:
+			var warnings []string
+			err := r.RunStep("Retirando skills heredadas de OpenClaw…", "Skills heredadas de OpenClaw revisadas", func() error {
+				var retireErr error
+				warnings, retireErr = installer.RetireLegacyOpenClawSkills(cfg)
+				return retireErr
+			})
+			for _, warning := range warnings {
+				fmt.Fprintln(out, r.Warn(warning))
+			}
+			if err != nil {
 				return err
 			}
 		case installer.StepActionSyncCodexGuidance:
@@ -310,24 +285,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo registrar Engram en Codex: %v. La actualización local continúa; reintenta más tarde con `click update`.", mcpErr)))
 			} else {
 				fmt.Fprintln(out, r.Success("Engram registrado en Codex"))
-			}
-		case installer.StepActionSaveCodexModelProfile:
-			if err := r.RunStep("Guardando perfil de modelos de Codex (referencia)…", "Perfil de modelos de Codex guardado", func() error {
-				return installer.SaveCodexModelProfile(cfg, codexTier)
-			}); err != nil {
-				if restoreErr := installer.RestoreRun(cfg); restoreErr != nil {
-					return fmt.Errorf("%w; rollback failed: %v", err, restoreErr)
-				}
-				return fmt.Errorf("%w; rollback restored the previous snapshot", err)
-			}
-		case installer.StepActionConfigureCodexNativeModel:
-			// Only present in the plan when --codex-model was passed (see PlanOptions.CodexNativeModel
-			// above); a plain update never reaches this native config.toml mutation.
-			if err := installer.ConfigureCodexModel(cfg.CodexHome, codexModel); err != nil {
-				if restoreErr := installer.RestoreRun(cfg); restoreErr != nil {
-					return fmt.Errorf("%w; rollback failed: %v", err, restoreErr)
-				}
-				return fmt.Errorf("%w; rollback restored the previous snapshot", err)
 			}
 		}
 	}

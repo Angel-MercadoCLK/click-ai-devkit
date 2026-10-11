@@ -3,6 +3,11 @@
 > Status: draft v0.1. Grounded in `00-decisions-and-open-questions.md` (D1–D20).
 > Audience: engineers building or maintaining click-ai-devkit itself.
 
+> **Historical architecture snapshot.** This predates the Gentle AI distribution decision. For
+> current ownership, use D48–D53 and [`README.md`](README.md): Gentle AI owns workflow, permissions,
+> model selection, and shared Engram/Context7 lifecycle; Click ships three plugins and its own
+> business/memory policy, guard, installer, and Cloud enrollment.
+
 ## 1. High-level architecture
 
 `click-ai-devkit` has four moving parts. Three are installed *into* a developer's Claude Code
@@ -56,7 +61,7 @@ all of it writes to.
 | **`plugins/click-memory/`** | Memory policy docs + the memory-guard PreToolUse hook + memory-related skills. | D6, D7 |
 | **`plugins/click-review/`** | PR/code review agent and skills, adapted from `guardian-angel`. | D9 |
 | **Engram** | Persistent-memory MCP server. Bundled, not reimplemented, pinned per click-ai-devkit release. | D1, D8 |
-| **memory-guard hook** | Deterministic Claude Code PreToolUse hook. Scans every `mem_save` call before it reaches Engram. | D7 |
+| **memory-guard hook** | Deterministic Claude Code PreToolUse hook. Scans every Engram tool call that persists content (`mem_save`, `mem_update`, ... — see `internal/guard/tools.go`) before it reaches Engram. | D7 |
 
 **Why a CLI at all, given the SDD flow is "just markdown"?** Because *getting* that markdown (and
 Engram, and the hook, and the CLAUDE.md rules) onto every developer's machine, identically, is

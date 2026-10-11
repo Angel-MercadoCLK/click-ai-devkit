@@ -10,12 +10,10 @@ import (
 )
 
 // DefaultOpenClawAgentsContent is the managed AGENTS.md body written under
-// cfg.OpenClawWorkspaceDir() when OpenClaw is detected — OpenClaw's counterpart to
-// DefaultManagedContent (claudemd.go). Kept deliberately minimal (design's "write minimal
-// idempotent managed AGENTS.md/SOUL.md" decision): it points the OpenClaw agent at click-sdd
-// conventions and the click-memory policy docs, without duplicating CLAUDE.md's full content.
-const DefaultOpenClawAgentsContent = `This workspace is managed by click-ai-devkit for OpenClaw. For a new change, start with the installed OpenClaw-native click-sdd skill in the skills/click-sdd directory, then follow the phase skills it names.
-The OpenClaw workflow uses its native provider/model configuration. Configure it with click configure-openclaw-model provider/model; Click delegates that operation to the documented OpenClaw CLI and keeps model-profile.json as local rollback metadata. Claude-specific agents and plugin registries are not installed or required here.
+// cfg.OpenClawWorkspaceDir() when OpenClaw is detected. It adds Click-specific policy and
+// guidance while leaving workflow ownership to gentle-ai.
+const DefaultOpenClawAgentsContent = `This workspace is managed by click-ai-devkit for OpenClaw. Use gentle-ai's upstream Organic Driven Development (ODD) workflow for repository changes; Click does not provide a separate orchestration flow.
+Click does not manage OpenClaw model choices or change native model settings. Use OpenClaw's native configuration tools for model choices. Claude-specific agents and plugin registries are not installed or required here.
 Before any mem_save, review the click-memory plugin's policy docs (memory-policy.md, allowed-memory.md, forbidden-memory.md) under its installed docs/ directory. The deterministic memory-guard hook enforces this policy even if an agent attempts something unsafe.
 This block is managed by click: edit via "click update" and remove via "click uninstall".`
 

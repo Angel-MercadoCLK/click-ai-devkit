@@ -66,26 +66,25 @@ type runManifest struct {
 // snapshotSource pairs a Config-resolved original path with the fixed filename its copy uses
 // inside backups/latest/, plus the drift policy to apply.
 type snapshotSource struct {
-	originalPath string
-	backupFile   string
-	policy       DriftPolicy
+	originalPath            string
+	backupFile              string
+	policy                  DriftPolicy
+	guardSymlinkedAncestors bool
 }
 
 // snapshotSources returns the per-target set of files a run-start snapshot covers: CLAUDE.md and
 // settings.json ALWAYS (design's Data Flow — the two root-level files `click install`/`click
 // update` write to, ahead of any external `claude` subprocess invocation), PLUS OpenClaw's
 // AGENTS.md/SOUL.md/openclaw.json AND the click-memory-guard plugin's files (hooks.js, plugin.json —
-// PR-C task 3.9's "add file(s) to PR-B's per-target snapshot list") AND the click-owned OpenClaw
-// skill manifests (clickhola, clickdev, and the portable click-sdd phase skills) when
+// PR-C task 3.9's "add file(s) to PR-B's per-target snapshot list"), the retained clickhola skill,
+// and the retired legacy Click skill paths when
 // cfg.OpenClawHome is populated (openclaw-target-support spec's install-snapshot-preview capability
 // — generalizing this from a fixed 2-file list to a per-target list, so install-reliability-
 // foundation's backup/preview/rollback protection extends to every OpenClaw file). Order is fixed
 // so manifest.json's entry order is deterministic across runs.
 //
-// The plugin's own file list (openClawPluginRelPaths, openclawplugin.go) and the skill's own file
-// list (openClawSkillRelPaths, openclawskills.go) are the single sources of truth iterated here —
-// SyncOpenClawPlugin/SyncOpenClawSkills and snapshotSources can never drift out of sync about which
-// files exist.
+// Active plugin/skill manifests use their installer's file lists; retired skill paths are added
+// separately so their pre-removal bytes remain available for historical rollback.
 //
 // ZERO behavior change for a Claude-only host: when cfg.OpenClawHome == "" (the zero value, exactly
 // what every pre-existing caller that never sets it produces), this returns the identical 2-entry
@@ -111,7 +110,6 @@ func snapshotSources(cfg Config) []snapshotSource {
 	if cfg.CodexHome != "" {
 		sources = append(sources,
 			snapshotSource{originalPath: cfg.CodexAgentsMDPath(), backupFile: "codex-AGENTS.md", policy: DriftPolicyManagedContentVeto},
-			snapshotSource{originalPath: cfg.CodexModelProfilePath(), backupFile: "codex-model-profile.json", policy: DriftPolicyWholeFileVeto},
 		)
 		// Codex config.toml is non-veto (user-owned)
 		if cfg.CodexConfigPath() != "" {
@@ -127,7 +125,6 @@ func snapshotSources(cfg Config) []snapshotSource {
 		snapshotSource{originalPath: cfg.OpenClawAgentsMDPath(), backupFile: "AGENTS.md", policy: DriftPolicyManagedContentVeto},
 		snapshotSource{originalPath: cfg.OpenClawSoulMDPath(), backupFile: "SOUL.md", policy: DriftPolicyWholeFileVeto},
 		snapshotSource{originalPath: cfg.OpenClawMCPConfigPath(), backupFile: "openclaw.json", policy: DriftPolicyWholeFileVeto},
-		snapshotSource{originalPath: cfg.OpenClawModelProfilePath(), backupFile: "openclaw-model-profile.json", policy: DriftPolicyWholeFileVeto},
 	)
 	for _, rel := range openClawPluginRelPaths {
 		sources = append(sources, snapshotSource{
@@ -141,6 +138,14 @@ func snapshotSources(cfg Config) []snapshotSource {
 			originalPath: filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel)),
 			backupFile:   openClawSkillBackupFileName(rel),
 			policy:       DriftPolicyWholeFileVeto,
+		})
+	}
+	for _, rel := range retiredOpenClawSkillPaths() {
+		sources = append(sources, snapshotSource{
+			originalPath:            filepath.Join(cfg.OpenClawSkillsDir(), filepath.FromSlash(rel)),
+			backupFile:              "retired-" + openClawSkillBackupFileName(rel),
+			policy:                  DriftPolicyWholeFileVeto,
+			guardSymlinkedAncestors: true,
 		})
 	}
 	return sources
@@ -223,7 +228,12 @@ func SnapshotTargetPlan(cfg Config, plan TargetPlan) error {
 func SnapshotTargetPlanWithWarnings(cfg Config, plan TargetPlan) ([]string, error) {
 	sources := make([]snapshotSource, 0, len(plan.SnapshotPaths()))
 	for i, decl := range plan.SnapshotSpecs() {
-		sources = append(sources, snapshotSource{originalPath: decl.Path, backupFile: fmt.Sprintf("plan-%03d%s", i+1, filepath.Ext(decl.Path)), policy: decl.Policy})
+		sources = append(sources, snapshotSource{
+			originalPath:            decl.Path,
+			backupFile:              fmt.Sprintf("plan-%03d%s", i+1, filepath.Ext(decl.Path)),
+			policy:                  decl.Policy,
+			guardSymlinkedAncestors: isRetiredOpenClawSkillPath(cfg, decl.Path),
+		})
 	}
 	return snapshotRunWithSourcesWithWarnings(cfg, sources)
 }
@@ -462,6 +472,22 @@ func snapshotRunWithSourcesWithWarnings(cfg Config, sources []snapshotSource) ([
 	manifest := runManifest{}
 	warnings := []string{}
 	for _, src := range sources {
+		if src.guardSymlinkedAncestors {
+			info, safe, inspectErr := inspectRetirementPath(src.originalPath)
+			if inspectErr != nil {
+				return nil, fmt.Errorf("installer: inspeccionar skill heredada de OpenClaw %s para el respaldo: %w", src.originalPath, inspectErr)
+			}
+			if !safe {
+				// A symlink or non-regular ancestor is deliberately omitted: following it could
+				// back up unrelated data, while an Existed=false marker could delete it on restore.
+				continue
+			}
+			if info == nil {
+				// Retirement never creates legacy paths. Omitting an absent entry avoids treating
+				// later user content as Click-owned during rollback.
+				continue
+			}
+		}
 		data, readErr := os.ReadFile(src.originalPath)
 		if readErr != nil {
 			if os.IsNotExist(readErr) {
@@ -526,11 +552,9 @@ func snapshotRunWithSourcesWithWarnings(cfg Config, sources []snapshotSource) ([
 	return warnings, nil
 }
 
-// RestoreRun restores every snapshotted file to its last run-start snapshot (spec Requirement:
-// Restore Last Run Snapshot). It is a thin composition of PrepareRestore + ApplyPreparedRestore
-// with NO prompting and NO warning output of its own: it is used by install/update's automatic
-// failure-recovery paths, which must never prompt a user mid-command. The ownership-scoped
-// drift/consent policy lives in the rollback command, not here.
+// RestoreRun restores the eligible Click-owned portions of the last run-start snapshot. It is a
+// thin composition of PrepareRestore + ApplyPreparedRestore with no prompting; shared native
+// configs and paths not currently proven Click-owned remain untouched.
 func RestoreRun(cfg Config) error {
 	prepared, err := PrepareRestore(cfg)
 	if err != nil {

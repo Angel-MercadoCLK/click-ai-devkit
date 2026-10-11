@@ -2,6 +2,10 @@
 
 > Status: draft v0.1. Grounded in `00-decisions-and-open-questions.md` (D1–D20).
 
+> **Historical rollout proposal.** This v0.1 plan predates the current Gentle AI distribution and
+> is not evidence that its canary or rollout occurred. See D48–D53 and [`README.md`](README.md) for
+> current ownership and support boundaries.
+
 ## 1. Rollout shape (D11)
 
 Team-wide rollout, gated by a short hardening canary:

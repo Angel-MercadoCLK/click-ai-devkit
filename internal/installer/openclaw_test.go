@@ -3,6 +3,7 @@ package installer
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -100,6 +101,85 @@ func TestSyncOpenClawWorkspace_PreservesHandWrittenContentOutsideMarkers(t *test
 	}
 	if !strings.Contains(string(got), managedBeginMarker) {
 		t.Fatalf("AGENTS.md = %q, want the managed block appended", got)
+	}
+}
+
+func TestSyncOpenClawWorkspace_UsesUpstreamWorkflowAndPreservesUserSections(t *testing.T) {
+	cfg := Config{OpenClawHome: t.TempDir()}
+	path := cfg.OpenClawAgentsMDPath()
+	userBefore := "# Workspace rules\nKeep this before.\n"
+	upstreamBefore := "<!-- gentle-ai:openclaw-guidance:start -->\nUpstream OpenClaw setup remains.\n<!-- gentle-ai:openclaw-guidance:end -->\n"
+	upstreamAfter := "\n<!-- gentle-ai:openclaw-runtime -->\nUpstream OpenClaw runtime note remains.\n<!-- /gentle-ai:openclaw-runtime -->\n"
+	userAfter := "\nKeep this after.\n"
+	prefix, suffix := userBefore+upstreamBefore, upstreamAfter+userAfter
+	old := prefix + joinLines(buildManagedBlock("Start with click-sdd and follow its phase skills.")) + suffix
+	soulPath := cfg.OpenClawSoulMDPath()
+	soulBefore := "# User soul note\nKeep the safety boundary.\n"
+	soulAfter := "\n<!-- gentle-ai:soul-note -->\nKeep upstream soul notes.\n<!-- /gentle-ai:soul-note -->\n"
+	oldSoul := soulBefore + joinLines(buildManagedBlock("Old Click soul content.")) + soulAfter
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(soulPath, []byte(oldSoul), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncOpenClawWorkspace(cfg); err != nil {
+		t.Fatalf("SyncOpenClawWorkspace() refresh error = %v", err)
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok, err := ManagedBlockBody(path)
+	if err != nil || !ok {
+		t.Fatalf("ManagedBlockBody() = %q, %v, %v; want managed block", body, ok, err)
+	}
+	for _, obsolete := range []string{"click-sdd", "phase skills"} {
+		if strings.Contains(body, obsolete) {
+			t.Errorf("managed OpenClaw guidance contains obsolete workflow %q", obsolete)
+		}
+	}
+	for _, retained := range []string{"gentle-ai", "ODD", "Click does not manage OpenClaw model choices", "click-memory", "click update", "click uninstall"} {
+		if !strings.Contains(body, retained) {
+			t.Errorf("managed OpenClaw guidance missing retained content %q", retained)
+		}
+	}
+	for _, obsolete := range []string{"click configure-openclaw-model", "model-profile.json as local rollback metadata"} {
+		if strings.Contains(body, obsolete) {
+			t.Errorf("managed OpenClaw guidance retains retired model-management claim %q", obsolete)
+		}
+	}
+	expected := prefix + joinLines(buildManagedBlock(DefaultOpenClawAgentsContent)) + suffix
+	if string(first) != expected {
+		t.Fatalf("refresh changed surrounding or upstream AGENTS.md guidance:\nwant: %q\n got: %q", expected, first)
+	}
+	if !strings.Contains(DefaultOpenClawSoulContent, "business or customer data") {
+		t.Fatal("SOUL guidance must retain the Click data-handling boundary")
+	}
+	if err := SyncOpenClawWorkspace(cfg); err != nil {
+		t.Fatalf("SyncOpenClawWorkspace() second run error = %v", err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil || string(second) != string(first) {
+		t.Fatalf("second sync changed AGENTS.md: first=%q second=%q err=%v", first, second, err)
+	}
+	firstSoul, err := os.ReadFile(soulPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedSoul := soulBefore + joinLines(buildManagedBlock(DefaultOpenClawSoulContent)) + soulAfter
+	if string(firstSoul) != expectedSoul {
+		t.Fatalf("refresh changed surrounding or upstream SOUL.md guidance:\nwant: %q\n got: %q", expectedSoul, firstSoul)
+	}
+	if err := SyncOpenClawWorkspace(cfg); err != nil {
+		t.Fatalf("SyncOpenClawWorkspace() third run error = %v", err)
+	}
+	secondSoul, err := os.ReadFile(soulPath)
+	if err != nil || string(secondSoul) != string(firstSoul) {
+		t.Fatalf("second sync changed SOUL.md: first=%q second=%q err=%v", firstSoul, secondSoul, err)
 	}
 }
 

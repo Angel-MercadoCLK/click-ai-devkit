@@ -21,7 +21,7 @@ func TestCheckClickPluginRegistries_CompleteStateReportsHealthy(t *testing.T) {
 	if !check.Healthy {
 		t.Fatalf("checkClickPluginRegistries() Healthy = false, want true: %s", check.Detail)
 	}
-	if !strings.Contains(check.Detail, "4 plugins") {
+	if !strings.Contains(check.Detail, "3 plugins") {
 		t.Fatalf("checkClickPluginRegistries() Detail = %q, want installed count", check.Detail)
 	}
 }
@@ -81,7 +81,7 @@ func TestCheckClickPluginRegistries_IncompletePluginSetReportsMissingIDs(t *test
 	if check.Healthy {
 		t.Fatal("checkClickPluginRegistries() Healthy = true, want false")
 	}
-	for _, plugin := range []string{"click-review@click-ai-devkit", "click-skills@click-ai-devkit"} {
+	for _, plugin := range []string{"click-skills@click-ai-devkit"} {
 		if !strings.Contains(check.Detail, plugin) {
 			t.Errorf("checkClickPluginRegistries() Detail = %q, want missing plugin %q", check.Detail, plugin)
 		}
@@ -112,7 +112,6 @@ func TestCheckClickPluginRegistries_MalformedJSONReportsActionableWarning(t *tes
 
 func installerClickPluginIDs() []string {
 	return []string{
-		"click-sdd@click-ai-devkit",
 		"click-memory@click-ai-devkit",
 		"click-review@click-ai-devkit",
 		"click-skills@click-ai-devkit",

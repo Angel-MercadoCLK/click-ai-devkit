@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,18 +11,71 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 )
 
-// TestConfigureOpenClawModelCommand_NoArgs_PrintsGuidanceAndReturnsNil is the FIX 1 contract:
-// running `click configure-openclaw-model` with NO args (exactly what the standing menu dispatches)
-// must NEVER return an error — an error here would propagate through runMenuLoop and terminate the
-// whole interactive menu session. It must instead print the Spanish guidance line and exit cleanly.
-func TestConfigureOpenClawModelCommand_NoArgs_PrintsGuidanceAndReturnsNil(t *testing.T) {
-	home := t.TempDir()
-	out, err := execRoot(t, home, "configure-openclaw-model")
-	if err != nil {
-		t.Fatalf("`click configure-openclaw-model` with no args error = %v, want nil (must never crash the menu)", err)
-	}
-	if !strings.Contains(out, "Indique el modelo con: click configure-openclaw-model <provider/model>") {
-		t.Fatalf("no-args output = %q, want the Spanish guidance line", out)
+func TestConfigureOpenClawModelCommand_RetiredWithoutChangingExistingConfiguration(t *testing.T) {
+	for _, args := range [][]string{{"configure-openclaw-model"}, {"configure-openclaw-model", "openai/example-model"}} {
+		t.Run(strings.Join(args, "-"), func(t *testing.T) {
+			claudeHome, openClawHome := t.TempDir(), t.TempDir()
+			t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
+			cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+			if err := os.MkdirAll(filepath.Dir(cfg.OpenClawMCPConfigPath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			before := []byte(`{"mcp":{"servers":{"foreign":{"command":"keep-me"}}},"agents":{"defaults":{"model":{"primary":"vendor/existing","fallbacks":["vendor/fallback"]}}},"custom":"sentinel"}`)
+			if err := os.WriteFile(cfg.OpenClawMCPConfigPath(), before, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(cfg.OpenClawModelProfilePath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			profileBefore := []byte(`{"schema_version":2,"profile":"legacy","models":{"default":"preserve-me"}}`)
+			if err := os.WriteFile(cfg.OpenClawModelProfilePath(), profileBefore, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			runner := newTestCommandRunner(claudeHome)
+			restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+			t.Cleanup(restoreRunner)
+			lookupCalls := 0
+			restoreLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+				lookupCalls++
+				return cliFakeBinaryLookup{resolved: map[string]string{}}
+			})
+			t.Cleanup(restoreLookup)
+
+			cmd := newConfigureOpenClawModelCommand()
+			var output bytes.Buffer
+			cmd.SetOut(&output)
+			cmd.SetErr(&output)
+			cmd.SetIn(&bytes.Buffer{})
+			cmd.SetArgs(args[1:])
+			err := cmd.Execute()
+			out := output.String()
+			if err == nil {
+				t.Fatalf("command error = nil, want a deprecation error; output=%q", out)
+			}
+			if !strings.Contains(err.Error(), "retirado") {
+				t.Fatalf("command error = %q, want a Spanish retirement notice", err)
+			}
+			if len(runner.commands) != 0 {
+				t.Fatalf("runner commands = %v, want none", runner.commands)
+			}
+			if lookupCalls != 0 {
+				t.Fatalf("runtime lookup factory called %d times, want 0", lookupCalls)
+			}
+			after, readErr := os.ReadFile(cfg.OpenClawMCPConfigPath())
+			if readErr != nil {
+				t.Fatalf("ReadFile(existing OpenClaw config) error = %v", readErr)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("existing OpenClaw config changed: before=%q after=%q", before, after)
+			}
+			profileAfter, readErr := os.ReadFile(cfg.OpenClawModelProfilePath())
+			if readErr != nil {
+				t.Fatalf("ReadFile(existing OpenClaw model profile) error = %v", readErr)
+			}
+			if string(profileAfter) != string(profileBefore) {
+				t.Fatalf("existing OpenClaw model profile changed: before=%q after=%q", profileBefore, profileAfter)
+			}
+		})
 	}
 }
 
@@ -45,9 +99,8 @@ func seedResolvableOpenClaw(t *testing.T) {
 // present.
 func execRootWithOpenClaw(t *testing.T, claudeHome, openClawHome string, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	configureCLIExecutionHomes(t, claudeHome, os.Getenv("CLICK_TEST_CODEX_FIXTURE"), openClawHome, args)
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
-	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
 	seedResolvableOpenClaw(t)
 
 	root := NewRootCommand()
@@ -58,21 +111,32 @@ func execRootWithOpenClaw(t *testing.T, claudeHome, openClawHome string, args ..
 	root.SetArgs(args)
 
 	err := root.Execute()
+	if os.Getenv("CLICK_TEST_CLAUDE_FIXTURE") != "" {
+		if syncErr := syncStandardTargetFixtures(); syncErr != nil {
+			t.Errorf("sync target fixtures after command: %v", syncErr)
+		}
+	}
 	return buf.String(), err
 }
 
 // TestInstallCommand_OpenClawDetected_WritesAgentsAndSoul is task 2.14/2.17's end-to-end test,
-// adapted for the urgent cleanup-only fix: with openclaw resolvable on PATH, `click install` must
+// adapted for the ownership transfer: with openclaw resolvable on PATH, `click install` must
 // write AGENTS.md and SOUL.md, under the SAME single confirm as Claude Code's own writes
 // (execRootWithOpenClaw's non-TTY buffer takes the non-interactive path, exactly like every other
 // CLI test in this package, so this proves the writes actually run, not just that the plan lists
-// them). It must NOT create openclaw.json — SyncOpenClawMCPConfig is cleanup-only now (real
-// `validate config` evidence proved OpenClaw's schema has no top-level "mcpServers" key, so click
-// must never write one, not even to register Engram), and there is nothing to clean on a fresh
-// install where openclaw.json never existed.
+// them). gentle-ai owns the upstream MCP config in openclaw.json; Click writes only its guidance,
+// model profile, and memory-guard assets around that registration.
 func TestInstallCommand_OpenClawDetected_WritesAgentsAndSoul(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
+	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
+	if err := os.MkdirAll(filepath.Dir(cfg.OpenClawModelProfilePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyProfile := []byte("existing OpenClaw model metadata remains user-owned")
+	if err := os.WriteFile(cfg.OpenClawModelProfilePath(), legacyProfile, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	runner := newTestCommandRunner(claudeHome)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
@@ -85,7 +149,6 @@ func TestInstallCommand_OpenClawDetected_WritesAgentsAndSoul(t *testing.T) {
 		t.Errorf("install output = %q, want it to mention OpenClaw when detected", out)
 	}
 
-	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
 	agentsRaw, err := os.ReadFile(cfg.OpenClawAgentsMDPath())
 	if err != nil {
 		t.Fatalf("ReadFile(AGENTS.md) error = %v, want it written when OpenClaw is detected", err)
@@ -100,15 +163,24 @@ func TestInstallCommand_OpenClawDetected_WritesAgentsAndSoul(t *testing.T) {
 	if !strings.Contains(string(soulRaw), "click-ai-devkit (managed)") {
 		t.Fatalf("SOUL.md content = %q, want it to contain the managed block markers", soulRaw)
 	}
-	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); !os.IsNotExist(err) {
-		t.Fatalf("Stat(openclaw.json) error = %v, want it left absent — SyncOpenClawMCPConfig is cleanup-only and must never create the file", err)
+	upstreamConfig, err := os.ReadFile(cfg.OpenClawMCPConfigPath())
+	if err != nil {
+		t.Fatalf("ReadFile(openclaw.json) error = %v, want gentle-ai's selected MCP registrations", err)
+	}
+	var openClawConfig map[string]any
+	if err := json.Unmarshal(upstreamConfig, &openClawConfig); err != nil {
+		t.Fatalf("parse gentle-ai OpenClaw config: %v", err)
+	}
+	mcp := openClawConfig["mcp"].(map[string]any)
+	servers := mcp["servers"].(map[string]any)
+	for _, name := range []string{"engram", "context7"} {
+		if _, ok := servers[name]; !ok {
+			t.Fatalf("OpenClaw mcp.servers = %v, want upstream registration %q", servers, name)
+		}
 	}
 	profileRaw, err := os.ReadFile(cfg.OpenClawModelProfilePath())
-	if err != nil {
-		t.Fatalf("ReadFile(model-profile.json) error = %v, want portable recommendation written", err)
-	}
-	if !strings.Contains(string(profileRaw), `"schema_version": 2`) || !strings.Contains(string(profileRaw), `"profile": "balanced"`) {
-		t.Fatalf("model-profile.json content = %q, want the shared versioned balanced profile", profileRaw)
+	if err != nil || !bytes.Equal(profileRaw, legacyProfile) {
+		t.Fatalf("model-profile.json = %q (err %v), want legacy metadata preserved exactly", profileRaw, err)
 	}
 }
 
@@ -207,11 +279,18 @@ func TestInstallCommand_SkipOpenClawFlag_NoMemoryGuardPluginWritten(t *testing.T
 	}
 }
 
-// TestInstallCommand_OpenClawDetected_SyncsClickSkills is PR4's RED test: with openclaw resolvable
-// on PATH, `click install` must synchronize the click-owned skill manifests under OpenClawSkillsDir().
-func TestInstallCommand_OpenClawDetected_SyncsClickSkills(t *testing.T) {
+// TestInstallCommand_OpenClawDetected_SyncsRetainedClickSkill verifies only the retained business
+// skill is synchronized; retired workflow paths are not recreated during install.
+func TestInstallCommand_OpenClawDetected_SyncsRetainedClickSkill(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
+	legacyPath := filepath.Join(openClawHome, "skills", "clickdev", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("custom legacy content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	runner := newTestCommandRunner(claudeHome)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
@@ -223,17 +302,19 @@ func TestInstallCommand_OpenClawDetected_SyncsClickSkills(t *testing.T) {
 	if !strings.Contains(out, "Sincronizando skills de Click en OpenClaw") {
 		t.Errorf("install output = %q, want it to mention the OpenClaw skill sync step", out)
 	}
+	if !strings.Contains(out, "Se conservó la skill heredada de OpenClaw clickdev/SKILL.md") {
+		t.Errorf("install output = %q, want Spanish warning for modified legacy skill", out)
+	}
 
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
-	for _, name := range []string{"clickhola", "clickdev"} {
-		path := filepath.Join(cfg.OpenClawSkillsDir(), name, "SKILL.md")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("ReadFile(%s) error = %v, want it written when OpenClaw is detected", path, err)
-		}
-		if !strings.Contains(string(data), "name: "+name) {
-			t.Fatalf("%s content = %q, want frontmatter name %q", path, data, name)
-		}
+	path := filepath.Join(cfg.OpenClawSkillsDir(), "clickhola", "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), "name: clickhola") {
+		t.Fatalf("clickhola content = %q, %v; want retained skill written", data, err)
+	}
+	got, err := os.ReadFile(legacyPath)
+	if err != nil || string(got) != "custom legacy content\n" {
+		t.Fatalf("clickdev legacy skill = %q, %v; want modified bytes preserved", got, err)
 	}
 }
 
@@ -255,8 +336,7 @@ func TestInstallCommand_OpenClawAbsent_NoSkillWrites(t *testing.T) {
 }
 
 // TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoul mirrors the install-side detection test
-// for `click update`, adapted for the cleanup-only fix: no pre-existing openclaw.json means update
-// leaves it absent too (nothing to clean).
+// for `click update` and keeps the upstream-owned MCP configuration present.
 func TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoul(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
@@ -277,17 +357,14 @@ func TestUpdateCommand_OpenClawDetected_ResyncsAgentsAndSoul(t *testing.T) {
 	}
 
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
-	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); !os.IsNotExist(err) {
-		t.Fatalf("Stat(openclaw.json) error = %v, want it left absent — nothing to clean when it never existed", err)
+	if _, err := os.Stat(cfg.OpenClawMCPConfigPath()); err != nil {
+		t.Fatalf("Stat(openclaw.json) error = %v, want upstream-owned config retained", err)
 	}
 }
 
-// TestInstallCommand_OpenClawDetected_HealsLegacyMCPServersKey is the urgent-fix end-to-end
-// regression guard: a real machine's openclaw.json already corrupted by a PAST click run (a
-// top-level "mcpServers" key OpenClaw's own `validate config` rejects) must be healed — the key
-// removed, every other top-level key preserved — the next time `click install` runs against that
-// same OpenClaw target.
-func TestInstallCommand_OpenClawDetected_HealsLegacyMCPServersKey(t *testing.T) {
+// TestInstallCommand_OpenClawDetected_PreservesUnprovenLegacyMCPConfig proves Click does not
+// delete an unproven same-name registration while transferring MCP ownership to gentle-ai.
+func TestInstallCommand_OpenClawDetected_PreservesUnprovenLegacyMCPConfig(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
 	runner := newTestCommandRunner(claudeHome)
@@ -303,25 +380,28 @@ func TestInstallCommand_OpenClawDetected_HealsLegacyMCPServersKey(t *testing.T) 
 		t.Fatalf("WriteFile(openclaw.json) error = %v", err)
 	}
 
-	if _, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "install"); err != nil {
-		t.Fatalf("install command error = %v", err)
+	if _, err := execRootWithOpenClaw(t, claudeHome, openClawHome, "install"); err == nil {
+		t.Fatal("install accepted an unproven same-name OpenClaw Engram registration")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("Click runner calls = %v, want preflight to stop before Click writes", runner.commands)
 	}
 
 	got, err := os.ReadFile(cfg.OpenClawMCPConfigPath())
 	if err != nil {
 		t.Fatalf("ReadFile(openclaw.json) error = %v", err)
 	}
-	if strings.Contains(string(got), "mcpServers") {
-		t.Fatalf("openclaw.json = %s, want the invalid legacy \"mcpServers\" key healed away", got)
+	if string(got) != corrupted {
+		t.Fatalf("openclaw.json = %s, want unproven legacy config preserved exactly", got)
 	}
 	if !strings.Contains(string(got), "someUserKey") {
 		t.Fatalf("openclaw.json = %s, want unrelated top-level key preserved", got)
 	}
 }
 
-// TestUpdateCommand_OpenClawDetected_ResyncsClickSkills is PR4's RED test: `click update` must re-
-// synchronize the click-owned OpenClaw skill manifests, restoring them if they drifted.
-func TestUpdateCommand_OpenClawDetected_ResyncsClickSkills(t *testing.T) {
+// TestUpdateCommand_OpenClawDetected_PreservesModifiedRetiredSkill verifies update does not
+// overwrite unknown content at a retired legacy path and reports the preservation warning.
+func TestUpdateCommand_OpenClawDetected_PreservesModifiedRetiredSkill(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
 	runner := newTestCommandRunner(claudeHome)
@@ -334,6 +414,9 @@ func TestUpdateCommand_OpenClawDetected_ResyncsClickSkills(t *testing.T) {
 
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
 	tampered := filepath.Join(cfg.OpenClawSkillsDir(), "clickdev", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(tampered), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(tampered, []byte("tampered content"), 0o644); err != nil {
 		t.Fatalf("WriteFile(tamper) error = %v", err)
 	}
@@ -345,15 +428,15 @@ func TestUpdateCommand_OpenClawDetected_ResyncsClickSkills(t *testing.T) {
 	if !strings.Contains(out, "Sincronizando skills de Click en OpenClaw") {
 		t.Errorf("update output = %q, want it to mention the OpenClaw skill sync step", out)
 	}
+	if !strings.Contains(out, "Se conservó la skill heredada de OpenClaw clickdev/SKILL.md") {
+		t.Errorf("update output = %q, want Spanish preservation warning", out)
+	}
 
 	got, err := os.ReadFile(tampered)
 	if err != nil {
 		t.Fatalf("ReadFile(clickdev SKILL.md) error = %v", err)
 	}
-	if strings.Contains(string(got), "tampered content") {
-		t.Fatalf("clickdev SKILL.md still contains tampered content = %q, want resynced embedded bytes", got)
-	}
-	if !strings.Contains(string(got), "name: clickdev") {
-		t.Fatalf("clickdev SKILL.md = %q, want resynced embedded bytes with frontmatter name", got)
+	if string(got) != "tampered content" {
+		t.Fatalf("clickdev SKILL.md = %q, want modified legacy content preserved exactly", got)
 	}
 }

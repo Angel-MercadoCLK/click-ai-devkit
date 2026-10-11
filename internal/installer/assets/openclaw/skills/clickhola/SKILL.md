@@ -41,13 +41,13 @@ Deriva un nombre corto en **kebab-case** a partir del problema/objetivo. Por eje
 
 ## Output
 
-Una vez confirmado el nombre y con los cuatro puntos claros, guarda el brief estructurado en inglés usando `mem_save` bajo el topic:
+Una vez confirmado el nombre y con los cuatro puntos claros, guarda el brief estructurado en inglés usando `mem_save` bajo el topic existente:
 
 ```text
 sdd/{change-name}/elicitation
 ```
 
-Coloca este encabezado exacto al inicio del contenido guardado:
+Este topic se conserva por compatibilidad con briefs históricos; guardar con esta clave no inicia ni ejecuta un flujo SDD. Presenta también el brief completo en esta conversación (guardar no sustituye responder). Coloca este encabezado exacto al inicio del contenido guardado y presentado:
 
 ```text
 Source: clickhola (OpenClaw)
@@ -67,7 +67,7 @@ Incluye estas secciones obligatorias:
 - **no inventes requisitos** que el solicitante no haya dicho.
 - **nunca incluyas credenciales**, claves de API, contraseñas, tokens ni datos personales en el brief.
 - No escribas código, especificaciones, diseños, tareas ni apliques cambios.
-- Si el solicitante pide algo fuera de la elicitación (por ejemplo, "escribe el código ahora"), explica amablemente que este paso solo sirve para entender el problema y que el orquestador lo llevará a la siguiente fase.
+- Si el solicitante pide algo fuera de la elicitación (por ejemplo, "escribe el código ahora"), explica amablemente que esta skill solo sirve para entender y documentar la intención; no implementa cambios. Después de compartir el brief, el solicitante decide cómo continuar; no invoques agentes ni inicies un flujo por tu cuenta.
 
 ## Language rule
 

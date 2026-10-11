@@ -37,7 +37,10 @@ func execRootWithLookupAndState(t *testing.T, claudeHome, stateHome string, look
 // Used to prove Finding 2(b)'s resilience contract (every OTHER step still runs to completion) and
 // Finding 2(a)'s friendly-message wrapping (the raw failure gets ClaudeMissingMessage attached) end
 // to end, without depending on a real missing claude binary.
-type failingClaudeRunner struct{ commands []string }
+type failingClaudeRunner struct {
+	commands        []string
+	pluginInventory []byte
+}
 
 func (r *failingClaudeRunner) Run(name string, args ...string) error {
 	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
@@ -49,33 +52,36 @@ func (r *failingClaudeRunner) Run(name string, args ...string) error {
 
 func (r *failingClaudeRunner) Output(name string, args ...string) ([]byte, error) {
 	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
+	if name == "claude" && len(args) == 3 && args[0] == "plugin" && args[1] == "list" && args[2] == "--json" {
+		if r.pluginInventory != nil {
+			return append([]byte(nil), r.pluginInventory...), nil
+		}
+		return []byte("[]"), nil
+	}
 	return []byte{}, nil
 }
 
-// TestUninstallCommand_SurfacesEngramPathWarning_WarningOnlyNoError is the pre-existing-shaped half
-// of the T4-1 follow-up regression coverage: a warning-only RemoveEngramPlugin result (err == nil)
-// must surface via surfacePathWarning and `click uninstall` must still succeed. This mirrors the
-// success path runUninstall already exercised before the fix — kept here as an explicit CLI-level
-// case alongside the double-failure test below, so both branches of the same `if err != nil` split
-// are covered from the same seam.
-func TestUninstallCommand_SurfacesEngramPathWarning_WarningOnlyNoError(t *testing.T) {
+// TestUninstallCommand_DoesNotRemoveUpstreamEngram proves Click uninstall no longer removes shared
+// Engram state or invokes the legacy Click-owned teardown path.
+func TestUninstallCommand_DoesNotRemoveUpstreamEngram(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 
-	wantWarning := "no se pudo quitar C:\\fake\\gobin del PATH persistente: acceso denegado"
+	removeCalls := 0
 	restoreRemove := SetRemoveEngramPluginFuncForTests(func(cfg installer.Config) (string, error) {
-		return wantWarning, nil
+		removeCalls++
+		return "", nil
 	})
 	defer restoreRemove()
 
-	out, err := execRoot(t, home, "uninstall")
+	_, err := execRoot(t, home, "uninstall")
 	if err != nil {
 		t.Fatalf("uninstall command error = %v, want nil when RemoveEngramPlugin only returns a pathWarning", err)
 	}
-	if !strings.Contains(out, wantWarning) {
-		t.Fatalf("uninstall output = %q, want it to contain the PATH warning %q", out, wantWarning)
+	if removeCalls != 0 {
+		t.Fatalf("RemoveEngramPlugin called %d times, want Click uninstall to preserve upstream Engram", removeCalls)
 	}
 }
 
@@ -86,25 +92,85 @@ func TestUninstallCommand_SurfacesEngramPathWarning_WarningOnlyNoError(t *testin
 // captured it into engramPathWarning but returned early on `err != nil`, before ever reaching
 // surfacePathWarning. The fatal error itself still surfaced (via cobra), but the PATH-specific
 // detail vanished. The fix surfaces engramPathWarning on BOTH the error path and the success path.
-func TestUninstallCommand_SurfacesEngramPathWarning_EvenOnFatalError(t *testing.T) {
+func TestUninstallCommand_DoesNotRunLegacySharedTeardown(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 
-	wantWarning := "no se pudo quitar C:\\fake\\gobin del PATH persistente: acceso denegado"
-	wantErr := errors.New("no se pudo desinstalar el plugin engram@engram")
+	removeCalls := 0
 	restoreRemove := SetRemoveEngramPluginFuncForTests(func(cfg installer.Config) (string, error) {
-		return wantWarning, wantErr
+		removeCalls++
+		return "", nil
 	})
 	defer restoreRemove()
 
-	out, err := execRoot(t, home, "uninstall")
-	if err == nil {
-		t.Fatalf("uninstall command error = nil, want a non-nil error when RemoveEngramPlugin also fails, output:\n%s", out)
+	_, err := execRoot(t, home, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall command error = %v, want nil", err)
 	}
-	if !strings.Contains(out, wantWarning) {
-		t.Fatalf("uninstall output = %q, want it to contain the PATH warning %q even though RemoveEngramPlugin also returned a fatal error", out, wantWarning)
+	if removeCalls != 0 {
+		t.Fatalf("RemoveEngramPlugin called %d times, want no shared dependency teardown", removeCalls)
+	}
+}
+
+func TestUninstallCommand_RetiresOnlyUserClickSDDAndKeepsMarketplace(t *testing.T) {
+	claudeHome, stateHome := t.TempDir(), t.TempDir()
+	cfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	if err := os.WriteFile(cfg.SettingsPath(), []byte(`{"pluginConfigs":{"click-sdd@click-ai-devkit":{"options":{"legacy":"preserved-in-backup"}}}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(settings.json) error = %v", err)
+	}
+	runner := newTestCommandRunner(claudeHome)
+	runner.pluginInventory = []byte(`[
+		{"id":"click-sdd@click-ai-devkit","scope":"project","projectPath":"/project"},
+		{"id":"click-sdd@click-ai-devkit","scope":"user"},
+		{"id":"click-sdd@click-ai-devkit","scope":"synced"},
+		{"id":"click-memory@click-ai-devkit","scope":"project","projectPath":"/project"},
+		{"id":"click-review@click-ai-devkit","scope":"user"},
+		{"id":"click-skills@click-ai-devkit","scope":"user"}
+	]`)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+
+	_, err := execRootWithLookupAndState(t, claudeHome, stateHome,
+		cliFakeBinaryLookup{resolved: map[string]string{"claude": "/usr/bin/claude", "git": "/usr/bin/git"}}, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall command error = %v", err)
+	}
+	userRetirements := 0
+	userScopedRemovals := map[string]bool{}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "plugin uninstall click-sdd@click-ai-devkit") {
+			userRetirements++
+			if command != "claude plugin uninstall click-sdd@click-ai-devkit --scope user --keep-data" {
+				t.Errorf("click-sdd uninstall command = %q, want exact user scope with --keep-data", command)
+			}
+		}
+		if strings.Contains(command, "plugin marketplace remove") {
+			t.Errorf("uninstall removed the marketplace and could cascade into other scopes: %q", command)
+		}
+		for _, plugin := range []string{"click-memory", "click-review", "click-skills"} {
+			want := "claude plugin uninstall " + plugin + "@click-ai-devkit --scope user --keep-data"
+			if command == want {
+				userScopedRemovals[plugin] = true
+			}
+			if strings.HasPrefix(command, "claude plugin uninstall "+plugin+"@click-ai-devkit") && command != want {
+				t.Errorf("plugin removal did not preserve data and user scope: %q", command)
+			}
+		}
+	}
+	if userRetirements != 1 {
+		t.Fatalf("user-scoped click-sdd retirements = %d, want one; commands = %#v", userRetirements, runner.commands)
+	}
+	if userScopedRemovals["click-memory"] || !userScopedRemovals["click-review"] || !userScopedRemovals["click-skills"] {
+		t.Fatalf("remaining Click plugin removals = %#v, want foreign-only memory skipped and user review/skills removed", userScopedRemovals)
+	}
+	backups, globErr := filepath.Glob(filepath.Join(stateHome, "retired-plugin-options", "click-sdd-*.json"))
+	if globErr != nil || len(backups) != 1 {
+		t.Fatalf("retirement backups = %#v, err = %v; want durable backup after full uninstall", backups, globErr)
 	}
 }
 
@@ -131,6 +197,7 @@ func TestUninstallCommand_ContinuesEveryStepAfterAnEarlierOneFails(t *testing.T)
 	}
 
 	runner := &failingClaudeRunner{}
+	runner.pluginInventory = []byte(`[{"id":"click-memory@click-ai-devkit","scope":"user"}]`)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 
@@ -209,6 +276,9 @@ func TestUninstallCommand_ClaudeMissing_StillRunsEveryStepAndReportsFriendlyMess
 	}
 
 	runner := &failingClaudeRunner{}
+	runner.pluginInventory = []byte(`[{
+		"id":"click-memory@click-ai-devkit","scope":"user"
+	}]`)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 	missingClaude := cliFakeBinaryLookup{resolved: map[string]string{"git": "/usr/bin/git"}}
@@ -279,10 +349,9 @@ func TestUninstallCommand_OpenClawNeverInstalled_NoOpNoError(t *testing.T) {
 	}
 }
 
-// TestUninstallCommand_RemovesOpenClawSkillsAndPreservesSiblings is PR4's RED test: `click
-// uninstall` must remove the click-owned OpenClaw skill directories (clickhola, clickdev) while
-// leaving any user-created sibling skill directories untouched.
-func TestUninstallCommand_RemovesOpenClawSkillsAndPreservesSiblings(t *testing.T) {
+// TestUninstallCommand_RemovesRetainedOpenClawSkillAndPreservesSiblings verifies uninstall removes
+// clickhola while leaving user-created sibling directories untouched.
+func TestUninstallCommand_RemovesRetainedOpenClawSkillAndPreservesSiblings(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
 	cfg := installer.Config{ClaudeHome: claudeHome, OpenClawHome: openClawHome}
@@ -313,7 +382,7 @@ func TestUninstallCommand_RemovesOpenClawSkillsAndPreservesSiblings(t *testing.T
 		t.Fatalf("uninstall command error = %v, output:\n%s", err, out)
 	}
 
-	for _, owned := range []string{"clickhola", "clickdev"} {
+	for _, owned := range []string{"clickhola"} {
 		path := filepath.Join(cfg.OpenClawSkillsDir(), owned)
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("Stat(%s) after uninstall error = %v, want os.IsNotExist", owned, err)
@@ -321,6 +390,45 @@ func TestUninstallCommand_RemovesOpenClawSkillsAndPreservesSiblings(t *testing.T
 	}
 	if _, err := os.Stat(sibling); err != nil {
 		t.Fatalf("Stat(user-skill) after uninstall error = %v, want sibling preserved", err)
+	}
+}
+
+func TestUninstallCommand_WarnsAndPreservesModifiedRetiredOpenClawSkill(t *testing.T) {
+	processHome := t.TempDir()
+	openClawHome := t.TempDir()
+	stateHome := t.TempDir()
+	t.Setenv("HOME", processHome)
+	t.Setenv("USERPROFILE", processHome)
+	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
+	t.Setenv("CLICK_CLAUDE_HOME", filepath.Join(processHome, ".claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(processHome, ".codex"))
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+	cfg := installer.Config{OpenClawHome: openClawHome, ClickStateHome: stateHome}
+	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, OpenClaw: true}); err != nil {
+		t.Fatalf("SaveTargetSelection() error = %v", err)
+	}
+	legacyPath := filepath.Join(cfg.OpenClawSkillsDir(), "click-sdd", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte("user-edited workflow content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCommand()
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetErr(&output)
+	root.SetIn(&bytes.Buffer{})
+	root.SetArgs([]string{"uninstall"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("uninstall error = %v, output:\n%s", err, output.String())
+	}
+	if got, err := os.ReadFile(legacyPath); err != nil || string(got) != "user-edited workflow content\n" {
+		t.Fatalf("modified legacy path = %q, %v; want preserved bytes", got, err)
+	}
+	if !strings.Contains(output.String(), "Se conservó la skill heredada de OpenClaw click-sdd/SKILL.md") {
+		t.Fatalf("uninstall output = %q, want Spanish preservation warning", output.String())
 	}
 }
 
@@ -375,12 +483,9 @@ func TestUninstallCommand_RemoveOpenClawSkillsError_ContinuesTeardown(t *testing
 	}
 }
 
-// TestUninstallCommand_CorruptedEngramState_SucceedsWithWarning is Finding 3's CLI-level regression
-// test: a truncated/corrupted engram.json must not abort `click uninstall` — RemoveEngramPlugin now
-// reports it as a warning (installer.RemoveEngramPlugin's own corrupted-state handling), so with
-// every other step healthy the overall command must still succeed, and the warning must be visible
-// in the output rather than silently dropped.
-func TestUninstallCommand_CorruptedEngramState_SucceedsWithWarning(t *testing.T) {
+// TestUninstallCommand_PreservesLegacyEngramState proves Click does not mutate upstream/shared
+// Engram state during uninstall, including unclassifiable legacy state.
+func TestUninstallCommand_PreservesLegacyEngramState(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -399,19 +504,16 @@ func TestUninstallCommand_CorruptedEngramState_SucceedsWithWarning(t *testing.T)
 	if err != nil {
 		t.Fatalf("uninstall command error = %v, want nil — a corrupted engram.json must be a warning, not a fatal failure, output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "dañado") {
-		t.Fatalf("uninstall output = %q, want it to contain the corrupted-state warning", out)
+	got, readErr := os.ReadFile(statePath)
+	if readErr != nil || string(got) != "{not valid json" {
+		t.Fatalf("legacy Engram state = %q, err = %v, want exact bytes preserved", got, readErr)
 	}
 }
 
-// TestUninstallCommand_RemovesModelsAndEngramCloudState is the orphaned-files regression: click's own
-// models.json (written by StepActionSaveModels) and engram-cloud.json (written by
-// StepActionSyncEngramCloud) both survived `click uninstall` forever — the claude-models step had no
-// UninstallActions and no reverser existed at all, and the engram-cloud step had no UninstallActions
-// either even though RemoveEngramCloudState already existed (its only caller was the zero-caller
-// legacy installer.Uninstall). This drives both teardowns through the real run loop and proves the
-// files are actually gone, with the Spanish step labels surfaced.
-func TestUninstallCommand_RemovesModelsAndEngramCloudState(t *testing.T) {
+// TestUninstallCommand_PreservesModelsAndRemovesEngramCloudState verifies that uninstall leaves
+// legacy user-owned model artifacts and native model settings untouched while removing Click's
+// local Engram Cloud enrollment record.
+func TestUninstallCommand_PreservesModelsAndRemovesEngramCloudState(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 
@@ -419,8 +521,20 @@ func TestUninstallCommand_RemovesModelsAndEngramCloudState(t *testing.T) {
 	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
 		t.Fatalf("SaveTargetSelection() error = %v", err)
 	}
-	if err := installer.SaveModelsWithProfile(cfg, "", nil); err != nil {
-		t.Fatalf("SaveModelsWithProfile() error = %v", err)
+	legacyModels := []byte("legacy models are user-owned after retirement")
+	legacyBackup := []byte("legacy backup must remain untouched")
+	if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.ModelsPath(), legacyModels, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.ModelsPath()+".bak", legacyBackup, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	modelSettings := []byte(`{"model":"native-user-model"}`)
+	if err := os.WriteFile(cfg.SettingsPath(), modelSettings, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(cfg.EngramCloudStatePath(), []byte(`{"enrolled":true,"project":"click-ai-devkit"}`), 0o644); err != nil {
 		t.Fatalf("WriteFile(engram-cloud.json) error = %v", err)
@@ -435,14 +549,21 @@ func TestUninstallCommand_RemovesModelsAndEngramCloudState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("uninstall command error = %v, want nil, output:\n%s", err, out)
 	}
-	if _, statErr := os.Stat(cfg.ModelsPath()); !os.IsNotExist(statErr) {
-		t.Fatalf("Stat(models.json) error = %v, want click uninstall to remove its own models.json", statErr)
+	if got, readErr := os.ReadFile(cfg.ModelsPath()); readErr != nil || !bytes.Equal(got, legacyModels) {
+		t.Fatalf("models.json = %q (err %v), want exact legacy preservation", got, readErr)
+	}
+	if got, readErr := os.ReadFile(cfg.ModelsPath() + ".bak"); readErr != nil || !bytes.Equal(got, legacyBackup) {
+		t.Fatalf("models.json.bak = %q (err %v), want exact legacy backup preservation", got, readErr)
+	}
+	var gotSettings map[string]any
+	if err := readJSONFile(cfg.SettingsPath(), &gotSettings); err != nil {
+		t.Fatalf("read settings.json after uninstall: %v", err)
+	}
+	if gotSettings["model"] != "native-user-model" {
+		t.Fatalf("settings model = %#v, want native model preserved", gotSettings["model"])
 	}
 	if _, statErr := os.Stat(cfg.EngramCloudStatePath()); !os.IsNotExist(statErr) {
 		t.Fatalf("Stat(engram-cloud.json) error = %v, want click uninstall to remove its own Engram Cloud record", statErr)
-	}
-	if !strings.Contains(out, "Modelos por fase eliminados") {
-		t.Fatalf("uninstall output = %q, want the models teardown success label", out)
 	}
 	if !strings.Contains(out, "Registro local de Engram Cloud eliminado") {
 		t.Fatalf("uninstall output = %q, want the Engram Cloud teardown success label", out)
@@ -451,9 +572,9 @@ func TestUninstallCommand_RemovesModelsAndEngramCloudState(t *testing.T) {
 
 // TestUninstallCommand_NoEngramCloudEnrollment_SkipsCloudTeardown is the complement: a machine that
 // never enrolled in Engram Cloud has no engram-cloud.json, so the cloud teardown step must not even
-// be listed — while models.json is still removed. This pins the presence-based gate: uninstall must
+// be listed, while legacy models.json remains untouched. This pins the presence-based gate: uninstall must
 // NOT key the cloud step off EngramCloudConfigured, which needs ENGRAM_CLOUD_TOKEN still exported.
-func TestUninstallCommand_NoEngramCloudEnrollment_RemovesSessionSync(t *testing.T) {
+func TestUninstallCommand_NoEngramCloudEnrollment_PreservesModelsAndRemovesSessionSync(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 
@@ -461,8 +582,12 @@ func TestUninstallCommand_NoEngramCloudEnrollment_RemovesSessionSync(t *testing.
 	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Claude: true}); err != nil {
 		t.Fatalf("SaveTargetSelection() error = %v", err)
 	}
-	if err := installer.SaveModelsWithProfile(cfg, "", nil); err != nil {
-		t.Fatalf("SaveModelsWithProfile() error = %v", err)
+	legacyModels := []byte("legacy models remain when Cloud was never enrolled")
+	if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.ModelsPath(), legacyModels, 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	runner := newTestCommandRunner(claudeHome)
@@ -474,8 +599,8 @@ func TestUninstallCommand_NoEngramCloudEnrollment_RemovesSessionSync(t *testing.
 	if err != nil {
 		t.Fatalf("uninstall command error = %v, want nil, output:\n%s", err, out)
 	}
-	if _, statErr := os.Stat(cfg.ModelsPath()); !os.IsNotExist(statErr) {
-		t.Fatalf("Stat(models.json) error = %v, want models.json removed even with no cloud enrollment", statErr)
+	if got, readErr := os.ReadFile(cfg.ModelsPath()); readErr != nil || !bytes.Equal(got, legacyModels) {
+		t.Fatalf("models.json = %q (err %v), want exact legacy preservation", got, readErr)
 	}
 	if !strings.Contains(out, "Sincroniz") {
 		t.Fatalf("uninstall output = %q, want session-sync removal even with no enrollment record", out)
@@ -653,11 +778,9 @@ func TestUninstallCommand_FailedCodexTeardown_ContinuesForwardNoRollback(t *test
 	}
 }
 
-// TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregistersCodexMCP is FIX 1's
-// end-to-end proof of the completed uninstall lifecycle: a full Claude + OpenClaw + Codex teardown
-// must strip OpenClaw's managed AGENTS.md/SOUL.md blocks (which nothing removed before) AND issue the
-// exact real `codex mcp remove engram` to deregister Engram's Codex MCP server.
-func TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregistersCodexMCP(t *testing.T) {
+// TestUninstallCommand_FullOpenClawAndCodex_PreservesSharedMCP proves the Click workspace blocks
+// are removed while the shared Codex MCP server is not deregistered.
+func TestUninstallCommand_FullOpenClawAndCodex_PreservesSharedMCP(t *testing.T) {
 	claudeHome := t.TempDir()
 	openClawHome := t.TempDir()
 	codexHome := t.TempDir()
@@ -674,8 +797,7 @@ func TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregist
 	})
 	defer restoreLookup()
 
-	// testCommandRunner makes `codex mcp get engram` succeed (Output returns nil), so RemoveCodexMCP
-	// treats Engram as registered and issues `mcp remove engram`; its Run records but no-ops it.
+	// The runner records any native MCP command; Click uninstall must leave upstream registrations alone.
 	runner := newTestCommandRunner(claudeHome)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
@@ -685,11 +807,24 @@ func TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregist
 	if err := installer.SaveTargetSelection(stateCfg, installer.TargetSelection{Configured: true, Claude: true, OpenClaw: true, Codex: true}); err != nil {
 		t.Fatalf("SaveTargetSelection() error = %v", err)
 	}
+	claudeCfg := installer.Config{ClaudeHome: claudeHome}
+	claudeMCP := []byte(`{"mcpServers":{"engram":{"command":"/fixture/engram","args":["mcp","--tools=agent"]},"context7":{"type":"http","url":"https://mcp.context7.com/mcp"}}}`)
+	if err := os.WriteFile(claudeCfg.Context7ConfigPath(), claudeMCP, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	openClawCfg := installer.Config{OpenClawHome: openClawHome}
+	openClawMCP := []byte(`{"mcp":{"servers":{"engram":{"command":"/fixture/engram","args":["mcp","--tools=agent"]}}},"userSetting":true}`)
+	if err := os.WriteFile(openClawCfg.OpenClawMCPConfigPath(), openClawMCP, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := installer.SyncOpenClawWorkspace(openClawCfg); err != nil {
 		t.Fatalf("SyncOpenClawWorkspace() error = %v", err)
 	}
 	codexCfg := installer.Config{CodexHome: codexHome}
+	codexMCP := []byte("[mcp_servers.engram]\ncommand = \"engram\"\nargs = [\"mcp\", \"--tools=agent\"]\n")
+	if err := os.WriteFile(codexCfg.CodexConfigPath(), codexMCP, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := installer.WriteManagedBlock(codexCfg.CodexAgentsMDPath(), installer.DefaultCodexAgentsContent); err != nil {
 		t.Fatalf("WriteManagedBlock(CodexAgentsMDPath) error = %v", err)
 	}
@@ -714,11 +849,23 @@ func TestUninstallCommand_FullOpenClawAndCodex_RemovesWorkspaceBlocksAndDeregist
 			t.Fatalf("HasManagedBlock(%s) = true after uninstall, want the OpenClaw managed block removed", path)
 		}
 	}
+	for _, entry := range []struct {
+		path string
+		want []byte
+	}{
+		{claudeCfg.Context7ConfigPath(), claudeMCP},
+		{openClawCfg.OpenClawMCPConfigPath(), openClawMCP},
+		{codexCfg.CodexConfigPath(), codexMCP},
+	} {
+		got, err := os.ReadFile(entry.path)
+		if err != nil || !bytes.Equal(got, entry.want) {
+			t.Fatalf("shared MCP config %s = %q, err = %v, want exact bytes preserved", entry.path, got, err)
+		}
+	}
 
-	// Codex Engram MCP registration was deregistered with the exact confirmed real syntax.
 	joined := strings.Join(runner.commands, "\n")
-	if !strings.Contains(joined, "mcp remove engram") {
-		t.Fatalf("codex command log =\n%s\nwant `codex mcp remove engram` issued", joined)
+	if strings.Contains(joined, "mcp remove engram") {
+		t.Fatalf("codex command log =\n%s\nwant shared Engram MCP registration preserved", joined)
 	}
 }
 
@@ -750,7 +897,7 @@ func TestUninstallCommand_FullClaude_PrunesEmptyClickKeys(t *testing.T) {
 		"hooks": map[string]any{
 			"PreToolUse": []any{
 				map[string]any{
-					"matcher": installer.MemoryGuardToolMatcher,
+					"matcher": installer.MemoryGuardToolMatcher(),
 					"hooks":   []any{map[string]any{"type": "command", "command": installer.MemoryGuardCommand}},
 				},
 			},
@@ -874,21 +1021,21 @@ func TestUninstallCommand_ForeignHooksSurvive(t *testing.T) {
 			"PreToolUse": []any{
 				// Click's memory guard hook (will be removed)
 				map[string]any{
-					"matcher": installer.MemoryGuardToolMatcher,
+					"matcher": installer.MemoryGuardToolMatcher(),
 					"hooks": []any{
 						map[string]any{"type": "command", "command": installer.MemoryGuardCommand},
 					},
 				},
 				// Foreign hook 1: same matcher, different type (should survive)
 				map[string]any{
-					"matcher": installer.MemoryGuardToolMatcher,
+					"matcher": installer.MemoryGuardToolMatcher(),
 					"hooks": []any{
 						map[string]any{"type": "javascript", "code": "console.log('foreign hook')"},
 					},
 				},
 				// Foreign hook 2: same matcher, different command (should survive)
 				map[string]any{
-					"matcher": installer.MemoryGuardToolMatcher,
+					"matcher": installer.MemoryGuardToolMatcher(),
 					"hooks": []any{
 						map[string]any{"type": "command", "command": "foreign-command"},
 					},
@@ -958,7 +1105,7 @@ func TestUninstallCommand_ForeignHooksSurvive(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if entryMap["matcher"] != installer.MemoryGuardToolMatcher {
+		if entryMap["matcher"] != installer.MemoryGuardToolMatcher() {
 			continue
 		}
 		hooks, _ := entryMap["hooks"].([]any)
@@ -984,7 +1131,7 @@ func TestUninstallCommand_ForeignHooksSurvive(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if entryMap["matcher"] != installer.MemoryGuardToolMatcher {
+		if entryMap["matcher"] != installer.MemoryGuardToolMatcher() {
 			continue
 		}
 		hooks, _ := entryMap["hooks"].([]any)

@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
 func TestRenderAgentMarkdownGoldenOutput(t *testing.T) {
@@ -17,8 +15,6 @@ func TestRenderAgentMarkdownGoldenOutput(t *testing.T) {
 		Engine:      ClaudeCode,
 		Name:        "release-helper",
 		Description: "Helps prepare release notes.",
-		SDDMode:     SDDPhaseSupport,
-		Phase:       modelconfig.PhaseApply,
 		Tools:       "Read, Grep, Edit",
 		Model:       "sonnet",
 		Purpose:     "Turn merged pull requests into release notes.",
@@ -50,9 +46,6 @@ func TestRenderAgentMarkdownGoldenOutput(t *testing.T) {
 		"Use when a release candidate is ready.\n\n" +
 		"## Hard Rules\n" +
 		"Never invent merged work.\n\n" +
-		"## SDD Integration\n" +
-		"Mode: phase-support\n" +
-		"Phase: apply\n\n" +
 		"## Tone\n" +
 		"Clear, direct, and concise.\n\n" +
 		"## Domain Knowledge\n" +
@@ -197,50 +190,133 @@ func TestTargetPathPersonalDefaultsToUserClaudeAgentsDir(t *testing.T) {
 	wantPath(t, got, filepath.Join(home, ".claude", "agents", "release-helper.md"))
 }
 
-func TestTargetPathShareableWithRegisteredClickSDDUsesClickSDDAgentsForPhaseSupport(t *testing.T) {
+func TestTargetPathShareableIgnoresStaleClickSDDRegistration(t *testing.T) {
 	repoRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repoRoot, ".claude-plugin"), 0o755); err != nil {
-		t.Fatalf("os.MkdirAll() error = %v", err)
+	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
+	pluginManifestPath := filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json")
+	if err := os.MkdirAll(filepath.Dir(marketplacePath), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".claude-plugin", "marketplace.json"), []byte(`{"plugins":[{"name":"click-sdd","source":"./plugins/click-sdd"}]}`), 0o600); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
+	if err := os.WriteFile(marketplacePath, []byte(`{"plugins":[{"name":"click-sdd","source":"./plugins/click-sdd"}]}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin"), 0o755); err != nil {
-		t.Fatalf("os.MkdirAll() error = %v", err)
+	if err := os.MkdirAll(filepath.Dir(pluginManifestPath), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json"), validClickSDDPluginManifest(), 0o600); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
+	if err := os.WriteFile(pluginManifestPath, validClickSDDPluginManifest(), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	spec := validAgentSpec()
-	spec.SDDMode = SDDPhaseSupport
 	spec.Placement = PlacementShareable
 
 	got, err := TargetPath(spec, "", repoRoot)
 	if err != nil {
 		t.Fatalf("TargetPath() error = %v", err)
 	}
+	want := filepath.Join(repoRoot, "plugins", "click-release-helper", "agents", "release-helper.md")
+	wantPath(t, got, want)
 
-	wantPath(t, got, filepath.Join(repoRoot, "plugins", "click-sdd", "agents", "release-helper.md"))
+	installedPath, err := Install(spec, "", repoRoot, nil)
+	if err != nil {
+		t.Fatalf("Install() with stale Click SDD registration error = %v", err)
+	}
+	wantPath(t, installedPath, want)
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("generic agent was not installed at %s: %v", want, err)
+	}
+	retiredTarget := filepath.Join(repoRoot, "plugins", "click-sdd", "agents", "release-helper.md")
+	if _, err := os.Lstat(retiredTarget); !os.IsNotExist(err) {
+		t.Fatalf("Install() recreated the retired Click SDD target %s: %v", retiredTarget, err)
+	}
 }
 
-func TestTargetPathShareableWithUnregisteredClickSDDReturnsScaffoldPath(t *testing.T) {
+func TestShareableAgentNamedSDDIsRejectedBeforeTargetOrAvailabilityChecks(t *testing.T) {
 	repoRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repoRoot, ".claude-plugin"), 0o755); err != nil {
-		t.Fatalf("os.MkdirAll() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".claude-plugin", "marketplace.json"), []byte(`{"plugins":[]}`), 0o600); err != nil {
-		t.Fatalf("os.WriteFile() error = %v", err)
-	}
 	spec := validAgentSpec()
-	spec.SDDMode = SDDPhaseSupport
+	spec.Name = "sdd"
 	spec.Placement = PlacementShareable
 
-	got, err := TargetPath(spec, "", repoRoot)
+	if got, err := TargetPath(spec, "", repoRoot); err == nil {
+		t.Fatalf("TargetPath() = %q, want retired click-sdd target to be rejected", got)
+	}
+	writer := newFakeFileWriter()
+	if err := CheckNameAvailable(spec, "", repoRoot, writer); err == nil {
+		t.Fatal("CheckNameAvailable() error = nil, want reserved shareable name rejection")
+	}
+	if len(writer.writePaths) != 0 {
+		t.Fatalf("CheckNameAvailable() wrote files = %v, want no writes", writer.writePaths)
+	}
+}
+
+func TestInstallShareableAgentNamedSDDDoesNotCreateRetiredPlugin(t *testing.T) {
+	repoRoot := t.TempDir()
+	spec := validAgentSpec()
+	spec.Name = "sdd"
+	spec.Placement = PlacementShareable
+
+	got, err := Install(spec, "", repoRoot, nil)
+	if err == nil {
+		t.Fatalf("Install() path = %q, want retired click-sdd plugin creation rejected", got)
+	}
+	if !strings.Contains(err.Error(), "reservado") {
+		t.Fatalf("Install() error = %q, want actionable Spanish reserved-name context", err)
+	}
+	retiredPlugin := filepath.Join(repoRoot, "plugins", "click-sdd")
+	if _, err := os.Lstat(retiredPlugin); !os.IsNotExist(err) {
+		t.Fatalf("Install() created retired plugin path %s: %v", retiredPlugin, err)
+	}
+}
+
+func TestInstallFinalMarkdownNamedSDDDoesNotCreateRetiredPlugin(t *testing.T) {
+	repoRoot := t.TempDir()
+	spec := validAgentSpec()
+	spec.Name = "sdd"
+	spec.Placement = PlacementShareable
+	finalMarkdown, err := RenderAgentMarkdown(spec)
 	if err != nil {
-		t.Fatalf("TargetPath() error = %v", err)
+		t.Fatalf("RenderAgentMarkdown() error = %v", err)
 	}
 
-	wantPath(t, got, filepath.Join(repoRoot, "plugins", "click-release-helper", "agents", "release-helper.md"))
+	got, err := InstallFinalMarkdown(spec, finalMarkdown, "", repoRoot, nil)
+	if err == nil {
+		t.Fatalf("InstallFinalMarkdown() path = %q, want retired click-sdd plugin creation rejected", got)
+	}
+	if !strings.Contains(err.Error(), "reservado") {
+		t.Fatalf("InstallFinalMarkdown() error = %q, want actionable Spanish reserved-name context", err)
+	}
+	retiredPlugin := filepath.Join(repoRoot, "plugins", "click-sdd")
+	if _, err := os.Lstat(retiredPlugin); !os.IsNotExist(err) {
+		t.Fatalf("InstallFinalMarkdown() created retired plugin path %s: %v", retiredPlugin, err)
+	}
+}
+
+func TestPersonalAgentNamedSDDRemainsSupported(t *testing.T) {
+	claudeHome := t.TempDir()
+	spec := validAgentSpec()
+	spec.Name = "sdd"
+	spec.Placement = PlacementPersonal
+
+	got, err := Install(spec, claudeHome, "", nil)
+	if err != nil {
+		t.Fatalf("Install() personal sdd agent error = %v", err)
+	}
+	want := filepath.Join(claudeHome, "agents", "sdd.md")
+	wantPath(t, got, want)
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("personal agent file %s was not written: %v", want, err)
+	}
+}
+
+func TestRenderAgentMarkdownOmitsRetiredWorkflowMetadata(t *testing.T) {
+	got, err := RenderAgentMarkdown(validAgentSpec())
+	if err != nil {
+		t.Fatalf("RenderAgentMarkdown() error = %v", err)
+	}
+	for _, retired := range []string{"SDD Integration", "Mode: standalone", "Phase:"} {
+		if strings.Contains(got, retired) {
+			t.Errorf("agent markdown contains retired workflow metadata %q:\n%s", retired, got)
+		}
+	}
 }
 
 func TestTargetPathShareableWithoutMarketplaceReturnsScaffoldPath(t *testing.T) {
@@ -313,7 +389,6 @@ func TestInstallFinalMarkdownWritesConfirmedMarkdownExactly(t *testing.T) {
 				"## Tasks\nConfirmed tasks.\n\n" +
 				"## Triggers\nConfirmed triggers.\n\n" +
 				"## Hard Rules\nConfirmed hard rules.\n\n" +
-				"## SDD Integration\nMode: standalone\n\n" +
 				"## Tone\nConfirmed tone.\n\n" +
 				"## Domain Knowledge\nConfirmed domain knowledge.\n\n" +
 				"## Good Output\nConfirmed good output.\n",
@@ -337,7 +412,6 @@ func TestInstallFinalMarkdownWritesConfirmedMarkdownExactly(t *testing.T) {
 				"## Tasks\nConfirmed tasks.\n\n" +
 				"## Triggers\nConfirmed triggers.\n\n" +
 				"## Hard Rules\nConfirmed hard rules.\n\n" +
-				"## SDD Integration\nMode: standalone\n\n" +
 				"## Tone\nConfirmed tone.\n\n" +
 				"## Domain Knowledge\nConfirmed domain knowledge.\n\n" +
 				"## Good Output\nConfirmed good output.\n",
@@ -567,164 +641,6 @@ func TestInstallShareableStandaloneRejectsExistingPluginMetadataCollision(t *tes
 		if path == pluginManifestPath || path == marketplacePath {
 			t.Fatalf("Install() wrote colliding metadata path %s; writes=%v", path, writer.writePaths)
 		}
-	}
-}
-
-func TestInstallShareablePhaseSupportWithoutMarketplaceScaffoldsLoadablePlugin(t *testing.T) {
-	repoRoot := filepath.Join("testdata", "repo")
-	spec := validAgentSpec()
-	spec.SDDMode = SDDPhaseSupport
-	spec.Phase = modelconfig.PhaseApply
-	spec.Placement = PlacementShareable
-	writer := newFakeFileWriter()
-
-	gotPath, err := Install(spec, "", repoRoot, writer)
-	if err != nil {
-		t.Fatalf("Install() error = %v", err)
-	}
-
-	pluginName := "click-release-helper"
-	agentPath := filepath.Join(repoRoot, "plugins", pluginName, "agents", "release-helper.md")
-	pluginManifestPath := filepath.Join(repoRoot, "plugins", pluginName, ".claude-plugin", "plugin.json")
-	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
-	wantPath(t, gotPath, agentPath)
-
-	for _, path := range []string{agentPath, pluginManifestPath, marketplacePath} {
-		if _, ok := writer.files[path]; !ok {
-			t.Fatalf("Install() did not write %s; writes=%v", path, writer.writePaths)
-		}
-	}
-
-	var marketplace struct {
-		Plugins []struct {
-			Name   string `json:"name"`
-			Source string `json:"source"`
-		} `json:"plugins"`
-	}
-	if err := json.Unmarshal(writer.files[marketplacePath], &marketplace); err != nil {
-		t.Fatalf("marketplace.json parse error = %v\n%s", err, writer.files[marketplacePath])
-	}
-	if len(marketplace.Plugins) != 1 || marketplace.Plugins[0].Name != pluginName || marketplace.Plugins[0].Source != "./plugins/click-release-helper" {
-		t.Fatalf("marketplace plugins = %+v, want registration for %s", marketplace.Plugins, pluginName)
-	}
-}
-
-func TestInstallShareablePhaseSupportWithUnregisteredClickSDDScaffoldsLoadablePlugin(t *testing.T) {
-	repoRoot := filepath.Join("testdata", "repo")
-	spec := validAgentSpec()
-	spec.SDDMode = SDDPhaseSupport
-	spec.Phase = modelconfig.PhaseApply
-	spec.Placement = PlacementShareable
-	writer := newFakeFileWriter()
-	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(`{"plugins":[]}`)
-
-	gotPath, err := Install(spec, "", repoRoot, writer)
-	if err != nil {
-		t.Fatalf("Install() error = %v", err)
-	}
-
-	pluginName := "click-release-helper"
-	agentPath := filepath.Join(repoRoot, "plugins", pluginName, "agents", "release-helper.md")
-	pluginManifestPath := filepath.Join(repoRoot, "plugins", pluginName, ".claude-plugin", "plugin.json")
-	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
-	wantPath(t, gotPath, agentPath)
-
-	for _, path := range []string{agentPath, pluginManifestPath, marketplacePath} {
-		if _, ok := writer.files[path]; !ok {
-			t.Fatalf("Install() did not write %s; writes=%v", path, writer.writePaths)
-		}
-	}
-}
-
-func TestInstallShareablePhaseSupportWithMissingClickSDDManifestScaffoldsLoadablePlugin(t *testing.T) {
-	repoRoot := filepath.Join("testdata", "repo")
-	spec := validAgentSpec()
-	spec.SDDMode = SDDPhaseSupport
-	spec.Phase = modelconfig.PhaseApply
-	spec.Placement = PlacementShareable
-	writer := newFakeFileWriter()
-	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(`{"plugins":[{"name":"click-sdd","source":"./plugins/click-sdd"}]}`)
-
-	gotPath, err := Install(spec, "", repoRoot, writer)
-	if err != nil {
-		t.Fatalf("Install() error = %v", err)
-	}
-
-	pluginName := "click-release-helper"
-	agentPath := filepath.Join(repoRoot, "plugins", pluginName, "agents", "release-helper.md")
-	pluginManifestPath := filepath.Join(repoRoot, "plugins", pluginName, ".claude-plugin", "plugin.json")
-	wantPath(t, gotPath, agentPath)
-	if _, ok := writer.files[pluginManifestPath]; !ok {
-		t.Fatalf("Install() did not write standalone plugin manifest; writes=%v", writer.writePaths)
-	}
-}
-
-func TestInstallShareablePhaseSupportWithWrongClickSDDSourceScaffoldsLoadablePlugin(t *testing.T) {
-	repoRoot := filepath.Join("testdata", "repo")
-	spec := validAgentSpec()
-	spec.SDDMode = SDDPhaseSupport
-	spec.Phase = modelconfig.PhaseApply
-	spec.Placement = PlacementShareable
-	writer := newFakeFileWriter()
-	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(`{"plugins":[{"name":"click-sdd","source":"./plugins/not-click-sdd"}]}`)
-	writer.files[filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json")] = validClickSDDPluginManifest()
-
-	gotPath, err := Install(spec, "", repoRoot, writer)
-	if err != nil {
-		t.Fatalf("Install() error = %v", err)
-	}
-
-	pluginName := "click-release-helper"
-	agentPath := filepath.Join(repoRoot, "plugins", pluginName, "agents", "release-helper.md")
-	pluginManifestPath := filepath.Join(repoRoot, "plugins", pluginName, ".claude-plugin", "plugin.json")
-	wantPath(t, gotPath, agentPath)
-	if _, ok := writer.files[pluginManifestPath]; !ok {
-		t.Fatalf("Install() did not write standalone plugin manifest; writes=%v", writer.writePaths)
-	}
-}
-
-func TestInstallShareablePhaseSupportWithMalformedClickSDDManifestScaffoldsLoadablePlugin(t *testing.T) {
-	repoRoot := filepath.Join("testdata", "repo")
-	spec := validAgentSpec()
-	spec.SDDMode = SDDPhaseSupport
-	spec.Phase = modelconfig.PhaseApply
-	spec.Placement = PlacementShareable
-	writer := newFakeFileWriter()
-	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(`{"plugins":[{"name":"click-sdd","source":"./plugins/click-sdd"}]}`)
-	writer.files[filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json")] = []byte(`{"name":"click-sdd"`)
-
-	gotPath, err := Install(spec, "", repoRoot, writer)
-	if err != nil {
-		t.Fatalf("Install() error = %v", err)
-	}
-
-	pluginName := "click-release-helper"
-	agentPath := filepath.Join(repoRoot, "plugins", pluginName, "agents", "release-helper.md")
-	pluginManifestPath := filepath.Join(repoRoot, "plugins", pluginName, ".claude-plugin", "plugin.json")
-	wantPath(t, gotPath, agentPath)
-	if _, ok := writer.files[pluginManifestPath]; !ok {
-		t.Fatalf("Install() did not write standalone plugin manifest; writes=%v", writer.writePaths)
-	}
-}
-
-func TestInstallShareablePhaseSupportWithRegisteredClickSDDUsesClickSDDAgents(t *testing.T) {
-	repoRoot := filepath.Join("testdata", "repo")
-	spec := validAgentSpec()
-	spec.SDDMode = SDDPhaseSupport
-	spec.Phase = modelconfig.PhaseApply
-	spec.Placement = PlacementShareable
-	writer := newFakeFileWriter()
-	writer.files[filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")] = []byte(`{"plugins":[{"name":"click-sdd","source":"./plugins/click-sdd"}]}`)
-	writer.files[filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json")] = validClickSDDPluginManifest()
-
-	gotPath, err := Install(spec, "", repoRoot, writer)
-	if err != nil {
-		t.Fatalf("Install() error = %v", err)
-	}
-
-	wantPath(t, gotPath, filepath.Join(repoRoot, "plugins", "click-sdd", "agents", "release-helper.md"))
-	if _, ok := writer.files[filepath.Join(repoRoot, "plugins", "click-release-helper", ".claude-plugin", "plugin.json")]; ok {
-		t.Fatal("Install() scaffolded a standalone plugin even though click-sdd is registered and loadable")
 	}
 }
 
@@ -1059,7 +975,6 @@ func TestInstallFinalMarkdownShareableUsesConfirmedDescriptionNotOriginalSpec(t 
 		"## Tasks\nRead merged PRs.\n\n" +
 		"## Triggers\nUse on release day.\n\n" +
 		"## Hard Rules\nNever invent merged work.\n\n" +
-		"## SDD Integration\nMode: standalone\n\n" +
 		"## Tone\nClear and direct.\n\n" +
 		"## Domain Knowledge\nGo CLI releases.\n\n" +
 		"## Good Output\nA changelog.\n\n"
@@ -1103,7 +1018,6 @@ func validAgentSpec() AgentSpec {
 		Engine:      ClaudeCode,
 		Name:        "release-helper",
 		Description: "Helps prepare release notes.",
-		SDDMode:     SDDStandalone,
 		Tools:       "Read, Grep",
 		Model:       "sonnet",
 		Purpose:     "Turn merged pull requests into release notes.",

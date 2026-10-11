@@ -17,9 +17,9 @@ const (
 	managedEndMarker   = "# <<< click-ai-devkit (managed) <<<"
 )
 
-// DefaultManagedContent is the Slice 3 managed CLAUDE.md body: it activates ClickOrchestrator,
-// explains the Spanish/English split, points at the memory-policy docs, and reminds the user that
-// click manages this block.
+// DefaultManagedContent is Click-specific guidance layered on gentle-ai's upstream workflow.
+// It explains the Spanish/English split, points at memory-policy docs, and keeps the business
+// checklist discoverable without defining a competing orchestration flow.
 //
 // Hardening T1-3: the memory-policy reference used to be a bare repo-relative path
 // ("plugins/click-memory/docs/memory-policy.md"), which is wrong/ambiguous for any developer whose
@@ -33,7 +33,7 @@ const (
 // claims a specific (and possibly wrong) path — it names the plugin and doc filenames only. If a
 // future change wants the fully-resolved absolute path, it needs a deliberate scoping decision (a
 // template function taking Config + the click-memory version), not a quick patch here.
-const DefaultManagedContent = `Use ClickOrchestrator by default for this repository and delegate phase work to the click-sdd agents and skills.
+const DefaultManagedContent = `Use gentle-ai's upstream Organic Driven Development (ODD) workflow for repository changes; Click does not provide a separate orchestration flow.
 Reply to the developer in Spanish. Produce all artifacts (PRD, design, tasks, code comments, and memory entries) in English. Keep explanations plain, direct, and free of regional slang.
 Before any mem_save, review the click-memory plugin's policy docs (memory-policy.md, allowed-memory.md, forbidden-memory.md) under its installed docs/ directory. The deterministic memory-guard hook enforces this policy even if a model attempts something unsafe.
 Before opening or merging a PR, run the click-review pre-merge checklist.

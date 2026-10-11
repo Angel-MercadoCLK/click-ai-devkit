@@ -41,6 +41,48 @@ func TestWriteManagedBlock_CreatesFileWhenMissing(t *testing.T) {
 	}
 }
 
+func TestDefaultManagedContent_RefreshesGuidanceWithoutCompetingOrchestrator(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "CLAUDE.md")
+	userBefore := "# Team notes\nKeep this guidance.\n"
+	upstreamBefore := "<!-- gentle-ai:repository-guidance:start -->\nUpstream setup guidance stays intact.\n<!-- gentle-ai:repository-guidance:end -->\n"
+	upstreamAfter := "\n<!-- gentle-ai:runtime-note -->\nUpstream runtime note stays intact.\n<!-- /gentle-ai:runtime-note -->\n"
+	userAfter := "\nAdditional repository guidance.\n"
+	prefix, suffix := userBefore+upstreamBefore, upstreamAfter+userAfter
+	old := prefix + joinLines(buildManagedBlock("Use ClickOrchestrator and click-sdd for workflow.")) + suffix
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteManagedBlock(path, DefaultManagedContent); err != nil {
+		t.Fatalf("WriteManagedBlock() refresh error = %v", err)
+	}
+	first := readFile(t, path)
+	body, ok, err := ManagedBlockBody(path)
+	if err != nil || !ok {
+		t.Fatalf("ManagedBlockBody() = %q, %v, %v; want managed block", body, ok, err)
+	}
+	for _, obsolete := range []string{"ClickOrchestrator", "click-sdd"} {
+		if strings.Contains(body, obsolete) {
+			t.Errorf("managed CLAUDE.md body contains obsolete workflow %q", obsolete)
+		}
+	}
+	for _, retained := range []string{"Reply to the developer in Spanish", "Produce all artifacts", "click-memory", "click-review", "click update", "click uninstall"} {
+		if !strings.Contains(body, retained) {
+			t.Errorf("managed CLAUDE.md body missing retained Click guidance %q", retained)
+		}
+	}
+	expected := prefix + joinLines(buildManagedBlock(DefaultManagedContent)) + suffix
+	if first != expected {
+		t.Fatalf("refresh changed surrounding or upstream guidance:\nwant: %q\n got: %q", expected, first)
+	}
+	if err := WriteManagedBlock(path, DefaultManagedContent); err != nil {
+		t.Fatalf("WriteManagedBlock() idempotent rerun error = %v", err)
+	}
+	if got := readFile(t, path); got != first {
+		t.Fatalf("second guidance sync changed file:\nfirst: %q\nsecond: %q", first, got)
+	}
+}
+
 func TestWriteManagedBlock_AppendsPreservingExistingContent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "CLAUDE.md")

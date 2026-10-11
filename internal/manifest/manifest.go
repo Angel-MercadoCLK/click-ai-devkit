@@ -1,12 +1,9 @@
-// Package manifest defines the embedded release manifest that click reads to know what
-// "this click-ai-devkit release" means: the click-sdd/click-memory/click-review plugin
-// versions and the pinned Engram version. The manifest is embedded into the binary at build
-// time (go:embed) so `click doctor` and `click update` never need a network call to know what
-// they should install — see tech-spec.md §2.3.
+// Package manifest defines the embedded release metadata and qualified upstream tool pin used
+// by click. The manifest is embedded into the binary at build time (go:embed), so Click's local
+// lifecycle decisions do not need a network call — see tech-spec.md §2.3.
 //
-// There is deliberately no .claude-plugin/marketplace.json anywhere in this repo (D16,
-// implementation-plan.md Phase 0 DoD): this manifest is the only source of truth for install
-// content.
+// The Claude marketplace manifest separately describes retained Click plugins. Workflow and
+// model configuration are owned by gentle-ai, not by a Click plugin entry.
 package manifest
 
 import (
@@ -33,6 +30,20 @@ type Engram struct {
 	Source  string `yaml:"source"`
 }
 
+// GentleAIAsset is an official release archive qualified by a pinned SHA-256.
+type GentleAIAsset struct {
+	Name   string `yaml:"name"`
+	SHA256 string `yaml:"sha256"`
+}
+
+// GentleAI is the qualified upstream CLI pin. Assets are keyed by GOOS_GOARCH;
+// Windows intentionally has no archive and is built from Module@Version.
+type GentleAI struct {
+	Version string                   `yaml:"version"`
+	Module  string                   `yaml:"module"`
+	Assets  map[string]GentleAIAsset `yaml:"assets"`
+}
+
 // EngramCloud holds the optional non-secret Engram Cloud enrollment config surfaced in
 // manifest.yaml. Empty values mean local-only Engram behavior (no cloud enrollment).
 type EngramCloud struct {
@@ -43,7 +54,7 @@ type EngramCloud struct {
 // Manifest is the parsed shape of manifest.yaml, per tech-spec.md §2.3.
 type Manifest struct {
 	SchemaVersion        int               `yaml:"schema_version"`
-	ClickVersion         string            `yaml:"click_version"`
+	GentleAI             GentleAI          `yaml:"gentle_ai"`
 	Engram               Engram            `yaml:"engram"`
 	Plugins              map[string]Plugin `yaml:"plugins"`
 	MinClaudeCodeVersion string            `yaml:"min_claude_code_version"`

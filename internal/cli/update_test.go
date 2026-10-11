@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,7 +16,7 @@ import (
 
 func TestUpdate_ManifestOnlyConfigPersistsTokenWithFlag(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", "")
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", "")
@@ -37,6 +38,9 @@ func TestUpdate_ManifestOnlyConfigPersistsTokenWithFlag(t *testing.T) {
 	root.SetArgs([]string{"update", "--persist-engram-cloud-token"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("update error = %v", err)
+	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(home, "settings.json"))
 	if err != nil {
@@ -63,8 +67,9 @@ func TestUpdate_MalformedSettingsDoesNotAbortRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update command error = %v, want nil; output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Se omitió el respaldo de settings.json") || !strings.Contains(out, settingsPath) {
-		t.Fatalf("update output = %q, want malformed-settings backup warning naming %q", out, settingsPath)
+	installedSettingsPath := filepath.Join(os.Getenv("CLICK_CLAUDE_HOME"), "settings.json")
+	if !strings.Contains(out, "Se omitió el respaldo de settings.json") || !strings.Contains(out, installedSettingsPath) {
+		t.Fatalf("update output = %q, want malformed-settings backup warning naming %q", out, installedSettingsPath)
 	}
 	if !strings.Contains(out, "CLAUDE.md sincronizado") {
 		t.Fatalf("update output = %q, want a later configured step to run", out)
@@ -234,8 +239,7 @@ func TestUpdateCommand_CloudConfigured_PartialTokenMissing_SkipsCloudStep(t *tes
 
 // TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal is resilience fix W1: an Engram Cloud
 // re-sync failure must be NON-FATAL to `click update`. The command must (a) return nil, (b) surface a
-// Spanish warning containing the underlying error, and (c) still run the remaining steps through to
-// completion (Context7 sync and the completion line follow the cloud step in runUpdate).
+// Spanish warning containing the underlying error, and (c) still reach completion.
 // The --persist-engram-cloud-token opt-in authorizes the re-sync to run unattended (DD-3).
 func TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal(t *testing.T) {
 	home := t.TempDir()
@@ -263,9 +267,6 @@ func TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal(t *testing.T) {
 	if !strings.Contains(out, errTestEngramCloud.Error()) {
 		t.Fatalf("update output = %q, want the warning to include the underlying error %q", out, errTestEngramCloud.Error())
 	}
-	if !strings.Contains(out, "Context7 sincronizado") {
-		t.Fatalf("update output = %q, want the steps after the cloud step to still run", out)
-	}
 	if !strings.Contains(out, "Update completo.") {
 		t.Fatalf("update output = %q, want the command to continue to completion after cloud failure", out)
 	}
@@ -280,13 +281,8 @@ func TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal(t *testing.T) {
 	}
 }
 
-// TestUpdateCommand_CodexMCPFailureIsNonFatal is FIX 2's non-fatal contract for `click update`,
-// mirroring TestUpdateCommand_CloudConfigured_ReSyncFailureIsNonFatal for Codex's Engram MCP
-// registration (D45 "supplementary integrations are non-fatal" pattern): a failure re-registering
-// Engram's MCP server with Codex must never abort an otherwise-good update. The command must (a)
-// return nil, (b) surface a Spanish warning containing the underlying error, and (c) still reach
-// completion.
-func TestUpdateCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
+// TestUpdateCommand_DoesNotRegisterCodexMCP proves gentle-ai owns Codex MCP during update too.
+func TestUpdateCommand_DoesNotRegisterCodexMCP(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 	runner := newTestCommandRunner(claudeHome)
@@ -304,7 +300,9 @@ func TestUpdateCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
 	})
 	defer restoreGuidance()
 
+	mcpCalls := 0
 	restoreMCP := SetSyncCodexMCPFuncForTests(func(cfg installer.Config) error {
+		mcpCalls++
 		return errTestCodexMCP
 	})
 	defer restoreMCP()
@@ -313,17 +311,14 @@ func TestUpdateCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update command error = %v, want nil (Codex MCP failure must be non-fatal), output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "No se pudo registrar Engram en Codex") {
-		t.Fatalf("update output = %q, want it to contain the Spanish Codex MCP failure warning", out)
-	}
-	if !strings.Contains(out, errTestCodexMCP.Error()) {
-		t.Fatalf("update output = %q, want the warning to include the underlying error %q", out, errTestCodexMCP.Error())
-	}
 	if !strings.Contains(out, "Update completo.") {
-		t.Fatalf("update output = %q, want the command to continue to completion after the Codex MCP failure", out)
+		t.Fatalf("update output = %q, want the command to complete", out)
 	}
 	if guidanceCalls != 1 {
-		t.Fatalf("SyncCodexGuidance called %d times, want 1 — the AGENTS.md write step must still have run before the failed MCP step", guidanceCalls)
+		t.Fatalf("SyncCodexGuidance called %d times, want 1", guidanceCalls)
+	}
+	if mcpCalls != 0 {
+		t.Fatalf("SyncCodexMCP called %d times, want no Click-owned Codex registration", mcpCalls)
 	}
 }
 
@@ -333,7 +328,7 @@ func TestUpdateCommand_CodexMCPFailureIsNonFatal(t *testing.T) {
 // configure runs before enrollment.
 func TestUpdate_ConfigureFailureWarnsAndContinues(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	seedResolvableGit(t)
 
@@ -367,6 +362,9 @@ func TestUpdate_ConfigureFailureWarnsAndContinues(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("update command error = %v, want nil (cloud settings failure must be non-fatal)", err)
 	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
+	}
 	if len(order) != 2 || order[0] != "configure" || order[1] != "enrollment" {
 		t.Fatalf("recorded order = %v, want [configure enrollment]", order)
 	}
@@ -387,7 +385,7 @@ func TestUpdate_ConfigureFailureWarnsAndContinues(t *testing.T) {
 // enrollment/re-sync still runs when ENGRAM_CLOUD_TOKEN is present in the environment.
 func TestUpdate_DeclineWarnsAutosyncDisabled(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	seedResolvableGit(t)
 
@@ -408,6 +406,9 @@ func TestUpdate_DeclineWarnsAutosyncDisabled(t *testing.T) {
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("update command error = %v, want nil (decline remains successful)", err)
+	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "autosync desactivado") {
 		t.Fatalf("update output missing the Spanish autosync-disabled warning (ECS-3.3)")
@@ -435,7 +436,7 @@ func TestUpdate_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
 	t.Setenv("ENGRAM_CLOUD_TOKEN", tokenOverride)
-	t.Setenv("CLICK_CLAUDE_HOME", home)
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 
 	// Run update with --persist-engram-cloud-token to give consent
@@ -451,6 +452,9 @@ func TestUpdate_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 		// If a regression causes this test to fail and out contains the token,
 		// printing it would leak the secret into CI logs.
 		t.Fatalf("update command failed unexpectedly; see test setup for expected consent flow")
+	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
 	}
 
 	// Read the actual settings.json file on disk
@@ -540,6 +544,7 @@ func TestUpdate_EnvOverridesWriteEnvBlockAndHook(t *testing.T) {
 // stored token must remain present and unchanged (NoOp mode - never delete).
 func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 	home := t.TempDir()
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
@@ -547,7 +552,7 @@ func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 
 	// Seed settings.json with a previously-consented token
 	storedToken := "previously-consented-token-456"
-	settingsPath := filepath.Join(home, "settings.json")
+	settingsPath := filepath.Join(os.Getenv("CLICK_CLAUDE_HOME"), "settings.json")
 	initialSettings := fmt.Sprintf(`{
   "env": {
     "ENGRAM_CLOUD_TOKEN": "%s"
@@ -564,7 +569,6 @@ func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
 	// ENGRAM_CLOUD_TOKEN intentionally absent
-	t.Setenv("CLICK_CLAUDE_HOME", home)
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 
 	// Run update (non-interactive, no consent needed since no token present)
@@ -580,6 +584,9 @@ func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 		// If a regression causes this test to fail and out contains the token,
 		// printing it would leak the secret into CI logs.
 		t.Fatalf("update command failed unexpectedly; see test setup for expected update flow")
+	}
+	if err := syncStandardTargetFixtures(); err != nil {
+		t.Fatal(err)
 	}
 
 	// Read the actual settings.json file on disk
@@ -609,6 +616,7 @@ func TestUpdate_NoProcessTokenPreservesStoredToken(t *testing.T) {
 // This ensures a future change cannot collapse the two states again.
 func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
 	home := t.TempDir()
+	configureCLIExecutionHomes(t, home, "", "", []string{"update"})
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
@@ -616,7 +624,7 @@ func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
 
 	// Seed settings.json with a previously-consented token
 	storedToken := "previously-consented-token-789"
-	settingsPath := filepath.Join(home, "settings.json")
+	settingsPath := filepath.Join(os.Getenv("CLICK_CLAUDE_HOME"), "settings.json")
 	initialSettings := fmt.Sprintf(`{
   "env": {
     "ENGRAM_CLOUD_TOKEN": "%s"
@@ -634,7 +642,6 @@ func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
 	t.Setenv("CLICK_ENGRAM_CLOUD_SERVER", serverOverride)
 	t.Setenv("CLICK_ENGRAM_CLOUD_PROJECT", projectOverride)
 	t.Setenv("ENGRAM_CLOUD_TOKEN", processToken)
-	t.Setenv("CLICK_CLAUDE_HOME", home)
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 
 	// Run update WITHOUT --persist-engram-cloud-token (decline persistence)
@@ -671,5 +678,165 @@ func TestUpdate_DeclineWithProcessTokenRemovesStoredToken(t *testing.T) {
 
 	if _, present := env["ENGRAM_CLOUD_TOKEN"]; present {
 		t.Fatalf("env[\"ENGRAM_CLOUD_TOKEN\"] present, want absent (declined persistence must remove stored token)")
+	}
+}
+
+func TestUpdate_GentleAIOnlyUsesActiveTargets(t *testing.T) {
+	for _, skip := range []bool{false, true} {
+		t.Run(fmt.Sprintf("skip-openclaw=%t", skip), func(t *testing.T) {
+			home, state := t.TempDir(), t.TempDir()
+			cfg := installer.Config{ClickStateHome: state}
+			if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Claude: true, Codex: true, OpenClaw: true}); err != nil {
+				t.Fatal(err)
+			}
+			runner := newTestCommandRunner(home)
+			t.Cleanup(installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner }))
+			p := installer.NewGentleAIProvisioner()
+			p.EnsureOnPath = func(string) (bool, error) { return false, nil }
+			managed := t.TempDir()
+			p.HomeDir = func() (string, error) { return managed, nil }
+			path, err := p.ManagedPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(path, []byte("fixture"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			p.Environ = func() []string { return nil }
+			calls := 0
+			p.Run = func(_ context.Context, _ []string, _ string, args ...string) ([]byte, error) {
+				if args[0] == "version" {
+					return []byte("gentle-ai v4.0.0"), nil
+				}
+				calls++
+				if args[2] != "claude-code" {
+					t.Fatalf("unavailable/skipped targets included: %q", args)
+				}
+				return nil, fmt.Errorf("stop fixture")
+			}
+			t.Cleanup(installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
+			resolved := map[string]string{"claude": "/fixture/claude", "git": "/fixture/git"}
+			if skip {
+				resolved["openclaw"] = "/fixture/openclaw"
+			}
+			args := []string{"update", "--yes"}
+			if skip {
+				args = append(args, "--skip-openclaw")
+			}
+			_, err = execRootWithHomesAndLookup(t, home, state, t.TempDir(), t.TempDir(), cliFakeBinaryLookup{resolved: resolved}, args...)
+			if err == nil || calls != 1 {
+				t.Fatalf("error=%v calls=%d", err, calls)
+			}
+		})
+	}
+}
+
+func TestUpdate_GentleAIFailurePreservesPreexistingState(t *testing.T) {
+	testGentleAIFailurePreservesPreexistingState(t, "update")
+}
+
+func TestUpdate_PersistedIntentNarrowsTargetsWithoutRewritingSelection(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		selection installer.TargetSelection
+		available []string
+		skip      bool
+		agents    string
+		codex     bool
+		openClaw  bool
+	}{
+		{"codex disabled with existing home", installer.TargetSelection{Claude: true}, []string{"claude", "codex"}, false, "claude-code", false, false},
+		{"codex selected unavailable", installer.TargetSelection{Claude: true, Codex: true}, []string{"claude"}, false, "claude-code", false, false},
+		{"codex selected available", installer.TargetSelection{Claude: true, Codex: true}, []string{"claude", "codex"}, false, "claude-code,codex", true, false},
+		{"openclaw disabled with existing home", installer.TargetSelection{Claude: true}, []string{"claude", "openclaw"}, false, "claude-code", false, false},
+		{"openclaw selected unavailable", installer.TargetSelection{Claude: true, OpenClaw: true}, []string{"claude"}, false, "claude-code", false, false},
+		{"openclaw selected available", installer.TargetSelection{Claude: true, OpenClaw: true}, []string{"claude", "openclaw"}, false, "claude-code,openclaw", false, true},
+		{"openclaw selected skipped", installer.TargetSelection{Claude: true, OpenClaw: true}, []string{"claude", "openclaw"}, true, "claude-code", false, false},
+		{"claude disabled with existing home", installer.TargetSelection{Codex: true}, []string{"claude", "codex"}, false, "codex", true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home, state, openClawHome, codexHome := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+			cfg := installer.Config{ClickStateHome: state}
+			tt.selection.Configured = true
+			if err := installer.SaveTargetSelection(cfg, tt.selection); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(cfg.TargetSelectionPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := newTestCommandRunner(home)
+			t.Cleanup(installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner }))
+			p := installer.NewGentleAIProvisioner()
+			p.HomeDir = func() (string, error) { return state, nil }
+			p.EnsureOnPath = func(string) (bool, error) { return false, nil }
+			p.Environ = func() []string { return nil }
+			path, err := p.ManagedPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("fixture"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			installs := 0
+			p.Run = func(_ context.Context, _ []string, _ string, args ...string) ([]byte, error) {
+				if args[0] == "version" {
+					return []byte("gentle-ai v4.0.0"), nil
+				}
+				installs++
+				if args[0] != "install" || args[1] != "--agents" || args[2] != tt.agents {
+					t.Errorf("upstream argv = %q, want agents %q", args, tt.agents)
+				}
+				return nil, nil
+			}
+			t.Cleanup(installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
+			resolved := map[string]string{"git": "/fixture/git"}
+			for _, name := range tt.available {
+				resolved[name] = "/fixture/" + name
+			}
+			lookup := cliFakeBinaryLookup{resolved: resolved}
+			args := []string{"update", "--yes"}
+			if tt.skip {
+				args = append(args, "--skip-openclaw")
+			}
+			preview, err := execRootWithHomesAndLookup(t, home, state, openClawHome, codexHome, lookup, append(args, "--dry-run")...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if installs != 0 || !strings.Contains(preview, "gentle-ai install --agents "+tt.agents+" --preset") {
+				t.Error("dry-run did not render the narrowed upstream selection without executing it")
+			}
+			for _, target := range []struct {
+				marker string
+				active bool
+			}{
+				{"Actualizando AGENTS.md de Codex", tt.codex},
+				{"Actualizando AGENTS.md y SOUL.md de OpenClaw", tt.openClaw},
+				{"Actualizando CLAUDE.md", tt.selection.Claude},
+			} {
+				if strings.Contains(preview, target.marker) != target.active {
+					t.Errorf("local plan marker %q active = %t, want %t", target.marker, !target.active, target.active)
+				}
+			}
+			if _, err := execRootWithHomesAndLookup(t, home, state, openClawHome, codexHome, lookup, args...); err != nil {
+				t.Fatal(err)
+			}
+			if installs != 1 {
+				t.Errorf("install calls = %d, want 1", installs)
+			}
+			after, err := os.ReadFile(cfg.TargetSelectionPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Error("update rewrote persisted target intent")
+			}
+		})
 	}
 }

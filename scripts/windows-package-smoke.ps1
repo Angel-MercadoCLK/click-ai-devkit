@@ -2,30 +2,40 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$DistDir,
   [Parameter(Mandatory = $true)]
-  [string]$ExpectedVersion
+  [string]$ExpectedVersion,
+  [Parameter(Mandatory = $true)]
+  [switch]$DisposableRunner
 )
 
 $ErrorActionPreference = 'Stop'
 
-function Assert-Contains {
-  param(
-    [string]$Actual,
-    [string]$Expected,
-    [string]$Context
-  )
+# This is an operational guard, not cryptographic runner detection. The real isolation boundary is
+# the disposable GitHub-hosted windows-latest job.
+if (-not $DisposableRunner) {
+  throw 'Pass -DisposableRunner only from the disposable GitHub-hosted Windows smoke workflow.'
+}
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+  throw 'The Windows package smoke requires a Windows runner.'
+}
+if ($env:GITHUB_ACTIONS -ne 'true' -or
+    $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or
+    $env:RUNNER_OS -ne 'Windows') {
+  throw 'The Windows package smoke requires a disposable GitHub-hosted Windows runner.'
+}
 
+function Assert-Contains {
+  param([string]$Actual, [string]$Expected, [string]$Context)
+  if ([string]::IsNullOrEmpty($Actual)) {
+    throw "$Context produced no output; expected '$Expected'."
+  }
   if (-not $Actual.Contains($Expected)) {
     throw "$Context did not contain '$Expected'. Actual: $Actual"
   }
 }
 
-function New-CmdStub {
-  param(
-    [string]$Path,
-    [string[]]$Lines
-  )
-
-  [System.IO.File]::WriteAllText($Path, ((@("@echo off") + $Lines) -join "`r`n") + "`r`n")
+function Copy-SmokeExecutable {
+  param([string]$Source, [string]$Destination)
+  Copy-Item -LiteralPath $Source -Destination $Destination -Force
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -38,246 +48,331 @@ if (-not $binary) {
 $smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("click-release-smoke-" + [System.Guid]::NewGuid().ToString('N'))
 $packageRoot = Join-Path $smokeRoot 'package'
 $extractRoot = Join-Path $smokeRoot 'extract'
-$binRoot = Join-Path $smokeRoot 'bin'
-$claudeHome = Join-Path $smokeRoot '.claude'
-$openClawHome = Join-Path $smokeRoot '.openclaw'
-$codexHome = Join-Path $smokeRoot '.codex'
-$engramBinary = Join-Path $binRoot 'engram.cmd'
-$claudeLog = Join-Path $smokeRoot 'claude.log'
-$openClawLog = Join-Path $smokeRoot 'openclaw.log'
-$openClawHelper = Join-Path $binRoot 'openclaw-helper.ps1'
-$codexLog = Join-Path $smokeRoot 'codex.log'
-$codexHelper = Join-Path $binRoot 'codex-helper.ps1'
-$codexEngramRegisteredMarker = Join-Path $smokeRoot 'codex-engram-registered.marker'
-$openClawEngramMCPMarker = Join-Path $smokeRoot 'openclaw-engram-mcp.marker'
+$stubRoot = Join-Path $smokeRoot 'stubs'
+$homeClaude = Join-Path $smokeRoot '.claude'
+$homeCodex = Join-Path $smokeRoot '.codex'
+$homeOpenClaw = Join-Path $smokeRoot '.openclaw'
+$clickStateHome = Join-Path $smokeRoot '.click-state'
+$configHome = Join-Path $smokeRoot '.config'
+$managedBin = Join-Path $smokeRoot '.click\bin'
+$goStub = Join-Path $stubRoot 'go.exe'
+$commandStub = Join-Path $stubRoot 'command-stub.exe'
+$engramBinary = Join-Path $stubRoot 'engram.exe'
+$commandLog = Join-Path $smokeRoot 'commands.log'
+$goLog = Join-Path $smokeRoot 'go-commands.log'
+$pluginState = Join-Path $smokeRoot 'claude-plugins.json'
+$claudeSettings = Join-Path $homeClaude 'settings.json'
+$claudeJSON = Join-Path $smokeRoot '.claude.json'
+$codexConfig = Join-Path $homeCodex 'config.toml'
+$openClawConfig = Join-Path $homeOpenClaw 'openclaw.json'
+$claudeModels = Join-Path $homeClaude 'click-ai-devkit\models.json'
+$codexModelProfile = Join-Path $homeCodex 'click-ai-devkit\model-profile.json'
+$openClawModelProfile = Join-Path $homeOpenClaw 'click-ai-devkit\model-profile.json'
+$clickSddBackupDir = Join-Path $clickStateHome 'retired-plugin-options'
 
-New-Item -ItemType Directory -Path $packageRoot, $extractRoot, $binRoot, $claudeHome, $openClawHome, $codexHome | Out-Null
-
-# Real-repro regression guard: a live OpenClaw instance's own `validate config` proved
-# `mcpServers` is an unrecognized top-level key in the real schema — click used to write it,
-# corrupting every affected install. Seed exactly that legacy-broken shape (plus a legitimate
-# unrelated key that must survive untouched) so this smoke fails again if that regresses.
-$openClawConfigPath = Join-Path $openClawHome 'openclaw.json'
-@'
-{
-  "agents": { "defaults": { "model": { "primary": "openai/gpt-5.6-sol" } } },
-  "mcpServers": { "engram": { "command": "engram", "args": ["mcp", "--tools=agent"], "transport": "stdio" } }
-}
-'@ | Set-Content -LiteralPath $openClawConfigPath -Encoding ASCII
-
-$zipPath = Join-Path $packageRoot 'click_windows_smoke.zip'
-Compress-Archive -LiteralPath $binary.FullName -DestinationPath $zipPath
-Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot
-$clickExe = Join-Path $extractRoot 'click.exe'
-if (-not (Test-Path -LiteralPath $clickExe)) {
-  throw "Packaged click.exe was not extracted to $clickExe"
-}
-
-New-CmdStub -Path (Join-Path $binRoot 'git.cmd') -Lines @(
-  'echo git version 2.45.1'
+$environmentNames = @(
+  'PATH', 'HOME', 'USERPROFILE', 'XDG_CONFIG_HOME', 'CLICK_STATE_HOME',
+  'CLICK_CLAUDE_HOME', 'CLICK_OPENCLAW_HOME', 'CODEX_HOME', 'CLICK_ENGRAM_BINARY_PATH',
+  'CLICK_ENGRAM_CLOUD_SERVER', 'CLICK_ENGRAM_CLOUD_PROJECT', 'ENGRAM_CLOUD_TOKEN',
+  'CLICK_SMOKE_COMMAND_LOG', 'CLICK_SMOKE_PLUGIN_STATE', 'CLICK_SMOKE_GO_LOG', 'CLICK_SMOKE_FAIL_INSTALL',
+  'GOCACHE', 'GOPATH', 'GOMODCACHE', 'GOENV', 'GOFLAGS', 'GOWORK', 'GOPROXY', 'GOTOOLCHAIN', 'GOOS', 'GOARCH', 'CGO_ENABLED'
 )
-# Real-repro regression guard for SyncCodexMCP: mirrors the confirmed live-Codex behavior —
-# `codex mcp get engram` fails until `codex mcp add engram -- engram mcp --tools=agent` has run,
-# then succeeds (idempotency check) — so this smoke exercises both the first-time-registration and
-# the already-registered no-op paths across the install/update calls below.
-@"
-# No param() block on purpose: a literal '--' argument (as in 'mcp add engram -- engram mcp ...')
-# confuses PowerShell's positional-parameter binding when declared via
-# [Parameter(ValueFromRemainingArguments=`$true)]. Reading the automatic `$args variable directly
-# avoids that binding step entirely — a real codex.exe receives its argv straight from the OS via
-# exec.CommandContext with no such parsing involved, so this is purely a test-stub concern.
-`$joined = [string]::Join(' ', `$args)
-Add-Content -LiteralPath '$codexLog' -Value `$joined
-if (`$args.Count -ge 3 -and `$args[0] -eq 'mcp' -and `$args[1] -eq 'get' -and `$args[2] -eq 'engram') {
-  if (Test-Path -LiteralPath '$codexEngramRegisteredMarker') { exit 0 } else { exit 1 }
-}
-if (`$args.Count -ge 3 -and `$args[0] -eq 'mcp' -and `$args[1] -eq 'add' -and `$args[2] -eq 'engram') {
-  New-Item -ItemType File -Path '$codexEngramRegisteredMarker' -Force | Out-Null
-  exit 0
-}
-if (`$args.Count -ge 3 -and `$args[0] -eq 'mcp' -and `$args[1] -eq 'remove' -and `$args[2] -eq 'engram') {
-  Remove-Item -LiteralPath '$codexEngramRegisteredMarker' -Force -ErrorAction SilentlyContinue
-  exit 0
-}
-exit 0
-"@ | Set-Content -LiteralPath $codexHelper -Encoding ASCII
-[System.IO.File]::WriteAllText((Join-Path $binRoot 'codex.cmd'), '@powershell -NoProfile -ExecutionPolicy Bypass -File "' + $codexHelper + '" %*' + "`r`n")
-New-CmdStub -Path $engramBinary -Lines @(
-  'echo engram stub >> "%TEMP%\\click-engram-stub.log"',
-  'exit /b 0'
-)
-New-CmdStub -Path (Join-Path $binRoot 'claude.cmd') -Lines @(
-  'echo %*>>"' + $claudeLog + '"',
-  'exit /b 0'
-)
-@"
-# No param() block (same reason as the codex stub): reading the automatic `$args avoids PowerShell
-# positional-binding surprises on flag-shaped tokens like '--command'/'--arg=--tools=agent'.
-`$joined = [string]::Join(' ', `$args)
-Add-Content -LiteralPath '$openClawLog' -Value `$joined
-if (`$joined -eq 'config set --help') {
-  'config set agents.defaults.model.primary agents.defaults.model.fallbacks --strict-json'
-  exit 0
-}
-if (`$joined -eq 'mcp add --help') {
-  # Qualification probe: real OpenClaw help contains these tokens (add, --command, --arg).
-  'openclaw mcp add <name> --command <exe> --arg <arg> --env <KEY=VALUE>'
-  exit 0
-}
-if (`$args.Count -ge 3 -and `$args[0] -eq 'mcp' -and `$args[1] -eq 'show' -and `$args[2] -eq 'engram') {
-  if (Test-Path -LiteralPath '$openClawEngramMCPMarker') { exit 0 } else { exit 1 }
-}
-if (`$args.Count -ge 3 -and `$args[0] -eq 'mcp' -and `$args[1] -eq 'add' -and `$args[2] -eq 'engram') {
-  New-Item -ItemType File -Path '$openClawEngramMCPMarker' -Force | Out-Null
-  exit 0
-}
-if (`$args.Count -ge 3 -and `$args[0] -eq 'mcp' -and `$args[1] -eq 'unset' -and `$args[2] -eq 'engram') {
-  Remove-Item -LiteralPath '$openClawEngramMCPMarker' -Force -ErrorAction SilentlyContinue
-  exit 0
-}
-exit 0
-"@ | Set-Content -LiteralPath $openClawHelper -Encoding ASCII
-[System.IO.File]::WriteAllText((Join-Path $binRoot 'openclaw.cmd'), '@powershell -NoProfile -ExecutionPolicy Bypass -File "' + $openClawHelper + '" %*' + "`r`n")
-
-$env:PATH = "$binRoot;$env:PATH"
-$env:CLICK_CLAUDE_HOME = $claudeHome
-$env:CLICK_OPENCLAW_HOME = $openClawHome
-$env:CODEX_HOME = $codexHome
-$env:CLICK_ENGRAM_BINARY_PATH = $engramBinary
-
-$versionOutput = & $clickExe --version
-Assert-Contains -Actual $versionOutput -Expected $ExpectedVersion -Context 'click --version output'
-
-$targetsOutput = & $clickExe targets --no-color
-Assert-Contains -Actual $targetsOutput -Expected 'Claude Code: detectado' -Context 'click targets output'
-Assert-Contains -Actual $targetsOutput -Expected 'OpenClaw: detectado' -Context 'click targets output'
-Assert-Contains -Actual $targetsOutput -Expected 'Codex: detectado' -Context 'click targets output'
-Assert-Contains -Actual $targetsOutput -Expected 'modelo nativo de config.toml' -Context 'click targets output'
-
-& $clickExe configure-openclaw-model openai/gpt-5.6-sol google/gemini-2.5-pro | Out-Null
-$openClawCalls = Get-Content -LiteralPath $openClawLog -Raw
-Assert-Contains -Actual $openClawCalls -Expected 'config set agents.defaults.model.primary openai/gpt-5.6-sol' -Context 'openclaw command log'
-Assert-Contains -Actual $openClawCalls -Expected 'config set agents.defaults.model.fallbacks ["google/gemini-2.5-pro"] --strict-json' -Context 'openclaw command log'
-
-# No --skip-openclaw here: that flag PERSISTS OpenClaw=false to targets.json (install.go saves the
-# resolved selection), which would make the later `update` call below skip OpenClaw too even
-# without repeating the flag — defeating the openclaw.json healing assertion after `update`.
-& $clickExe install --yes --profile balanced --codex-model gpt-5.6 | Out-Null
-$codexAgents = Get-Content -LiteralPath (Join-Path $codexHome 'AGENTS.md') -Raw
-$codexConfig = Get-Content -LiteralPath (Join-Path $codexHome 'config.toml') -Raw
-Assert-Contains -Actual $codexAgents -Expected 'This block is managed by click' -Context 'Codex AGENTS.md'
-# ConfigureCodexModel now uses github.com/pelletier/go-toml/v2, which serializes simple strings as
-# TOML literal (single-quoted) strings, e.g. model = 'gpt-5.6'. Assert quote-agnostically: the root
-# `model =` assignment and the gpt-5.6 value must both be present, regardless of the quote char.
-Assert-Contains -Actual $codexConfig -Expected 'model =' -Context 'Codex config.toml'
-Assert-Contains -Actual $codexConfig -Expected 'gpt-5.6' -Context 'Codex config.toml'
-
-# Codex model-profile (click-owned REFERENCE file, never Codex's own config) written on install with
-# the non-interactive default tier `recommended`.
-$codexProfilePath = Join-Path $codexHome 'click-ai-devkit\model-profile.json'
-if (-not (Test-Path -LiteralPath $codexProfilePath)) {
-  throw 'SaveCodexModelProfile did not write the Codex model-profile.json during install'
-}
-$codexProfile = Get-Content -Raw -LiteralPath $codexProfilePath | ConvertFrom-Json
-if ($codexProfile.tier -ne 'recommended') {
-  throw "Codex model-profile tier = '$($codexProfile.tier)', want 'recommended' (non-interactive default)"
+$originalEnvironment = @{}
+$locationPushed = $false
+foreach ($name in $environmentNames) {
+  $originalEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, 'Process')
 }
 
-# Claude models.json (click-owned per-phase model + profile selection) written on install.
-$modelsPath = Join-Path $claudeHome 'click-ai-devkit\models.json'
-if (-not (Test-Path -LiteralPath $modelsPath)) {
-  throw 'SaveModelsWithProfile did not write models.json during install'
-}
+try {
+  New-Item -ItemType Directory -Path $packageRoot, $extractRoot, $stubRoot, $homeClaude, $homeCodex, $homeOpenClaw, $clickStateHome, $configHome, $managedBin | Out-Null
 
-# First-time Engram registration with Codex: get (not-yet-registered) then add, exact real syntax.
-$codexCallsAfterInstall = Get-Content -LiteralPath $codexLog -Raw
-Assert-Contains -Actual $codexCallsAfterInstall -Expected 'mcp get engram' -Context 'codex command log (install)'
-Assert-Contains -Actual $codexCallsAfterInstall -Expected 'mcp add engram -- engram mcp --tools=agent' -Context 'codex command log (install)'
-if (-not (Test-Path -LiteralPath $codexEngramRegisteredMarker)) {
-  throw 'SyncCodexMCP did not register Engram with Codex during install'
-}
+  # Isolate the Go build cache and disable toolchain/module network fallback before compiling the
+  # local, standard-library-only fixture. PATH remains untouched until both real executables exist.
+  $env:HOME = $smokeRoot
+  $env:USERPROFILE = $smokeRoot
+  $env:XDG_CONFIG_HOME = $configHome
+  $env:CLICK_STATE_HOME = $clickStateHome
+  $env:GOCACHE = Join-Path $smokeRoot '.go-cache'
+  $env:GOPATH = Join-Path $smokeRoot '.go-path'
+  $env:GOMODCACHE = Join-Path $smokeRoot '.go-mod-cache'
+  $env:GOENV = 'off'
+  $env:GOFLAGS = ''
+  $env:GOWORK = 'off'
+  $env:GOPROXY = 'off'
+  $env:GOTOOLCHAIN = 'local'
+  $env:GOOS = 'windows'
+  $env:GOARCH = 'amd64'
+  $env:CGO_ENABLED = '0'
 
-# First-time Engram MCP registration with OpenClaw: fail-closed probe, show (not registered), then the
-# exact `openclaw mcp add engram --command engram --arg mcp --arg=--tools=agent`; marker created.
-$openClawCallsAfterInstall = Get-Content -LiteralPath $openClawLog -Raw
-Assert-Contains -Actual $openClawCallsAfterInstall -Expected 'mcp add --help' -Context 'openclaw command log (install probe)'
-Assert-Contains -Actual $openClawCallsAfterInstall -Expected 'mcp add engram --command engram --arg mcp --arg=--tools=agent' -Context 'openclaw command log (install)'
-if (-not (Test-Path -LiteralPath $openClawEngramMCPMarker)) {
-  throw 'SyncOpenClawMCP did not register Engram with OpenClaw during install'
-}
-
-& $clickExe update | Out-Null
-$claudeCalls = Get-Content -LiteralPath $claudeLog -Raw
-Assert-Contains -Actual $claudeCalls -Expected 'plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins' -Context 'claude command log'
-Assert-Contains -Actual $claudeCalls -Expected 'plugin marketplace update click-ai-devkit' -Context 'claude command log'
-Assert-Contains -Actual $claudeCalls -Expected 'plugin install click-sdd@click-ai-devkit' -Context 'claude command log'
-
-# Idempotent Codex re-run: get now succeeds (already registered), add must NOT run again.
-$codexCallsAfterUpdate = (Get-Content -LiteralPath $codexLog -Raw).Substring($codexCallsAfterInstall.Length)
-Assert-Contains -Actual $codexCallsAfterUpdate -Expected 'mcp get engram' -Context 'codex command log (update)'
-if ($codexCallsAfterUpdate.Contains('mcp add engram')) {
-  throw "SyncCodexMCP re-added an already-registered Engram server on update. Actual: $codexCallsAfterUpdate"
-}
-
-# Real-repro regression guard: `click update` (OpenClaw now a target, no --skip-openclaw) must have
-# HEALED the legacy invalid 'mcpServers' key seeded above, and preserved every other key untouched.
-$healedConfig = Get-Content -LiteralPath $openClawConfigPath -Raw | ConvertFrom-Json
-if ($null -ne $healedConfig.mcpServers) {
-  throw "click update did not remove the invalid legacy 'mcpServers' key from openclaw.json. Actual: $(Get-Content -LiteralPath $openClawConfigPath -Raw)"
-}
-if ($healedConfig.agents.defaults.model.primary -ne 'openai/gpt-5.6-sol') {
-  throw "click update did not preserve unrelated openclaw.json content during cleanup. Actual: $(Get-Content -LiteralPath $openClawConfigPath -Raw)"
-}
-
-# Idempotent OpenClaw MCP on update: still registered, `mcp add engram` issued exactly once (install).
-if (-not (Test-Path -LiteralPath $openClawEngramMCPMarker)) {
-  throw 'OpenClaw Engram MCP marker missing after update (should stay registered)'
-}
-$openClawAddCount = ([regex]::Matches((Get-Content -LiteralPath $openClawLog -Raw), 'mcp add engram --command')).Count
-if ($openClawAddCount -ne 1) {
-  throw "SyncOpenClawMCP re-registered on update (expected idempotent). 'mcp add engram' count = $openClawAddCount"
-}
-
-# --- v0.5.8 uninstall lifecycle: prove `click uninstall` REVERSES the OpenClaw managed blocks and
-# de-registers the Codex Engram MCP (previously left behind forever). ---
-$openClawAgentsMD = Join-Path $openClawHome 'workspace\AGENTS.md'
-$openClawSoulMD = Join-Path $openClawHome 'workspace\SOUL.md'
-# Precondition: install/update above (OpenClaw a target, not skipped) wrote the managed blocks.
-if (-not (Test-Path -LiteralPath $openClawAgentsMD) -or -not ((Get-Content -Raw -LiteralPath $openClawAgentsMD).Contains('managed by click'))) {
-  throw "precondition failed: OpenClaw AGENTS.md managed block missing before uninstall"
-}
-# Precondition: Codex Engram MCP is registered (marker present) after the idempotent update.
-if (-not (Test-Path -LiteralPath $codexEngramRegisteredMarker)) {
-  throw "precondition failed: Codex Engram MCP not registered before uninstall"
-}
-
-& $clickExe uninstall | Out-Null
-
-# OpenClaw AGENTS.md and SOUL.md must no longer carry click's managed block (stripped, or file removed).
-foreach ($f in @($openClawAgentsMD, $openClawSoulMD)) {
-  if ((Test-Path -LiteralPath $f) -and (Get-Content -Raw -LiteralPath $f).Contains('managed by click')) {
-    throw "click uninstall left the click-managed block in $f"
+  # Compile the pinned-component and fake-Go fixtures before adding any stubs to PATH. Fake Go
+  # validates the exact pinned provisioning contract and stages only its own compiled bytes.
+  Push-Location -LiteralPath $repoRoot
+  $locationPushed = $true
+  try {
+    & go build -o $commandStub ./scripts/test-fixtures/windows-smoke-stub
+    if ($LASTEXITCODE -ne 0) {
+      throw "Could not build the isolated command smoke fixture (exit $LASTEXITCODE)"
+    }
+  } finally {
+    Pop-Location
+    $locationPushed = $false
   }
-}
-# Codex Engram MCP must be de-registered: `codex mcp remove engram` issued and the marker cleared.
-$codexCallsAll = Get-Content -LiteralPath $codexLog -Raw
-Assert-Contains -Actual $codexCallsAll -Expected 'mcp remove engram' -Context 'codex command log (uninstall)'
-if (Test-Path -LiteralPath $codexEngramRegisteredMarker) {
-  throw "click uninstall did not de-register Engram MCP from Codex (marker still present)"
-}
-# OpenClaw Engram MCP must be de-registered too: `openclaw mcp unset engram` issued, marker cleared.
-$openClawCallsAll = Get-Content -LiteralPath $openClawLog -Raw
-Assert-Contains -Actual $openClawCallsAll -Expected 'mcp unset engram' -Context 'openclaw command log (uninstall)'
-if (Test-Path -LiteralPath $openClawEngramMCPMarker) {
-  throw "click uninstall did not de-register Engram MCP from OpenClaw (marker still present)"
-}
-# Codex model-profile (click-owned reference file) removed on uninstall.
-if (Test-Path -LiteralPath $codexProfilePath) {
-  throw "click uninstall left the Codex model-profile.json behind"
-}
-# Claude models.json (click-owned per-phase model + profile selection) removed on uninstall.
-if (Test-Path -LiteralPath $modelsPath) {
-  throw "click uninstall left the Claude models.json behind"
-}
+  foreach ($name in @('claude.exe', 'git.exe', 'openclaw.exe', 'codex.exe')) {
+    Copy-SmokeExecutable -Source $commandStub -Destination (Join-Path $stubRoot $name)
+  }
+  Copy-SmokeExecutable -Source $commandStub -Destination $goStub
+  Copy-SmokeExecutable -Source $commandStub -Destination $engramBinary
 
-Remove-Item -LiteralPath $smokeRoot -Recurse -Force
+  $zipPath = Join-Path $packageRoot 'click_windows_smoke.zip'
+  Compress-Archive -LiteralPath $binary.FullName -DestinationPath $zipPath
+  Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot
+  $clickExe = Join-Path $extractRoot 'click.exe'
+  if (-not (Test-Path -LiteralPath $clickExe)) {
+    throw "Packaged click.exe was not extracted to $clickExe"
+  }
+
+  # Snapshot all environment that can affect target, state, token, and executable resolution.
+  # Click targets are the standard directories beneath HOME/USERPROFILE; no root overrides are used.
+  $env:CLICK_ENGRAM_BINARY_PATH = $engramBinary
+  $env:CLICK_SMOKE_COMMAND_LOG = $commandLog
+  $env:CLICK_SMOKE_GO_LOG = $goLog
+  $env:CLICK_SMOKE_PLUGIN_STATE = $pluginState
+  $env:CLICK_CLAUDE_HOME = $null
+  $env:CLICK_OPENCLAW_HOME = $null
+  $env:CODEX_HOME = $null
+  $env:CLICK_ENGRAM_CLOUD_SERVER = $null
+  $env:CLICK_ENGRAM_CLOUD_PROJECT = $null
+  $env:ENGRAM_CLOUD_TOKEN = $null
+  $env:CLICK_SMOKE_FAIL_INSTALL = $null
+
+  # Leave the managed pin absent to exercise Windows provisioning. Fake Go is first on PATH;
+  # compilation happened offline above, and the staged executable is only the local fixture.
+  $env:PATH = "$stubRoot;$managedBin"
+
+  [System.IO.File]::WriteAllText($codexConfig, "model = 'codex-native-sentinel'`r`n")
+  [System.IO.File]::WriteAllText((Join-Path $homeCodex 'sdd-strong.config.toml'), "model = 'codex-profile-sentinel'`r`n")
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $claudeModels) | Out-Null
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $codexModelProfile) | Out-Null
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $openClawModelProfile) | Out-Null
+  [System.IO.File]::WriteAllText($claudeModels, '{"schemaVersion":1,"sentinel":"claude-legacy-profile"}')
+  [System.IO.File]::WriteAllText($codexModelProfile, '{"schemaVersion":1,"sentinel":"codex-legacy-profile"}')
+  [System.IO.File]::WriteAllText($openClawModelProfile, '{"schemaVersion":1,"sentinel":"openclaw-legacy-profile"}')
+  [System.IO.File]::WriteAllText($claudeSettings, @'
+{"env":{"ENGRAM_CLOUD_TOKEN":"snapshot-cloud-sentinel"},"model":"claude-native-sentinel","hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"user-owned-hook"}]}]},"pluginConfigs":{"click-sdd@click-ai-devkit":{"enabled":true,"options":{"sentinel":"preserve"}}}}
+'@)
+  [System.IO.File]::WriteAllText((Join-Path $homeClaude 'CLAUDE.md'), @'
+Before install.
+# >>> click-ai-devkit (managed) >>>
+old-click-guidance-sentinel
+# <<< click-ai-devkit (managed) <<<
+After install.
+'@)
+  [System.IO.File]::WriteAllText($openClawConfig, @'
+{"agents":{"defaults":{"model":{"primary":"openclaw-native-primary","fallbacks":["openclaw-native-fallback"]}}},"custom":{"sentinel":"preserve"}}
+'@)
+  [System.IO.File]::WriteAllText($pluginState, @'
+  [{"id":"click-sdd@click-ai-devkit","scope":"user","enabled":true},{"id":"click-sdd@click-ai-devkit","scope":"project","projectPath":"C:\\smoke\\project-a","enabled":true},{"id":"click-sdd@click-ai-devkit","scope":"project","projectPath":"C:\\smoke\\project-b","enabled":true},{"id":"click-sdd@click-ai-devkit","scope":"local","enabled":true},{"id":"click-sdd@click-ai-devkit","scope":"managed","enabled":true},{"id":"click-sdd@click-ai-devkit","scope":"session","enabled":true},{"id":"click-sdd@click-ai-devkit","scope":"synced","enabled":true},{"id":"foreign-plugin@other-marketplace","scope":"user","enabled":true}]
+'@)
+
+  $versionOutput = & $clickExe --version
+  if ($LASTEXITCODE -ne 0) { throw "click --version failed with exit $LASTEXITCODE" }
+  Assert-Contains -Actual $versionOutput -Expected $ExpectedVersion -Context 'click --version output'
+
+  $targetsOutput = & $clickExe targets --no-color
+  if ($LASTEXITCODE -ne 0) { throw "click targets failed with exit $LASTEXITCODE" }
+  foreach ($target in @('Claude Code: detectado', 'OpenClaw: detectado', 'Codex: detectado')) {
+    Assert-Contains -Actual $targetsOutput -Expected $target -Context 'click targets output'
+  }
+
+  & $clickExe install --yes | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "click install failed with exit $LASTEXITCODE" }
+
+  # Model a previous Click guidance revision before update so rollback has an observable owned
+  # block to restore, rather than merely succeeding after an upstream failure that wrote nothing.
+  [System.IO.File]::WriteAllText((Join-Path $homeClaude 'CLAUDE.md'), @'
+update preface sentinel
+# >>> click-ai-devkit (managed) >>>
+old-click-guidance-sentinel
+# <<< click-ai-devkit (managed) <<<
+update suffix sentinel
+'@)
+  & $clickExe update | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "click update failed with exit $LASTEXITCODE" }
+
+  $updatedGuidance = Get-Content -LiteralPath (Join-Path $homeClaude 'CLAUDE.md') -Raw
+  $clickBlock = [System.Text.RegularExpressions.Regex]::Match($updatedGuidance, '(?s)# >>> click-ai-devkit \(managed\) >>>.*?# <<< click-ai-devkit \(managed\) <<<')
+  if (-not $clickBlock.Success) { throw 'Successful update did not produce a bounded Click guidance block' }
+  [System.IO.File]::WriteAllText((Join-Path $homeClaude 'CLAUDE.md'), "foreign-after-update-sentinel`r`n$($clickBlock.Value)`r`nforeign-suffix-sentinel")
+  $currentSettings = Get-Content -LiteralPath $claudeSettings -Raw | ConvertFrom-Json
+  $currentSettings.env.ENGRAM_CLOUD_TOKEN = 'current-synthetic-cloud-token'
+  [System.IO.File]::WriteAllText($claudeSettings, ($currentSettings | ConvertTo-Json -Depth 32))
+  & $clickExe rollback --yes | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "click rollback failed with exit $LASTEXITCODE" }
+  $rolledBackGuidance = Get-Content -LiteralPath (Join-Path $homeClaude 'CLAUDE.md') -Raw
+  if (-not $rolledBackGuidance.Contains('old-click-guidance-sentinel') -or
+      -not $rolledBackGuidance.Contains('foreign-after-update-sentinel') -or
+      -not $rolledBackGuidance.Contains('foreign-suffix-sentinel')) {
+    throw 'Rollback did not restore the prior Click block while preserving current surrounding text'
+  }
+  $rolledBackSettings = Get-Content -LiteralPath $claudeSettings -Raw | ConvertFrom-Json
+  if ($rolledBackSettings.env.ENGRAM_CLOUD_TOKEN -ne 'current-synthetic-cloud-token') {
+    throw 'Rollback changed the current synthetic Engram Cloud token'
+  }
+  Assert-Contains -Actual $rolledBackSettings.model -Expected 'claude-native-sentinel' -Context 'preserved Claude native model'
+  if ($rolledBackSettings.hooks.UserPromptSubmit[0].hooks[0].command -ne 'user-owned-hook') {
+    throw 'Rollback changed a foreign Claude hook'
+  }
+  & $clickExe update | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "click update after rollback failed with exit $LASTEXITCODE" }
+
+  $upstreamCalls = Get-Content -LiteralPath $commandLog -Raw
+  $goCalls = Get-Content -LiteralPath $goLog -Raw
+  Assert-Contains -Actual $goCalls -Expected 'go version' -Context 'isolated Go version probe'
+  Assert-Contains -Actual $goCalls -Expected 'go install github.com/gentleman-programming/gentle-ai/v4/cmd/gentle-ai@v4.0.0' -Context 'isolated pinned Go install'
+  Assert-Contains -Actual $upstreamCalls -Expected 'gentle-ai install --agents claude-code,codex,openclaw --preset full-gentleman --components engram,skills,context7,permissions,persona --persona neutral --scope global' -Context 'pinned upstream install invocation'
+  if ($upstreamCalls.Contains('mcp remove engram') -or $upstreamCalls.Contains('mcp unset engram') -or
+      $upstreamCalls.Contains('mcp remove context7') -or $upstreamCalls.Contains('mcp unset context7')) {
+    throw 'Click smoke attempted to remove upstream-owned shared Engram or Context7 registrations'
+  }
+  $claudeCalls = Get-Content -LiteralPath $commandLog -Raw
+  Assert-Contains -Actual $claudeCalls -Expected 'claude plugin list --json' -Context 'Claude user plugin inventory'
+  Assert-Contains -Actual $claudeCalls -Expected 'plugin uninstall click-sdd@click-ai-devkit --scope user --keep-data' -Context 'legacy Click SDD retirement'
+  if ($claudeCalls.IndexOf('claude plugin uninstall click-sdd@click-ai-devkit --scope user --keep-data') -gt
+      $claudeCalls.IndexOf('claude plugin marketplace add')) {
+    throw 'Click updated the marketplace before safely retiring the legacy user plugin'
+  }
+  foreach ($plugin in @('click-memory', 'click-review', 'click-skills')) {
+    Assert-Contains -Actual $claudeCalls -Expected "plugin install $plugin@click-ai-devkit" -Context 'retained Click plugin installation'
+  }
+  if ($claudeCalls.Contains('plugin install click-sdd@click-ai-devkit')) {
+    throw 'Click update reinstalled the retired click-sdd plugin'
+  }
+
+  $managedClaude = Get-Content -LiteralPath (Join-Path $homeClaude 'CLAUDE.md') -Raw
+  Assert-Contains -Actual $managedClaude -Expected 'This block is managed by click' -Context 'Claude managed guidance'
+  $codexAgents = Get-Content -LiteralPath (Join-Path $homeCodex 'AGENTS.md') -Raw
+  Assert-Contains -Actual $codexAgents -Expected 'This block is managed by click' -Context 'Codex managed guidance'
+  $openClawAgents = Get-Content -LiteralPath (Join-Path $homeOpenClaw 'workspace\AGENTS.md') -Raw
+  Assert-Contains -Actual $openClawAgents -Expected 'This workspace is managed by click-ai-devkit' -Context 'OpenClaw managed guidance'
+
+  $claudeMCP = Get-Content -LiteralPath $claudeJSON -Raw | ConvertFrom-Json
+  if ($null -eq $claudeMCP.mcpServers.engram -or $null -eq $claudeMCP.mcpServers.context7) {
+    throw 'Pinned upstream fixture did not register both Claude shared MCP servers'
+  }
+  $codexMCP = Get-Content -LiteralPath $codexConfig -Raw
+  Assert-Contains -Actual $codexMCP -Expected '[mcp_servers.engram]' -Context 'Codex shared Engram MCP'
+  Assert-Contains -Actual $codexMCP -Expected '[mcp_servers.context7]' -Context 'Codex shared Context7 MCP'
+  $openClawMCP = Get-Content -LiteralPath $openClawConfig -Raw | ConvertFrom-Json
+  if ($null -eq $openClawMCP.mcp.servers.engram -or $null -eq $openClawMCP.mcp.servers.context7) {
+    throw 'Pinned upstream fixture did not register both OpenClaw shared MCP servers'
+  }
+
+  # This upstream failure occurs after snapshotting but before target writes. It is not a partial
+  # target mutation test; T10c separately qualifies late-write recovery.
+  Remove-Item -LiteralPath (Join-Path $clickStateHome 'backups\latest') -Recurse -Force
+  $env:CLICK_SMOKE_FAIL_INSTALL = '1'
+  $failureOutput = (& $clickExe update 2>&1 | Out-String)
+  $failureExit = $LASTEXITCODE
+  if ($failureExit -eq 0) { throw 'Injected gentle-ai update failure unexpectedly succeeded' }
+  Assert-Contains -Actual $failureOutput -Expected 'No se pudo configurar gentle-ai para los runtimes seleccionados' -Context 'sanitized update failure'
+  $env:CLICK_SMOKE_FAIL_INSTALL = $null
+  $failureCalls = Get-Content -LiteralPath $commandLog -Raw
+  Assert-Contains -Actual $failureCalls -Expected 'gentle-ai-failure install' -Context 'fixture-recorded failing upstream invocation'
+  $failureManifestPath = Join-Path $clickStateHome 'backups\latest\manifest.json'
+  if (-not (Test-Path -LiteralPath $failureManifestPath)) {
+    throw 'Failed update did not retain a restorable post-run snapshot'
+  }
+  $failureManifest = Get-Content -LiteralPath $failureManifestPath -Raw | ConvertFrom-Json
+  if (@($failureManifest.entries).Count -eq 0) {
+    throw 'The current failing update produced an empty snapshot manifest'
+  }
+
+  & $clickExe uninstall | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "click uninstall reported a teardown failure ($LASTEXITCODE)" }
+
+  foreach ($path in @((Join-Path $homeClaude 'CLAUDE.md'), (Join-Path $homeCodex 'AGENTS.md'), (Join-Path $homeOpenClaw 'workspace\AGENTS.md'))) {
+    if (Test-Path -LiteralPath $path) {
+      $guidance = [System.IO.File]::ReadAllText($path)
+      if ($guidance.Contains('managed by click')) {
+        throw "click uninstall left Click-managed guidance in $path"
+      }
+    }
+  }
+  $remainingPlugins = Get-Content -LiteralPath $pluginState -Raw | ConvertFrom-Json
+  if (@($remainingPlugins | Where-Object { $_.id -eq 'foreign-plugin@other-marketplace' }).Count -ne 1) {
+    throw 'Click teardown changed a foreign Claude plugin'
+  }
+  if (@($remainingPlugins | Where-Object { $_.id -like '*@click-ai-devkit' -and $_.scope -eq 'user' }).Count -ne 0) {
+    throw 'Click teardown left a user-scoped Click Claude plugin installed'
+  }
+  $retainedScopedSDD = @($remainingPlugins | Where-Object { $_.id -eq 'click-sdd@click-ai-devkit' })
+  if ($retainedScopedSDD.Count -ne 6) {
+    throw "Click teardown changed project/local/managed/session/synced click-sdd installs (remaining $($retainedScopedSDD.Count))"
+  }
+  $claudeCalls = Get-Content -LiteralPath $commandLog -Raw
+  if ($claudeCalls.Contains('plugin marketplace remove') -or
+      $claudeCalls.Contains('mcp remove engram') -or $claudeCalls.Contains('mcp unset engram') -or
+      $claudeCalls.Contains('mcp remove context7') -or $claudeCalls.Contains('mcp unset context7')) {
+    throw 'Click teardown attempted a marketplace cascade or shared Engram/Context7 removal'
+  }
+  foreach ($plugin in @('click-memory', 'click-review', 'click-skills')) {
+    Assert-Contains -Actual $claudeCalls -Expected "plugin uninstall $plugin@click-ai-devkit --scope user --keep-data" -Context 'scoped Click plugin teardown'
+  }
+
+  $claudeMCP = Get-Content -LiteralPath $claudeJSON -Raw | ConvertFrom-Json
+  $openClawMCP = Get-Content -LiteralPath $openClawConfig -Raw | ConvertFrom-Json
+  $codexMCP = Get-Content -LiteralPath $codexConfig -Raw
+  if ($null -eq $claudeMCP.mcpServers.engram -or $null -eq $claudeMCP.mcpServers.context7 -or
+      $null -eq $openClawMCP.mcp.servers.engram -or $null -eq $openClawMCP.mcp.servers.context7 -or
+      -not $codexMCP.Contains('[mcp_servers.engram]') -or -not $codexMCP.Contains('[mcp_servers.context7]')) {
+    throw 'Click teardown removed shared upstream Engram/Context7 configuration'
+  }
+  Assert-Contains -Actual $codexMCP -Expected "model = 'codex-native-sentinel'" -Context 'preserved Codex native model'
+  Assert-Contains -Actual (Get-Content -LiteralPath (Join-Path $homeCodex 'sdd-strong.config.toml') -Raw) -Expected 'codex-profile-sentinel' -Context 'preserved Codex native profile'
+  $openClawJSON = Get-Content -LiteralPath $openClawConfig -Raw | ConvertFrom-Json
+  if ($openClawJSON.agents.defaults.model.primary -ne 'openclaw-native-primary' -or
+      $openClawJSON.agents.defaults.model.fallbacks[0] -ne 'openclaw-native-fallback') {
+    throw 'Click teardown changed native OpenClaw model selections'
+  }
+  $settings = Get-Content -LiteralPath $claudeSettings -Raw | ConvertFrom-Json
+  if ($settings.model -ne 'claude-native-sentinel' -or
+      $settings.hooks.UserPromptSubmit[0].hooks[0].command -ne 'user-owned-hook') {
+    throw 'Click teardown changed native Claude model or user-owned hook settings'
+  }
+  foreach ($pair in @(
+    @{ Path = $claudeModels; Value = 'claude-legacy-profile' },
+    @{ Path = $codexModelProfile; Value = 'codex-legacy-profile' },
+    @{ Path = $openClawModelProfile; Value = 'openclaw-legacy-profile' }
+  )) {
+    Assert-Contains -Actual (Get-Content -LiteralPath $pair.Path -Raw) -Expected $pair.Value -Context "preserved legacy model artifact $($pair.Path)"
+  }
+  $retirementBackups = @(Get-ChildItem -LiteralPath $clickSddBackupDir -Filter 'click-sdd-*.json')
+  if ($retirementBackups.Count -ne 1) {
+    throw 'Retirement did not retain Click SDD plugin configuration backup'
+  }
+  $retirementBackup = Get-Content -LiteralPath $retirementBackups[0].FullName -Raw | ConvertFrom-Json
+  if ($retirementBackup.pluginId -ne 'click-sdd@click-ai-devkit' -or
+      $retirementBackup.scope -ne 'user' -or
+      $retirementBackup.pluginConfig.options.sentinel -ne 'preserve') {
+    throw 'Retirement backup did not preserve the exact Click SDD user plugin options'
+  }
+} catch {
+  $scriptLine = $null
+  if ($null -ne $_.InvocationInfo) {
+    $scriptLine = $_.InvocationInfo.ScriptLineNumber
+  }
+  if ($null -eq $scriptLine -or $scriptLine -eq 0) {
+    $scriptLine = 'unknown'
+  }
+  [Console]::Error.WriteLine("Windows package smoke failed at script line $scriptLine.")
+  if (-not [string]::IsNullOrEmpty($_.ScriptStackTrace)) {
+    [Console]::Error.WriteLine($_.ScriptStackTrace)
+  }
+  throw
+} finally {
+  foreach ($name in $environmentNames) {
+    [System.Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], 'Process')
+  }
+  if ($locationPushed) { Pop-Location }
+  Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
+}

@@ -1,5 +1,10 @@
 # click-sdd agent-definition fixes — verified findings for implementation
 
+> **Historical implementation notes.** These findings target the retired `plugins/click-sdd/`
+> tree, which was removed under D48. Do not execute the instructions as current work; use
+> [`README.md`](../README.md) and [`00-decisions-and-open-questions.md`](00-decisions-and-open-questions.md)
+> for current ownership and scope.
+
 **Audience**: an implementing agent (Codex) with repo write access. Every finding below was
 independently re-verified against the actual files in this repository — not taken on the word of
 the session report that originally surfaced them. Where that report's diagnosis was wrong, this

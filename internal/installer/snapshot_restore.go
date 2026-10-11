@@ -7,24 +7,24 @@ import (
 	"strings"
 )
 
-// DriftReport is SnapshotDrift's typed result: the two ownership-scoped tiers a rollback decision
-// needs. Vetoes lists click-owned content that was hand-edited since the snapshot (refuse-by-
-// default, spec install-rollback Decision 3); WarnableNonVeto lists present non-veto files whose
-// content matches neither the pre-run backup nor the recorded post-run baseline — these never
-// refuse a rollback, but the rollback command warns about them and asks for consent because a
-// restore still overwrites them.
+// DriftReport is SnapshotDrift's typed result for rollback. Vetoes lists eligible Click-owned
+// content edited since the snapshot; WarnableNonVeto holds eligible entries that need a warning;
+// Skipped lists shared or currently unqualified paths that are preserved and never written.
 type DriftReport struct {
 	Vetoes          []string
 	WarnableNonVeto []string
+	Skipped         []string
 }
 
 // entryFingerprint captures one manifest entry's current on-disk state at a point in time, so a
 // prepared restore can later verify nothing changed between prepare and apply (TOCTOU guard).
 // present=false means the file is currently absent; contentHash/managedHash are then zero values.
 type entryFingerprint struct {
-	present     bool
-	contentHash string
-	managedHash string
+	present              bool
+	contentHash          string
+	rawHash              string
+	managedHash          string
+	settingsHashVariants [2]string
 }
 
 // managedProjectionForEntry picks the managed-content projection for an entry exactly the way
@@ -40,29 +40,42 @@ func managedProjectionForEntry(entry manifestEntry, content string) string {
 	return ""
 }
 
-// fingerprintEntry reads the entry's current on-disk content and hashes it. A currently absent
-// file is NOT an error: it yields the zero fingerprint (present=false), which drift classification
-// treats as "nothing to veto or warn about".
-func fingerprintEntry(entry manifestEntry) (entryFingerprint, error) {
+func fingerprintEntryData(entry manifestEntry) (entryFingerprint, []byte, error) {
+	if err := checkRestorePath(entry.OriginalPath, true); err != nil {
+		return entryFingerprint{}, nil, fmt.Errorf("installer: destino de restauración inseguro")
+	}
+	info, statErr := os.Lstat(entry.OriginalPath)
+	if os.IsNotExist(statErr) {
+		return entryFingerprint{}, nil, nil
+	}
+	if statErr != nil {
+		return entryFingerprint{}, nil, fmt.Errorf("installer: no se pudo inspeccionar un destino de restauración")
+	}
+	if !info.Mode().IsRegular() {
+		return entryFingerprint{}, nil, fmt.Errorf("installer: el destino de restauración no es un archivo regular")
+	}
 	data, err := os.ReadFile(entry.OriginalPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return entryFingerprint{}, nil
-		}
-		return entryFingerprint{}, fmt.Errorf("installer: read %s to check drift: %w", entry.OriginalPath, err)
+		return entryFingerprint{}, nil, fmt.Errorf("installer: no se pudo leer un destino de restauración")
 	}
-	fp := entryFingerprint{present: true, contentHash: CanonicalContentHash(string(data))}
+	fp := entryFingerprint{present: true, contentHash: CanonicalContentHash(string(data)), rawHash: rawContentHash(data)}
 	if entry.DriftPolicy == DriftPolicyManagedContentVeto {
 		fp.managedHash = managedProjectionForEntry(entry, string(data))
+		if strings.HasSuffix(entry.OriginalPath, "settings.json") || entry.BackupFile == "settings.json" {
+			fp.settingsHashVariants = [2]string{
+				managedSettingsProjectionHashWithTokenPresence(string(data), false),
+				managedSettingsProjectionHashWithTokenPresence(string(data), true),
+			}
+		}
 	}
-	return fp, nil
+	return fp, data, nil
 }
 
 // classifyEntryDrift applies the entry's DriftPolicy to decide whether the current on-disk state
 // vetoes a rollback or is merely warnable. A currently absent file (fp.present == false) NEVER
 // vetoes nor warns — restoring simply recreates the known-good content. An entry is safe whenever
 // its current state matches EITHER the pre-run backup OR the recorded post-run baseline.
-func classifyEntryDrift(entry manifestEntry, backupData []byte, fp entryFingerprint) (veto, warnable bool) {
+func classifyEntryDrift(entry manifestEntry, backupData []byte, currentData []byte, fp entryFingerprint) (veto, warnable bool) {
 	if !fp.present {
 		return false, false
 	}
@@ -78,8 +91,19 @@ func classifyEntryDrift(entry manifestEntry, backupData []byte, fp entryFingerpr
 			// rather than silently skipping the veto.
 			return !matchesWholeBaseline, false
 		}
-		matchesManagedBaseline := fp.managedHash == backupManaged ||
-			(entry.ExpectedPostRunManagedHash != "" && fp.managedHash == entry.ExpectedPostRunManagedHash)
+		matchesManagedBaseline := fp.managedHash == backupManaged
+		if strings.HasSuffix(entry.OriginalPath, "settings.json") || entry.BackupFile == "settings.json" {
+			backupGuardHash := managedSettingsProjectionHashWithTokenPresence(string(backupData), false)
+			currentGuardHash := managedSettingsProjectionHashWithTokenPresence(string(currentData), false)
+			matchesManagedBaseline = currentGuardHash == backupGuardHash
+			for _, variant := range fp.settingsHashVariants {
+				if entry.ExpectedPostRunManagedHash != "" && variant == entry.ExpectedPostRunManagedHash {
+					matchesManagedBaseline = true
+				}
+			}
+		} else if entry.ExpectedPostRunManagedHash != "" && fp.managedHash == entry.ExpectedPostRunManagedHash {
+			matchesManagedBaseline = true
+		}
 		return !matchesManagedBaseline, false
 	default:
 		// DriftPolicyWholeFileVeto (loadSnapshotManifest already normalized any empty policy to it).
@@ -87,13 +111,19 @@ func classifyEntryDrift(entry manifestEntry, backupData []byte, fp entryFingerpr
 	}
 }
 
-// preparedRestoreEntry is one manifest entry with everything ApplyPreparedRestore needs: the
-// pre-run backup content (nil for no-prior-state markers) and the fingerprint captured at prepare
-// time for the TOCTOU guard.
+// preparedRestoreEntry is one eligible manifest entry with its validated backup, precomputed
+// write/removal transformation, and destination fingerprint for apply-time TOCTOU checks.
 type preparedRestoreEntry struct {
 	entry       manifestEntry
+	backupPath  string
 	backupData  []byte
+	backupHash  string
+	currentData []byte
 	fingerprint entryFingerprint
+	ownership   restoreOwnership
+	writeData   []byte
+	write       bool
+	remove      bool
 }
 
 // PreparedRestore is PrepareRestore's result: the drift report plus everything needed to actually
@@ -104,9 +134,9 @@ type PreparedRestore struct {
 	entries []preparedRestoreEntry
 }
 
-// PrepareRestore loads the snapshot manifest and backup contents and fingerprints every entry's
-// current on-disk state, producing the ownership-scoped drift report (the same classification
-// SnapshotDrift exposes) plus a ready-to-apply restore plan. It writes nothing.
+// PrepareRestore loads the snapshot manifest, selects exact owned destinations from the current
+// Config, and precomputes safe transformations. Shared and unknown paths are reported as skipped;
+// malformed managed content fails before any write. It writes nothing.
 //
 // PrepareRestore assumes a manifest already exists; callers that need to distinguish "no snapshot
 // to restore" from a real error should check HasRestorableSnapshot first — mirroring RestoreRun's
@@ -122,22 +152,73 @@ func PrepareRestore(cfg Config) (PreparedRestore, error) {
 	latestDir := snapshotReadDir(cfg)
 	prepared := PreparedRestore{}
 	for _, entry := range manifest.Entries {
-		pe := preparedRestoreEntry{entry: entry}
+		if !isCanonicalAbsolutePath(entry.OriginalPath) {
+			return PreparedRestore{}, fmt.Errorf("installer: una ruta del manifiesto de restauración no es canónica")
+		}
+		ownership, _ := classifyRestorePath(cfg, entry.OriginalPath)
+		if ownership == restoreSkip {
+			prepared.Drift.Skipped = append(prepared.Drift.Skipped, entry.OriginalPath)
+			continue
+		}
+		if isRetiredOpenClawSkillPath(cfg, entry.OriginalPath) && !entry.Existed {
+			prepared.Drift.Skipped = append(prepared.Drift.Skipped, entry.OriginalPath)
+			continue
+		}
+		pe := preparedRestoreEntry{entry: entry, ownership: ownership}
+		if err := checkRestorePath(entry.OriginalPath, true); err != nil {
+			return PreparedRestore{}, fmt.Errorf("installer: destino de restauración inseguro")
+		}
 		if entry.Existed {
+			if entry.BackupFile == "" || filepath.Clean(entry.BackupFile) != entry.BackupFile || filepath.Base(entry.BackupFile) != entry.BackupFile || entry.BackupFile == "." || entry.BackupFile == ".." {
+				return PreparedRestore{}, fmt.Errorf("installer: nombre de respaldo inválido")
+			}
 			backupPath := filepath.Join(latestDir, entry.BackupFile)
+			if err := checkRestorePath(backupPath, true); err != nil {
+				return PreparedRestore{}, fmt.Errorf("installer: ruta de respaldo insegura")
+			}
 			data, readErr := os.ReadFile(backupPath)
 			if readErr != nil {
-				return PreparedRestore{}, fmt.Errorf("installer: read snapshot backup %s: %w", backupPath, readErr)
+				return PreparedRestore{}, fmt.Errorf("installer: no se pudo leer un respaldo necesario")
 			}
+			pe.backupPath = backupPath
 			pe.backupData = data
+			pe.backupHash = rawContentHash(data)
+			if err := validateRetiredSkillBackup(cfg, entry, data); err != nil {
+				return PreparedRestore{}, err
+			}
 		}
-		fp, fpErr := fingerprintEntry(entry)
+		fp, current, fpErr := fingerprintEntryData(entry)
 		if fpErr != nil {
 			return PreparedRestore{}, fpErr
 		}
 		pe.fingerprint = fp
+		pe.currentData = current
+		if isRetiredOpenClawSkillPath(cfg, entry.OriginalPath) && fp.present && !retiredSkillSignatureMatches(cfg, entry.OriginalPath, current) {
+			prepared.Drift.Skipped = append(prepared.Drift.Skipped, entry.OriginalPath)
+			continue
+		}
+		if !entry.Existed && ownership == restorePrivateFile && fp.present &&
+			(entry.ExpectedPostRunHash == "" || fp.contentHash != entry.ExpectedPostRunHash) {
+			prepared.Drift.Skipped = append(prepared.Drift.Skipped, entry.OriginalPath)
+			continue
+		}
+		switch ownership {
+		case restoreManagedMarkdown:
+			pe.writeData, pe.write, pe.remove, fpErr = prepareMarkdownRestore(current, pe.backupData, entry.Existed)
+		case restoreSettingsHooks:
+			pe.writeData, pe.write, pe.remove, fpErr = prepareSettingsRestore(current, pe.backupData, entry.Existed)
+		case restorePrivateFile:
+			if entry.Existed {
+				pe.writeData, pe.write = append([]byte(nil), pe.backupData...), true
+			} else if fp.present {
+				pe.remove = true
+			}
+		}
+		if fpErr != nil {
+			return PreparedRestore{}, fpErr
+		}
 		if entry.Existed {
-			veto, warnable := classifyEntryDrift(entry, pe.backupData, fp)
+			veto, warnable := classifyEntryDrift(entry, pe.backupData, current, fp)
 			if veto {
 				prepared.Drift.Vetoes = append(prepared.Drift.Vetoes, entry.OriginalPath)
 			}
@@ -145,13 +226,8 @@ func PrepareRestore(cfg Config) (PreparedRestore, error) {
 				prepared.Drift.WarnableNonVeto = append(prepared.Drift.WarnableNonVeto, entry.OriginalPath)
 			}
 		} else if fp.present && entry.DriftPolicy == DriftPolicyNonVeto {
-			// No-prior-state entry that has since appeared: for a policy click does not own outright,
-			// deleting it (ApplyPreparedRestore's no-prior-state branch) could destroy real, legitimate
-			// data an external tool wrote after the snapshot (review-risk finding). There is no baseline
-			// to veto against — only a decision to delete or not — so this warns exactly like a
-			// present-and-drifted non-veto entry, never vetoes. whole-file-veto/managed-content-veto
-			// entries are deliberately NOT extended here: click owns that content outright, so deleting a
-			// no-prior-state entry it owns is the correct, expected undo, not a foreign-data risk.
+			// No-prior-state non-veto entry that has since appeared has no trustworthy baseline
+			// proving that Click created its current contents. Warn rather than deleting it.
 			prepared.Drift.WarnableNonVeto = append(prepared.Drift.WarnableNonVeto, entry.OriginalPath)
 		}
 		prepared.entries = append(prepared.entries, pe)
@@ -159,37 +235,50 @@ func PrepareRestore(cfg Config) (PreparedRestore, error) {
 	return prepared, nil
 }
 
-// ApplyPreparedRestore executes a prepared restore. Before ANY write it re-fingerprints every
-// entry and refuses if anything changed since PrepareRestore ran (the TOCTOU guard: an
-// interactive confirmation prompt may have sat in between). Restore COVERAGE is the full
-// manifest — including non-veto entries (only VETO SCOPE is ownership-scoped): entries with
-// backed-up content are copied back byte-for-byte; no-prior-state markers (Existed=false) remove
-// any file that has since appeared at the original path, which for a DriftPolicyNonVeto entry is
-// exactly what PrepareRestore's WarnableNonVeto classification (see there) puts in front of the
-// rollback command's warning/consent flow first. The snapshot itself is left intact.
+// ApplyPreparedRestore executes the prepared owned transformations. Before ANY write it verifies
+// every eligible destination and backup is unchanged and safely addressed. The snapshot remains
+// intact. Skipped shared or unknown paths are never re-read or mutated.
 func ApplyPreparedRestore(prepared PreparedRestore) error {
 	for _, pe := range prepared.entries {
-		fp, err := fingerprintEntry(pe.entry)
+		if err := checkRestorePath(pe.entry.OriginalPath, true); err != nil {
+			return fmt.Errorf("installer: destino de restauración inseguro")
+		}
+		fp, _, err := fingerprintEntryData(pe.entry)
 		if err != nil {
 			return err
 		}
 		if fp != pe.fingerprint {
-			return fmt.Errorf("installer: %s changed since the restore was prepared; refusing to restore", pe.entry.OriginalPath)
+			return fmt.Errorf("installer: un archivo cambió desde la preparación; se canceló la restauración")
+		}
+		if pe.entry.Existed {
+			if err := checkRestorePath(pe.backupPath, true); err != nil {
+				return fmt.Errorf("installer: ruta de respaldo insegura")
+			}
+			backup, err := os.ReadFile(pe.backupPath)
+			if err != nil || rawContentHash(backup) != pe.backupHash {
+				return fmt.Errorf("installer: un respaldo cambió desde la preparación; se canceló la restauración")
+			}
 		}
 	}
 
 	for _, pe := range prepared.entries {
-		if !pe.entry.Existed {
+		if !pe.write && !pe.remove {
+			continue
+		}
+		if err := checkRestorePath(pe.entry.OriginalPath, true); err != nil {
+			return fmt.Errorf("installer: destino de restauración inseguro")
+		}
+		if pe.remove {
 			if removeErr := os.Remove(pe.entry.OriginalPath); removeErr != nil && !os.IsNotExist(removeErr) {
-				return fmt.Errorf("installer: remove %s while restoring a no-prior-state entry: %w", pe.entry.OriginalPath, removeErr)
+				return fmt.Errorf("installer: no se pudo retirar contenido gestionado durante la restauración")
 			}
 			continue
 		}
 		if mkdirErr := os.MkdirAll(filepath.Dir(pe.entry.OriginalPath), 0o755); mkdirErr != nil {
-			return fmt.Errorf("installer: create restore dir for %s: %w", pe.entry.OriginalPath, mkdirErr)
+			return fmt.Errorf("installer: no se pudo preparar el directorio de restauración")
 		}
-		if writeErr := atomicWriteFile(pe.entry.OriginalPath, pe.backupData, 0o600); writeErr != nil {
-			return fmt.Errorf("installer: restore %s: %w", pe.entry.OriginalPath, writeErr)
+		if writeErr := atomicWriteFile(pe.entry.OriginalPath, pe.writeData, 0o600); writeErr != nil {
+			return fmt.Errorf("installer: no se pudo restaurar contenido gestionado")
 		}
 	}
 	return nil

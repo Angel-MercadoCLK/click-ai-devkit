@@ -57,7 +57,8 @@ func managedMarkdownProjectionHash(content string) string {
 // The projection is a tagged digest: "absent:<hash>" when no owned hook exists, or "present:<hash>"
 // when owned hooks are found — the compact-serialized hooks are hashed, never returned, so the
 // manifest never carries click-owned content in plaintext.
-// Owned hooks are identified by matching both MemoryGuardToolMatcher and MemoryGuardCommand.
+// Owned hooks are identified by their MemoryGuardCommand, whatever the matcher (current, legacy or
+// hand-edited), so a drifted entry is still recognized as Click-owned.
 // The projection is order-independent to tolerate writeSettingsFile's key-order normalization.
 //
 // The projection also encodes token presence (boolean) in env.ENGRAM_CLOUD_TOKEN, never the token
@@ -65,18 +66,20 @@ func managedMarkdownProjectionHash(content string) string {
 // leaking its value.
 func managedSettingsProjectionHash(content string) string {
 	var settings map[string]any
+	_ = json.Unmarshal([]byte(content), &settings)
+	tokenPresent := false
+	if env, ok := settings["env"].(map[string]any); ok {
+		_, tokenPresent = env["ENGRAM_CLOUD_TOKEN"]
+	}
+	return managedSettingsProjectionHashWithTokenPresence(content, tokenPresent)
+}
+
+func managedSettingsProjectionHashWithTokenPresence(content string, tokenPresent bool) string {
+	var settings map[string]any
 	if err := json.Unmarshal([]byte(content), &settings); err != nil {
 		// Invalid JSON - treat as absent
 		projection := "absent"
 		return "absent:" + CanonicalContentHash(projection)
-	}
-
-	// Check for token presence (encode boolean, never the value)
-	tokenPresent := false
-	if env, ok := settings["env"].(map[string]any); ok {
-		if _, hasToken := env["ENGRAM_CLOUD_TOKEN"]; hasToken {
-			tokenPresent = true
-		}
 	}
 
 	entries := getPreToolUseEntries(settings)
@@ -88,9 +91,6 @@ func managedSettingsProjectionHash(content string) string {
 			continue
 		}
 		matcher, _ := entry["matcher"].(string)
-		if matcher != MemoryGuardToolMatcher {
-			continue
-		}
 
 		hooks, _ := entry["hooks"].([]any)
 		for _, hookRaw := range hooks {
@@ -98,7 +98,7 @@ func managedSettingsProjectionHash(content string) string {
 			if !ok {
 				continue
 			}
-			if hook["type"] == "command" && hook["command"] == MemoryGuardCommand {
+			if isClickGuardHook(hook) {
 				// Found an owned hook - create a compact-marshaled representation
 				ownedEntry := map[string]any{
 					"matcher": matcher,

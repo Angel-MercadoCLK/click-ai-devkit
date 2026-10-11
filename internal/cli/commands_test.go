@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,10 +13,13 @@ import (
 	"testing"
 	"time"
 
+	toml "github.com/pelletier/go-toml/v2"
+
 	"github.com/spf13/cobra"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/doctor"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
@@ -51,6 +55,27 @@ func seedResolvableEngram(t *testing.T) {
 func seedResolvableClickBinary(t *testing.T) {
 	t.Helper()
 	t.Cleanup(doctor.SetClickBinaryLookupForTests(func(string) (string, error) { return "/usr/bin/click", nil }))
+	pin, err := manifest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedHome := t.TempDir()
+	p := installer.NewGentleAIProvisioner()
+	p.HomeDir = func() (string, error) { return managedHome, nil }
+	managedPath, err := p.ManagedPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(managedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedPath, []byte("test binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p.Run = func(context.Context, []string, string, ...string) ([]byte, error) {
+		return []byte("gentle-ai " + pin.GentleAI.Version), nil
+	}
+	t.Cleanup(doctor.SetManagedGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
 }
 
 // cliFakeBinaryLookup fakes PATH resolution for installer.BinaryLookup, mirroring the same
@@ -83,6 +108,243 @@ func seedResolvableGit(t *testing.T) {
 	t.Cleanup(restore)
 }
 
+// isolateStandardTargetHomes gives the CLI the standard target paths expected by the pinned
+// gentle-ai installer while keeping each target's contents in test-owned temporary directories.
+// The symlinked target trees let existing assertions keep using their fixture paths; gentle-ai
+// itself still resolves and mutates only <isolated HOME>/.claude, .codex, and .openclaw.
+func isolateStandardTargetHomes(t *testing.T, claudeFixture, codexFixture, openClawFixture string) (claudeHome, codexHome, openClawHome string) {
+	t.Helper()
+	if claudeFixture == "" {
+		claudeFixture = os.Getenv("CLICK_TEST_CLAUDE_FIXTURE")
+	}
+	if codexFixture == "" {
+		codexFixture = os.Getenv("CLICK_TEST_CODEX_FIXTURE")
+	}
+	if openClawFixture == "" {
+		openClawFixture = os.Getenv("CLICK_TEST_OPENCLAW_FIXTURE")
+	}
+	processHome := filepath.Join(filepath.Dir(claudeFixture), ".gentle-ai-test-home-"+filepath.Base(claudeFixture))
+	if err := os.MkdirAll(processHome, 0o755); err != nil {
+		t.Fatalf("create isolated process home: %v", err)
+	}
+	t.Setenv("HOME", processHome)
+	t.Setenv("USERPROFILE", processHome)
+
+	fixtures := []struct {
+		name string
+		path string
+		into *string
+	}{
+		{name: ".claude", path: claudeFixture, into: &claudeHome},
+		{name: ".codex", path: codexFixture, into: &codexHome},
+		{name: ".openclaw", path: openClawFixture, into: &openClawHome},
+	}
+	for _, fixture := range fixtures {
+		if fixture.path == "" {
+			fixture.path = t.TempDir()
+		}
+		if err := os.MkdirAll(fixture.path, 0o755); err != nil {
+			t.Fatalf("create %s fixture root: %v", fixture.name, err)
+		}
+		target := filepath.Join(processHome, fixture.name)
+		if err := replaceFixtureTree(fixture.path, target); err != nil {
+			t.Fatalf("prepare isolated %s target: %v", fixture.name, err)
+		}
+		*fixture.into = target
+	}
+	if err := copyFixtureFile(filepath.Join(claudeFixture, ".claude.json"), filepath.Join(processHome, ".claude.json")); err != nil {
+		t.Fatalf("prepare isolated Claude MCP config: %v", err)
+	}
+	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
+	t.Setenv("CLICK_TEST_CLAUDE_FIXTURE", claudeFixture)
+	t.Setenv("CLICK_TEST_CODEX_FIXTURE", codexFixture)
+	t.Setenv("CLICK_TEST_OPENCLAW_FIXTURE", openClawFixture)
+	t.Cleanup(func() {
+		for _, fixture := range fixtures {
+			if fixture.path == "" {
+				continue
+			}
+			if err := replaceFixtureTree(filepath.Join(processHome, fixture.name), fixture.path); err != nil {
+				t.Errorf("sync isolated %s fixture: %v", fixture.name, err)
+			}
+		}
+		if err := copyFixtureFile(filepath.Join(processHome, ".claude.json"), filepath.Join(claudeFixture, ".claude.json")); err != nil {
+			t.Errorf("sync isolated Claude MCP config: %v", err)
+		}
+	})
+	return claudeHome, codexHome, openClawHome
+}
+
+func syncStandardTargetFixtures() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	fixtures := []struct {
+		name string
+		path string
+	}{
+		{name: ".claude", path: os.Getenv("CLICK_TEST_CLAUDE_FIXTURE")},
+		{name: ".codex", path: os.Getenv("CLICK_TEST_CODEX_FIXTURE")},
+		{name: ".openclaw", path: os.Getenv("CLICK_TEST_OPENCLAW_FIXTURE")},
+	}
+	for _, fixture := range fixtures {
+		if fixture.path == "" {
+			continue
+		}
+		if err := replaceFixtureTree(filepath.Join(home, fixture.name), fixture.path); err != nil {
+			return fmt.Errorf("sync %s test fixture: %w", fixture.name, err)
+		}
+	}
+	if err := copyFixtureFile(filepath.Join(home, ".claude.json"), filepath.Join(os.Getenv("CLICK_TEST_CLAUDE_FIXTURE"), ".claude.json")); err != nil {
+		return fmt.Errorf("sync Claude MCP test fixture: %w", err)
+	}
+	return nil
+}
+
+func configureCLIExecutionHomes(t *testing.T, claudeFixture, codexFixture, openClawFixture string, args []string) {
+	t.Helper()
+	usesUpstreamInstall := len(args) > 0 && (args[0] == "install" || args[0] == "update")
+	continuesStandardHome := os.Getenv("CLICK_TEST_CLAUDE_FIXTURE") == claudeFixture && claudeFixture != ""
+	if usesUpstreamInstall || continuesStandardHome {
+		isolateStandardTargetHomes(t, claudeFixture, codexFixture, openClawFixture)
+		return
+	}
+	processHome := t.TempDir()
+	t.Setenv("HOME", processHome)
+	t.Setenv("USERPROFILE", processHome)
+	t.Setenv("CLICK_CLAUDE_HOME", claudeFixture)
+	if codexFixture == "" {
+		codexFixture = t.TempDir()
+	}
+	if openClawFixture == "" {
+		openClawFixture = t.TempDir()
+	}
+	t.Setenv("CODEX_HOME", codexFixture)
+	t.Setenv("CLICK_OPENCLAW_HOME", openClawFixture)
+	t.Setenv("CLICK_TEST_CLAUDE_FIXTURE", "")
+	t.Setenv("CLICK_TEST_CODEX_FIXTURE", "")
+	t.Setenv("CLICK_TEST_OPENCLAW_FIXTURE", "")
+}
+
+func copyFixtureFile(source, destination string) error {
+	data, err := os.ReadFile(source)
+	if os.IsNotExist(err) {
+		if removeErr := os.Remove(destination); removeErr != nil && !os.IsNotExist(removeErr) {
+			return removeErr
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(destination, data, 0o600)
+}
+
+func replaceFixtureTree(source, destination string) error {
+	if err := os.RemoveAll(destination); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(destination, 0o755); err != nil {
+		return err
+	}
+	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == source {
+			return nil
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		out := filepath.Join(destination, rel)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return os.MkdirAll(out, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported test fixture entry %q", path)
+		}
+		ownerOnly, err := installer.OwnerOnly(path)
+		if err != nil {
+			return fmt.Errorf("inspect test fixture security %q: %w", path, err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(out, data, info.Mode().Perm()); err != nil {
+			return err
+		}
+		if ownerOnly {
+			if err := installer.Apply(out); err != nil {
+				return fmt.Errorf("preserve owner-only test fixture security %q: %w", out, err)
+			}
+		}
+		return nil
+	})
+}
+
+func TestReplaceFixtureTree_PreservesOwnerOnlyState(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ownerOnly bool
+	}{
+		{name: "secured source remains secured", ownerOnly: true},
+		{name: "insecure source remains insecure", ownerOnly: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := t.TempDir()
+			sourceFile := filepath.Join(source, "settings.json")
+			mode := os.FileMode(0o644)
+			if tc.ownerOnly {
+				mode = 0o600
+			}
+			if err := os.WriteFile(sourceFile, []byte(`{"fixture":true}`), mode); err != nil {
+				t.Fatalf("write source fixture: %v", err)
+			}
+			if tc.ownerOnly {
+				if err := installer.Apply(sourceFile); err != nil {
+					t.Fatalf("secure source fixture: %v", err)
+				}
+			}
+			gotSourceOwnerOnly, err := installer.OwnerOnly(sourceFile)
+			if err != nil {
+				t.Fatalf("inspect source fixture security: %v", err)
+			}
+			if gotSourceOwnerOnly != tc.ownerOnly {
+				t.Fatalf("source OwnerOnly() = %v, want %v", gotSourceOwnerOnly, tc.ownerOnly)
+			}
+
+			destination := filepath.Join(t.TempDir(), "home")
+			if err := replaceFixtureTree(source, destination); err != nil {
+				t.Fatalf("replace fixture tree: %v", err)
+			}
+			destinationFile := filepath.Join(destination, "settings.json")
+			gotDestinationOwnerOnly, err := installer.OwnerOnly(destinationFile)
+			if err != nil {
+				t.Fatalf("inspect copied fixture security: %v", err)
+			}
+			if gotDestinationOwnerOnly != tc.ownerOnly {
+				t.Fatalf("copied fixture OwnerOnly() = %v, want %v", gotDestinationOwnerOnly, tc.ownerOnly)
+			}
+		})
+	}
+}
+
 func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
 	t.Helper()
 	return execRootWithStateHome(t, claudeHome, t.TempDir(), args...)
@@ -94,7 +356,8 @@ func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
 // state home would write its snapshot somewhere the command never looks.
 func execRootWithStateHome(t *testing.T, claudeHome, stateHome string, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	codexFixture, openClawFixture := os.Getenv("CLICK_TEST_CODEX_FIXTURE"), os.Getenv("CLICK_TEST_OPENCLAW_FIXTURE")
+	configureCLIExecutionHomes(t, claudeHome, codexFixture, openClawFixture, args)
 	t.Setenv("CLICK_STATE_HOME", stateHome)
 	// openclaw-target-support (PR-C safety fix): `click uninstall` now unconditionally resolves
 	// OpenClawHome (installer.ResolveOpenClawHome) to remove the memory-guard plugin dir, regardless
@@ -104,7 +367,6 @@ func execRootWithStateHome(t *testing.T, claudeHome, stateHome string, args ...s
 	// <user home>/.openclaw on whatever machine runs `go test` — violating this codebase's own hard
 	// safety rule (config.go's openClawHomeEnvOverride doc comment: "never the real home directory").
 	// Pointing it at a throwaway t.TempDir() here makes every execRoot-based test safe by default.
-	t.Setenv("CLICK_OPENCLAW_HOME", t.TempDir())
 	seedResolvableGit(t)
 
 	root := NewRootCommand()
@@ -118,18 +380,31 @@ func execRootWithStateHome(t *testing.T, claudeHome, stateHome string, args ...s
 	root.SetArgs(args)
 
 	err := root.Execute()
+	if os.Getenv("CLICK_TEST_CLAUDE_FIXTURE") != "" {
+		if syncErr := syncStandardTargetFixtures(); syncErr != nil {
+			t.Errorf("sync target fixtures after command: %v", syncErr)
+		}
+	}
 	return buf.String(), err
 }
 
 type testCommandRunner struct {
-	home          string
-	commands      []string
-	plugins       map[string]bool
-	pluginConfigs map[string]map[string]string
+	home            string
+	commands        []string
+	plugins         map[string]bool
+	pluginConfigs   map[string]map[string]string
+	pluginInventory []byte
 }
 
 func newTestCommandRunner(home string) *testCommandRunner {
 	return &testCommandRunner{home: home, plugins: map[string]bool{}, pluginConfigs: map[string]map[string]string{}}
+}
+
+func (r *testCommandRunner) homeDir() string {
+	if home := os.Getenv("CLICK_CLAUDE_HOME"); home != "" {
+		return home
+	}
+	return r.home
 }
 
 func (r *testCommandRunner) Run(name string, args ...string) error {
@@ -169,6 +444,7 @@ func (r *testCommandRunner) Run(name string, args ...string) error {
 }
 
 func (r *testCommandRunner) writeKnownMarketplace(source string) error {
+	home := r.homeDir()
 	data, err := json.Marshal(map[string]any{
 		installer.ClickMarketplaceName(): map[string]any{
 			"source": map[string]any{"source": "git", "url": source},
@@ -177,7 +453,7 @@ func (r *testCommandRunner) writeKnownMarketplace(source string) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(r.home, "plugins", "known_marketplaces.json")
+	path := filepath.Join(home, "plugins", "known_marketplaces.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -189,7 +465,7 @@ func (r *testCommandRunner) writeKnownMarketplace(source string) error {
 // the real CLI in documentacion/spikes/spike-g-context7.md), mirroring the equivalent simulation
 // already used by installer package's own fakeCommandRunner (internal/installer/plugins.go).
 func (r *testCommandRunner) context7ConfigPath() string {
-	return filepath.Join(r.home, ".claude.json")
+	return filepath.Join(r.homeDir(), ".claude.json")
 }
 
 func (r *testCommandRunner) upsertMCPServer(name, url string) error {
@@ -241,13 +517,20 @@ func (r *testCommandRunner) removeMCPServer(name string) error {
 // the previous unconditional empty-bytes stub. Every other command still gets the previous
 // no-op/empty-bytes behavior.
 func (r *testCommandRunner) Output(name string, args ...string) ([]byte, error) {
+	home := r.homeDir()
 	r.commands = append(r.commands, name+" "+strings.Join(args, " "))
+	if name == "claude" && len(args) == 3 && args[0] == "plugin" && args[1] == "list" && args[2] == "--json" {
+		if r.pluginInventory != nil {
+			return append([]byte(nil), r.pluginInventory...), nil
+		}
+		return []byte("[]"), nil
+	}
 	if name == "go" && len(args) == 2 && args[0] == "env" {
 		switch args[1] {
 		case "GOBIN":
 			return []byte("\n"), nil
 		case "GOPATH":
-			return []byte(filepath.Join(r.home, "go") + "\n"), nil
+			return []byte(filepath.Join(home, "go") + "\n"), nil
 		}
 	}
 	if filepath.Base(name) == "openclaw" && len(args) == 3 && args[0] == "config" && args[1] == "set" && args[2] == "--help" {
@@ -275,20 +558,31 @@ func parseTestConfigFlags(args []string) map[string]string {
 }
 
 func (r *testCommandRunner) writeSettings() error {
+	home := r.homeDir()
 	plugins := map[string]any{}
 	enabled := map[string]bool{}
 	for pluginID := range r.plugins {
 		pluginName, marketplace, _ := strings.Cut(pluginID, "@")
-		installPath := filepath.Join(r.home, "plugins", "cache", marketplace, pluginName, "0.1.0")
+		installPath := filepath.Join(home, "plugins", "cache", marketplace, pluginName, "0.1.0")
 		plugins[pluginID] = []map[string]any{{"scope": "user", "version": "0.1.0", "installPath": installPath}}
 		enabled[pluginID] = true
 		if pluginID == installer.EngramPluginID {
 			writeTestFile(filepath.Join(installPath, ".mcp.json"), `{"mcpServers":{"engram":{"command":"engram","args":["mcp","--tools=agent"]}}}`)
 		}
 		if pluginID == installer.ClickSDDPluginID {
-			tools := "mcp__plugin_engram_engram__mem_search, mcp__plugin_engram_engram__mem_get_observation, mcp__plugin_engram_engram__mem_save, mcp__plugin_engram_engram__mem_update"
 			for _, agent := range []string{"click-apply", "click-architect", "click-archive", "click-explore", "click-jd-fix-agent", "click-jd-judge-a", "click-jd-judge-b", "click-memory-curator", "click-onboard", "click-orchestrator", "click-prd-writer", "click-reviewer"} {
-				writeTestFile(filepath.Join(installPath, "agents", agent+".md"), "---\ntools: "+tools+"\n---\n")
+				assetPath := filepath.Join("..", "..", "plugins", "click-sdd", "agents", agent+".md")
+				data, err := os.ReadFile(assetPath)
+				if err != nil {
+					return fmt.Errorf("read bundled Click agent asset %s: %w", agent, err)
+				}
+				assetDestination := filepath.Join(installPath, "agents", agent+".md")
+				if err := os.MkdirAll(filepath.Dir(assetDestination), 0o755); err != nil {
+					return err
+				}
+				if err := os.WriteFile(assetDestination, data, 0o600); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -296,7 +590,7 @@ func (r *testCommandRunner) writeSettings() error {
 	if err != nil {
 		return err
 	}
-	pluginsPath := filepath.Join(r.home, "plugins", "installed_plugins.json")
+	pluginsPath := filepath.Join(home, "plugins", "installed_plugins.json")
 	if err := os.MkdirAll(filepath.Dir(pluginsPath), 0o755); err != nil {
 		return err
 	}
@@ -313,7 +607,7 @@ func (r *testCommandRunner) writeSettings() error {
 	}
 
 	// MERGE: read existing settings.json if present, preserve foreign keys, set/replace only the keys we own
-	settingsPath := filepath.Join(r.home, "settings.json")
+	settingsPath := filepath.Join(home, "settings.json")
 	existingSettings := map[string]any{}
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		if err := json.Unmarshal(data, &existingSettings); err != nil {
@@ -321,7 +615,8 @@ func (r *testCommandRunner) writeSettings() error {
 			existingSettings = map[string]any{}
 		}
 	}
-	// Set/replace only the keys this runner owns
+	// This fake models the external CLI's plugin-config handling as a complete replacement.
+	// Tests must not infer that legacy plugin-owned options survive real marketplace operations.
 	existingSettings["enabledPlugins"] = enabled
 	existingSettings["pluginConfigs"] = pluginConfigs
 
@@ -344,6 +639,10 @@ func writeTestFile(path, content string) {
 
 func TestInstallCommand_Succeeds(t *testing.T) {
 	home := t.TempDir()
+	writeJSONFileForTest(t, filepath.Join(home, ".claude.json"), map[string]any{
+		"mcpServers":  map[string]any{"private-server": map[string]any{"command": "private-tool"}},
+		"userSetting": "preserved",
+	})
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
@@ -354,8 +653,8 @@ func TestInstallCommand_Succeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install command error = %v, output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "click-sdd") {
-		t.Errorf("install output = %q, want it to mention the click-sdd plugin step", out)
+	if !strings.Contains(out, "Retirando click-sdd") {
+		t.Errorf("install output = %q, want it to mention legacy click-sdd retirement", out)
 	}
 	if !strings.Contains(out, "click-memory") {
 		t.Errorf("install output = %q, want it to mention the click-memory plugin step", out)
@@ -365,6 +664,29 @@ func TestInstallCommand_Succeeds(t *testing.T) {
 	}
 	if !strings.Contains(out, "CLAUDE.md") {
 		t.Errorf("install output = %q, want it to mention the CLAUDE.md step", out)
+	}
+	configBytes, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(.claude.json) error = %v", err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(configBytes, &config); err != nil {
+		t.Fatalf("parse .claude.json: %v", err)
+	}
+	if config["userSetting"] != "preserved" {
+		t.Fatalf(".claude.json userSetting = %v, want existing unrelated value preserved", config["userSetting"])
+	}
+	servers := config["mcpServers"].(map[string]any)
+	for _, name := range []string{"private-server", "engram", "context7"} {
+		if _, ok := servers[name]; !ok {
+			t.Fatalf(".claude.json mcpServers = %v, want %q present", servers, name)
+		}
+	}
+	if !reflect.DeepEqual(servers["engram"], map[string]any{"command": "engram", "args": []any{"mcp", "--tools=agent"}}) {
+		t.Fatalf("upstream Engram registration = %#v, want pinned gentle-ai shape", servers["engram"])
+	}
+	if !reflect.DeepEqual(servers["context7"], map[string]any{"command": "npx", "args": []any{"-y", "--package=@upstash/context7-mcp@2.2.5", "--", "context7-mcp"}}) {
+		t.Fatalf("upstream Context7 registration = %#v, want pinned gentle-ai shape", servers["context7"])
 	}
 }
 
@@ -398,11 +720,11 @@ func TestResolveInstallTargetSelection_NonInteractiveDoesNotPersistBeforeConfirm
 // preflight tests below, where the whole point is to simulate git being absent from PATH.
 func execRootWithGitLookup(t *testing.T, claudeHome string, lookup installer.BinaryLookup, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	codexFixture, openClawFixture := os.Getenv("CLICK_TEST_CODEX_FIXTURE"), os.Getenv("CLICK_TEST_OPENCLAW_FIXTURE")
+	configureCLIExecutionHomes(t, claudeHome, codexFixture, openClawFixture, args)
 	t.Setenv("CLICK_STATE_HOME", t.TempDir())
 	// Same CLICK_OPENCLAW_HOME safety override as execRoot above — see its comment for the full
 	// rationale (runUninstall's unconditional ResolveOpenClawHome call).
-	t.Setenv("CLICK_OPENCLAW_HOME", t.TempDir())
 	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup { return lookup })
 	defer restore()
 
@@ -414,15 +736,18 @@ func execRootWithGitLookup(t *testing.T, claudeHome string, lookup installer.Bin
 	root.SetArgs(args)
 
 	err := root.Execute()
+	if os.Getenv("CLICK_TEST_CLAUDE_FIXTURE") != "" {
+		if syncErr := syncStandardTargetFixtures(); syncErr != nil {
+			t.Errorf("sync target fixtures after command: %v", syncErr)
+		}
+	}
 	return buf.String(), err
 }
 
 func execRootWithHomesAndLookup(t *testing.T, claudeHome, stateHome, openClawHome, codexHome string, lookup installer.BinaryLookup, args ...string) (string, error) {
 	t.Helper()
-	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	configureCLIExecutionHomes(t, claudeHome, codexHome, openClawHome, args)
 	t.Setenv("CLICK_STATE_HOME", stateHome)
-	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
-	t.Setenv("CODEX_HOME", codexHome)
 	restore := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup { return lookup })
 	defer restore()
 
@@ -434,6 +759,11 @@ func execRootWithHomesAndLookup(t *testing.T, claudeHome, stateHome, openClawHom
 	root.SetArgs(args)
 
 	err := root.Execute()
+	if os.Getenv("CLICK_TEST_CLAUDE_FIXTURE") != "" {
+		if syncErr := syncStandardTargetFixtures(); syncErr != nil {
+			t.Errorf("sync target fixtures after command: %v", syncErr)
+		}
+	}
 	return buf.String(), err
 }
 
@@ -580,27 +910,24 @@ func TestInstallCommand_CodexOnly_NonInteractiveOmitsNativeModelWithoutFlagAndDo
 	if err != nil {
 		t.Fatalf("install command error = %v, want nil for Codex-only noninteractive install without Claude, output:\n%s", err, out)
 	}
-	// SyncCodexMCP always runs for a Codex target (independent of --codex-model), issuing exactly
-	// one `codex mcp get engram` idempotency check via the fake runner — the fake's default Output
-	// stub answers success, so no `mcp add` follows. No Claude marketplace/preflight command is
-	// ever issued for a Codex-only install. SyncCodexMCP resolves the binary to an absolute path
-	// (filepath.Abs), so the fake lookup's "/usr/bin/codex" is qualified the same way here.
-	qualifiedCodexBinary, absErr := filepath.Abs("/usr/bin/codex")
-	if absErr != nil {
-		t.Fatal(absErr)
-	}
-	wantCommands := []string{qualifiedCodexBinary + " mcp get engram"}
-	if !reflect.DeepEqual(runner.commands, wantCommands) {
-		t.Fatalf("runner.commands = %#v, want exactly %#v (only the Codex Engram MCP check, no Claude commands)", runner.commands, wantCommands)
+	// gentle-ai owns Codex MCP registration; Click must issue no duplicate mcp get/add command.
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want no Click-owned Codex MCP commands", runner.commands)
 	}
 	if strings.Contains(out, "gpt-5.6") {
 		t.Fatalf("install output = %q, want no fabricated default Codex native model in noninteractive mode", out)
 	}
-	if !strings.Contains(out, "Codex usa su modelo nativo ya configurado") {
-		t.Fatalf("install output = %q, want the native-default guidance for Codex when --codex-model is omitted", out)
+	config, readErr := os.ReadFile(filepath.Join(codexHome, "config.toml"))
+	if readErr != nil {
+		t.Fatalf("ReadFile(config.toml) error = %v, want upstream MCP registration", readErr)
 	}
-	if _, statErr := os.Stat(filepath.Join(codexHome, "config.toml")); !os.IsNotExist(statErr) {
-		t.Fatalf("Stat(config.toml) error = %v, want no Codex config write when --codex-model is omitted", statErr)
+	for _, want := range []string{"mcp_servers", "engram", "context7", "https://mcp.context7.com/mcp"} {
+		if !strings.Contains(string(config), want) {
+			t.Fatalf("config.toml = %q, want upstream MCP field %q", config, want)
+		}
+	}
+	if strings.Contains(string(config), "model =") {
+		t.Fatalf("config.toml = %q, want no Click-owned native model mutation", config)
 	}
 	selection, found, loadErr := installer.LoadTargetSelection(installer.Config{ClickStateHome: stateHome})
 	if loadErr != nil {
@@ -611,11 +938,8 @@ func TestInstallCommand_CodexOnly_NonInteractiveOmitsNativeModelWithoutFlagAndDo
 	}
 }
 
-// TestInstallCommand_CodexOnly_SavesRecommendedModelProfileAndUninstallRemovesIt is the v1 Codex
-// tier picker end-to-end contract: a non-interactive Codex-only install writes the "recommended"
-// tier to Click's own reference file under CodexHome, and `click uninstall` removes that file without
-// touching Codex's native config.toml.
-func TestInstallCommand_CodexOnly_SavesRecommendedModelProfileAndUninstallRemovesIt(t *testing.T) {
+// TestInstallCommand_CodexOnly_PreservesLegacyModelProfileOnUninstall verifies install and uninstall leave legacy model metadata untouched.
+func TestInstallCommand_CodexOnly_PreservesLegacyModelProfileOnUninstall(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 	codexHome := filepath.Join(stateHome, "codex-home")
@@ -624,29 +948,186 @@ func TestInstallCommand_CodexOnly_SavesRecommendedModelProfileAndUninstallRemove
 	defer restoreRunner()
 	lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex"}}
 
+	cfg := installer.Config{CodexHome: codexHome}
+	profilePath := cfg.CodexModelProfilePath()
+	profile := []byte(`{"schema_version":1,"tier":"preserve-user-tier","roles":{"apply":"vendor/user"}}`)
+	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(profilePath, profile, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "install")
 	if err != nil {
 		t.Fatalf("install command error = %v, want nil for Codex-only noninteractive install, output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Guardando perfil de modelos de Codex") {
-		t.Fatalf("install output = %q, want it to mention the Codex model profile step", out)
-	}
-
-	cfg := installer.Config{CodexHome: codexHome}
-	profilePath := cfg.CodexModelProfilePath()
 	raw, err := os.ReadFile(profilePath)
-	if err != nil {
-		t.Fatalf("ReadFile(model-profile.json) error = %v, want the recommended profile written", err)
-	}
-	if !strings.Contains(string(raw), `"tier": "recommended"`) {
-		t.Fatalf("model-profile.json content = %q, want tier=recommended", raw)
+	if err != nil || !bytes.Equal(raw, profile) {
+		t.Fatalf("model-profile.json = %q (err %v), want exact legacy bytes preserved", raw, err)
 	}
 
 	if _, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "uninstall"); err != nil {
 		t.Fatalf("uninstall command error = %v", err)
 	}
-	if _, err := os.Stat(profilePath); !os.IsNotExist(err) {
-		t.Fatalf("Stat(model-profile.json) error = %v, want the profile removed after uninstall", err)
+	got, err := os.ReadFile(profilePath)
+	if err != nil || !bytes.Equal(got, profile) {
+		t.Fatalf("model-profile.json after uninstall = %q (err %v), want exact legacy bytes preserved", got, err)
+	}
+}
+
+func TestInstallUpdate_RetiredModelFlagsRejectBeforeSideEffects(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "install Claude profile", args: []string{"install", "--profile="}},
+		{name: "install empty Codex model", args: []string{"install", "--codex-model="}},
+		{name: "install Codex model", args: []string{"install", "--codex-model=gpt-5.6"}},
+		{name: "install empty OpenClaw model", args: []string{"install", "--openclaw-model="}},
+		{name: "install OpenClaw model", args: []string{"install", "--openclaw-model=provider/model"}},
+		{name: "install empty OpenClaw fallback", args: []string{"install", "--openclaw-fallback-model="}},
+		{name: "install OpenClaw fallback", args: []string{"install", "--openclaw-fallback-model=provider/fallback"}},
+		{name: "update Claude profile", args: []string{"update", "--profile="}},
+		{name: "update empty Codex model", args: []string{"update", "--codex-model="}},
+		{name: "update Codex model", args: []string{"update", "--codex-model=gpt-5.6"}},
+		{name: "update empty OpenClaw model", args: []string{"update", "--openclaw-model="}},
+		{name: "update OpenClaw model", args: []string{"update", "--openclaw-model=provider/model"}},
+		{name: "update empty OpenClaw fallback", args: []string{"update", "--openclaw-fallback-model="}},
+		{name: "update OpenClaw fallback", args: []string{"update", "--openclaw-fallback-model=provider/fallback"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			claudeHome, stateHome := t.TempDir(), t.TempDir()
+			openClawHome, codexHome := t.TempDir(), t.TempDir()
+			runner := newTestCommandRunner(claudeHome)
+			restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+			defer restoreRunner()
+
+			provisionerFactoryCalls := 0
+			restoreProvisioner := installer.SetGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner {
+				provisionerFactoryCalls++
+				return installer.NewGentleAIProvisioner()
+			})
+			defer restoreProvisioner()
+
+			lookup := cliFakeBinaryLookup{resolved: map[string]string{
+				"claude": "/usr/bin/claude", "git": "/usr/bin/git",
+				"codex": "/usr/bin/codex", "openclaw": "/usr/bin/openclaw",
+			}}
+			out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, openClawHome, codexHome, lookup, tt.args...)
+			if err == nil || !strings.Contains(err.Error(), "modelos") {
+				t.Fatalf("%v error = %v, output %q; want actionable Spanish model deprecation", tt.args[0], err, out)
+			}
+			if len(runner.commands) != 0 || provisionerFactoryCalls != 0 {
+				t.Fatalf("side effects: runner commands=%#v provisioner factory calls=%d; want none", runner.commands, provisionerFactoryCalls)
+			}
+			cfg := installer.Config{ClickStateHome: stateHome, CodexHome: codexHome, OpenClawHome: openClawHome}
+			for _, path := range []string{cfg.TargetSelectionPath(), filepath.Join(cfg.BackupDir(), "latest", "manifest.json")} {
+				if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+					t.Fatalf("%v created state at %q: %v", tt.args[0], path, statErr)
+				}
+			}
+		})
+	}
+}
+
+func TestInstallUpdate_RetiredModelFlagsAreHiddenCompatibilityFlags(t *testing.T) {
+	for _, command := range []*cobra.Command{newInstallCommand(), newUpdateCommand()} {
+		for _, name := range []string{profileFlag, codexModelFlag, openClawModelFlag, openClawFallbackFlag} {
+			flag := command.Flags().Lookup(name)
+			if flag == nil || !flag.Hidden {
+				t.Errorf("%s --%s flag = %#v, want hidden compatibility flag", command.Name(), name, flag)
+			}
+		}
+	}
+}
+
+func TestCodexOpenClawModelStatePreservedAcrossInstallUpdateUninstall(t *testing.T) {
+	for _, command := range []string{"install", "update", "uninstall"} {
+		t.Run(command, func(t *testing.T) {
+			claudeHome, stateHome := t.TempDir(), t.TempDir()
+			codexHome, openClawHome := t.TempDir(), t.TempDir()
+			cfg := installer.Config{ClickStateHome: stateHome, CodexHome: codexHome, OpenClawHome: openClawHome}
+			if err := os.MkdirAll(codexHome, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			codexConfig := []byte("model = \"vendor/codex-user-model\"\n\n[profiles.sdd-strong]\nmodel = \"vendor/codex-profile-model\"\n")
+			if err := os.WriteFile(cfg.CodexConfigPath(), codexConfig, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			codexProfile := []byte(`{"schema_version":1,"tier":"user-tier","roles":{"apply":"user-model"}}`)
+			if err := os.MkdirAll(filepath.Dir(cfg.CodexModelProfilePath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(cfg.CodexModelProfilePath(), codexProfile, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(openClawHome, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			openClawConfig := []byte(`{"agents":{"defaults":{"model":{"primary":"provider/openclaw-user","fallbacks":["provider/fallback-user"]}}},"mcp":{"servers":{"custom":{"command":"keep-me"}}}}`)
+			if err := os.WriteFile(cfg.OpenClawMCPConfigPath(), openClawConfig, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			openClawProfile := []byte(`{"schema_version":2,"profile":"legacy-user-profile","models":{"default":"preserve-me"}}`)
+			if err := os.MkdirAll(filepath.Dir(cfg.OpenClawModelProfilePath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(cfg.OpenClawModelProfilePath(), openClawProfile, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if command != "install" {
+				if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, Codex: true, OpenClaw: true}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runner := newTestCommandRunner(claudeHome)
+			restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+			defer restoreRunner()
+			lookup := cliFakeBinaryLookup{resolved: map[string]string{"codex": "/usr/bin/codex", "openclaw": "/usr/bin/openclaw"}}
+			out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, openClawHome, codexHome, lookup, command)
+			if err != nil {
+				t.Fatalf("%s error = %v, output:\n%s", command, err, out)
+			}
+
+			gotCodex, readErr := os.ReadFile(cfg.CodexConfigPath())
+			if readErr != nil {
+				t.Fatalf("read Codex config: %v", readErr)
+			}
+			var codexSettings map[string]any
+			if err := toml.Unmarshal(gotCodex, &codexSettings); err != nil {
+				t.Fatalf("parse Codex config: %v", err)
+			}
+			profiles := codexSettings["profiles"].(map[string]any)
+			sddStrong := profiles["sdd-strong"].(map[string]any)
+			if codexSettings["model"] != "vendor/codex-user-model" || sddStrong["model"] != "vendor/codex-profile-model" {
+				t.Fatalf("Codex model settings = (top-level %#v, profiles.sdd-strong %#v), want exact configured values", codexSettings["model"], sddStrong["model"])
+			}
+			gotCodexProfile, readErr := os.ReadFile(cfg.CodexModelProfilePath())
+			if readErr != nil || !bytes.Equal(gotCodexProfile, codexProfile) {
+				t.Fatalf("Codex profile = %q (err %v), want exact legacy metadata preservation", gotCodexProfile, readErr)
+			}
+			var gotOpenClaw map[string]any
+			if err := readJSONFile(cfg.OpenClawMCPConfigPath(), &gotOpenClaw); err != nil {
+				t.Fatalf("read OpenClaw config: %v", err)
+			}
+			agents := gotOpenClaw["agents"].(map[string]any)
+			defaults := agents["defaults"].(map[string]any)
+			model := defaults["model"].(map[string]any)
+			if model["primary"] != "provider/openclaw-user" || !reflect.DeepEqual(model["fallbacks"], []any{"provider/fallback-user"}) {
+				t.Fatalf("OpenClaw native model = %#v, want user primary and fallback preserved", model)
+			}
+			gotOpenClawProfile, readErr := os.ReadFile(cfg.OpenClawModelProfilePath())
+			if readErr != nil || !bytes.Equal(gotOpenClawProfile, openClawProfile) {
+				t.Fatalf("OpenClaw profile = %q (err %v), want exact legacy metadata preservation", gotOpenClawProfile, readErr)
+			}
+			for _, commandLine := range runner.commands {
+				if strings.Contains(commandLine, "--config") || strings.Contains(commandLine, "config set") {
+					t.Fatalf("Click emitted a model mutation: %q", commandLine)
+				}
+			}
+		})
 	}
 }
 
@@ -666,31 +1147,28 @@ func TestUpdateCommand_CodexOnly_UsesPersistedSelectionWithoutClaudeAndOmitsNati
 	if err != nil {
 		t.Fatalf("update command error = %v, want nil for Codex-only update without Claude, output:\n%s", err, out)
 	}
-	// SyncCodexMCP always runs for a Codex target (independent of --codex-model), issuing exactly
-	// one `codex mcp get engram` idempotency check via the fake runner. No Claude marketplace/
-	// preflight command is ever issued for a Codex-only update. SyncCodexMCP resolves the binary to
-	// an absolute path (filepath.Abs), so the fake lookup's "/usr/bin/codex" is qualified the same
-	// way here.
-	qualifiedCodexBinary, absErr := filepath.Abs("/usr/bin/codex")
-	if absErr != nil {
-		t.Fatal(absErr)
-	}
-	wantCommands := []string{qualifiedCodexBinary + " mcp get engram"}
-	if !reflect.DeepEqual(runner.commands, wantCommands) {
-		t.Fatalf("runner.commands = %#v, want exactly %#v (only the Codex Engram MCP check, no Claude commands)", runner.commands, wantCommands)
+	// gentle-ai owns Codex MCP registration; Click must issue no duplicate mcp get/add command.
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want no Click-owned Codex MCP commands", runner.commands)
 	}
 	if strings.Contains(out, "gpt-5.6") {
 		t.Fatalf("update output = %q, want no fabricated default Codex native model in noninteractive mode", out)
 	}
-	if !strings.Contains(out, "Codex usa su modelo nativo ya configurado") {
-		t.Fatalf("update output = %q, want the native-default guidance for Codex when --codex-model is omitted", out)
+	config, readErr := os.ReadFile(filepath.Join(codexHome, "config.toml"))
+	if readErr != nil {
+		t.Fatalf("ReadFile(config.toml) error = %v, want upstream MCP registration", readErr)
 	}
-	if _, statErr := os.Stat(filepath.Join(codexHome, "config.toml")); !os.IsNotExist(statErr) {
-		t.Fatalf("Stat(config.toml) error = %v, want no Codex config write when --codex-model is omitted", statErr)
+	for _, want := range []string{"mcp_servers", "engram", "context7", "https://mcp.context7.com/mcp"} {
+		if !strings.Contains(string(config), want) {
+			t.Fatalf("config.toml = %q, want upstream MCP field %q", config, want)
+		}
+	}
+	if strings.Contains(string(config), "model =") {
+		t.Fatalf("config.toml = %q, want no native model mutation without --codex-model", config)
 	}
 }
 
-func TestUpdateCommand_CodexNativeMutationFailure_RollsBackConfigToml(t *testing.T) {
+func TestUpdateCommand_CodexGuidanceFailure_RollsBackCodexConfig(t *testing.T) {
 	claudeHome := t.TempDir()
 	stateHome := t.TempDir()
 	codexHome := filepath.Join(stateHome, "codex-home")
@@ -709,27 +1187,28 @@ func TestUpdateCommand_CodexNativeMutationFailure_RollsBackConfigToml(t *testing
 		t.Fatalf("WriteFile(config.toml) error = %v", err)
 	}
 	restoreGuidance := SetSyncCodexGuidanceFuncForTests(func(installer.Config) error {
-		return errors.New("codex guidance failed after native mutation")
+		return errors.New("codex guidance failed after upstream MCP sync")
 	})
 	defer restoreGuidance()
 
-	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "update", "--codex-model", "gpt-5.6")
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, t.TempDir(), codexHome, lookup, "update")
 	if err == nil {
-		t.Fatalf("update command error = nil, want rollback-triggering failure after Codex native mutation, output:\n%s", out)
+		t.Fatalf("update command error = nil, want rollback-triggering failure after Codex MCP sync, output:\n%s", out)
 	}
 	after, readErr := os.ReadFile(filepath.Join(codexHome, "config.toml"))
 	if readErr != nil {
 		t.Fatalf("ReadFile(config.toml) error = %v", readErr)
 	}
-	if string(after) != before {
-		t.Fatalf("config.toml after failed update = %q, want rollback-restored bytes %q", after, before)
+	wantAfter := "model = 'gpt-5.5'\n\n[mcp_servers]\n[mcp_servers.context7]\nurl = 'https://mcp.context7.com/mcp'\n\n[mcp_servers.engram]\nargs = ['mcp', '--tools=agent']\ncommand = 'engram'\n"
+	if string(after) != wantAfter {
+		t.Fatalf("config.toml after failed update = %q, want current native config preserved as %q", after, wantAfter)
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "rollback") {
 		t.Fatalf("update error = %v, want rollback context after restoring the snapshot", err)
 	}
 }
 
-func TestDoctorCommand_StaleCacheThenUpdateThenFreshDoctorReportsHealthy(t *testing.T) {
+func TestDoctorCommand_IgnoresStaleRetiredClickSDDRegistryEntry(t *testing.T) {
 	seedResolvableEngram(t)
 	seedResolvableClickBinary(t)
 	home := t.TempDir()
@@ -750,9 +1229,7 @@ func TestDoctorCommand_StaleCacheThenUpdateThenFreshDoctorReportsHealthy(t *test
 		t.Fatalf("json.Unmarshal(installed_plugins.json) error = %v", err)
 	}
 	plugins := registry["plugins"].(map[string]any)
-	entries := plugins[installer.ClickSDDPluginID].([]any)
-	entry := entries[0].(map[string]any)
-	entry["installPath"] = filepath.Join(home, "plugins", "cache", "click-ai-devkit", "click-sdd-stale", "0.1.0")
+	plugins[installer.ClickSDDPluginID] = []any{map[string]any{"installPath": filepath.Join(home, "plugins", "cache", "click-ai-devkit", "click-sdd-stale", "0.1.0")}}
 	updated, err := json.Marshal(registry)
 	if err != nil {
 		t.Fatalf("json.Marshal(installed_plugins.json) error = %v", err)
@@ -762,23 +1239,11 @@ func TestDoctorCommand_StaleCacheThenUpdateThenFreshDoctorReportsHealthy(t *test
 	}
 
 	doctorOut, doctorErr := execRoot(t, home, "doctor")
-	if doctorErr == nil {
-		t.Fatalf("doctor error = nil on a stale click-sdd cache path, want unhealthy report, output:\n%s", doctorOut)
+	if strings.Contains(doctorOut, "click-sdd") {
+		t.Fatalf("doctor output = %q, want stale retired click-sdd registry state ignored", doctorOut)
 	}
-	if !strings.Contains(strings.ToLower(doctorOut), "click update") {
-		t.Fatalf("doctor output = %q, want update guidance for stale cache recovery", doctorOut)
-	}
-
-	updateOut, updateErr := execRoot(t, home, "update")
-	if updateErr != nil {
-		t.Fatalf("update command error = %v, output:\n%s", updateErr, updateOut)
-	}
-	freshDoctorOut, freshDoctorErr := execRoot(t, home, "doctor")
-	if freshDoctorErr != nil {
-		t.Fatalf("doctor after update error = %v, want healthy report after the refreshed session, output:\n%s", freshDoctorErr, freshDoctorOut)
-	}
-	if !strings.Contains(freshDoctorOut, "propagación") {
-		t.Fatalf("doctor after update output = %q, want the live propagation limitation note from the refreshed session", freshDoctorOut)
+	if doctorErr != nil && strings.Contains(doctorOut, "click-sdd") {
+		t.Fatalf("doctor failed because of retired click-sdd state: %v\n%s", doctorErr, doctorOut)
 	}
 }
 
@@ -830,11 +1295,9 @@ func TestInstallCommand_FreshInstall_NoBackupCreated(t *testing.T) {
 	}
 }
 
-// TestInstallCommand_MigratesStaleModelsBeforeOverwriting guards the D8 "never clobber a working
-// setup without a backup" safety net for `click install`, consistent with `click update`: if
-// models.json is stale (pre-taxonomy-realignment), `click install` must back it up to
-// models.json.bak before overwriting it with fresh new-taxonomy defaults.
-func TestInstallCommand_MigratesStaleModelsBeforeOverwriting(t *testing.T) {
+// TestInstallCommand_PreservesStaleModels guards that retired model artifacts are not migrated or
+// regenerated during install.
+func TestInstallCommand_PreservesStaleModels(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -862,20 +1325,12 @@ func TestInstallCommand_MigratesStaleModelsBeforeOverwriting(t *testing.T) {
 		t.Fatalf("install command error = %v", err)
 	}
 
-	backup, err := os.ReadFile(cfg.ModelsPath() + ".bak")
-	if err != nil {
-		t.Fatalf("ReadFile(models.json.bak) error = %v, want the stale file backed up before overwrite", err)
+	got, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil || !bytes.Equal(got, legacyRaw) {
+		t.Fatalf("models.json = %q (err %v), want original stale bytes preserved", got, err)
 	}
-	if string(backup) != string(legacyRaw) {
-		t.Fatalf("models.json.bak = %q, want verbatim legacy content %q", backup, legacyRaw)
-	}
-
-	stale, err := installer.IsStale(cfg)
-	if err != nil {
-		t.Fatalf("IsStale() error = %v", err)
-	}
-	if stale {
-		t.Fatal("models.json is still stale after `click install`, want migrated to current schema")
+	if _, err := os.Stat(cfg.ModelsPath() + ".bak"); !os.IsNotExist(err) {
+		t.Fatalf("models.json.bak stat error = %v, want no migration backup", err)
 	}
 }
 
@@ -1021,8 +1476,8 @@ func TestUpdateCommand_ResyncsPluginsAndWritesEngramPin(t *testing.T) {
 	if !strings.Contains(out, "click-review") {
 		t.Errorf("update output = %q, want it to mention the click-review re-sync step", out)
 	}
-	if !strings.Contains(out, "Engram") {
-		t.Errorf("update output = %q, want it to mention the Engram pin step", out)
+	if !strings.Contains(out, "gentle-ai") {
+		t.Errorf("update output = %q, want it to mention upstream component sync", out)
 	}
 
 	wantCommand := "claude plugin install click-review@click-ai-devkit"
@@ -1030,22 +1485,15 @@ func TestUpdateCommand_ResyncsPluginsAndWritesEngramPin(t *testing.T) {
 		t.Fatalf("update command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
 	}
 
-	// click no longer writes an MCP config file itself — Step 0 of Slice 3 proved Claude Code
-	// never reads a hand-rolled <ClaudeHome>/mcp/engram.json; only the engram plugin's own
-	// bundled .mcp.json is actually loaded. `click update` now just re-syncs the engram plugin
-	// (idempotent) and refreshes click's own state bookkeeping file.
-	if _, err := os.Stat(filepath.Join(home, "click-ai-devkit", "engram.json")); err != nil {
-		t.Fatalf("update did not write engram pinned state: %v", err)
+	// Click no longer writes a separate Engram pin or MCP registration; gentle-ai owns that lifecycle.
+	if _, err := os.Stat(filepath.Join(home, "click-ai-devkit", "engram.json")); !os.IsNotExist(err) {
+		t.Fatalf("update created Click-owned Engram state: stat error = %v, want no state file", err)
 	}
 }
 
-// TestUpdateCommand_PersistsModelsJson is a regression test for an asymmetry bug: `click install`
-// both applies AND saves models.json (installer.SaveModels), but `click update` only re-applied
-// the per-phase model routing config without re-persisting it to disk. On a home where
-// models.json was never written (e.g. install predates this feature, or the file was lost),
-// `click update` must still leave models.json present and readable afterward, exactly like
-// `click install` does.
-func TestUpdateCommand_PersistsModelsJson(t *testing.T) {
+// TestUpdateCommand_DoesNotCreateRetiredModelsJson verifies that update does not create the
+// retired Click-owned model artifact when none exists.
+func TestUpdateCommand_DoesNotCreateRetiredModelsJson(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1056,24 +1504,149 @@ func TestUpdateCommand_PersistsModelsJson(t *testing.T) {
 	}
 	t.Setenv("CLICK_ENGRAM_BINARY_PATH", binaryPath)
 
-	// No prior `click install` ran, so models.json does not exist yet — exercises update's own
-	// fallback-to-defaults path (installer.LoadModels found=false), which must still persist.
+	// No prior install ran, so models.json is absent. Update must leave that state unchanged rather
+	// than generating Click-owned model defaults.
 	if _, err := execRoot(t, home, "update"); err != nil {
 		t.Fatalf("update command error = %v", err)
 	}
 
-	got, found, err := installer.LoadModels(installer.Config{ClaudeHome: home})
+	if _, err := os.Stat(installer.Config{ClaudeHome: home}.ModelsPath()); !os.IsNotExist(err) {
+		t.Fatalf("models.json stat error = %v, want no Click model artifact created", err)
+	}
+}
+
+func TestInstallAndUpdate_PreserveLegacyClaudeModelArtifacts(t *testing.T) {
+	for _, command := range []string{"install", "update"} {
+		t.Run(command, func(t *testing.T) {
+			home := t.TempDir()
+			cfg := installer.Config{ClaudeHome: home}
+			if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			original := []byte("legacy user-owned model data: keep byte-for-byte")
+			if err := os.WriteFile(cfg.ModelsPath(), original, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			settings := []byte(`{"model":"user-default"}`)
+			if err := os.WriteFile(cfg.SettingsPath(), settings, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			runner := newTestCommandRunner(home)
+			restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+			defer restoreRunner()
+
+			if _, err := execRoot(t, home, command); err != nil {
+				t.Fatalf("%s command error = %v", command, err)
+			}
+			got, err := os.ReadFile(cfg.ModelsPath())
+			if err != nil {
+				t.Fatalf("ReadFile(models.json) error = %v", err)
+			}
+			if !bytes.Equal(got, original) {
+				t.Fatalf("models.json = %q, want preserved bytes %q", got, original)
+			}
+			if _, err := os.Stat(cfg.ModelsPath() + ".bak"); !os.IsNotExist(err) {
+				t.Fatalf("models.json.bak stat error = %v, want no migration backup", err)
+			}
+			var gotSettings map[string]any
+			if err := readJSONFile(cfg.SettingsPath(), &gotSettings); err != nil {
+				t.Fatalf("read settings.json: %v", err)
+			}
+			if gotSettings["model"] != "user-default" {
+				t.Fatalf("settings model = %#v, want preserved native model", gotSettings["model"])
+			}
+			for _, command := range runner.commands {
+				if strings.Contains(command, "--config") {
+					t.Fatalf("runner command %q contains retired model config flags", command)
+				}
+			}
+		})
+	}
+}
+
+func TestRetiredClaudeProfileFlagRejectsBeforeInstallOrUpdateWrites(t *testing.T) {
+	for _, command := range []string{"install", "update"} {
+		t.Run(command, func(t *testing.T) {
+			home, stateHome := t.TempDir(), t.TempDir()
+			runner := newTestCommandRunner(home)
+			restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+			defer restoreRunner()
+
+			out, err := execRootWithStateHome(t, home, stateHome, command, "--profile", "quality")
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "modelos") || !strings.Contains(strings.ToLower(err.Error()), "gentle-ai") {
+				t.Fatalf("%s --profile error = %v, output %q; want actionable Spanish deprecation error", command, err, out)
+			}
+			if len(runner.commands) != 0 {
+				t.Fatalf("runner.commands = %#v, want no commands before retired flag rejection", runner.commands)
+			}
+			if _, found, loadErr := installer.LoadTargetSelection(installer.Config{ClickStateHome: stateHome}); loadErr != nil || found {
+				t.Fatalf("target selection = (found=%t, err=%v), want no persisted state", found, loadErr)
+			}
+			if has, snapshotErr := installer.HasRunSnapshot(installer.Config{ClaudeHome: home, ClickStateHome: stateHome}); snapshotErr != nil || has {
+				t.Fatalf("run snapshot = (present=%t, err=%v), want rejection before snapshot", has, snapshotErr)
+			}
+		})
+	}
+}
+
+func TestRetiredClaudeProfileFlagIsHiddenFromInstallAndUpdateHelp(t *testing.T) {
+	for name, command := range map[string]*cobra.Command{
+		"install": newInstallCommand(),
+		"update":  newUpdateCommand(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			flag := command.Flags().Lookup(profileFlag)
+			if flag == nil || !flag.Hidden {
+				t.Fatalf("%s --profile flag = %#v, want hidden compatibility flag", name, flag)
+			}
+		})
+	}
+}
+
+func readJSONFile(path string, target any) error {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("LoadModels() error = %v", err)
+		return err
 	}
-	if !found {
-		t.Fatal("LoadModels() found = false after `click update`, want true — update must persist models.json like install does")
+	return json.Unmarshal(data, target)
+}
+
+func TestOpenClawOnlyUpdateDoesNotReadClaudeModelsOrRewriteLegacyProfile(t *testing.T) {
+	claudeHome, stateHome, openClawHome := t.TempDir(), t.TempDir(), t.TempDir()
+	runner := newTestCommandRunner(claudeHome)
+	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
+	defer restoreRunner()
+	lookup := cliFakeBinaryLookup{resolved: map[string]string{"openclaw": "/usr/bin/openclaw"}}
+	cfg := installer.Config{ClaudeHome: claudeHome, ClickStateHome: stateHome, OpenClawHome: openClawHome}
+	if err := installer.SaveTargetSelection(cfg, installer.TargetSelection{Configured: true, OpenClaw: true}); err != nil {
+		t.Fatal(err)
 	}
-	want := modelconfig.Defaults()
-	for phase, model := range want {
-		if got[phase] != model {
-			t.Errorf("persisted models[%s] = %q, want default %q", phase, got[phase], model)
-		}
+	if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	models := []byte("not valid JSON: must not be read")
+	if err := os.WriteFile(cfg.ModelsPath(), models, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.OpenClawModelProfilePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	profile := []byte("legacy OpenClaw profile metadata: preserve exactly")
+	if err := os.WriteFile(cfg.OpenClawModelProfilePath(), profile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execRootWithHomesAndLookup(t, claudeHome, stateHome, openClawHome, t.TempDir(), lookup, "update")
+	if err != nil {
+		t.Fatalf("OpenClaw-only update error = %v, output %q", err, out)
+	}
+	gotModels, readErr := os.ReadFile(cfg.ModelsPath())
+	if readErr != nil || !bytes.Equal(gotModels, models) {
+		t.Fatalf("models.json = %q (err %v), want exact preservation without migration or rewrite", gotModels, readErr)
+	}
+	gotProfile, readErr := os.ReadFile(cfg.OpenClawModelProfilePath())
+	if readErr != nil || !bytes.Equal(gotProfile, profile) {
+		t.Fatalf("OpenClaw model-profile.json = %q (err %v), want exact preservation", gotProfile, readErr)
 	}
 }
 
@@ -1102,43 +1675,20 @@ func TestInstallCommand_IssuesMarketplaceCommandsInOrder(t *testing.T) {
 	want := []string{
 		"claude plugin marketplace add https://github.com/Angel-MercadoCLK/click-ai-devkit --sparse .claude-plugin plugins",
 		"claude plugin marketplace update click-ai-devkit",
-		"claude plugin install click-sdd@click-ai-devkit" +
-			" --config orchestration_profile=balanced" +
-			" --config explore_model=sonnet" +
-			" --config propose_model=opus" +
-			" --config spec_model=sonnet" +
-			" --config design_model=opus" +
-			" --config tasks_model=sonnet" +
-			" --config apply_model=sonnet" +
-			" --config verify_model=opus" +
-			" --config archive_model=haiku" +
-			" --config onboard_model=haiku" +
-			" --config jd_judge_a_model=sonnet" +
-			" --config jd_judge_b_model=sonnet" +
-			" --config jd_fix_agent_model=sonnet" +
-			" --config review_risk_model=sonnet" +
-			" --config review_readability_model=sonnet" +
-			" --config review_reliability_model=sonnet" +
-			" --config review_resilience_model=sonnet" +
-			" --config review_refuter_model=sonnet" +
-			" --config default_model=sonnet",
 		"claude plugin install click-memory@click-ai-devkit",
 		"claude plugin install click-review@click-ai-devkit",
 		"claude plugin install click-skills@click-ai-devkit",
 	}
-	if !reflect.DeepEqual(runner.commands[:6], want) {
-		t.Fatalf("runner.commands[:6] = %#v, want %#v", runner.commands[:6], want)
+	if !reflect.DeepEqual(runner.commands[:6], append([]string{"claude plugin list --json"}, want...)) {
+		t.Fatalf("runner.commands[:6] = %#v, want retirement preflight then active plugins %#v", runner.commands[:6], append([]string{"claude plugin list --json"}, want...))
 	}
 }
 
-// TestInstallCommand_NonTTY_DoesNotHangAndResolvesToBalanced guards the CRITICAL non-TTY/CI safety
-// contract (design D4): a non-interactive `click install` with no --profile flag must return
-// immediately — never block waiting for interactive input — and must persist the "balanced" profile
-// label alongside its (Defaults()-equal) per-phase map. execRoot always wires stdin/stdout to a
-// bytes.Buffer (never a real terminal), so isNonInteractiveInstall's TTY check already forces the
-// non-interactive branch on every test in this file; this test makes that safety property explicit
-// with its own elapsed-time assertion instead of relying on it implicitly.
-func TestInstallCommand_NonTTY_DoesNotHangAndResolvesToBalanced(t *testing.T) {
+// TestInstallCommand_NonTTY_ReturnsWithoutCreatingModelArtifact guards the non-TTY/CI safety
+// contract: install returns without waiting for interactive input and no longer creates Click-owned
+// model artifacts. execRoot uses buffers rather than a real terminal, so this test makes the
+// non-blocking behavior explicit with its own elapsed-time assertion.
+func TestInstallCommand_NonTTY_ReturnsWithoutCreatingModelArtifact(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1152,25 +1702,14 @@ func TestInstallCommand_NonTTY_DoesNotHangAndResolvesToBalanced(t *testing.T) {
 		t.Fatalf("install command took %s on a non-TTY buffer, want it to return immediately without blocking on interactive input", elapsed)
 	}
 
-	profile, models, found, err := installer.LoadModelsWithProfile(installer.Config{ClaudeHome: home})
-	if err != nil {
-		t.Fatalf("LoadModelsWithProfile() error = %v", err)
-	}
-	if !found {
-		t.Fatal("LoadModelsWithProfile() found = false after install, want true")
-	}
-	if profile != modelconfig.ProfileBalanced {
-		t.Fatalf("persisted profile = %q, want %q", profile, modelconfig.ProfileBalanced)
-	}
-	if !reflect.DeepEqual(models, modelconfig.Defaults()) {
-		t.Fatalf("persisted models = %#v, want Defaults() %#v", models, modelconfig.Defaults())
+	if _, err := os.Stat(installer.Config{ClaudeHome: home}.ModelsPath()); !os.IsNotExist(err) {
+		t.Fatalf("models.json stat error = %v, want no Click model artifact created", err)
 	}
 }
 
-// TestInstallCommand_ProfileFlag_NonInteractive_PersistsChosenProfile guards --profile's
-// non-interactive contract: the flag selects a built-in preset with no prompt, and BOTH the emitted
-// --config flags AND the persisted models.json profile field must reflect it.
-func TestInstallCommand_ProfileFlag_NonInteractive_PersistsChosenProfile(t *testing.T) {
+// TestInstallCommand_ProfileFlag_NonInteractive_RejectsRetiredSelection verifies that install
+// rejects the retired Click profile selector before invoking any command.
+func TestInstallCommand_ProfileFlag_NonInteractive_RejectsRetiredSelection(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1178,68 +1717,29 @@ func TestInstallCommand_ProfileFlag_NonInteractive_PersistsChosenProfile(t *test
 	restoreSource := installer.SetMarketplaceSourceForTests("https://github.com/Angel-MercadoCLK/click-ai-devkit")
 	defer restoreSource()
 
-	if _, err := execRoot(t, home, "install", "--profile", "cost-saver"); err != nil {
-		t.Fatalf("install command error = %v", err)
+	_, err := execRoot(t, home, "install", "--profile", "cost-saver")
+	if err == nil || !strings.Contains(err.Error(), "Configure Models") {
+		t.Fatalf("install --profile error = %v, want actionable deprecation", err)
 	}
-
-	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
-		" --config orchestration_profile=cost-saver" +
-		" --config explore_model=haiku" +
-		" --config propose_model=opus" +
-		" --config spec_model=haiku" +
-		" --config design_model=opus" +
-		" --config tasks_model=haiku" +
-		" --config apply_model=haiku" +
-		" --config verify_model=opus" +
-		" --config archive_model=haiku" +
-		" --config onboard_model=haiku" +
-		" --config jd_judge_a_model=haiku" +
-		" --config jd_judge_b_model=haiku" +
-		" --config jd_fix_agent_model=haiku" +
-		" --config review_risk_model=haiku" +
-		" --config review_readability_model=haiku" +
-		" --config review_reliability_model=haiku" +
-		" --config review_resilience_model=haiku" +
-		" --config review_refuter_model=haiku" +
-		" --config default_model=haiku"
-	if !contains(runner.commands, wantCommand) {
-		t.Fatalf("install command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
-	}
-
-	profile, _, found, err := installer.LoadModelsWithProfile(installer.Config{ClaudeHome: home})
-	if err != nil {
-		t.Fatalf("LoadModelsWithProfile() error = %v", err)
-	}
-	if !found {
-		t.Fatal("LoadModelsWithProfile() found = false after install, want true")
-	}
-	if profile != modelconfig.ProfileCostSaver {
-		t.Fatalf("persisted profile = %q, want %q", profile, modelconfig.ProfileCostSaver)
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want rejection before any command", runner.commands)
 	}
 }
 
-// TestInstallCommand_ProfileFlag_UnknownValue_FallsBackToBalanced guards that an unrecognized
-// --profile value never hangs or errors — it silently falls back to balanced, matching
-// modelconfig.ResolveProfile's own fallback rule.
-func TestInstallCommand_ProfileFlag_UnknownValue_FallsBackToBalanced(t *testing.T) {
+// TestInstallCommand_ProfileFlag_UnknownValue_StillRejectsRetiredSelection verifies that an
+// unknown value does not bypass deprecation rejection or invoke any command.
+func TestInstallCommand_ProfileFlag_UnknownValue_StillRejectsRetiredSelection(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
 
-	if _, err := execRoot(t, home, "install", "--profile", "not-a-real-profile"); err != nil {
-		t.Fatalf("install command error = %v", err)
+	_, err := execRoot(t, home, "install", "--profile", "not-a-real-profile")
+	if err == nil || !strings.Contains(err.Error(), "Configure Models") {
+		t.Fatalf("install --profile error = %v, want actionable deprecation", err)
 	}
-
-	profile, _, found, err := installer.LoadModelsWithProfile(installer.Config{ClaudeHome: home})
-	if err != nil {
-		t.Fatalf("LoadModelsWithProfile() error = %v", err)
-	}
-	if !found {
-		t.Fatal("LoadModelsWithProfile() found = false after install, want true")
-	}
-	if profile != modelconfig.ProfileBalanced {
-		t.Fatalf("persisted profile = %q, want %q (unknown --profile falls back)", profile, modelconfig.ProfileBalanced)
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner.commands = %#v, want rejection before any command", runner.commands)
 	}
 }
 
@@ -1335,11 +1835,9 @@ func TestResolveInstallModels_Interactive_ThreadsProfileFlagAsInitialSelection(t
 	}
 }
 
-// TestInstallCommand_NonTTY_PersistsDefaultModels guards D25's persistence contract for the
-// non-interactive path (which every test in this file exercises, since execRoot writes to a
-// bytes.Buffer, not a real terminal): a plain `click install` with no flags must still write
-// models.json with the five defaults, so `click doctor`/`click update` have something to read.
-func TestInstallCommand_NonTTY_PersistsDefaultModels(t *testing.T) {
+// TestInstallCommand_NonTTY_DoesNotCreateModelArtifact verifies that a plain install leaves the
+// retired Click-owned models.json artifact absent.
+func TestInstallCommand_NonTTY_DoesNotCreateModelArtifact(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1349,31 +1847,14 @@ func TestInstallCommand_NonTTY_PersistsDefaultModels(t *testing.T) {
 		t.Fatalf("install command error = %v", err)
 	}
 
-	got, found, err := installer.LoadModels(installer.Config{ClaudeHome: home})
-	if err != nil {
-		t.Fatalf("LoadModels() error = %v", err)
-	}
-	if !found {
-		t.Fatal("LoadModels() found = false after install, want true")
-	}
-	want := modelconfig.Defaults()
-	for phase, model := range want {
-		if got[phase] != model {
-			t.Errorf("persisted models[%s] = %q, want default %q", phase, got[phase], model)
-		}
+	if _, err := os.Stat(installer.Config{ClaudeHome: home}.ModelsPath()); !os.IsNotExist(err) {
+		t.Fatalf("models.json stat error = %v, want no Click model artifact created", err)
 	}
 }
 
-// TestUpdateCommand_ReappliesPersistedModels guards the "click update re-passes the same --config
-// flags" contract: a non-default model selection saved by a previous install must be re-emitted
-// verbatim on the next update, not silently reset to defaults. The custom map is persisted via
-// SaveModelsWithProfile with an explicit "custom" label (C1 fix): the previous version of this test
-// persisted it via the profile-dropping SaveModels(cfg, custom) and then asserted
-// orchestration_profile=balanced was re-emitted — that assertion pinned the C1 bug (configure-models
-// silently erasing the persisted profile label) instead of guarding correct behavior. update.go
-// itself only re-emits whatever label LoadModelsWithProfile returns, so a correctly persisted
-// "custom" label must round-trip as "custom", not get silently relabeled to "balanced".
-func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
+// TestUpdateCommand_PreservesLegacyModelsWithoutApplyingThem verifies that update neither emits
+// retired model configuration arguments nor changes an existing models.json artifact.
+func TestUpdateCommand_PreservesLegacyModelsWithoutApplyingThem(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1406,6 +1887,11 @@ func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
 	if err := installer.SaveModelsWithProfile(installer.Config{ClaudeHome: home}, modelconfig.ProfileCustom, custom); err != nil {
 		t.Fatalf("SaveModelsWithProfile() error = %v", err)
 	}
+	cfg := installer.Config{ClaudeHome: home}
+	originalModels, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) before update: %v", err)
+	}
 
 	if _, err := execRoot(t, home, "update"); err != nil {
 		t.Fatalf("update command error = %v", err)
@@ -1431,17 +1917,23 @@ func TestUpdateCommand_ReappliesPersistedModels(t *testing.T) {
 		" --config review_resilience_model=opus" +
 		" --config review_refuter_model=sonnet" +
 		" --config default_model=haiku"
-	if !contains(runner.commands, wantCommand) {
-		t.Fatalf("update command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
+	if contains(runner.commands, wantCommand) {
+		t.Fatalf("update command sequence = %#v, unexpectedly reapplied retired model settings %q", runner.commands, wantCommand)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "--config") {
+			t.Fatalf("update emitted retired model config arguments in %q", command)
+		}
+	}
+	gotModels, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil || !bytes.Equal(gotModels, originalModels) {
+		t.Fatalf("models.json after update = %q (err %v), want exact preservation", gotModels, err)
 	}
 }
 
-// TestUpdateCommand_MigratesStaleModelsBeforeReapplying guards the confirmed migration wiring: if
-// models.json is stale (pre-taxonomy-realignment), `click update` must back it up to
-// models.json.bak and regenerate fresh new-taxonomy defaults BEFORE re-emitting --config flags —
-// never re-emitting the old invented-taxonomy keys, and never silently carrying forward the old
-// per-phase overrides.
-func TestUpdateCommand_MigratesStaleModelsBeforeReapplying(t *testing.T) {
+// TestUpdateCommand_PreservesStaleModelsWithoutMigration verifies that update leaves stale legacy
+// model bytes untouched, does not create a migration backup, and emits no retired model arguments.
+func TestUpdateCommand_PreservesStaleModelsWithoutMigration(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
@@ -1474,97 +1966,51 @@ func TestUpdateCommand_MigratesStaleModelsBeforeReapplying(t *testing.T) {
 		t.Fatalf("update command error = %v", err)
 	}
 
-	if _, err := os.Stat(cfg.ModelsPath() + ".bak"); err != nil {
-		t.Fatalf("Stat(models.json.bak) error = %v, want the stale file backed up before regen", err)
+	got, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil || !bytes.Equal(got, legacyRaw) {
+		t.Fatalf("models.json = %q (err %v), want original stale bytes preserved", got, err)
 	}
-
-	stale, err := installer.IsStale(cfg)
-	if err != nil {
-		t.Fatalf("IsStale() error = %v", err)
+	if _, err := os.Stat(cfg.ModelsPath() + ".bak"); !os.IsNotExist(err) {
+		t.Fatalf("models.json.bak stat error = %v, want no migration backup", err)
 	}
-	if stale {
-		t.Fatal("models.json is still stale after `click update`, want migrated to current schema")
-	}
-
-	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
-		" --config orchestration_profile=balanced" +
-		" --config explore_model=sonnet" +
-		" --config propose_model=opus" +
-		" --config spec_model=sonnet" +
-		" --config design_model=opus" +
-		" --config tasks_model=sonnet" +
-		" --config apply_model=sonnet" +
-		" --config verify_model=opus" +
-		" --config archive_model=haiku" +
-		" --config onboard_model=haiku" +
-		" --config jd_judge_a_model=sonnet" +
-		" --config jd_judge_b_model=sonnet" +
-		" --config jd_fix_agent_model=sonnet" +
-		" --config review_risk_model=sonnet" +
-		" --config review_readability_model=sonnet" +
-		" --config review_reliability_model=sonnet" +
-		" --config review_resilience_model=sonnet" +
-		" --config review_refuter_model=sonnet" +
-		" --config default_model=sonnet"
-	if !contains(runner.commands, wantCommand) {
-		t.Fatalf("update command sequence = %#v, want it to contain fresh-defaults command %q", runner.commands, wantCommand)
+	for _, command := range runner.commands {
+		if strings.Contains(command, "--config") {
+			t.Fatalf("update emitted retired model config arguments in %q", command)
+		}
 	}
 }
 
-// TestUpdateCommand_ReappliesPersistedProfile guards the "active profile re-applied on update" spec
-// scenario: a non-balanced profile chosen at install time must be re-emitted (and re-persisted)
-// verbatim on the next `click update`, with no interactive prompt.
-func TestUpdateCommand_ReappliesPersistedProfile(t *testing.T) {
+// TestUpdateCommand_PreservesLegacyProfileArtifact guards update's non-ownership of legacy model
+// state while still syncing the non-model runtime assets.
+func TestUpdateCommand_PreservesLegacyProfileArtifact(t *testing.T) {
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
-
-	if _, err := execRoot(t, home, "install", "--profile", "quality"); err != nil {
-		t.Fatalf("install command error = %v", err)
+	cfg := installer.Config{ClaudeHome: home}
+	if err := installer.SaveModelsWithProfile(cfg, modelconfig.ProfileQuality, modelconfig.ResolveProfile(string(modelconfig.ProfileQuality)).Models); err != nil {
+		t.Fatalf("SaveModelsWithProfile() error = %v", err)
+	}
+	before, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) before update: %v", err)
 	}
 
 	if _, err := execRoot(t, home, "update"); err != nil {
 		t.Fatalf("update command error = %v", err)
 	}
-
-	wantCommand := "claude plugin install click-sdd@click-ai-devkit" +
-		" --config orchestration_profile=quality" +
-		" --config explore_model=opus" +
-		" --config propose_model=opus" +
-		" --config spec_model=opus" +
-		" --config design_model=opus" +
-		" --config tasks_model=opus" +
-		" --config apply_model=opus" +
-		" --config verify_model=opus" +
-		" --config archive_model=haiku" +
-		" --config onboard_model=haiku" +
-		" --config jd_judge_a_model=opus" +
-		" --config jd_judge_b_model=opus" +
-		" --config jd_fix_agent_model=opus" +
-		" --config review_risk_model=opus" +
-		" --config review_readability_model=opus" +
-		" --config review_reliability_model=opus" +
-		" --config review_resilience_model=opus" +
-		" --config review_refuter_model=opus" +
-		" --config default_model=opus"
-	if !contains(runner.commands, wantCommand) {
-		t.Fatalf("update command sequence = %#v, want it to contain %q", runner.commands, wantCommand)
+	after, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("models.json after update = %q (err %v), want exact preservation", after, err)
 	}
-
-	profile, _, found, err := installer.LoadModelsWithProfile(installer.Config{ClaudeHome: home})
-	if err != nil {
-		t.Fatalf("LoadModelsWithProfile() error = %v", err)
-	}
-	if !found {
-		t.Fatal("LoadModelsWithProfile() found = false after update, want true")
-	}
-	if profile != modelconfig.ProfileQuality {
-		t.Fatalf("persisted profile after update = %q, want %q", profile, modelconfig.ProfileQuality)
+	for _, command := range runner.commands {
+		if strings.Contains(command, "--config") {
+			t.Fatalf("update emitted retired model config arguments in %q", command)
+		}
 	}
 }
 
-func TestUpdateCommand_NormalizesPartialProfileModelsJson(t *testing.T) {
+func TestUpdateCommand_PreservesPartialLegacyModelsJson(t *testing.T) {
 	seedResolvableEngram(t)
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
@@ -1576,152 +2022,57 @@ func TestUpdateCommand_NormalizesPartialProfileModelsJson(t *testing.T) {
 	if err := installer.SaveModelsWithProfile(cfg, modelconfig.ProfileCostSaver, partial); err != nil {
 		t.Fatalf("SaveModelsWithProfile(partial cost-saver) error = %v", err)
 	}
+	before, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil {
+		t.Fatalf("ReadFile(models.json) before update: %v", err)
+	}
 
 	if _, err := execRoot(t, home, "update"); err != nil {
 		t.Fatalf("update command error = %v", err)
 	}
 
-	profile, got, found, err := installer.LoadModelsWithProfile(cfg)
-	if err != nil {
-		t.Fatalf("LoadModelsWithProfile() error = %v", err)
-	}
-	if !found {
-		t.Fatal("LoadModelsWithProfile() found = false after update, want true")
-	}
-	if profile != modelconfig.ProfileCostSaver {
-		t.Fatalf("persisted profile after update = %q, want %q", profile, modelconfig.ProfileCostSaver)
-	}
-	if len(got) != len(modelconfig.Phases) {
-		t.Fatalf("persisted models has %d phases, want %d: %#v", len(got), len(modelconfig.Phases), got)
-	}
-	for _, phase := range []modelconfig.Phase{
-		modelconfig.PhaseReviewRisk,
-		modelconfig.PhaseReviewReadability,
-		modelconfig.PhaseReviewReliability,
-		modelconfig.PhaseReviewResilience,
-		modelconfig.PhaseReviewRefuter,
-	} {
-		if got[phase] != "haiku" {
-			t.Fatalf("persisted models[%s] = %q, want haiku from active cost-saver profile", phase, got[phase])
-		}
+	after, err := os.ReadFile(cfg.ModelsPath())
+	if err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("models.json after update = %q (err %v), want partial legacy model artifact preserved", after, err)
 	}
 }
 
-func TestDoctorModelsLine_ResolvesMissingReviewPhasesFromActiveProfile(t *testing.T) {
-	for _, tt := range []struct {
-		name    string
-		profile modelconfig.ProfileName
-		want    string
-	}{
-		{name: "cost saver", profile: modelconfig.ProfileCostSaver, want: "haiku"},
-		{name: "quality", profile: modelconfig.ProfileQuality, want: "opus"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := installer.Config{ClaudeHome: t.TempDir()}
-			partial := oldThirteenPhaseModelsForProfile(tt.profile)
-			if err := installer.SaveModelsWithProfile(cfg, tt.profile, partial); err != nil {
-				t.Fatalf("SaveModelsWithProfile(partial %s) error = %v", tt.profile, err)
-			}
-
-			line, err := formatModelsLine(cfg, installer.TargetSelection{Configured: true, Claude: true})
-			if err != nil {
-				t.Fatalf("formatModelsLine() error = %v", err)
-			}
-
-			for _, phase := range []modelconfig.Phase{
-				modelconfig.PhaseReviewRisk,
-				modelconfig.PhaseReviewReadability,
-				modelconfig.PhaseReviewReliability,
-				modelconfig.PhaseReviewResilience,
-				modelconfig.PhaseReviewRefuter,
-			} {
-				want := string(phase) + "=" + tt.want
-				if !strings.Contains(line, want) {
-					t.Fatalf("formatModelsLine() = %q, want it to contain %q", line, want)
-				}
-			}
-		})
-	}
-}
-
-// TestDoctorCommand_ReportsConfiguredModels guards the doctor-output contract: it must report the
-// configured per-phase models (or "defaults" pre-install) rather than staying silent about D25.
-func TestDoctorCommand_ReportsConfiguredModels(t *testing.T) {
+func TestDoctorCommand_IgnoresMalformedRetiredModelMetadata(t *testing.T) {
 	seedResolvableEngram(t)
 	seedResolvableClickBinary(t)
 	home := t.TempDir()
 	runner := newTestCommandRunner(home)
 	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
 	defer restoreRunner()
-
 	if _, err := execRoot(t, home, "install"); err != nil {
 		t.Fatalf("install command error = %v", err)
 	}
-
-	out, err := execRoot(t, home, "doctor")
-	if err != nil {
-		t.Fatalf("doctor command error = %v", err)
-	}
-	if !strings.Contains(out, "Modelos por fase de click-sdd") {
-		t.Fatalf("doctor output = %q, want it to report configured models", out)
-	}
-	if !strings.Contains(out, "propose=opus") {
-		t.Fatalf("doctor output = %q, want it to report propose=opus", out)
-	}
-}
-
-// TestDoctorCommand_ReportsActiveProfile guards the "doctor reports active profile" spec
-// requirement: the persisted orchestration profile name must appear in `click doctor`'s output.
-func TestDoctorCommand_ReportsActiveProfile(t *testing.T) {
-	seedResolvableEngram(t)
-	seedResolvableClickBinary(t)
-	home := t.TempDir()
-	runner := newTestCommandRunner(home)
-	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
-	defer restoreRunner()
-
-	if _, err := execRoot(t, home, "install", "--profile", "cost-saver"); err != nil {
-		t.Fatalf("install command error = %v", err)
-	}
-
-	out, err := execRoot(t, home, "doctor")
-	if err != nil {
-		t.Fatalf("doctor command error = %v", err)
-	}
-	if !strings.Contains(out, "Perfil de orquestación: cost-saver") {
-		t.Fatalf("doctor output = %q, want it to report the active profile cost-saver", out)
-	}
-}
-
-// TestDoctorCommand_DoesNotMutateModelsJson guards NFR-012 / the read-only contract carried over
-// from PR2: `click doctor`'s new profile-reporting line must never write to models.json.
-func TestDoctorCommand_DoesNotMutateModelsJson(t *testing.T) {
-	seedResolvableEngram(t)
-	seedResolvableClickBinary(t)
-	home := t.TempDir()
-	runner := newTestCommandRunner(home)
-	restoreRunner := installer.SetCommandRunnerFactoryForTests(func() installer.CommandRunner { return runner })
-	defer restoreRunner()
-
-	if _, err := execRoot(t, home, "install", "--profile", "quality"); err != nil {
-		t.Fatalf("install command error = %v", err)
-	}
 	cfg := installer.Config{ClaudeHome: home}
+	if err := os.MkdirAll(filepath.Dir(cfg.ModelsPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.ModelsPath(), []byte("{malformed legacy model data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	before, err := os.ReadFile(cfg.ModelsPath())
 	if err != nil {
-		t.Fatalf("ReadFile(models.json) error = %v", err)
+		t.Fatalf("ReadFile(models.json) before doctor: %v", err)
 	}
-
-	if _, err := execRoot(t, home, "doctor"); err != nil {
-		t.Fatalf("doctor command error = %v", err)
+	out, err := execRoot(t, home, "doctor")
+	if err != nil {
+		t.Fatalf("doctor must ignore retired model metadata, got %v; output:\n%s", err, out)
 	}
-
 	after, err := os.ReadFile(cfg.ModelsPath())
 	if err != nil {
-		t.Fatalf("ReadFile(models.json) error = %v", err)
+		t.Fatalf("ReadFile(models.json) after doctor: %v", err)
 	}
-	if string(before) != string(after) {
-		t.Fatalf("models.json changed after `click doctor`, want byte-for-byte unchanged (doctor must stay read-only)\nbefore: %s\nafter:  %s", before, after)
+	if !bytes.Equal(after, before) {
+		t.Fatalf("doctor changed retired models.json bytes; want exact preservation\nbefore: %q\nafter:  %q", before, after)
+	}
+	for _, retired := range []string{"Modelos por fase de click-sdd", "Perfil de orquestación"} {
+		if strings.Contains(out, retired) {
+			t.Errorf("doctor output contains retired model readout %q:\n%s", retired, out)
+		}
 	}
 }
 

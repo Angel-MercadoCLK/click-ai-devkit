@@ -25,7 +25,7 @@ const (
 	ClickSDDPluginID = "click-sdd@" + marketplaceName
 )
 
-var managedPlugins = []string{"click-sdd", "click-memory", "click-review", "click-skills"}
+var managedPlugins = []string{"click-memory", "click-review", "click-skills"}
 
 // ClickPluginStatus reports registry state for one plugin managed by Click.
 type ClickPluginStatus struct {
@@ -510,31 +510,18 @@ func SetMarketplaceSourceForTests(source string) func() {
 	return func() { marketplaceSource = old }
 }
 
-// SyncMarketplacePlugins uses the official Claude Code plugin CLI to register the marketplace and
-// install the click-managed plugins (see managedPlugins). This is the real activation path — copying loose plugin
-// folders never loaded anything in Claude Code.
+// SyncMarketplacePlugins retires a legacy user-scoped Click SDD plugin before registering the
+// marketplace and installing the remaining Click-managed plugins. This is the real activation path —
+// copying loose plugin folders never loaded anything in Claude Code.
 //
-// models is the resolved per-phase click-sdd model selection (D25): it is always run through
-// modelconfig.ResolveForProfile first, so a nil or partial map still installs click-sdd with a
-// fully self-describing --config flag set (the profile's defaults fill any gap). click-memory and
-// click-review never receive --config flags — they have no userConfig schema.
-//
-// profile is trailing-variadic, not a required second positional argument (design D3's literal
-// signature would be SyncMarketplacePlugins(profile, models)): this is the single canonical sync
-// function — Line B's separate SyncMarketplacePluginsForProfile wrapper is deliberately NOT
-// reintroduced — but PR2b's scope explicitly forbids touching internal/cli/{install,update}.go,
-// which both call SyncMarketplacePlugins(models) today. A trailing variadic keeps that exact 1-arg
-// call compiling unchanged (defaulting to the balanced profile) while giving PR3 a real 2-arg call
-// (SyncMarketplacePlugins(models, profile)) to wire the actual selected profile through once it
-// migrates those two call sites. At most the first variadic value is used; an empty ProfileName
-// behaves the same as omitting it.
-func SyncMarketplacePlugins(models map[modelconfig.Phase]string, profile ...modelconfig.ProfileName) error {
-	name := modelconfig.ProfileBalanced
-	if len(profile) > 0 && profile[0] != "" {
-		name = profile[0]
-	}
-	resolved := modelconfig.ResolveForProfile(string(name), models)
+// SyncMarketplacePlugins installs Click's plugin assets without assigning models. Model selection
+// belongs to the upstream runtime; the legacy arguments are retained for source compatibility and
+// deliberately ignored.
+func SyncMarketplacePlugins(cfg Config, _ map[modelconfig.Phase]string, _ ...modelconfig.ProfileName) error {
 	runner := commandRunnerFactory()
+	if _, err := retireLegacyClickSDDWithRunner(cfg, runner); err != nil {
+		return err
+	}
 	var sparsePaths []string
 	if usesSparseCheckout(marketplaceSource) {
 		sparsePaths = []string{".claude-plugin", "plugins"}
@@ -555,46 +542,58 @@ func SyncMarketplacePlugins(models map[modelconfig.Phase]string, profile ...mode
 		return err
 	}
 	for _, plugin := range managedPlugins {
-		var extraArgs []string
-		if plugin == "click-sdd" {
-			extraArgs = clickSDDConfigArgs(name, resolved)
-		}
-		if err := installMarketplacePlugin(runner, plugin, extraArgs...); err != nil {
+		if err := installMarketplacePlugin(runner, plugin); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// clickSDDConfigArgs builds the `--config <key>=<value>` flag pairs for
-// `claude plugin install click-sdd@click-ai-devkit`: FIRST the active orchestration profile
-// (modelconfig.ProfileConfigKey, design D3), THEN one `--config <phase>_model=<alias>` pair per
-// phase in modelconfig.Phases order (verified against the real CLI in Step 0: repeated
-// `--config key=value` flags land in settings.json's
-// pluginConfigs["click-sdd@click-ai-devkit"].options).
-func clickSDDConfigArgs(profile modelconfig.ProfileName, resolved map[modelconfig.Phase]string) []string {
-	args := make([]string, 0, len(modelconfig.Phases)*2+2)
-	args = append(args, "--config", modelconfig.ProfileConfigKey+"="+string(profile))
-	for _, phase := range modelconfig.Phases {
-		model, ok := resolved[phase]
-		if !ok || model == "" {
-			continue
-		}
-		args = append(args, "--config", phase.ConfigKey()+"="+model)
+// RemoveMarketplacePlugins retires only the exact legacy user-scoped Click SDD installation, then
+// uninstalls the remaining Click-managed plugins. It intentionally keeps the marketplace registered
+// because removing it can cascade into plugins installed at other scopes.
+func RemoveMarketplacePlugins(cfg Config) error {
+	runner := commandRunnerFactory()
+	if _, err := retireLegacyClickSDDWithRunner(cfg, runner); err != nil {
+		return err
 	}
-	return args
+	return removeUserScopedMarketplacePlugins(runner)
 }
 
-// RemoveMarketplacePlugins uninstalls all click-managed plugins (see managedPlugins) and removes the marketplace.
-func RemoveMarketplacePlugins() error {
-	runner := commandRunnerFactory()
-	for _, plugin := range managedPlugins {
-		if err := uninstallMarketplacePlugin(runner, plugin); err != nil {
-			return err
+func removeUserScopedMarketplacePlugins(runner CommandRunner) error {
+	if runner == nil {
+		return fmt.Errorf("installer: no se puede retirar plugins de Click sin un ejecutor de Claude")
+	}
+	output, err := runner.Output(pluginCLIBinary, "plugin", "list", "--json")
+	if err != nil {
+		return &safeRetirementError{message: "installer: no se pudo consultar la lista de plugins de Claude; no se retiraron plugins de Click", cause: err}
+	}
+	installations, err := parseClaudePluginInventory(output)
+	if err != nil {
+		return err
+	}
+
+	userCounts := make(map[string]int, len(managedPlugins))
+	for _, installation := range installations {
+		for _, plugin := range managedPlugins {
+			if installation.ID == plugin+"@"+marketplaceName && installation.Scope == clickSDDRetirementScope {
+				userCounts[plugin]++
+			}
 		}
 	}
-	if err := removeMarketplace(runner, marketplaceName); err != nil {
-		return err
+	for plugin, count := range userCounts {
+		if count > 1 {
+			return fmt.Errorf("installer: la lista de plugins de Claude contiene instalaciones de usuario ambiguas de %s; no se retiraron plugins de Click", plugin)
+		}
+	}
+
+	for _, plugin := range managedPlugins {
+		if userCounts[plugin] == 0 {
+			continue
+		}
+		if err := runner.Run(pluginCLIBinary, "plugin", "uninstall", plugin+"@"+marketplaceName, "--scope", clickSDDRetirementScope, "--keep-data"); err != nil {
+			return &safeRetirementError{message: fmt.Sprintf("installer: Claude no pudo retirar %s de la instalación de usuario; los retiros anteriores pueden haberse completado y no se revirtieron automáticamente", plugin), cause: err}
+		}
 	}
 	return nil
 }
@@ -898,6 +897,16 @@ func (f *fakeCommandRunner) Output(name string, args ...string) ([]byte, error) 
 	key := name + " " + strings.Join(args, " ")
 	if out, ok := f.lookup[key]; ok {
 		return out, nil
+	}
+	if name == pluginCLIBinary && len(args) == 3 && args[0] == "plugin" && args[1] == "list" && args[2] == "--json" {
+		installations := make([]claudePluginInstallation, 0, len(f.plugins))
+		for pluginID, installed := range f.plugins {
+			if installed {
+				installations = append(installations, claudePluginInstallation{ID: pluginID, Scope: clickSDDRetirementScope})
+			}
+		}
+		data, err := json.Marshal(installations)
+		return data, err
 	}
 	if filepath.Base(name) == "openclaw" && len(args) == 3 && args[0] == "config" && args[1] == "set" && args[2] == "--help" {
 		return []byte("config set agents.defaults.model.primary agents.defaults.model.fallbacks --strict-json"), nil

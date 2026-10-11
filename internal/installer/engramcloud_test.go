@@ -23,6 +23,13 @@ func newFakeEngramCloudRunner() *fakeEngramCloudRunner {
 	return &fakeEngramCloudRunner{failAt: -1, failWith: errors.New("engram cloud command failed")}
 }
 
+func TestResolveGentleAIEngramCommand_RequiresClaudeHomeWithSpanishError(t *testing.T) {
+	_, err := ResolveGentleAIEngramCommand(Config{})
+	if err == nil || !strings.Contains(err.Error(), "se requiere el directorio de Claude") {
+		t.Fatalf("ResolveGentleAIEngramCommand() error = %v, want Spanish missing-home guidance", err)
+	}
+}
+
 func (f *fakeEngramCloudRunner) Run(name string, args ...string) error {
 	f.commands = append(f.commands, commandInvocation{Name: name, Args: append([]string(nil), args...)})
 	defer func() { f.calls++ }()
@@ -51,6 +58,120 @@ func (f *fakeEngramCloudRunner) Output(name string, args ...string) ([]byte, err
 		return nil, f.failWith
 	}
 	return nil, nil
+}
+
+func TestResolveGentleAIEngramCommand_UsesVerifiedManagedRegistration(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	bin := filepath.Join(t.TempDir(), "engram")
+	if err := os.WriteFile(bin, []byte("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lookupRestore := setEngramLookPathForTest(t, bin, nil)
+	defer lookupRestore()
+	if err := os.WriteFile(cfg.Context7ConfigPath(), marshalMCPConfig(t, map[string]any{"mcpServers": map[string]any{"engram": engramEntry(bin)}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveGentleAIEngramCommand(cfg)
+	if err != nil {
+		t.Fatalf("ResolveGentleAIEngramCommand() error = %v", err)
+	}
+	if got != bin {
+		t.Fatalf("resolved command = %q, want configured upstream executable %q", got, bin)
+	}
+}
+
+func TestResolveGentleAIEngramCommand_RejectsUnrelatedAbsoluteExecutable(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	actual := filepath.Join(t.TempDir(), "engram")
+	other := filepath.Join(t.TempDir(), "engram")
+	if err := os.WriteFile(other, []byte("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defer setEngramLookPathForTest(t, actual, nil)()
+	if err := os.WriteFile(cfg.Context7ConfigPath(), marshalMCPConfig(t, map[string]any{"mcpServers": map[string]any{"engram": engramEntry(other)}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveGentleAIEngramCommand(cfg); err == nil {
+		t.Fatal("resolver accepted unrelated executable with basename engram")
+	}
+}
+
+func TestResolveGentleAIEngramCommand_RequiresPluginForBareFallback(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	bin := filepath.Join(t.TempDir(), "engram")
+	if err := os.WriteFile(bin, []byte("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defer setEngramLookPathForTest(t, bin, nil)()
+	if _, err := ResolveGentleAIEngramCommand(cfg); err == nil {
+		t.Fatal("resolver accepted bare PATH fallback with no direct MCP registration or enabled plugin")
+	}
+	settings, err := json.Marshal(map[string]any{"enabledPlugins": map[string]bool{"engram@engram": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.SettingsPath(), settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveGentleAIEngramCommand(cfg)
+	if err != nil || !filepath.IsAbs(got) {
+		t.Fatalf("resolver = %q, %v; want verified PATH binary after plugin proof", got, err)
+	}
+}
+
+func TestResolveGentleAIEngramCommand_UsesPATHFallbackWhenPluginOwnsRegistration(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	bin := filepath.Join(t.TempDir(), "engram")
+	if err := os.WriteFile(bin, []byte("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := json.Marshal(map[string]any{"enabledPlugins": map[string]bool{"engram@engram": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.SettingsPath(), settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer setEngramLookPathForTest(t, bin, nil)()
+	got, err := ResolveGentleAIEngramCommand(cfg)
+	if err != nil {
+		t.Fatalf("ResolveGentleAIEngramCommand() error = %v", err)
+	}
+	if got != bin {
+		t.Fatalf("resolved command = %q, want the resolved plugin-backed executable %q", got, bin)
+	}
+}
+
+func TestSyncEngramCloud_UsesUpstreamRegisteredExecutable(t *testing.T) {
+	cfg := Config{ClaudeHome: t.TempDir()}
+	bin := filepath.Join(t.TempDir(), "engram")
+	if err := os.WriteFile(bin, []byte("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defer setEngramLookPathForTest(t, bin, nil)()
+	if err := os.WriteFile(cfg.Context7ConfigPath(), marshalMCPConfig(t, map[string]any{"mcpServers": map[string]any{"engram": engramEntry(bin)}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ENGRAM_CLOUD_TOKEN", "cloud-token")
+	t.Setenv(engramCloudServerEnvOverride, "https://cloud.example.test")
+	t.Setenv(engramCloudProjectEnvOverride, "fixture-project")
+	runner := newFakeEngramCloudRunner()
+	restoreRunner := SetCommandRunnerFactoryForTests(func() CommandRunner { return runner })
+	defer restoreRunner()
+
+	if err := SyncEngramCloud(cfg, &manifest.Manifest{}); err != nil {
+		t.Fatalf("SyncEngramCloud() error = %v", err)
+	}
+	if len(runner.commands) == 0 || runner.commands[0].Name != bin {
+		t.Fatalf("first command = %+v, want upstream-registered executable %q", runner.commands, bin)
+	}
+}
+
+func setEngramLookPathForTest(t *testing.T, path string, lookupErr error) func() {
+	t.Helper()
+	previous := gentleAIEngramLookPath
+	gentleAIEngramLookPath = func(string) (string, error) { return path, lookupErr }
+	return func() { gentleAIEngramLookPath = previous }
 }
 
 func assertCommands(t *testing.T, got, want []commandInvocation) {
@@ -184,6 +305,7 @@ func TestSyncEngramCloud_NoOpWhenIncomplete(t *testing.T) {
 
 func TestSyncEngramCloud_FirstTimeEnrollment(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir()}
+	bin := seedGentleAICloudBinary(t, cfg)
 	t.Setenv("ENGRAM_CLOUD_TOKEN", "super-secret-token")
 
 	runner := newFakeEngramCloudRunner()
@@ -196,16 +318,16 @@ func TestSyncEngramCloud_FirstTimeEnrollment(t *testing.T) {
 	}
 
 	want := []commandInvocation{
-		{Name: "engram", Args: []string{"cloud", "config", "--server", "http://127.0.0.1:18080"}},
-		{Name: "engram", Args: []string{"cloud", "enroll", "click-ai-devkit"}},
+		{Name: bin, Args: []string{"cloud", "config", "--server", "http://127.0.0.1:18080"}},
+		{Name: bin, Args: []string{"cloud", "enroll", "click-ai-devkit"}},
 		// --project is REQUIRED by all three real engram upgrade subcommands (confirmed against a
 		// real deployed server during manual rollout validation, task 6.13 — each one exits 1 with
 		// "error: --project is required" without it, which is a real bug this exact test previously
 		// encoded as correct). --apply on repair so a real inconsistency actually gets fixed.
-		{Name: "engram", Args: []string{"cloud", "upgrade", "doctor", "--project", "click-ai-devkit"}},
-		{Name: "engram", Args: []string{"cloud", "upgrade", "repair", "--project", "click-ai-devkit", "--apply"}},
-		{Name: "engram", Args: []string{"cloud", "upgrade", "bootstrap", "--project", "click-ai-devkit"}},
-		{Name: "engram", Args: []string{"sync", "--cloud", "--project", "click-ai-devkit"}},
+		{Name: bin, Args: []string{"cloud", "upgrade", "doctor", "--project", "click-ai-devkit"}},
+		{Name: bin, Args: []string{"cloud", "upgrade", "repair", "--project", "click-ai-devkit", "--apply"}},
+		{Name: bin, Args: []string{"cloud", "upgrade", "bootstrap", "--project", "click-ai-devkit"}},
+		{Name: bin, Args: []string{"sync", "--cloud", "--project", "click-ai-devkit"}},
 	}
 	assertCommands(t, runner.commands, want)
 	assertEngramCloudState(t, cfg.EngramCloudStatePath(), "http://127.0.0.1:18080", "click-ai-devkit", true)
@@ -216,6 +338,7 @@ func TestSyncEngramCloud_FirstTimeEnrollment_FailStop(t *testing.T) {
 	for idx, step := range steps {
 		t.Run("fail at "+step, func(t *testing.T) {
 			cfg := Config{ClaudeHome: t.TempDir()}
+			seedGentleAICloudBinary(t, cfg)
 			t.Setenv("ENGRAM_CLOUD_TOKEN", "super-secret-token")
 
 			runner := newFakeEngramCloudRunner()
@@ -239,6 +362,7 @@ func TestSyncEngramCloud_FirstTimeEnrollment_FailStop(t *testing.T) {
 
 func TestSyncEngramCloud_AlreadyEnrolled_ShortPath(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir()}
+	bin := seedGentleAICloudBinary(t, cfg)
 	t.Setenv("ENGRAM_CLOUD_TOKEN", "super-secret-token")
 
 	if err := writeJSONFile(cfg.EngramCloudStatePath(), engramCloudState{Enrolled: true, Server: "http://127.0.0.1:18080", Project: "click-ai-devkit", LastSync: "2026-07-22T00:00:00Z"}); err != nil {
@@ -255,8 +379,8 @@ func TestSyncEngramCloud_AlreadyEnrolled_ShortPath(t *testing.T) {
 	}
 
 	want := []commandInvocation{
-		{Name: "engram", Args: []string{"cloud", "config", "--server", "http://127.0.0.1:18080"}},
-		{Name: "engram", Args: []string{"sync", "--cloud", "--project", "click-ai-devkit"}},
+		{Name: bin, Args: []string{"cloud", "config", "--server", "http://127.0.0.1:18080"}},
+		{Name: bin, Args: []string{"sync", "--cloud", "--project", "click-ai-devkit"}},
 	}
 	assertCommands(t, runner.commands, want)
 }
@@ -300,6 +424,7 @@ func TestSyncEngramCloud_MalformedStateFile_FailsClosed(t *testing.T) {
 
 func TestSyncEngramCloud_TokenNotInArgvOrState(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir()}
+	seedGentleAICloudBinary(t, cfg)
 	t.Setenv("ENGRAM_CLOUD_TOKEN", "do-not-leak-me")
 
 	runner := newFakeEngramCloudRunner()
@@ -328,8 +453,25 @@ func TestSyncEngramCloud_TokenNotInArgvOrState(t *testing.T) {
 	}
 }
 
+func seedGentleAICloudBinary(t *testing.T, cfg Config) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "engram")
+	if err := os.WriteFile(bin, []byte("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(setEngramLookPathForTest(t, bin, nil))
+	if err := os.MkdirAll(filepath.Dir(cfg.Context7ConfigPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.Context7ConfigPath(), marshalMCPConfig(t, map[string]any{"mcpServers": map[string]any{"engram": engramEntry(bin)}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
 func TestSyncEngramCloud_SubprocessOutputNeverSurfaced(t *testing.T) {
 	cfg := Config{ClaudeHome: t.TempDir()}
+	seedGentleAICloudBinary(t, cfg)
 	t.Setenv("ENGRAM_CLOUD_TOKEN", "subprocess-output-sentinel")
 
 	runner := newFakeEngramCloudRunner()

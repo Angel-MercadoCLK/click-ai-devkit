@@ -15,13 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// yesFlag / nonInteractiveFlag both select detected targets and skip every TUI. They use explicit
-// safe defaults and preserve an existing Codex model unless the user supplies --codex-model.
-//
-// profileFlag lets a non-interactive/scripted install pick a built-in orchestration profile
-// (design D4) without going through the interactive profile-select TUI; an empty or unrecognized
-// value falls back to "balanced" (modelconfig.ResolveProfile's own fallback rule).
-//
+// yesFlag / nonInteractiveFlag both select detected targets and skip every TUI.
 // skipOpenClawFlag is the explicit escape hatch for omitting a detected OpenClaw target.
 const (
 	yesFlag                     = "yes"
@@ -42,18 +36,40 @@ func newInstallCommand() *cobra.Command {
 			return runInstall(cmd)
 		},
 	}
-	cmd.Flags().Bool(yesFlag, false, "Skip the interactive model-selection screen; install click-sdd with default per-phase models")
+	cmd.Flags().Bool("dry-run", false, "Mostrar el plan sin ejecutar comandos ni modificar archivos")
+	cmd.Flags().Bool(yesFlag, false, "Omitir pantallas interactivas y confirmar la instalación")
 	cmd.Flags().Bool(nonInteractiveFlag, false, "Alias for --yes")
-	cmd.Flags().String(profileFlag, "", "Perfil de orquestación a usar (balanced/cost-saver/quality); default balanced. En instalación no interactiva selecciona el preset directamente; en la interactiva sólo precarga el editor por fase inicial.")
+	cmd.Flags().String(profileFlag, "", "")
+	_ = cmd.Flags().MarkHidden(profileFlag)
 	cmd.Flags().Bool(skipOpenClawFlag, false, "Omitir la integración con OpenClaw aunque se detecte openclaw en este equipo")
-	cmd.Flags().String(codexModelFlag, "", "Referencia de modelo nativa de Codex, por ejemplo gpt-5.6")
-	cmd.Flags().String(openClawModelFlag, "", "Referencia provider/model nativa de OpenClaw")
-	cmd.Flags().StringSlice(openClawFallbackFlag, nil, "Referencias provider/model alternativas de OpenClaw")
+	cmd.Flags().String(codexModelFlag, "", "")
+	cmd.Flags().String(openClawModelFlag, "", "")
+	cmd.Flags().StringSlice(openClawFallbackFlag, nil, "")
+	_ = cmd.Flags().MarkHidden(codexModelFlag)
+	_ = cmd.Flags().MarkHidden(openClawModelFlag)
+	_ = cmd.Flags().MarkHidden(openClawFallbackFlag)
 	cmd.Flags().Bool(persistEngramCloudTokenFlag, false, "Autorizar almacenamiento de ENGRAM_CLOUD_TOKEN en ~/.claude/settings.json con permisos 0600 (requiere consentimiento explícito)")
 	return cmd
 }
 
+func retiredModelFlagsWereSet(cmd *cobra.Command) bool {
+	for _, name := range []string{profileFlag, codexModelFlag, openClawModelFlag, openClawFallbackFlag} {
+		flag := cmd.Flags().Lookup(name)
+		if flag != nil && flag.Changed {
+			return true
+		}
+	}
+	return false
+}
+
+func retiredModelConfigurationError() error {
+	return fmt.Errorf("la configuración de modelos desde Click fue retirada; configura los roles compatibles en gentle-ai con Configure Models y los modelos de OpenClaw mediante su configuración nativa")
+}
+
 func runInstall(cmd *cobra.Command) error {
+	if retiredModelFlagsWereSet(cmd) {
+		return retiredModelConfigurationError()
+	}
 	out := cmd.OutOrStdout()
 	r := rendererFor(cmd, out)
 
@@ -103,43 +119,32 @@ func runInstall(cmd *cobra.Command) error {
 			return err
 		}
 	}
-	codexTier := resolveInstallCodexTier(cmd, selection, out, r)
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	nonInteractive := isNonInteractiveInstall(cmd, out)
-	profile := modelconfig.ProfileName("")
-	var models map[modelconfig.Phase]string
-	if selection.Claude {
-		profileFlagValue, _ := cmd.Flags().GetString(profileFlag)
-		var cancelled bool
-		profile, models, cancelled, err = resolveInstallModels(cmd, out, r, cfg, nonInteractive, profileFlagValue, runInstallSelectTUI)
-		if err != nil {
-			return err
-		}
-		if cancelled {
-			return nil
-		}
-	}
-	native := resolveNativeModels(cmd, selection, out, r)
-	codexNativeModel := selection.Codex && native.Codex.Primary != ""
-	openClawNativeModel := selection.OpenClaw && native.OpenClaw.Primary != ""
 	m, err := manifest.Load()
 	if err != nil {
 		return err
 	}
 	cloudResolvable := installer.EngramCloudConfigured(cfg, m) || installer.EngramCloudPartiallyConfigured(cfg, m)
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, CodexNativeModel: codexNativeModel, OpenClawNativeModel: openClawNativeModel})
+	if err := preflightGentleAI(cfg, selection); err != nil {
+		return err
+	}
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable})
 	fmt.Fprintln(out, r.Info("Capacidades seleccionadas: "+plan.CapabilitiesSummary()))
-	fmt.Fprintln(out, r.Info("Resumen final de instalación: "+strings.Join(plan.StepLabels(), " → ")+nativeSummary(native)))
+	fmt.Fprintln(out, r.Info("Resumen final de instalación: "+strings.Join(plan.StepLabels(), " → ")))
 
 	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE step 1 below (the first external `claude` subprocess invocation). A
 	// decline here means zero writes: nothing below this point has run yet.
-	proceed, sharedReader, err := confirmAndSnapshot(cmd, out, r, cfg, plan, nonInteractive, installWriteStepsForSelection(cfg, cloudResolvable, selection, codexNativeModel, openClawNativeModel))
+	proceed, sharedReader, err := confirmAndSnapshot(cmd, out, r, cfg, plan, nonInteractive, installWriteStepsForSelection(cfg, cloudResolvable, selection))
 	if err != nil {
 		return err
 	}
 	if !proceed {
-		fmt.Fprintln(out, r.Info("Instalación cancelada."))
+		if !dryRun {
+			fmt.Fprintln(out, r.Info("Instalación cancelada."))
+		}
 		return nil
 	}
 
@@ -175,18 +180,25 @@ func runInstall(cmd *cobra.Command) error {
 		}
 	}()
 
+	// The mandatory upstream foundation must succeed before Click persists selection
+	// or migrates models. The run-start snapshot and deferred recording are already armed.
+	if len(installer.GentleAIInstallArgs(selection)) > 0 {
+		if err := runGentleAIStep(cmd, out, r, m, cfg, selection); err != nil {
+			return err
+		}
+	}
+
 	if err := installer.SaveTargetSelection(cfg, selection); err != nil {
 		return err
 	}
-	if _, err := installer.MigrateIfStale(cfg); err != nil {
-		return err
-	}
-
 	for _, action := range plan.InstallActionKinds() {
 		switch action {
+		case installer.StepActionSyncGentleAI:
+			// Already completed before Click-owned state writes; never run it twice.
+			continue
 		case installer.StepActionSyncMarketplacePlugins:
-			if err := r.RunStep("Registrando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins registrados en Claude Code", func() error {
-				return installer.SyncMarketplacePlugins(models, profile)
+			if err := r.RunStep("Retirando click-sdd y registrando click-memory, click-review y click-skills…", "Plugins de Click registrados en Claude Code", func() error {
+				return installer.SyncMarketplacePlugins(cfg, nil)
 			}); err != nil {
 				return err
 			}
@@ -252,12 +264,6 @@ func runInstall(cmd *cobra.Command) error {
 			}); err != nil {
 				return err
 			}
-		case installer.StepActionSaveModels:
-			if err := r.RunStep("Guardando modelos por fase de click-sdd…", "Modelos por fase guardados", func() error {
-				return installer.SaveModelsWithProfile(cfg, profile, models)
-			}); err != nil {
-				return err
-			}
 		case installer.StepActionSyncCodexGuidance:
 			if err := r.RunStep("Actualizando AGENTS.md de Codex…", "AGENTS.md de Codex actualizado", func() error {
 				return syncCodexGuidanceFunc(cfg)
@@ -273,18 +279,6 @@ func runInstall(cmd *cobra.Command) error {
 				fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo registrar Engram en Codex: %v. La instalación local continúa; reintenta más tarde con `click update`.", mcpErr)))
 			} else {
 				fmt.Fprintln(out, r.Success("Engram registrado en Codex"))
-			}
-		case installer.StepActionSaveCodexModelProfile:
-			if err := r.RunStep("Guardando perfil de modelos de Codex (referencia)…", "Perfil de modelos de Codex guardado", func() error {
-				return installer.SaveCodexModelProfile(cfg, codexTier)
-			}); err != nil {
-				return err
-			}
-		case installer.StepActionConfigureCodexNativeModel:
-			if selection.Codex && native.Codex.Primary != "" {
-				if err := installer.ConfigureCodexModel(cfg.CodexHome, native.Codex.Primary); err != nil {
-					return err
-				}
 			}
 		case installer.StepActionSyncOpenClawWorkspace:
 			if err := r.RunStep("Actualizando AGENTS.md y SOUL.md de OpenClaw…", "AGENTS.md y SOUL.md de OpenClaw actualizados", func() error {
@@ -324,16 +318,17 @@ func runInstall(cmd *cobra.Command) error {
 			}); err != nil {
 				return err
 			}
-		case installer.StepActionSyncOpenClawModelProfile:
-			if err := r.RunStep("Guardando metadatos de modelos para OpenClaw…", "Metadatos de modelos guardados", func() error {
-				return installer.SyncOpenClawModelProfile(cfg, profile, models)
-			}); err != nil {
-				return err
+		case installer.StepActionRetireLegacyOpenClawSkills:
+			var warnings []string
+			err := r.RunStep("Retirando skills heredadas de OpenClaw…", "Skills heredadas de OpenClaw revisadas", func() error {
+				var retireErr error
+				warnings, retireErr = installer.RetireLegacyOpenClawSkills(cfg)
+				return retireErr
+			})
+			for _, warning := range warnings {
+				fmt.Fprintln(out, r.Warn(warning))
 			}
-		case installer.StepActionConfigureOpenClawNativeModel:
-			// Only present in the plan when --openclaw-model was passed (PlanOptions.OpenClawNativeModel);
-			// a plain install never reaches this native `openclaw config set` write.
-			if err := installer.ConfigureOpenClawModels(native.OpenClaw.Primary, native.OpenClaw.Fallbacks); err != nil {
+			if err != nil {
 				return err
 			}
 		}
@@ -344,7 +339,7 @@ func runInstall(cmd *cobra.Command) error {
 }
 
 // isNonInteractiveInstall decides whether click install should skip the TUI and go straight to
-// defaults: true when --yes/--non-interactive was passed, OR when EITHER stdout or stdin isn't a
+// defaults: true when --yes/--non-interactive/--dry-run was passed, OR when EITHER stdout or stdin isn't a
 // real terminal. Both streams are required (via rootdefault.go's shared isTerminalWriter/
 // isTerminalReader helpers — the same both-streams rule bare `click`'s interactive() uses): the
 // alt-screen wizard (runInstallSelectTUI) starves on piped stdin and confirmProceed's ReadString
@@ -353,6 +348,9 @@ func runInstall(cmd *cobra.Command) error {
 // blocking read. Piped output, CI runs, and `go test`'s bytes.Buffer all fall back automatically
 // without a flag.
 func isNonInteractiveInstall(cmd *cobra.Command, out io.Writer) bool {
+	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+		return true
+	}
 	if yes, _ := cmd.Flags().GetBool(yesFlag); yes {
 		return true
 	}
@@ -397,26 +395,6 @@ func SetSyncOpenClawMCPFuncForTests(fn func(installer.Config) error) func() {
 	return func() { syncOpenClawMCPFunc = old }
 }
 
-// resolveInstallCodexTier runs the interactive Codex tier picker when Codex is selected and the
-// session is interactive (real terminal on both stdin and stdout). In non-interactive mode, or when
-// the user cancels the picker, it returns "recommended" — the confirmed default tier.
-func resolveInstallCodexTier(cmd *cobra.Command, selection installer.TargetSelection, out io.Writer, r *ui.Renderer) string {
-	if !selection.Codex || isNonInteractiveInstall(cmd, out) {
-		return "recommended"
-	}
-	model := ui.NewCodexTierSelectModel()
-	program := tea.NewProgram(model, tea.WithInput(cmd.InOrStdin()), tea.WithOutput(out))
-	final, err := program.Run()
-	if err != nil {
-		return "recommended"
-	}
-	result := final.(ui.CodexTierSelectModel)
-	if result.Cancelled {
-		return "recommended"
-	}
-	return result.Selected
-}
-
 func resolveInstallTargetSelection(cmd *cobra.Command, skipOpenClaw bool, out io.Writer, r *ui.Renderer) (installer.TargetSelection, error) {
 	claudeFound := installer.ClaudeAvailable()
 	openClawFound := installer.OpenClawAvailable() && !skipOpenClaw
@@ -448,63 +426,6 @@ var runInstallTargetSelectTUI = func(cmd *cobra.Command, claudeFound, openClawFo
 		return installer.TargetSelection{}, true, nil
 	}
 	return installer.TargetSelection{Configured: true, Claude: result.Claude, OpenClaw: result.OpenClaw, Codex: result.Codex}, false, nil
-}
-
-// nativeModelSelection captures an explicit native-model choice for a portable target. Both fields
-// stay empty unless the developer passed the corresponding flag (--codex-model / --openclaw-model);
-// absence means "run against the model the target already has configured", so Click performs NO
-// native mutation and never prompts the developer to pick or guess one.
-type nativeModelSelection struct {
-	Primary   string
-	Fallbacks []string
-}
-
-type nativeTargetConfig struct {
-	Codex    nativeModelSelection
-	OpenClaw nativeModelSelection
-}
-
-// resolveNativeModels reads native-model configuration STRICTLY from explicit flags — it never
-// launches a prompt. Codex and OpenClaw already carry their own configured provider/model in their
-// own installations, so a plain `click install` runs the portable SDD against that existing default
-// and performs no native mutation. A native write happens only when the developer opts in with
-// --codex-model / --openclaw-model. For every detected target it prints a Spanish info line making
-// the resulting behavior explicit.
-func resolveNativeModels(cmd *cobra.Command, selection installer.TargetSelection, out io.Writer, r *ui.Renderer) nativeTargetConfig {
-	var result nativeTargetConfig
-	if selection.Codex {
-		model, _ := cmd.Flags().GetString(codexModelFlag)
-		model = strings.TrimSpace(model)
-		result.Codex = nativeModelSelection{Primary: model}
-		if model == "" {
-			fmt.Fprintln(out, r.Info("Codex usa su modelo nativo ya configurado; el SDD portable corre con ese default."))
-		} else {
-			fmt.Fprintln(out, r.Info("Codex: modelo nativo configurado explícitamente: "+model+"."))
-		}
-	}
-	if selection.OpenClaw {
-		model, _ := cmd.Flags().GetString(openClawModelFlag)
-		model = strings.TrimSpace(model)
-		fallbacks, _ := cmd.Flags().GetStringSlice(openClawFallbackFlag)
-		result.OpenClaw = nativeModelSelection{Primary: model, Fallbacks: fallbacks}
-		if model == "" {
-			fmt.Fprintln(out, r.Info("OpenClaw usa el proveedor/modelo que ya conectaste; el SDD portable corre con ese default."))
-		} else {
-			fmt.Fprintln(out, r.Info("OpenClaw: referencia nativa configurada explícitamente: "+model+"; fallbacks: "+strings.Join(fallbacks, ", ")+"."))
-		}
-	}
-	return result
-}
-
-func nativeSummary(config nativeTargetConfig) string {
-	var parts []string
-	if config.Codex.Primary != "" {
-		parts = append(parts, fmt.Sprintf("; Codex=%s", config.Codex.Primary))
-	}
-	if config.OpenClaw.Primary != "" {
-		parts = append(parts, fmt.Sprintf("; OpenClaw=%s (fallbacks: %s)", config.OpenClaw.Primary, strings.Join(config.OpenClaw.Fallbacks, ", ")))
-	}
-	return strings.Join(parts, "")
 }
 
 // installSelector drives the two-step interactive flow (profile-select, then the per-phase editor
@@ -608,4 +529,33 @@ var runInstallSelectTUI = func(cmd *cobra.Command, initialProfile modelconfig.Pr
 		return "", nil, true, nil
 	}
 	return result.Profile.Selected, result.Model.Selection, false, nil
+}
+
+// runGentleAIStep is shared by install/update so selection, warnings and fatal
+// foundational failures cannot diverge. Supplemental cloud/MCP steps stay non-fatal.
+func runGentleAIStep(cmd *cobra.Command, out io.Writer, r *ui.Renderer, m *manifest.Manifest, cfg installer.Config, selection installer.TargetSelection) error {
+	if err := preflightGentleAI(cfg, selection); err != nil {
+		return err
+	}
+	var result installer.GentleAIProvisionResult
+	err := r.RunStep("Sincronizando gentle-ai y sus componentes seleccionados…", "gentle-ai configurado", func() error {
+		var syncErr error
+		result, syncErr = installer.SyncGentleAI(cmd.Context(), m.GentleAI, selection, func(notice installer.GentleAIInstallNotice) {
+			if notice.Warning {
+				fmt.Fprintln(out, r.Warn(notice.Message))
+			} else {
+				fmt.Fprintln(out, r.Info(notice.Message))
+			}
+		})
+		return syncErr
+	})
+	surfacePathWarning(out, r, result.PathWarning)
+	return err
+}
+
+func preflightGentleAI(cfg installer.Config, selection installer.TargetSelection) error {
+	if err := installer.ValidateGentleAIDestinationRoots(cfg, selection); err != nil {
+		return err
+	}
+	return installer.PreflightGentleAIRegistrations(cfg, selection)
 }

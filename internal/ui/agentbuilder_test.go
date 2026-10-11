@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/agentbuilder"
-	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
 )
 
 func TestAgentBuilderModel_OneEngineStartsAtDescription(t *testing.T) {
@@ -55,7 +54,7 @@ func TestAgentBuilderModel_TwoEnginesStartsAtEngineAndConfirmsSelection(t *testi
 func TestAgentBuilderModel_DescriptionCapturesFreeTextBeforeThemes(t *testing.T) {
 	m := NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})
 	if strings.Contains(m.View(), "Propósito") {
-		t.Fatalf("description view rendered themed prompts too early:\n%s", m.View())
+		t.Fatalf("description step rendered a theme prompt too early:\n%s", m.View())
 	}
 
 	m = typeAgentBuilderText(t, m, "Review risky database migrations")
@@ -64,15 +63,30 @@ func TestAgentBuilderModel_DescriptionCapturesFreeTextBeforeThemes(t *testing.T)
 	if got := m.Spec.Description; got != "Review risky database migrations" {
 		t.Fatalf("Spec.Description = %q, want captured free text", got)
 	}
-	if m.Step != StepSDDMode {
-		t.Fatalf("Step after description = %v, want StepSDDMode", m.Step)
+	if m.Step != StepThemes {
+		t.Fatalf("Step after description = %v, want StepThemes", m.Step)
 	}
-	if strings.Contains(m.View(), "Propósito") {
-		t.Fatalf("SDD mode view rendered themed prompts too early:\n%s", m.View())
+	if !strings.Contains(m.View(), "Propósito") {
+		t.Fatalf("description step did not advance to the first theme prompt:\n%s", m.View())
 	}
 }
 
-func TestAgentBuilderModel_BlankDescriptionMustBeCorrectedBeforeSDDMode(t *testing.T) {
+func TestAgentBuilderModel_DescriptionAdvancesDirectlyToGenericThemes(t *testing.T) {
+	m := NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})
+	m = typeAgentBuilderText(t, m, "Review risky database migrations")
+	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
+
+	if m.Step != StepThemes {
+		t.Fatalf("Step after description = %v, want StepThemes without a workflow selector", m.Step)
+	}
+	for _, retired := range []string{"SDD", "Phase Support", "FASE SDD"} {
+		if strings.Contains(m.View(), retired) {
+			t.Errorf("agent-builder view contains retired workflow selector %q:\n%s", retired, m.View())
+		}
+	}
+}
+
+func TestAgentBuilderModel_BlankDescriptionMustBeCorrectedBeforeThemes(t *testing.T) {
 	m := NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})
 	m = typeAgentBuilderText(t, m, "   ")
 	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
@@ -89,12 +103,12 @@ func TestAgentBuilderModel_BlankDescriptionMustBeCorrectedBeforeSDDMode(t *testi
 
 	m = typeAgentBuilderText(t, m, "Review risky database migrations")
 	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
-	if m.Step != StepSDDMode || m.Spec.Description != "Review risky database migrations" || m.Spec.Name != "review-risky-database-migrations" || m.PreviewError != "" {
-		t.Fatalf("corrected description state = Step %v Description %q Name %q PreviewError %q, want SDD mode/corrected name/no error", m.Step, m.Spec.Description, m.Spec.Name, m.PreviewError)
+	if m.Step != StepThemes || m.Spec.Description != "Review risky database migrations" || m.Spec.Name != "review-risky-database-migrations" || m.PreviewError != "" {
+		t.Fatalf("corrected description state = Step %v Description %q Name %q PreviewError %q, want themes/corrected name/no error", m.Step, m.Spec.Description, m.Spec.Name, m.PreviewError)
 	}
 }
 
-func TestAgentBuilderModel_MultilinePastedDescriptionMustBeCorrectedBeforeSDDMode(t *testing.T) {
+func TestAgentBuilderModel_MultilinePastedDescriptionMustBeCorrectedBeforeThemes(t *testing.T) {
 	m := NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode})
 	m = pasteAgentBuilderText(t, m, "Review risky\ndatabase migrations")
 	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
@@ -112,8 +126,8 @@ func TestAgentBuilderModel_MultilinePastedDescriptionMustBeCorrectedBeforeSDDMod
 	m = clearAgentBuilderInput(t, m)
 	m = pasteAgentBuilderText(t, m, "Review risky database migrations")
 	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
-	if m.Step != StepSDDMode || m.Spec.Description != "Review risky database migrations" || m.Spec.Name != "review-risky-database-migrations" || m.PreviewError != "" {
-		t.Fatalf("corrected description state = Step %v Description %q Name %q PreviewError %q, want SDD mode/corrected name/no error", m.Step, m.Spec.Description, m.Spec.Name, m.PreviewError)
+	if m.Step != StepThemes || m.Spec.Description != "Review risky database migrations" || m.Spec.Name != "review-risky-database-migrations" || m.PreviewError != "" {
+		t.Fatalf("corrected description state = Step %v Description %q Name %q PreviewError %q, want themes/corrected name/no error", m.Step, m.Spec.Description, m.Spec.Name, m.PreviewError)
 	}
 }
 
@@ -157,66 +171,6 @@ func TestAgentBuilderModel_TextEntryStatesCaptureLowercaseQ(t *testing.T) {
 		}
 		if m.input != before+"q" {
 			t.Fatalf("input suffix = %q, want %q", m.input, before+"q")
-		}
-	})
-}
-
-func TestAgentBuilderModel_SDDModeOffersTwoOptionsAndNoNewPhase(t *testing.T) {
-	m := advancePastDescription(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
-
-	view := m.View()
-	for _, label := range []string{"Standalone", "Phase Support"} {
-		if !strings.Contains(view, label) {
-			t.Fatalf("View() missing SDD mode %q:\n%s", label, view)
-		}
-	}
-	for _, forbidden := range []string{"New Phase", "Nueva fase"} {
-		if strings.Contains(view, forbidden) {
-			t.Fatalf("View() exposed forbidden mode %q:\n%s", forbidden, view)
-		}
-	}
-
-	m, _ = updateAgentBuilderModel(m, keyMsg("down"))
-	m, _ = updateAgentBuilderModel(m, keyMsg("down"))
-	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
-	if m.Spec.SDDMode != agentbuilder.SDDStandalone {
-		t.Fatalf("SDDMode after wrapping two options = %q, want %q", m.Spec.SDDMode, agentbuilder.SDDStandalone)
-	}
-	if m.Step != StepThemes {
-		t.Fatalf("Step after standalone confirm = %v, want StepThemes", m.Step)
-	}
-}
-
-func TestAgentBuilderModel_PhaseStepOnlyForPhaseSupportAndReadsModelconfigPhases(t *testing.T) {
-	t.Run("standalone skips phase", func(t *testing.T) {
-		m := advancePastDescription(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
-		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
-		if m.Step != StepThemes {
-			t.Fatalf("Step after standalone SDD mode = %v, want StepThemes", m.Step)
-		}
-		if m.Spec.Phase != "" {
-			t.Fatalf("Spec.Phase = %q, want empty for standalone", m.Spec.Phase)
-		}
-	})
-
-	t.Run("phase support shows read-only phase picklist", func(t *testing.T) {
-		before := append([]modelconfig.Phase(nil), modelconfig.Phases...)
-		m := advancePastDescription(t, NewAgentBuilderModel([]agentbuilder.Engine{agentbuilder.ClaudeCode}))
-		m, _ = updateAgentBuilderModel(m, keyMsg("down"))
-		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
-		if m.Step != StepPhase {
-			t.Fatalf("Step after phase-support SDD mode = %v, want StepPhase", m.Step)
-		}
-		if !strings.Contains(m.View(), string(modelconfig.Phases[0])) {
-			t.Fatalf("phase view missing first modelconfig phase %q:\n%s", modelconfig.Phases[0], m.View())
-		}
-		m, _ = updateAgentBuilderModel(m, keyMsg("down"))
-		m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
-		if m.Spec.Phase != modelconfig.Phases[1] {
-			t.Fatalf("Spec.Phase = %q, want %q", m.Spec.Phase, modelconfig.Phases[1])
-		}
-		if !samePhases(before, modelconfig.Phases) {
-			t.Fatalf("modelconfig.Phases mutated: got %#v, want %#v", modelconfig.Phases, before)
 		}
 	})
 }
@@ -385,11 +339,10 @@ func TestAgentBuilderModel_InvalidGeneratedNameCanBeCorrectedBeforePreview(t *te
 	m = clearAgentBuilderInput(t, m)
 	m = typeAgentBuilderText(t, m, "Nandu migration reviewer")
 	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
-	if m.Step != StepSDDMode || m.Spec.Name != "nandu-migration-reviewer" || m.PreviewError != "" {
-		t.Fatalf("corrected generated name state = Step %v Name %q PreviewError %q, want SDD mode/nandu-migration-reviewer/no error", m.Step, m.Spec.Name, m.PreviewError)
+	if m.Step != StepThemes || m.Spec.Name != "nandu-migration-reviewer" || m.PreviewError != "" {
+		t.Fatalf("corrected generated name state = Step %v Name %q PreviewError %q, want themes/nandu-migration-reviewer/no error", m.Step, m.Spec.Name, m.PreviewError)
 	}
 
-	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
 	m = completeAnswersToPreview(t, m, validAgentBuilderThemeAnswers())
 	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
 	m, cmd := updateAgentBuilderModel(m, keyMsg("enter"))
@@ -1050,9 +1003,7 @@ func advancePastDescription(t *testing.T, m AgentBuilderModel) AgentBuilderModel
 
 func advanceToThemes(t *testing.T, m AgentBuilderModel) AgentBuilderModel {
 	t.Helper()
-	m = advancePastDescription(t, m)
-	m, _ = updateAgentBuilderModel(m, keyMsg("enter"))
-	return m
+	return advancePastDescription(t, m)
 }
 
 func completeRequiredFieldsToPreview(t *testing.T, m AgentBuilderModel) AgentBuilderModel {
@@ -1081,16 +1032,4 @@ func validAgentBuilderThemeAnswers() []string {
 		"Postgres, RLS, Supabase migrations",
 		"A concise risk report with blockers",
 	}
-}
-
-func samePhases(a, b []modelconfig.Phase) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -186,7 +187,17 @@ func TestRootCommand_DirectSubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsag
 
 func TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump(t *testing.T) {
 	home := t.TempDir()
+	restoreBinaryLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return cliFakeBinaryLookup{resolved: map[string]string{}}
+	})
+	defer restoreBinaryLookup()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("CLICK_CLAUDE_HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("CLICK_OPENCLAW_HOME", filepath.Join(home, ".openclaw"))
+	t.Setenv("CLICK_STATE_HOME", filepath.Join(home, ".click-state"))
 
 	parent := &cobra.Command{}
 	var buf bytes.Buffer
@@ -288,16 +299,65 @@ func TestDispatch_EmptyArgsIsANoOp(t *testing.T) {
 	}
 }
 
-// --- configure-models: must never spin up its TUI on non-TTY output. ---
+// --- Retired model selectors fail without prompting or changing configuration. ---
 
-func TestConfigureModelsCommand_NonTTY_NoHangPrintsMessage(t *testing.T) {
+func TestConfigureModelsCommand_RetiredWithoutChangingExistingConfiguration(t *testing.T) {
 	home := t.TempDir()
-	out, err := execRoot(t, home, "configure-models")
-	if err != nil {
-		t.Fatalf("`click configure-models` on non-TTY error = %v, want nil", err)
+	t.Setenv("CLICK_CLAUDE_HOME", home)
+	cfg := installer.Config{ClaudeHome: home}
+	config := cfg.ModelsPath()
+	if err := os.MkdirAll(filepath.Dir(config), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if out == "" {
-		t.Fatal("`click configure-models` on non-TTY printed nothing, want a no-terminal message")
+	before := []byte(`{"profile":"legacy","models":{"default":"keep-me"}}`)
+	if err := os.WriteFile(config, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lookupCalls := 0
+	restoreLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		lookupCalls++
+		return cliFakeBinaryLookup{resolved: map[string]string{}}
+	})
+	t.Cleanup(restoreLookup)
+	cmd := newConfigureModelsCommand()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetErr(&output)
+	cmd.SetIn(&bytes.Buffer{})
+	err := cmd.Execute()
+	out := output.String()
+	if err == nil {
+		t.Fatalf("`click configure-models` error = nil, want a deprecation error; output=%q", out)
+	}
+	if !strings.Contains(err.Error(), "retirado") {
+		t.Fatalf("`click configure-models` error = %q, want a Spanish retirement notice", err)
+	}
+	if strings.Contains(out, "No hay terminal") {
+		t.Fatalf("`click configure-models` output = %q, want immediate deprecation without TTY guidance", out)
+	}
+	if lookupCalls != 0 {
+		t.Fatalf("runtime lookup factory called %d times, want 0", lookupCalls)
+	}
+	after, readErr := os.ReadFile(config)
+	if readErr != nil {
+		t.Fatalf("ReadFile(existing models.json) error = %v", readErr)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("existing models.json changed: before=%q after=%q", before, after)
+	}
+	entries, readErr := os.ReadDir(filepath.Dir(config))
+	if readErr != nil {
+		t.Fatalf("ReadDir(models directory) error = %v", readErr)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(config) {
+		t.Fatalf("models directory entries = %v, want only %s", entries, filepath.Base(config))
+	}
+	rootEntries, readErr := os.ReadDir(home)
+	if readErr != nil {
+		t.Fatalf("ReadDir(Claude home) error = %v", readErr)
+	}
+	if len(rootEntries) != 1 || rootEntries[0].Name() != filepath.Base(filepath.Dir(config)) {
+		t.Fatalf("Claude home entries = %v, want only %s", rootEntries, filepath.Base(filepath.Dir(config)))
 	}
 }
 
@@ -397,40 +457,11 @@ func TestRunMenuLoop_DispatchErrorStopsLoopWithoutRelaunching(t *testing.T) {
 	}
 }
 
-// TestRunMenuLoop_ConfigureOpenClawModelDispatchDoesNotCrashMenu reproduces the exact FIX 1 crash
-// scenario end-to-end: selecting the "Configurar modelo nativo de OpenClaw" menu row dispatches
-// `configure-openclaw-model` with no args. Before the fix this errored out of runMenuLoop and killed
-// the whole menu. Now the loop must survive it: dispatch returns nil, the menu relaunches, and only
-// the following Quit ends the loop (launchMenu called twice, not one).
-func TestRunMenuLoop_ConfigureOpenClawModelDispatchDoesNotCrashMenu(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("CLICK_CLAUDE_HOME", home)
-	t.Setenv("CLICK_OPENCLAW_HOME", t.TempDir())
-	seedResolvableGit(t)
-
-	parent := &cobra.Command{}
-	var buf bytes.Buffer
-	parent.SetOut(&buf)
-	parent.SetErr(&buf)
-	parent.SetIn(&bytes.Buffer{})
-
-	chosen := []string{menu.ActionConfigureOpenClawModel, menu.ActionQuit}
-	launchCalls := 0
-	launchMenu := func() (string, error) {
-		got := chosen[launchCalls]
-		launchCalls++
-		return got, nil
-	}
-	dispatchFn := func(args []string) error { return dispatch(parent, args) }
-
-	if err := runMenuLoop(launchMenu, dispatchFn); err != nil {
-		t.Fatalf("runMenuLoop dispatching ActionConfigureOpenClawModel error = %v, want nil (menu must survive the no-args item)", err)
-	}
-	if launchCalls != 2 {
-		t.Fatalf("launchMenu called %d times, want 2 (menu relaunched after the item, then quit) — a dispatch error would have stopped the loop early", launchCalls)
-	}
-	if !strings.Contains(buf.String(), "Indique el modelo con") {
-		t.Fatalf("dispatched output = %q, want the no-args guidance line", buf.String())
+func TestRootMenuItems_OmitsRetiredModelSelectors(t *testing.T) {
+	for _, item := range rootMenuItems() {
+		if item.Action == "configure-models" || item.Action == "configure-openclaw-model" {
+			t.Errorf("root menu includes retired model selector: %+v", item)
+		}
 	}
 }
 
@@ -899,34 +930,5 @@ func TestRunInteractiveRoot_NoticeOutputHasNoLeadingBlankLine(t *testing.T) {
 	// The output should start with the notice line, NOT with a blank line
 	if !strings.HasPrefix(output, "Hay una nueva versión de click disponible:") {
 		t.Errorf("output should start with notice text, got: %q\n(red: current code has leading blank line)", output)
-	}
-}
-
-func TestRootMenuItems_DisablesUnavailableOpenClawNativeActionWithGuidance(t *testing.T) {
-	restore := installer.SetOpenClawNativeModelMenuStatusForTests(installer.OpenClawNativeModelMenuStatus{
-		Available: false,
-		Detail:    "OpenClaw native model action is unavailable until `config set --help` is qualified.",
-	})
-	defer restore()
-
-	items := rootMenuItems()
-	idx := -1
-	for i, item := range items {
-		if item.Action == menu.ActionConfigureOpenClawModel {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		t.Fatal("rootMenuItems() did not include the OpenClaw native model action")
-	}
-	if items[idx].Active {
-		t.Fatalf("rootMenuItems()[%d] = %+v, want the native action disabled when qualification is unavailable", idx, items[idx])
-	}
-	if items[idx].InactiveLabel != "no disponible" {
-		t.Fatalf("rootMenuItems()[%d].InactiveLabel = %q, want %q", idx, items[idx].InactiveLabel, "no disponible")
-	}
-	if !strings.Contains(items[idx].Hint, "qualified") {
-		t.Fatalf("rootMenuItems()[%d].Hint = %q, want qualification guidance", idx, items[idx].Hint)
 	}
 }

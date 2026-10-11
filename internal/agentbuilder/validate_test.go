@@ -21,7 +21,6 @@ func validFinalMarkdown() string {
 		"## Tasks\nRead merged PRs.\n\n" +
 		"## Triggers\nUse on release day.\n\n" +
 		"## Hard Rules\nNever invent merged work.\n\n" +
-		"## SDD Integration\nMode: standalone\n\n" +
 		"## Tone\nClear and direct.\n\n" +
 		"## Domain Knowledge\nGo CLI releases.\n\n" +
 		"## Good Output\nA changelog.\n\n"

@@ -197,8 +197,8 @@ func runUninstall(cmd *cobra.Command) error {
 	for _, action := range plan.UninstallActionKinds() {
 		switch action {
 		case installer.StepActionRemoveMarketplacePlugins:
-			runStep("Plugins de Claude Code", "Quitando plugins click-sdd, click-memory, click-review y click-skills…", "Plugins eliminados de Claude Code", true, func() error {
-				return installer.RemoveMarketplacePlugins()
+			runStep("Plugins de Claude Code", "Retirando click-sdd y quitando click-memory, click-review y click-skills…", "Plugins de Click procesados; el catálogo se conserva para proteger otras instalaciones", true, func() error {
+				return installer.RemoveMarketplacePlugins(cfg)
 			})
 		case installer.StepActionStripOpenClawWorkspace:
 			runStep("AGENTS.md y SOUL.md de OpenClaw", "Limpiando AGENTS.md y SOUL.md de OpenClaw…", "Bloques gestionados de AGENTS.md y SOUL.md de OpenClaw eliminados", false, func() error {
@@ -212,10 +212,16 @@ func runUninstall(cmd *cobra.Command) error {
 			runStep("skills de OpenClaw", "Quitando skills de Click de OpenClaw…", "Skills de Click de OpenClaw eliminados", false, func() error {
 				return removeOpenClawSkillsFunc(cfg)
 			})
-		case installer.StepActionRemoveOpenClawModelProfile:
-			runStep("metadatos de modelos de OpenClaw", "Quitando metadatos de modelos de OpenClaw…", "Metadatos de modelos de OpenClaw eliminados", false, func() error {
-				return installer.RemoveOpenClawModelProfile(cfg)
+		case installer.StepActionRetireLegacyOpenClawSkills:
+			var warnings []string
+			runStep("skills heredadas de OpenClaw", "Retirando skills heredadas de OpenClaw…", "Skills heredadas de OpenClaw revisadas", false, func() error {
+				var retireErr error
+				warnings, retireErr = installer.RetireLegacyOpenClawSkills(cfg)
+				return retireErr
 			})
+			for _, warning := range warnings {
+				fmt.Fprintln(out, r.Warn(warning))
+			}
 		case installer.StepActionStripCodexGuidance:
 			runStep("AGENTS.md de Codex", "Limpiando AGENTS.md de Codex…", "Bloque de AGENTS.md de Codex eliminado", false, func() error {
 				return stripCodexGuidanceFunc(cfg)
@@ -226,10 +232,6 @@ func runUninstall(cmd *cobra.Command) error {
 			// the teardown.
 			runStep("Engram MCP de Codex", "Quitando registro de Engram en Codex (MCP)…", "Registro de Engram en Codex procesado", false, func() error {
 				return installer.RemoveCodexMCP(cfg)
-			})
-		case installer.StepActionRemoveCodexModelProfile:
-			runStep("perfil de modelos de Codex", "Quitando perfil de modelos de Codex…", "Perfil de modelos de Codex eliminado", false, func() error {
-				return installer.RemoveCodexModelProfile(cfg)
 			})
 		case installer.StepActionUnregisterOpenClawMCP:
 			// Best-effort, like SyncOpenClawMCP on install (D45 "supplementary integrations are non-fatal"):
@@ -261,10 +263,6 @@ func runUninstall(cmd *cobra.Command) error {
 		case installer.StepActionUnregisterMemoryGuard:
 			runStep("memory-guard", "Quitando memory-guard…", "memory-guard eliminado", false, func() error {
 				return installer.UnregisterMemoryGuardHook(cfg)
-			})
-		case installer.StepActionRemoveModels:
-			runStep("modelos por fase", "Quitando modelos por fase de click-sdd…", "Modelos por fase eliminados", false, func() error {
-				return installer.RemoveModels(cfg)
 			})
 		case installer.StepActionRemoveEngramCloudSessionSync:
 			runStep("sincronización de sesión de Engram Cloud", "Quitando sincronización de sesión de Engram Cloud…", "Sincronización de sesión de Engram Cloud eliminada", false, func() error {

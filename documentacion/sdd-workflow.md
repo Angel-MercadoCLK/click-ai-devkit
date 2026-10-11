@@ -2,6 +2,11 @@
 
 > Status: draft v0.1. Grounded in `00-decisions-and-open-questions.md` (D1–D20).
 
+> **Historical Click SDD design.** The Click-owned orchestrator, phases, and agent chain below were
+> retired. Gentle AI owns ODD/RDD workflow; Click retains its business/memory policy and guard.
+> See D48–D53 and [`README.md`](../README.md) for current behavior. Do not follow this document as
+> an active workflow.
+
 ## 1. Overview
 
 The Click SDD flow is a **reuse/rebrand** of existing SDD machinery (D9), not a rewrite. Click's own value-add concentrates in two places: the **memory layer** (curator + guard, so nothing sensitive is ever persisted) and **review** (Click-specific pre-merge checks). `ClickOrchestrator` drives the whole flow and explains each step in plain language as it hands off between phases (D10).

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,8 +70,10 @@ func appendRollbackManifestEntry(t *testing.T, cfg installer.Config, entry rollb
 	if err := os.WriteFile(manifestPath, append(data, '\n'), 0o600); err != nil {
 		t.Fatalf("WriteFile(manifest.json) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(latestDir, entry.BackupFile), []byte(backupContent), 0o600); err != nil {
-		t.Fatalf("WriteFile(backup %s) error = %v", entry.BackupFile, err)
+	if entry.Existed && entry.BackupFile != "" {
+		if err := os.WriteFile(filepath.Join(latestDir, entry.BackupFile), []byte(backupContent), 0o600); err != nil {
+			t.Fatalf("WriteFile(backup %s) error = %v", entry.BackupFile, err)
+		}
 	}
 }
 
@@ -84,6 +87,7 @@ func execRollbackWithStdin(t *testing.T, claudeHome, stateHome, stdin string, ar
 	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
 	t.Setenv("CLICK_STATE_HOME", stateHome)
 	t.Setenv("CLICK_OPENCLAW_HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
 
 	root := NewRootCommand()
 	var buf bytes.Buffer
@@ -95,24 +99,24 @@ func execRollbackWithStdin(t *testing.T, claudeHome, stateHome, stdin string, ar
 	return buf.String(), err
 }
 
-// seedWarnableSharedFile gives cfg's real snapshot one edited non-veto "shared" entry: the
-// scenario rollback's new warning/consent flow exists for.
-func seedWarnableSharedFile(t *testing.T, cfg installer.Config) string {
+// seedSharedNativeConfig adds a current native config to a snapshot and confirms rollback must
+// preserve it rather than replay its historical bytes.
+func seedSharedNativeConfig(t *testing.T, cfg installer.Config) string {
 	t.Helper()
-	sharedPath := filepath.Join(cfg.ClaudeHome, "shared.txt")
+	sharedPath := cfg.Context7ConfigPath()
 	writeRollbackTestFile(t, cfg.ClaudeMDPath(), rollbackManagedBlockMD("managed v1"))
 	writeRollbackTestFile(t, cfg.SettingsPath(), `{"original":true}`)
-	writeRollbackTestFile(t, sharedPath, "shared original\n")
+	writeRollbackTestFile(t, sharedPath, `{"mcpServers":{"foreign":{"command":"before"}}}`)
 	if err := installer.SnapshotRun(cfg); err != nil {
 		t.Fatalf("installer.SnapshotRun() error = %v", err)
 	}
 	appendRollbackManifestEntry(t, cfg, rollbackManifestEntry{
 		OriginalPath: sharedPath,
-		BackupFile:   "shared.txt",
+		BackupFile:   "shared.json",
 		Existed:      true,
 		DriftPolicy:  "non-veto",
-	}, "shared original\n")
-	writeRollbackTestFile(t, sharedPath, "shared edited by Claude Code after the run\n")
+	}, `{"mcpServers":{"foreign":{"command":"backup"}}}`)
+	writeRollbackTestFile(t, sharedPath, `{"mcpServers":{"foreign":{"command":"current"}}}`)
 	return sharedPath
 }
 
@@ -206,6 +210,15 @@ func TestRollback_DriftNoForce_RefusesAndMakesZeroWrites(t *testing.T) {
 		t.Fatalf("installer.SnapshotRun() error = %v", err)
 	}
 	writeRollbackTestFile(t, cfg.ClaudeMDPath(), rollbackManagedBlockMD("hand-edited managed block"))
+	unknownPath := filepath.Join(home, "custom-history.json")
+	writeRollbackTestFile(t, unknownPath, `{"value":"snapshot"}`)
+	appendRollbackManifestEntry(t, cfg, rollbackManifestEntry{
+		OriginalPath: unknownPath,
+		BackupFile:   "custom-history.json",
+		Existed:      true,
+		DriftPolicy:  "whole-file-veto",
+	}, `{"value":"backup"}`)
+	writeRollbackTestFile(t, unknownPath, `{"value":"current"}`)
 
 	out, err := execRootWithStateHome(t, home, stateHome, "rollback")
 	if err == nil {
@@ -219,6 +232,9 @@ func TestRollback_DriftNoForce_RefusesAndMakesZeroWrites(t *testing.T) {
 	}
 	if !strings.Contains(out, "click rollback --force") {
 		t.Fatalf("rollback output = %q, want the --force guidance", out)
+	}
+	if !strings.Contains(out, "Se conservaron") || !strings.Contains(out, unknownPath) {
+		t.Fatalf("rollback output = %q, want skipped unknown path reported despite veto", out)
 	}
 
 	gotClaude, err := os.ReadFile(cfg.ClaudeMDPath())
@@ -234,6 +250,9 @@ func TestRollback_DriftNoForce_RefusesAndMakesZeroWrites(t *testing.T) {
 	}
 	if string(gotSettings) != `{"original":true}` {
 		t.Fatalf("settings.json after refused rollback = %q, want untouched %q", gotSettings, `{"original":true}`)
+	}
+	if gotUnknown := string(mustReadRollbackFile(t, unknownPath)); gotUnknown != `{"value":"current"}` {
+		t.Fatalf("unknown path after refused rollback = %q, want unchanged", gotUnknown)
 	}
 }
 
@@ -265,23 +284,21 @@ func TestRollback_DriftWithForce_Proceeds(t *testing.T) {
 	}
 }
 
-// TestRollback_MenuDispatchShape_InteractiveYes_WarnsAndRestores proves the live menu row works:
-// the exact args the standing menu dispatches ([]string{"rollback"}, no flags) with an interactive
-// "y" answer must warn about the edited shared file by name, obtain consent, and then restore it
-// to its pre-run backup content.
-func TestRollback_MenuDispatchShape_InteractiveYes_WarnsAndRestores(t *testing.T) {
+// TestRollback_MenuDispatchShape_PreservesSharedNativeConfig proves the live menu row reports and
+// preserves a shared native config without a consent prompt.
+func TestRollback_MenuDispatchShape_PreservesSharedNativeConfig(t *testing.T) {
 	forceTerminalDetection(t, true, true)
 	home := t.TempDir()
 	stateHome := t.TempDir()
 	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
-	sharedPath := seedWarnableSharedFile(t, cfg)
+	sharedPath := seedSharedNativeConfig(t, cfg)
 
 	out, err := execRollbackWithStdin(t, home, stateHome, "y\n", "rollback")
 	if err != nil {
-		t.Fatalf("rollback error = %v, want nil after interactive consent, output:\n%s", err, out)
+		t.Fatalf("rollback error = %v, want nil with shared native config preserved, output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "Advertencia") || !strings.Contains(out, sharedPath) {
-		t.Fatalf("rollback output = %q, want the shared-file warning naming %s", out, sharedPath)
+	if !strings.Contains(out, "Se conservaron") || !strings.Contains(out, sharedPath) {
+		t.Fatalf("rollback output = %q, want a preservation notice naming %s", out, sharedPath)
 	}
 	if !strings.Contains(out, "Archivos gestionados por click restaurados desde el último respaldo.") {
 		t.Fatalf("rollback output = %q, want the restore success message", out)
@@ -290,15 +307,14 @@ func TestRollback_MenuDispatchShape_InteractiveYes_WarnsAndRestores(t *testing.T
 	if err != nil {
 		t.Fatalf("read shared.txt after rollback: %v", err)
 	}
-	if string(got) != "shared original\n" {
-		t.Fatalf("shared.txt after consented rollback = %q, want the pre-run backup content %q", got, "shared original\n")
+	if string(got) != `{"mcpServers":{"foreign":{"command":"current"}}}` {
+		t.Fatalf("shared config after rollback = %q, want current native content preserved", got)
 	}
 }
 
-// TestRollback_InteractiveDecline_ZeroWrites guards the decline path: an interactive "n" — and
-// separately an immediate EOF — must cancel cleanly ("Rollback cancelado.", nil error) with ZERO
-// writes, mirroring confirmAndSnapshot's own decline semantics.
-func TestRollback_InteractiveDecline_ZeroWrites(t *testing.T) {
+// TestRollback_InteractiveInputCannotAuthorizeSharedOverwrite verifies that neither an affirmative
+// nor a negative stdin answer can cause a shared native configuration to be rewritten.
+func TestRollback_InteractiveInputCannotAuthorizeSharedOverwrite(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		stdin string
@@ -311,37 +327,36 @@ func TestRollback_InteractiveDecline_ZeroWrites(t *testing.T) {
 			home := t.TempDir()
 			stateHome := t.TempDir()
 			cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
-			sharedPath := seedWarnableSharedFile(t, cfg)
+			sharedPath := seedSharedNativeConfig(t, cfg)
 
 			out, err := execRollbackWithStdin(t, home, stateHome, tc.stdin, "rollback")
 			if err != nil {
 				t.Fatalf("rollback error = %v, want nil (declining is a clean outcome), output:\n%s", err, out)
 			}
-			if !strings.Contains(out, "Rollback cancelado.") {
-				t.Fatalf("rollback output = %q, want the cancellation message", out)
+			if !strings.Contains(out, "Se conservaron") {
+				t.Fatalf("rollback output = %q, want a shared-state preservation notice", out)
 			}
 			got, err := os.ReadFile(sharedPath)
 			if err != nil {
 				t.Fatalf("read shared.txt after declined rollback: %v", err)
 			}
-			if string(got) != "shared edited by Claude Code after the run\n" {
-				t.Fatalf("shared.txt after declined rollback = %q, want untouched (zero writes)", got)
+			if string(got) != `{"mcpServers":{"foreign":{"command":"current"}}}` {
+				t.Fatalf("shared config after rollback = %q, want current native content preserved", got)
 			}
 			gotClaude, err := os.ReadFile(cfg.ClaudeMDPath())
 			if err != nil {
 				t.Fatalf("read CLAUDE.md after declined rollback: %v", err)
 			}
 			if string(gotClaude) != rollbackManagedBlockMD("managed v1") {
-				t.Fatalf("CLAUDE.md after declined rollback = %q, want untouched (zero writes)", gotClaude)
+				t.Fatalf("CLAUDE.md after rollback = %q, want unchanged managed block", gotClaude)
 			}
 		})
 	}
 }
 
-// TestRollback_NonInteractivePendingWarnableWithoutYes_Refuses guards the CI/script safety path:
-// with a pending shared-file warning and no --yes, a non-interactive rollback (a non-TTY, or an
-// explicit --non-interactive) must refuse BEFORE any write and point at `click rollback --yes`.
-func TestRollback_NonInteractivePendingWarnableWithoutYes_Refuses(t *testing.T) {
+// TestRollback_NonInteractiveSharedConfigDoesNotRequireYes confirms preservation of shared native
+// configuration is not gated on consent, even in non-interactive mode.
+func TestRollback_NonInteractiveSharedConfigDoesNotRequireYes(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -353,33 +368,32 @@ func TestRollback_NonInteractivePendingWarnableWithoutYes_Refuses(t *testing.T) 
 			home := t.TempDir()
 			stateHome := t.TempDir()
 			cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
-			sharedPath := seedWarnableSharedFile(t, cfg)
+			sharedPath := seedSharedNativeConfig(t, cfg)
 
 			out, err := execRootWithStateHome(t, home, stateHome, tc.args...)
-			if err == nil {
-				t.Fatalf("rollback error = nil, want a refusal when consent is required but cannot be asked, output:\n%s", out)
+			if err != nil {
+				t.Fatalf("rollback error = %v, want shared config preserved without consent, output:\n%s", err, out)
 			}
-			if !strings.Contains(out, "--yes") {
-				t.Fatalf("rollback output = %q, want it to point at `click rollback --yes`", out)
+			if !strings.Contains(out, "Se conservaron") || strings.Contains(out, "--yes") {
+				t.Fatalf("rollback output = %q, want preservation notice without a --yes prompt", out)
 			}
 			got, err := os.ReadFile(sharedPath)
 			if err != nil {
 				t.Fatalf("read shared.txt after refused rollback: %v", err)
 			}
-			if string(got) != "shared edited by Claude Code after the run\n" {
-				t.Fatalf("shared.txt after refused rollback = %q, want untouched (refusal precedes any write)", got)
+			if string(got) != `{"mcpServers":{"foreign":{"command":"current"}}}` {
+				t.Fatalf("shared config after rollback = %q, want current native content preserved", got)
 			}
 		})
 	}
 }
 
-// TestRollback_Yes_SkipsPromptAndRestores guards the scripted-consent path: --yes skips the
-// confirmation prompt entirely and restores, including the warnable shared file.
-func TestRollback_Yes_SkipsPromptAndRestores(t *testing.T) {
+// TestRollback_YesDoesNotOverwriteSharedConfig verifies --yes cannot broaden Click ownership.
+func TestRollback_YesDoesNotOverwriteSharedConfig(t *testing.T) {
 	home := t.TempDir()
 	stateHome := t.TempDir()
 	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
-	sharedPath := seedWarnableSharedFile(t, cfg)
+	sharedPath := seedSharedNativeConfig(t, cfg)
 
 	out, err := execRootWithStateHome(t, home, stateHome, "rollback", "--yes")
 	if err != nil {
@@ -392,15 +406,14 @@ func TestRollback_Yes_SkipsPromptAndRestores(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read shared.txt after rollback --yes: %v", err)
 	}
-	if string(got) != "shared original\n" {
-		t.Fatalf("shared.txt after rollback --yes = %q, want the restored pre-run backup content", got)
+	if string(got) != `{"mcpServers":{"foreign":{"command":"current"}}}` {
+		t.Fatalf("shared config after rollback --yes = %q, want current native content preserved", got)
 	}
 }
 
-// TestRollback_NonVetoMatchingBaseline_NotWarned guards that a non-veto file whose current content
-// matches EITHER baseline (pre-run backup or recorded post-run hash) needs no warning and no
-// consent: non-interactive rollback without --yes must proceed straight through.
-func TestRollback_NonVetoMatchingBaseline_NotWarned(t *testing.T) {
+// TestRollback_UnknownHistoricalPathsArePreserved reports and preserves paths that are not
+// currently resolved by Config, regardless of their historical drift policy or hashes.
+func TestRollback_UnknownHistoricalPathsArePreserved(t *testing.T) {
 	home := t.TempDir()
 	stateHome := t.TempDir()
 	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
@@ -431,38 +444,48 @@ func TestRollback_NonVetoMatchingBaseline_NotWarned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rollback error = %v, want nil (nothing requires consent), output:\n%s", err, out)
 	}
-	if strings.Contains(out, "Advertencia") {
-		t.Fatalf("rollback output = %q, want NO shared-file warning when both non-veto files match a baseline", out)
+	if !strings.Contains(out, "Se conservaron") || !strings.Contains(out, uneditedPath) || !strings.Contains(out, postRunPath) {
+		t.Fatalf("rollback output = %q, want both unknown paths explicitly reported as preserved", out)
 	}
 	if !strings.Contains(out, "Archivos gestionados por click restaurados desde el último respaldo.") {
 		t.Fatalf("rollback output = %q, want the restore success message", out)
 	}
+	for path, want := range map[string]string{
+		uneditedPath: "same as backup\n",
+		postRunPath:  "post-run state\n",
+	} {
+		got, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("read preserved unknown path %s: %v", path, readErr)
+		}
+		if string(got) != want {
+			t.Errorf("unknown path %s = %q, want unchanged %q", path, got, want)
+		}
+	}
 }
 
-// TestRollback_Force_DoesNotImplyWarnableConsent guards the flag semantics: --force bypasses
-// VETOES only — a still-pending shared-file warning requires separate consent. Non-interactive
-// --force alone must refuse (naming --yes) with zero writes; --force --yes together must restore
-// both the vetoing file and the shared file.
-func TestRollback_Force_DoesNotImplyWarnableConsent(t *testing.T) {
+// TestRollback_ForceNeverOverwritesSharedConfig verifies --force only applies to proven Click-owned
+// drift and never turns shared-state preservation into overwrite permission.
+func TestRollback_ForceNeverOverwritesSharedConfig(t *testing.T) {
 	home := t.TempDir()
 	stateHome := t.TempDir()
 	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
-	sharedPath := seedWarnableSharedFile(t, cfg)
+	sharedPath := seedSharedNativeConfig(t, cfg)
 	writeRollbackTestFile(t, cfg.ClaudeMDPath(), rollbackManagedBlockMD("hand-edited managed block"))
 
 	out, err := execRootWithStateHome(t, home, stateHome, "rollback", "--force")
-	if err == nil {
-		t.Fatalf("rollback --force error = nil, want a refusal (pending shared-file consent), output:\n%s", out)
+	if err != nil {
+		t.Fatalf("rollback --force error = %v, want managed drift forced and shared config skipped, output:\n%s", err, out)
 	}
-	if !strings.Contains(out, "--yes") {
-		t.Fatalf("rollback --force output = %q, want it to point at `click rollback --yes`", out)
+	if !strings.Contains(out, "Se conservaron") {
+		t.Fatalf("rollback --force output = %q, want preservation notice", out)
 	}
 	got, err := os.ReadFile(sharedPath)
 	if err != nil {
 		t.Fatalf("read shared.txt after refused rollback: %v", err)
 	}
-	if string(got) != "shared edited by Claude Code after the run\n" {
-		t.Fatalf("shared.txt after refused --force rollback = %q, want untouched (zero writes)", got)
+	if string(got) != `{"mcpServers":{"foreign":{"command":"current"}}}` {
+		t.Fatalf("shared config after --force rollback = %q, want current native content preserved", got)
 	}
 
 	out, err = execRootWithStateHome(t, home, stateHome, "rollback", "--force", "--yes")
@@ -473,8 +496,8 @@ func TestRollback_Force_DoesNotImplyWarnableConsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read shared.txt after --force --yes rollback: %v", err)
 	}
-	if string(got) != "shared original\n" {
-		t.Fatalf("shared.txt after --force --yes rollback = %q, want the restored pre-run backup content", got)
+	if string(got) != `{"mcpServers":{"foreign":{"command":"current"}}}` {
+		t.Fatalf("shared config after --force --yes rollback = %q, want current native content preserved", got)
 	}
 	gotClaude, err := os.ReadFile(cfg.ClaudeMDPath())
 	if err != nil {
@@ -485,6 +508,149 @@ func TestRollback_Force_DoesNotImplyWarnableConsent(t *testing.T) {
 	}
 }
 
+func TestRollback_ForceRestoresGuardButPreservesCurrentCloudToken(t *testing.T) {
+	home, stateHome := t.TempDir(), t.TempDir()
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
+	matcher := installer.MemoryGuardToolMatcher()
+	before := `{"env":{"ENGRAM_CLOUD_TOKEN":"old-secret","KEEP":"before"},"hooks":{"PreToolUse":[{"matcher":"` + matcher + `","hooks":[{"type":"command","command":"` + installer.MemoryGuardCommand + `"},{"type":"command","command":"foreign"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"cloud-import"}]}]},"custom":"before"}`
+	writeRollbackTestFile(t, cfg.SettingsPath(), before)
+	writeRollbackTestFile(t, cfg.ClaudeMDPath(), rollbackManagedBlockMD("stable guidance"))
+	if err := installer.SnapshotRun(cfg); err != nil {
+		t.Fatal(err)
+	}
+	current := `{"env":{"ENGRAM_CLOUD_TOKEN":"current-secret","KEEP":"current"},"hooks":{"PreToolUse":[{"matcher":"hand-edited matcher","hooks":[{"type":"command","command":"` + installer.MemoryGuardCommand + `"},{"type":"command","command":"foreign"}]}],"SessionStart":[{"hooks":[{"type":"command","command":"cloud-import-current"}]}]},"custom":"current"}`
+	writeRollbackTestFile(t, cfg.SettingsPath(), current)
+	out, err := execRollbackWithStdin(t, home, stateHome, "", "rollback", "--force")
+	if err != nil {
+		t.Fatalf("rollback --force error = %v, output:\n%s", err, out)
+	}
+	after, err := os.ReadFile(cfg.SettingsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(after, &settings); err != nil {
+		t.Fatal(err)
+	}
+	env := settings["env"].(map[string]any)
+	if env["ENGRAM_CLOUD_TOKEN"] != "current-secret" || env["KEEP"] != "current" || settings["custom"] != "current" {
+		t.Fatalf("rollback replaced current Cloud or foreign settings: %s", after)
+	}
+	preTool := settings["hooks"].(map[string]any)["PreToolUse"].([]any)
+	guardRestored, foreignPreserved := false, false
+	for _, raw := range preTool {
+		entry := raw.(map[string]any)
+		matcherValue, _ := entry["matcher"].(string)
+		for _, rawHook := range entry["hooks"].([]any) {
+			command := rawHook.(map[string]any)["command"]
+			guardRestored = guardRestored || (command == installer.MemoryGuardCommand && matcherValue == matcher)
+			foreignPreserved = foreignPreserved || (command == "foreign" && matcherValue == "hand-edited matcher")
+		}
+	}
+	if !guardRestored || !foreignPreserved {
+		t.Fatalf("Click guard was not restored or foreign hook changed: %s", after)
+	}
+	if strings.Contains(string(after), "[REDACTED]") || strings.Contains(out, "token de Engram Cloud") {
+		t.Fatalf("rollback exposed a redacted placeholder or ran legacy token repair: output=%q settings=%s", out, after)
+	}
+}
+
+func TestRollback_ForceYesPreservesResolvedSharedAndUnknownPaths(t *testing.T) {
+	claudeHome, codexHome, openClawHome, stateHome := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	cfg := installer.Config{ClaudeHome: claudeHome, CodexHome: codexHome, OpenClawHome: openClawHome, ClickStateHome: stateHome}
+	writeRollbackTestFile(t, cfg.ClaudeMDPath(), rollbackManagedBlockMD("guidance"))
+	writeRollbackTestFile(t, cfg.SettingsPath(), `{"foreign":true}`)
+	shared := []string{cfg.Context7ConfigPath(), cfg.KnownMarketplacesPath(), cfg.InstalledPluginsPath(), cfg.CodexConfigPath(), cfg.OpenClawMCPConfigPath()}
+	for i, path := range shared {
+		writeRollbackTestFile(t, path, fmt.Sprintf(`{"before":%d}`, i))
+	}
+	if err := installer.SnapshotRun(cfg); err != nil {
+		t.Fatal(err)
+	}
+	for i, path := range shared {
+		writeRollbackTestFile(t, path, fmt.Sprintf(`{"current":%d}`, i))
+	}
+	unknown := filepath.Join(claudeHome, "custom-history.json")
+	writeRollbackTestFile(t, unknown, `{"current":"preserve"}`)
+	for i, path := range append(append([]string(nil), shared[:3]...), unknown) {
+		appendRollbackManifestEntry(t, cfg, rollbackManifestEntry{
+			OriginalPath: path, BackupFile: fmt.Sprintf("custom-%d.json", i), Existed: true, DriftPolicy: "whole-file-veto",
+		}, fmt.Sprintf(`{"backup":%d}`, i))
+	}
+
+	processHome := t.TempDir()
+	t.Setenv("HOME", processHome)
+	t.Setenv("USERPROFILE", processHome)
+	t.Setenv("CLICK_CLAUDE_HOME", claudeHome)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("CLICK_OPENCLAW_HOME", openClawHome)
+	t.Setenv("CLICK_STATE_HOME", stateHome)
+	root := NewRootCommand()
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetErr(&output)
+	root.SetArgs([]string{"rollback", "--force", "--yes"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("rollback --force --yes error = %v, output:\n%s", err, output.String())
+	}
+	for i, path := range shared {
+		if got, err := os.ReadFile(path); err != nil || string(got) != fmt.Sprintf(`{"current":%d}`, i) {
+			t.Errorf("shared config %s = %q, %v, want current value retained", path, got, err)
+		}
+		if !strings.Contains(output.String(), path) {
+			t.Errorf("rollback output did not report preserved shared path %s", path)
+		}
+	}
+	if got := string(mustReadRollbackFile(t, unknown)); got != `{"current":"preserve"}` {
+		t.Fatalf("unknown historical path = %q, want unchanged", got)
+	}
+	if !strings.Contains(output.String(), unknown) {
+		t.Fatalf("rollback output did not report unknown historical path: %s", output.String())
+	}
+}
+
+func TestRollback_ForceYesPreservesUnprovenNoPriorPrivateArtifacts(t *testing.T) {
+	home, stateHome := t.TempDir(), t.TempDir()
+	cfg := installer.Config{ClaudeHome: home, ClickStateHome: stateHome}
+	writeRollbackTestFile(t, cfg.ClaudeMDPath(), rollbackManagedBlockMD("guidance"))
+	writeRollbackTestFile(t, cfg.SettingsPath(), `{"foreign":true}`)
+	if err := installer.SnapshotRun(cfg); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{cfg.ModelsPath(), cfg.TargetSelectionPath()}
+	contents := []string{`{"profile":"user"}`, `{"configured":true,"targets":["user"]}`}
+	for i, path := range paths {
+		writeRollbackTestFile(t, path, contents[i])
+		appendRollbackManifestEntry(t, cfg, rollbackManifestEntry{
+			OriginalPath: path,
+			Existed:      false,
+			DriftPolicy:  "whole-file-veto",
+		}, "")
+	}
+
+	out, err := execRootWithStateHome(t, home, stateHome, "rollback", "--force", "--yes")
+	if err != nil {
+		t.Fatalf("rollback --force --yes error = %v, output:\n%s", err, out)
+	}
+	for i, path := range paths {
+		if got := string(mustReadRollbackFile(t, path)); got != contents[i] {
+			t.Errorf("unproven no-prior artifact %s = %q, want unchanged %q", path, got, contents[i])
+		}
+		if !strings.Contains(out, path) {
+			t.Errorf("rollback output did not report preserved artifact %s: %s", path, out)
+		}
+	}
+}
+
+func mustReadRollbackFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", path, err)
+	}
+	return data
+}
+
 // TestRollback_HiddenFromHelp guards that `click rollback` follows manage-backups/
 // configure-models' precedent: reachable directly but hidden from `click --help`.
 func TestRollback_HiddenFromHelp(t *testing.T) {
@@ -493,8 +659,8 @@ func TestRollback_HiddenFromHelp(t *testing.T) {
 	if cmd.Short != "Restaurar los archivos gestionados por click desde el último respaldo de instalación/actualización" {
 		t.Fatalf("rollback Short = %q, want the managed-files description", cmd.Short)
 	}
-	if !strings.Contains(cmd.Long, "CLI externo `claude`") || !strings.Contains(cmd.Long, "no solo cambios de Click") {
-		t.Fatalf("rollback Long = %q, want coarse-snapshot warning about external claude changes", cmd.Long)
+	if !strings.Contains(cmd.Long, "Conserva las configuraciones nativas compartidas") {
+		t.Fatalf("rollback Long = %q, want explicit shared-config preservation boundary", cmd.Long)
 	}
 
 	out, err := execRoot(t, home, "--help")

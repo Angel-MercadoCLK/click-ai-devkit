@@ -12,7 +12,7 @@
  * line-by-line against hooks.js's source, then confirmed executable in a Bash-capable verification
  * pass (13/13 passing via `node --test`). Every test below only exercises hooks.js's exported
  * pure/injectable-seam functions
- * (isEngramMemSaveTool, buildPreToolUsePayload, runClickMemoryGuard with a fake spawnFn) — NONE of
+ * (isPersistingEngramTool, buildPreToolUsePayload, runClickMemoryGuard with a fake spawnFn) — NONE of
  * them spawn a real child process, matching this codebase's "small mocks/interfaces around system or
  * command execution boundaries" convention (go-testing skill, applied here to its JS counterpart).
  */
@@ -49,24 +49,74 @@ function fakeChildProcess() {
 
 // --- Task 3.4: tool-name bypass prevention ---
 
-test('isEngramMemSaveTool: recognizes every documented candidate name', () => {
-  for (const name of hooks.ENGRAM_TOOL_NAME_CANDIDATES) {
-    assert.equal(hooks.isEngramMemSaveTool(name), true, `expected ${name} to be recognized`);
+const ALL_PREFIXES = ['mcp__plugin_engram_engram__', 'mcp__engram__', 'engram__', 'engram.'];
+
+test('isPersistingEngramTool: recognizes every persisting tool under every documented name form', () => {
+  assert.ok(hooks.PERSISTING_ENGRAM_TOOLS.length > 1, 'the guard must cover more than mem_save');
+  for (const tool of hooks.PERSISTING_ENGRAM_TOOLS) {
+    for (const prefix of ALL_PREFIXES) {
+      assert.equal(hooks.isPersistingEngramTool(prefix + tool), true, `expected ${prefix}${tool} to be recognized`);
+    }
+  }
+  assert.equal(hooks.isPersistingEngramTool('mcp__engram__mem_update'), true);
+});
+
+test('isPersistingEngramTool: read-only Engram tools and unrelated tools are NOT recognized', () => {
+  for (const name of [
+    'mcp__engram__mem_search',
+    'mcp__plugin_engram_engram__mem_context',
+    'engram__mem_get_observation',
+    'engram.mem_current_project',
+    'mcp__engram__mem_session_start',
+    'mcp__filesystem__read_file',
+    'mem_save',
+    undefined,
+    null,
+    '',
+  ]) {
+    assert.equal(hooks.isPersistingEngramTool(name), false, `expected ${String(name)} to be ignored`);
   }
 });
 
-test('isEngramMemSaveTool: a genuinely different tool is NOT recognized (no false-positive scanning)', () => {
-  assert.equal(hooks.isEngramMemSaveTool('mcp__filesystem__read_file'), false);
-  assert.equal(hooks.isEngramMemSaveTool(undefined), false);
-  assert.equal(hooks.isEngramMemSaveTool(''), false);
+test('isPersistingEngramTool: fail-safe fallback scans only names containing engram and a persisting tool', () => {
+  assert.equal(hooks.isPersistingEngramTool('OpenClaw__ENGRAM__experimental_MEM_SAVE_v2'), true);
+  assert.equal(hooks.isPersistingEngramTool('OpenClaw__ENGRAM__MEM_UPDATE'), true);
+  assert.equal(hooks.isPersistingEngramTool('engram_search'), false);
+  assert.equal(hooks.isPersistingEngramTool('read_file'), false);
+  assert.equal(hooks.isPersistingEngramTool(42), false);
 });
 
-test('isEngramMemSaveTool: fail-safe fallback scans only names containing both engram and mem_save', () => {
-  assert.equal(hooks.isEngramMemSaveTool('OpenClaw__ENGRAM__experimental_MEM_SAVE_v2'), true);
-  assert.equal(hooks.isEngramMemSaveTool('engram_search'), false);
-  assert.equal(hooks.isEngramMemSaveTool('read_file'), false);
-  assert.equal(hooks.isEngramMemSaveTool(null), false);
-  assert.equal(hooks.isEngramMemSaveTool(undefined), false);
+test('resolvePersistingTool: picks the longest matching tool so mem_save_prompt is not collapsed into mem_save', () => {
+  assert.equal(hooks.resolvePersistingTool('mcp__engram__mem_save_prompt'), 'mem_save_prompt');
+  assert.equal(hooks.resolvePersistingTool('mcp__engram__mem_save'), 'mem_save');
+  assert.equal(hooks.resolvePersistingTool('mcp__engram__mem_search'), null);
+});
+
+test('beforeToolCall: a persisting tool other than mem_save is scanned and blocked on deny', async () => {
+  const proc = fakeChildProcess();
+  let spawned = 0;
+  const resultPromise = hooks.beforeToolCall(
+    // click:allow-secret synthetic sequential-placeholder input for adapter unit test; not user data.
+    { tool_name: 'mcp__engram__mem_update', tool_input: { id: 1, content: 'CUIT 20-12345678-3' } },
+    { spawnFn: () => { spawned += 1; return proc; } }
+  );
+  assert.equal(spawned, 1, 'mem_update must be handed to click memory-guard');
+  const written = JSON.parse(proc.__stdinWrites[0]);
+  assert.equal(written.tool_name, 'mcp__plugin_engram_engram__mem_update');
+  proc.stdout.emit('data', Buffer.from('{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"blocked: detected pii"}}'));
+  proc.emit('close', 0);
+  assert.deepEqual(await resultPromise, { block: true, reason: 'blocked: detected pii' });
+});
+
+test('beforeToolCall: a read-only Engram tool is allowed WITHOUT spawning', async () => {
+  let spawned = 0;
+  const result = await hooks.beforeToolCall(
+    // click:allow-secret synthetic sequential-placeholder query for adapter unit test; not user data.
+    { tool_name: 'mcp__engram__mem_search', tool_input: { query: 'CUIT 20-12345678-3' } },
+    { spawnFn: () => { spawned += 1; return fakeChildProcess(); } }
+  );
+  assert.deepEqual(result, { block: false });
+  assert.equal(spawned, 0);
 });
 
 test('beforeToolCall: a non-engram tool is allowed through WITHOUT spawning anything', async () => {
@@ -105,10 +155,12 @@ test('buildPreToolUsePayload: field names/order/values match Go\'s preToolUsePay
   assert.equal(JSON.stringify(payload), wantJSON);
 });
 
-test('buildPreToolUsePayload: ALWAYS rewrites tool_name to the canonical Go matcher, regardless of which candidate matched', () => {
-  for (const candidate of hooks.ENGRAM_TOOL_NAME_CANDIDATES) {
-    const payload = hooks.buildPreToolUsePayload({ tool_name: candidate, tool_input: {} });
-    assert.equal(payload.tool_name, hooks.CANONICAL_TOOL_NAME);
+test('buildPreToolUsePayload: ALWAYS rewrites tool_name to the canonical plugin-scoped name of the same tool', () => {
+  for (const tool of hooks.PERSISTING_ENGRAM_TOOLS) {
+    for (const prefix of ALL_PREFIXES) {
+      const payload = hooks.buildPreToolUsePayload({ tool_name: prefix + tool, tool_input: {} });
+      assert.equal(payload.tool_name, hooks.CANONICAL_TOOL_PREFIX + tool);
+    }
   }
 });
 

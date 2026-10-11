@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -62,6 +63,7 @@ func TestRun_AfterInstall_ReportsHealthy(t *testing.T) {
 	defer restoreGit()
 	restoreClick := seedResolvableClickBinary(t, "/usr/bin/click")
 	defer restoreClick()
+	seedManagedGentleAI(t)
 	seedInstalledState(t, cfg)
 	if err := installer.WriteManagedBlock(cfg.ClaudeMDPath(), installer.DefaultManagedContent); err != nil {
 		t.Fatalf("WriteManagedBlock() error = %v", err)
@@ -86,6 +88,28 @@ func TestRun_AfterInstall_ReportsHealthy(t *testing.T) {
 	for _, c := range report.Checks {
 		if !c.Healthy {
 			t.Errorf("check %q reported unhealthy after Install(): %s", c.Name, c.Detail)
+		}
+	}
+}
+
+func TestRun_DoesNotRequireRetiredClickSDDOrItsAgentAssets(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	report := Run(cfg)
+	for _, check := range report.Checks {
+		if check.Name == "Plugin click-sdd" || check.Name == "Engram subagent visibility" {
+			t.Errorf("Run() includes retired click-sdd health dependency: %+v", check)
+		}
+	}
+}
+
+func TestRun_DoesNotReportRetiredOpenClawModelAction(t *testing.T) {
+	t.Cleanup(installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
+		return fakeGitLookup{resolved: map[string]string{}}
+	}))
+	report := Run(installer.Config{OpenClawHome: t.TempDir(), ClickStateHome: t.TempDir()})
+	for _, check := range report.Checks {
+		if check.Name == "OpenClaw native model action" {
+			t.Fatalf("Run() reported retired model-selection health check: %+v", check)
 		}
 	}
 }
@@ -121,17 +145,17 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
 	report := Run(cfg)
 
-	// 14 base checks now that the Claude plugin registries check joins the foundational checks,
+	// 11 base checks after adding the managed Gentle AI pin diagnostic and retiring the Click SDD plugin and its dependent visibility check,
 	// standalone PATH-based detection check (openclaw-target-support PR-A).
-	const wantChecks = 14 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 11 + EngramChecksCount + Context7ChecksCount
 	if len(report.Checks) != wantChecks {
-		t.Fatalf("Run() returned %d checks, want %d (git, openclaw, openclaw native model action, click binary, claude, click plugin registries, click-sdd plugin, click-memory plugin, click-review plugin, click-skills plugin, CLAUDE.md, models.json schema, click-sdd applied plugin config, engram plugin, engram subagent visibility, engram binary, engram PATH persistence, engram cloud enrollment, engram cloud session sync, context7 MCP, memory-guard hook)", len(report.Checks), wantChecks)
+		t.Fatalf("Run() returned %d checks, want %d without retired model checks", len(report.Checks), wantChecks)
 	}
 }
 
 func TestRun_CheckCountIncludesEngramCloudSessionSync(t *testing.T) {
 	report := Run(installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()})
-	const wantChecks = 14 + EngramChecksCount + Context7ChecksCount
+	const wantChecks = 11 + EngramChecksCount + Context7ChecksCount
 	if got := len(report.Checks); got != wantChecks {
 		t.Fatalf("Run() check count = %d, want %d including engram cloud session sync", got, wantChecks)
 	}
@@ -673,38 +697,6 @@ func TestCheckOpenClaw_ReportsHealthyWhenAbsent(t *testing.T) {
 	}
 }
 
-func TestCheckOpenClawNativeModelAction_UnavailableButHealthyWithGuidance(t *testing.T) {
-	restoreLookup := installer.SetBinaryLookupFactoryForTests(func() installer.BinaryLookup {
-		return fakeGitLookup{resolved: map[string]string{"openclaw": "/usr/bin/openclaw"}}
-	})
-	defer restoreLookup()
-	restoreStatus := installer.SetOpenClawNativeModelMenuStatusForTests(installer.OpenClawNativeModelMenuStatus{
-		Available: false,
-		Detail:    "OpenClaw native model action is unavailable until `click update` refreshes the contract and Claude Code restarts.",
-	})
-	defer restoreStatus()
-
-	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
-	report := Run(cfg)
-
-	var checked bool
-	for _, c := range report.Checks {
-		if c.Name != "OpenClaw native model action" {
-			continue
-		}
-		checked = true
-		if !c.Healthy {
-			t.Fatalf("OpenClaw native model action check = %+v, want Healthy=true for an unavailable optional action", c)
-		}
-		if !strings.Contains(c.Detail, "click update") || !strings.Contains(strings.ToLower(c.Detail), "restart") {
-			t.Fatalf("OpenClaw native model action detail = %q, want update and restart guidance", c.Detail)
-		}
-	}
-	if !checked {
-		t.Fatal(`Run() did not include an "OpenClaw native model action" check`)
-	}
-}
-
 // TestCheckGit_ReportsHealthyWhenResolvable guards the "present" branch: git resolvable on PATH
 // must report healthy, with the resolved path surfaced in Detail (mirroring checkEngramBinary's
 // "resuelto en <path>" shape).
@@ -906,26 +898,13 @@ func seedUnresolvableClickBinary(t *testing.T) func() {
 	})
 }
 
-// TestCheckModelsConfig_AbsentFile_ReportsHealthy guards the "absent = healthy" contract from the
-// taxonomy-migration spec: a home where `click install` never ran must not be flagged unhealthy for
-// models.json — it just means defaults will be generated on the next install/update.
+// TestCheckModelsConfig_AbsentFile_ReportsHealthy verifies that the legacy model-schema check treats
+// an absent models.json as healthy; Click no longer creates that artifact during install/update.
 func TestCheckModelsConfig_AbsentFile_ReportsHealthy(t *testing.T) {
 	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
-
-	report := Run(cfg)
-
-	var checked bool
-	for _, c := range report.Checks {
-		if c.Name != "models.json schema" {
-			continue
-		}
-		checked = true
-		if !c.Healthy {
-			t.Fatalf("checkModelsConfig reports unhealthy for an absent models.json: %s", c.Detail)
-		}
-	}
-	if !checked {
-		t.Fatal(`Run() did not include a "models.json schema" check`)
+	check := checkModelsConfig(cfg)
+	if !check.Healthy {
+		t.Fatalf("checkModelsConfig reports unhealthy for an absent models.json: %s", check.Detail)
 	}
 }
 
@@ -946,20 +925,9 @@ func TestCheckModelsConfig_StaleFile_ReportsUnhealthy(t *testing.T) {
 		t.Fatalf("WriteFile(legacy models.json) error = %v", err)
 	}
 
-	report := Run(cfg)
-
-	var checked bool
-	for _, c := range report.Checks {
-		if c.Name != "models.json schema" {
-			continue
-		}
-		checked = true
-		if c.Healthy {
-			t.Fatal("checkModelsConfig reports healthy for a stale legacy models.json, want unhealthy")
-		}
-	}
-	if !checked {
-		t.Fatal(`Run() did not include a "models.json schema" check`)
+	check := checkModelsConfig(cfg)
+	if check.Healthy {
+		t.Fatal("checkModelsConfig reports healthy for a stale legacy models.json, want unhealthy")
 	}
 
 	rawAfter, err := os.ReadFile(cfg.ModelsPath())
@@ -1262,6 +1230,31 @@ func seedEngramPathHealthy(t *testing.T) func() {
 	}
 }
 
+func seedManagedGentleAI(t *testing.T) {
+	t.Helper()
+	pin, err := manifest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	p := installer.NewGentleAIProvisioner()
+	p.HomeDir = func() (string, error) { return home, nil }
+	path, err := p.ManagedPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("test binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p.Run = func(context.Context, []string, string, ...string) ([]byte, error) {
+		return []byte("gentle-ai " + pin.GentleAI.Version), nil
+	}
+	t.Cleanup(SetManagedGentleAIProvisionerFactoryForTests(func() installer.GentleAIProvisioner { return p }))
+}
+
 // TestCheckEngramPath_PersistedAndLive_ReportsHealthy covers state 1/4: everything lines up right
 // now (a fresh install/update ran and this session already sees the result) — healthy.
 func TestCheckEngramPath_PersistedAndLive_ReportsHealthy(t *testing.T) {
@@ -1419,7 +1412,6 @@ func seedInstalledState(t *testing.T, cfg installer.Config) {
 	registry := pluginsRegistry{
 		Version: 2,
 		Plugins: map[string][]map[string]any{
-			"click-sdd@click-ai-devkit":    {{"installPath": filepath.Join(cfg.ClaudeHome, "plugins", "cache", "click-ai-devkit", "click-sdd", "0.1.0")}},
 			"click-memory@click-ai-devkit": {{}},
 			"click-review@click-ai-devkit": {{}},
 			"click-skills@click-ai-devkit": {{}},
@@ -1438,14 +1430,10 @@ func seedInstalledState(t *testing.T, cfg installer.Config) {
 	}
 	settings := map[string]any{
 		"enabledPlugins": map[string]bool{
-			"click-sdd@click-ai-devkit":    true,
 			"click-memory@click-ai-devkit": true,
 			"click-review@click-ai-devkit": true,
 			"click-skills@click-ai-devkit": true,
 			installer.EngramPluginID:       true,
-		},
-		"pluginConfigs": map[string]any{
-			installer.ClickSDDPluginID: map[string]any{"options": allExpectedAppliedOptions()},
 		},
 	}
 	settingsData, err := json.Marshal(settings)
@@ -1456,12 +1444,30 @@ func seedInstalledState(t *testing.T, cfg installer.Config) {
 		t.Fatalf("WriteFile(settings.json) error = %v", err)
 	}
 	engramPath := filepath.Join(cfg.ClaudeHome, "plugins", "cache", "engram", "engram", "0.1.1")
-	writeJSON(t, filepath.Join(engramPath, ".mcp.json"), map[string]any{
+	engramMCP, err := json.Marshal(map[string]any{
 		"mcpServers": map[string]any{"engram": map[string]any{"command": "engram", "args": []string{"mcp", "--tools=agent"}}},
 	})
-	clickSDDPath := filepath.Join(cfg.ClaudeHome, "plugins", "cache", "click-ai-devkit", "click-sdd", "0.1.0")
-	for agent, tools := range engramAgentToolRequirements {
-		writeFile(t, filepath.Join(clickSDDPath, "agents", agent+".md"), "---\ntools: "+strings.Join(tools, ", ")+"\n---\n")
+	if err != nil {
+		t.Fatalf("json.Marshal(Engram MCP config) error = %v", err)
+	}
+	if err := os.MkdirAll(engramPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(Engram cache) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(engramPath, ".mcp.json"), engramMCP, 0o600); err != nil {
+		t.Fatalf("WriteFile(Engram .mcp.json) error = %v", err)
+	}
+}
+
+func TestCheckClickPluginRegistriesReportsCurrentManagedPluginCount(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir()}
+	seedInstalledState(t, cfg)
+
+	check := checkClickPluginRegistries(cfg)
+	if !check.Healthy {
+		t.Fatalf("checkClickPluginRegistries() = %#v, want healthy fixture", check)
+	}
+	if !strings.Contains(check.Detail, "3 plugins administrados") {
+		t.Fatalf("healthy registry detail = %q, want current count of 3 managed plugins", check.Detail)
 	}
 }
 
@@ -1530,5 +1536,120 @@ func TestCheckEngramCloudSessionSync_UnhealthyOnUndecodableHookPayload(t *testin
 	}
 	if !strings.Contains(got.Detail, "payload") {
 		t.Fatalf("checkEngramCloudSessionSync() detail does not name the undecodable payload")
+	}
+}
+
+func TestCheckMemoryGuardHook_LegacyMatcherReportsOutdatedCoverage(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	legacy := `{"hooks":{"PreToolUse":[{"matcher":"` + installer.MemoryGuardLegacyToolMatcher + `","hooks":[{"type":"command","command":"` + installer.MemoryGuardCommand + `"}]}]}}`
+	if err := os.WriteFile(cfg.SettingsPath(), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+
+	result := checkMemoryGuardHook(cfg)
+
+	if result.Healthy {
+		t.Fatal("checkMemoryGuardHook reports healthy for the legacy mem_save-only matcher, want unhealthy")
+	}
+	if !strings.Contains(result.Detail, "mem_save") || !strings.Contains(result.Detail, "click update") {
+		t.Fatalf("Detail = %q, want it to name the mem_save-only coverage and the click update remedy", result.Detail)
+	}
+}
+
+func TestCheckMemoryGuardHook_CurrentMatcherIsHealthy(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	if err := installer.RegisterMemoryGuardHook(cfg); err != nil {
+		t.Fatalf("RegisterMemoryGuardHook() error = %v", err)
+	}
+	if result := checkMemoryGuardHook(cfg); !result.Healthy {
+		t.Fatalf("checkMemoryGuardHook unhealthy after a fresh register: %s", result.Detail)
+	}
+}
+
+func writeGuardSettings(t *testing.T, cfg installer.Config, matcher string) {
+	t.Helper()
+	settings := map[string]any{"hooks": map[string]any{"PreToolUse": []any{map[string]any{
+		"matcher": matcher,
+		"hooks":   []any{map[string]any{"type": "command", "command": installer.MemoryGuardCommand}},
+	}}}}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("Marshal(settings) error = %v", err)
+	}
+	if err := os.WriteFile(cfg.SettingsPath(), data, 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+}
+
+func TestCheckMemoryGuardHook_ProbeFailsWhenMatcherMissesAPersistingTool(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	writeGuardSettings(t, cfg, "^(?:mcp__plugin_engram_engram__|mcp__engram__)(?:mem_save|mem_save_prompt)$")
+
+	result := checkMemoryGuardHook(cfg)
+
+	if result.Healthy {
+		t.Fatal("checkMemoryGuardHook reports healthy for a matcher that misses persisting tools")
+	}
+	for _, want := range []string{"no cubre", "mem_update", "click update"} {
+		if !strings.Contains(result.Detail, want) {
+			t.Errorf("Detail = %q, want it to contain %q", result.Detail, want)
+		}
+	}
+}
+
+func TestCheckMemoryGuardHook_ProbeFailsWhenMatcherDoesNotCompile(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	writeGuardSettings(t, cfg, "^(?:mcp__engram__")
+
+	result := checkMemoryGuardHook(cfg)
+
+	if result.Healthy {
+		t.Fatal("checkMemoryGuardHook reports healthy for a matcher that does not compile")
+	}
+	for _, want := range []string{"no compila", "click update"} {
+		if !strings.Contains(result.Detail, want) {
+			t.Errorf("Detail = %q, want it to contain %q", result.Detail, want)
+		}
+	}
+}
+
+func TestCheckMemoryGuardHook_ProbeFailsWhenMatcherOvermatchesReadOnlyTools(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	writeGuardSettings(t, cfg, ".*")
+
+	result := checkMemoryGuardHook(cfg)
+
+	if result.Healthy {
+		t.Fatal("checkMemoryGuardHook reports healthy for a matcher that matches every tool")
+	}
+	for _, want := range []string{"cubre de más", "mem_search", "click update"} {
+		if !strings.Contains(result.Detail, want) {
+			t.Errorf("Detail = %q, want it to contain %q", result.Detail, want)
+		}
+	}
+}
+
+func TestCheckMemoryGuardHook_BehaviorNotStringDecidesHealth(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	writeGuardSettings(t, cfg, "^mcp__(?:plugin_engram_engram|engram)__(?:mem_capture_passive|mem_compare|mem_judge|mem_save|mem_save_prompt|mem_session_end|mem_session_summary|mem_update)$")
+
+	if result := checkMemoryGuardHook(cfg); !result.Healthy {
+		t.Fatalf("checkMemoryGuardHook unhealthy for an equivalent hand-written matcher: %s", result.Detail)
+	}
+}
+
+func TestCheckMemoryGuardHook_SurfacesUnreadableSettings(t *testing.T) {
+	cfg := installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()}
+	if err := os.WriteFile(cfg.SettingsPath(), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("WriteFile(settings) error = %v", err)
+	}
+
+	result := checkMemoryGuardHook(cfg)
+
+	if result.Healthy {
+		t.Fatal("checkMemoryGuardHook reports healthy for unparseable settings")
+	}
+	if !strings.Contains(result.Detail, "parse settings") {
+		t.Fatalf("Detail = %q, want the underlying parse error", result.Detail)
 	}
 }

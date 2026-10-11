@@ -2,6 +2,10 @@
 
 > Status: draft v0.1. Grounded in `00-decisions-and-open-questions.md` (D1–D20).
 
+> **Historical reference notes.** The original project framing below predates D48–D53. Treat
+> references to `ClickOrchestrator`, Click-owned SDD, or old model/permission behavior as historical;
+> see [`README.md`](../README.md) for current contracts.
+
 ## Reference only
 
 All sources below are used **for reference** — architecture patterns, mechanisms, and structure. Per the brief and the decisions doc: do **not** copy persona, names, or exact conventions from any of them. Everything Click-facing is rebranded (`click-*` naming, `ClickOrchestrator` persona per D10) and adapted to Click's own decisions (D6–D11).

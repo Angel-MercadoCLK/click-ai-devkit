@@ -13,8 +13,6 @@ import (
 
 var agentNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 
-const clickSDDPluginSource = "./plugins/click-sdd"
-
 type FileWriter interface {
 	MkdirAll(path string, perm os.FileMode) error
 	ReadFile(path string) ([]byte, error)
@@ -49,7 +47,6 @@ func RenderAgentMarkdown(spec AgentSpec) (string, error) {
 	writeMarkdownSection(&b, "##", "Tasks", spec.Tasks)
 	writeMarkdownSection(&b, "##", "Triggers", spec.Triggers)
 	writeMarkdownSection(&b, "##", "Hard Rules", spec.Rules)
-	writeSDDIntegrationSection(&b, spec)
 	writeMarkdownSection(&b, "##", "Tone", spec.Tone)
 	writeMarkdownSection(&b, "##", "Domain Knowledge", spec.Domain)
 	writeMarkdownSection(&b, "##", "Good Output", spec.GoodOutput)
@@ -191,16 +188,11 @@ func installTargetPath(spec AgentSpec, claudeHome, repoRoot string, w FileWriter
 	if strings.TrimSpace(repoRoot) == "" {
 		return "", fmt.Errorf("agentbuilder: repo root is required for shareable placement")
 	}
-	if spec.SDDMode == SDDPhaseSupport {
-		ok, err := hasLoadableClickSDDPlugin(repoRoot, w)
-		if err != nil {
-			return "", err
-		}
-		if ok {
-			return filepath.Join(repoRoot, "plugins", "click-sdd", "agents", spec.Name+".md"), nil
-		}
+	pluginName, err := shareablePluginName(spec)
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(repoRoot, "plugins", standalonePluginName(spec), "agents", spec.Name+".md"), nil
+	return filepath.Join(repoRoot, "plugins", pluginName, "agents", spec.Name+".md"), nil
 }
 
 func resolveClaudeHome(claudeHome string) (string, error) {
@@ -221,47 +213,19 @@ func resolveClaudeHome(claudeHome string) (string, error) {
 }
 
 func shareableTargetPath(spec AgentSpec, repoRoot string) (string, error) {
-	if spec.SDDMode == SDDPhaseSupport {
-		ok, err := hasLoadableClickSDDPlugin(repoRoot, osFileWriter{})
-		if err != nil {
-			return "", err
-		}
-		if ok {
-			return filepath.Join(repoRoot, "plugins", "click-sdd", "agents", spec.Name+".md"), nil
-		}
+	pluginName, err := shareablePluginName(spec)
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(repoRoot, "plugins", "click-"+spec.Name, "agents", spec.Name+".md"), nil
+	return filepath.Join(repoRoot, "plugins", pluginName, "agents", spec.Name+".md"), nil
 }
 
-func hasLoadableClickSDDPlugin(repoRoot string, w FileWriter) (bool, error) {
-	marketplacePath := filepath.Join(repoRoot, ".claude-plugin", "marketplace.json")
-	marketplace, err := loadMarketplaceManifest(w, marketplacePath)
-	if err != nil {
-		return false, err
+func shareablePluginName(spec AgentSpec) (string, error) {
+	pluginName := standalonePluginName(spec)
+	if pluginName == "click-sdd" {
+		return "", fmt.Errorf("agentbuilder: el nombre de plugin click-sdd está reservado porque ese plugin fue retirado")
 	}
-	if !marketplace.HasPluginSource("click-sdd", clickSDDPluginSource) {
-		return false, nil
-	}
-	pluginManifestPath := filepath.Join(repoRoot, "plugins", "click-sdd", ".claude-plugin", "plugin.json")
-	manifestData, err := w.ReadFile(pluginManifestPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("agentbuilder: inspect click-sdd plugin manifest: %w", err)
-	}
-	return isLoadablePluginManifest(manifestData, "click-sdd"), nil
-}
-
-func isLoadablePluginManifest(data []byte, name string) bool {
-	var manifest pluginManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return false
-	}
-	return strings.TrimSpace(manifest.Name) == name &&
-		strings.TrimSpace(manifest.Version) != "" &&
-		strings.TrimSpace(manifest.Description) != "" &&
-		strings.TrimSpace(manifest.Author.Name) != ""
+	return pluginName, nil
 }
 
 // ValidateAgentName validates an agent's slug-style name (used both for a name derived
@@ -639,24 +603,6 @@ func (m marketplaceManifest) HasPlugin(name string) bool {
 	return false
 }
 
-func (m marketplaceManifest) HasPluginSource(name, source string) bool {
-	for _, plugin := range m.Plugins {
-		if plugin.Name != name {
-			continue
-		}
-		var pluginSource string
-		if err := json.Unmarshal(plugin.Source, &pluginSource); err != nil {
-			// Object-form (or otherwise non-string) sources never match a plain string
-			// source comparison; they simply don't match this string-source check.
-			continue
-		}
-		if strings.TrimSpace(pluginSource) == source {
-			return true
-		}
-	}
-	return false
-}
-
 func writeMarkdownSection(b *strings.Builder, level, title, body string) {
 	b.WriteString(level)
 	b.WriteString(" ")
@@ -664,19 +610,6 @@ func writeMarkdownSection(b *strings.Builder, level, title, body string) {
 	b.WriteString("\n")
 	b.WriteString(strings.TrimSpace(body))
 	b.WriteString("\n\n")
-}
-
-func writeSDDIntegrationSection(b *strings.Builder, spec AgentSpec) {
-	b.WriteString("## SDD Integration\n")
-	b.WriteString("Mode: ")
-	b.WriteString(string(spec.SDDMode))
-	b.WriteString("\n")
-	if spec.SDDMode == SDDPhaseSupport && spec.Phase != "" {
-		b.WriteString("Phase: ")
-		b.WriteString(string(spec.Phase))
-		b.WriteString("\n")
-	}
-	b.WriteString("\n")
 }
 
 type osFileWriter struct{}

@@ -1,9 +1,10 @@
 // OpenClaw memory-guard parity plugin (design #1666's "ADDED PIECE: OpenClaw memory-guard parity",
 // decisions OCG-1..6, PR-C / tasks 3.1-3.14).
 //
-// Claude Code routes every Engram mem_save call through click memory-guard via a PreToolUse hook
+// Claude Code routes every content-persisting Engram tool call (mem_save, mem_update, ...; the set
+// lives in internal/guard/tools.go) through click memory-guard via a PreToolUse hook
 // (hooksettings.go's RegisterMemoryGuardHook). OpenClaw has no equivalent gate on its own, so any
-// OpenClaw agent's mem_save call is unguarded. This file closes that gap by installing a small,
+// OpenClaw agent's persisting Engram call is unguarded. This file closes that gap by installing a small,
 // static, click-owned OpenClaw plugin (plugins/hooks.js, an OpenClaw before_tool_call adapter) that
 // shells out to the SAME already-tested `click memory-guard` binary — this file and hooks.js
 // deliberately NEVER reimplement internal/guard's scanning logic (OCG-2).

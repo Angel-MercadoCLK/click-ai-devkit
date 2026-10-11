@@ -122,8 +122,12 @@ func TestCodexGuidance_IsIdempotentRemovableAndSnapshotRestorable(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(restored) != string(first) {
-		t.Fatalf("restored Codex guidance = %q, want %q", restored, first)
+	firstLines := crlfAwareSplitLines(string(first))
+	begin, end := findMarkers(firstLines)
+	wantManagedOnly := joinWithLineEnding(firstLines[begin:end+1], detectLineEnding(string(first)))
+	wantRestored := "user guidance\n" + wantManagedOnly
+	if string(restored) != wantRestored {
+		t.Fatalf("restored Codex guidance = %q, want current user guidance plus the known managed block %q", restored, wantRestored)
 	}
 }
 
