@@ -228,7 +228,7 @@ func mergeClaudeMCP(path string) error {
 	return mergeJSON(path, func(root map[string]any) {
 		servers := object(root["mcpServers"])
 		servers["engram"] = map[string]any{"command": "engram", "args": []any{"mcp", "--tools=agent"}}
-		servers["context7"] = map[string]any{"type": "http", "url": "https://mcp.context7.com/mcp"}
+		servers["context7"] = map[string]any{"command": "npx", "args": []any{"-y", "--package=@upstash/context7-mcp@2.2.5", "--", "context7-mcp"}}
 		root["mcpServers"] = servers
 	})
 }
