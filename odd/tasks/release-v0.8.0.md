@@ -2,7 +2,7 @@
 
 ## Objective and status
 
-Ship the PR #71 Gentle AI distribution and ownership integration to installed Click users as v0.8.0, with release metadata that never points to an asset before GoReleaser has published it. **R01 and R02 are complete; R03 publication is pending.** This task list is the recovery record for the release; it does not itself merge, tag, publish, or approve native review.
+Ship the PR #71 Gentle AI distribution and ownership integration to installed Click users as v0.8.0, with release metadata that never points to an asset before GoReleaser has published it. **R01–R03 are complete: v0.8.0 is published and its assets and Scoop metadata are verified.** This task list records observed results; it does not itself approve native review or delivery.
 
 ## Problem and rationale
 
@@ -48,12 +48,12 @@ The embedded manifest currently carries `click_version`, but the running CLI ver
 
 ### R03 — Publish v0.8.0 and verify installed-user delivery
 
-- [ ] Create/push tag `v0.8.0` only at the verified merged main commit, then monitor the tag workflow: disposable Windows release qualification must pass before the Ubuntu GoReleaser publication job proceeds.
-- [ ] Verify the GitHub release is for `v0.8.0` and contains `checksums.txt` plus the five supported archives: Windows amd64, Darwin amd64/arm64, and Linux amd64/arm64. Validate every published archive against `checksums.txt`.
-- [ ] After assets exist, verify the GoReleaser-published `bucket/click.json` has version `0.8.0`, its Windows amd64 URL resolves to the v0.8.0 archive, and its SHA-256 matches that archive. Never manually publish Scoop metadata that references absent assets.
-- [ ] Verify the packaged CLI reports v0.8.0 using only a disposable artifact check; do not run `click install`, `click update`, or live provisioning against a real profile. Confirm the embedded upstream pin values remain the intended qualified values.
-- [ ] Report installed-user instructions clearly: Scoop users run `scoop update; scoop update click` (Scoop needs Git to refresh the bucket); non-Scoop users download the release binary/archive manually. Then run `click update` separately to sync Click/Gentle AI components; it does not update the Click binary.
-- [ ] Record the actual workflow/run IDs, release URL, asset names and checksum results, bucket metadata verification, skipped/live limitations, and final main/tag identities. Failed, missing, or ambiguous publication evidence leaves R03 pending; do not retry a tag or publish a replacement blindly.
+- [x] Create/push tag `v0.8.0` only at the verified merged main commit, then monitor the tag workflow: disposable Windows release qualification must pass before the Ubuntu GoReleaser publication job proceeds.
+- [x] Verify the GitHub release is for `v0.8.0` and contains `checksums.txt` plus the five supported archives: Windows amd64, Darwin amd64/arm64, and Linux amd64/arm64. Validate every published archive against `checksums.txt`.
+- [x] After assets exist, verify the GoReleaser-published `bucket/click.json` has version `0.8.0`, its Windows amd64 URL resolves to the v0.8.0 archive, and its SHA-256 matches that archive. Never manually publish Scoop metadata that references absent assets.
+- [x] Verify the packaged CLI reports v0.8.0 using only a disposable artifact check; do not run `click install`, `click update`, or live provisioning against a real profile. Confirm the source pins and embedded marker evidence, without claiming runtime parsing proof.
+- [x] Record installed-user instructions: Scoop users run `scoop update; scoop update click` (Scoop needs Git to refresh the bucket); non-Scoop users download the release binary/archive manually. Then run `click update` separately to sync Click/Gentle AI components; it does not update the Click binary. Windows provisioning requires Go 1.25.10+.
+- [x] Record the actual workflow/run IDs, release URL, asset names and checksum results, bucket metadata verification, skipped/live limitations, and final main/tag identities. Failed, missing, or ambiguous publication evidence leaves R03 pending; do not retry a tag or publish a replacement blindly.
 - **Route:** parent owns tag/release operations; delegated artifact verification may inspect only published release assets and metadata, not provision any profile.
 - **Rollback:** release publication is not automatically reversible. If the tag workflow or release is partial, preserve state and report exact evidence; do not delete/recreate tags or silently replace assets.
 
@@ -78,6 +78,21 @@ The embedded manifest currently carries `click_version`, but the running CLI ver
 - R01 complete: source `db07cc5`, passive verification record `a41c3841b6a2acceb2728b14e8e348626c6b84cd`; exact-head CI [38119308006](https://github.com/Angel-MercadoCLK/click-ai-devkit/actions/runs/38119308006) passed Ubuntu and Windows, including the actual packaged Windows smoke. Earlier pending statements above are historical checkpoints.
 <!-- click:allow-secret public GitHub Actions run identifiers, not personal data or credentials. -->
 - R02 complete: PR #71 merged as `f64e002e08ecc34f64a210e556b477a392e8f4fe`; main CI [38120711388](https://github.com/Angel-MercadoCLK/click-ai-devkit/actions/runs/38120711388) passed. Merge tree is identical to the reviewed/tested PR head. No admin bypass, force push, branch deletion, or backup mutation.
-- R03 pending. Tag `v0.8.0` is absent locally and remotely before publication. The release tag must select the verified merge commit above, not later task-record commits.
+- R03 complete. Annotated tag `v0.8.0` (`49c5c3a61a88b91b2b1ca44f5e0837c0797c8ad0`) selects the verified merge commit above, not later task-record commits.
 
-**Next:** publish the exact verified merge commit as v0.8.0 and verify the tag workflow, release assets and Scoop metadata.
+<!-- click:allow-secret public GitHub Actions run identifiers, not personal data or credentials. -->
+Release [v0.8.0](https://github.com/Angel-MercadoCLK/click-ai-devkit/releases/tag/v0.8.0) is latest, nondraft and nonprerelease, published at `2026-10-11T07:21:43Z`. [Release workflow 38120909552](https://github.com/Angel-MercadoCLK/click-ai-devkit/actions/runs/38120909552) passed Windows qualification and GoReleaser publication. Scoop automatically updated main in `e1b094755ecad3439c6a9f687947860d55abb98f`; bucket version is `0.8.0` and its URL identifies the published Windows amd64 archive.
+
+Independent artifact verification downloaded all five ZIPs and `checksums.txt`; `sha256sum -c checksums.txt` passed for every archive (also rerun by the parent). Platform tuple inventory and archive path-safety checks passed. Published hashes:
+
+| Archive | SHA-256 |
+|---|---|
+| `click_0.8.0_darwin_amd64.zip` | `c046f114b976152935ec504b1a1a446de574b1ecb1c1a5707792e89800b31ee1` |
+| `click_0.8.0_darwin_arm64.zip` | `65af0615d8c8393085b43f052b263cfbd1f77385ac60c9038c9dbb60e262cba6` |
+| `click_0.8.0_linux_amd64.zip` | `69ad00dbe23226ef08479ddf7ce759a2fd467f22eac7b28dbf26797ecc4137e5` |
+| `click_0.8.0_linux_arm64.zip` | `4078e6d09371593ae35b0f65a2317cb4db083a287aaacc1e88daacd335eac952` |
+| `click_0.8.0_windows_amd64.zip` | `f91590ae80f54222c7bba508c20c463f681e9b08e7bd8c67e50739476420162d` |
+
+The Windows hash equals the current remote Scoop hash. Only the verified Linux amd64 executable was extracted and invoked with isolated HOME/config/state and `CLICK_NO_SELF_UPDATE=1`; `--version` printed `click version 0.8.0`. Tag-source pins remain Gentle AI v4.0.0 and Engram v1.20.0; matching binary strings are marker evidence, not proof of runtime manifest parsing. No real-profile install/update/provisioning, Cloud enrollment, macOS execution or final Windows release-binary execution is claimed. Disposable Windows lifecycle smoke used a snapshot and offline external CLI fixtures. Existing deferred findings and nonblocking CI deprecation warnings remain follow-ups.
+
+**Next:** users may update the binary and then synchronize components with the commands above. No release task remains pending; historical progress paragraphs describe earlier checkpoints.
