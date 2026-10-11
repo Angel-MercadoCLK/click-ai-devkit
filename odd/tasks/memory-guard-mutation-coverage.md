@@ -75,6 +75,7 @@ Strategy: ask-on-risk. Forecast: ~250-400 authored changed lines.
 - Route: live check inline by the parent (bounded test action); code delegated writer (writer trigger: 2+ non-trivial files).
 - Live evidence (parent): Claude Code 2.1.295, `claude -p` with `--setting-sources project --settings <file> --mcp-config <fake engram MCP> --strict-mcp-config`, model haiku, 2026-10-09.
   - Run 1 (logging hook, registered matcher `^(?:mcp__plugin_engram_engram__|mcp__engram__)(?:mem_capture_passive|mem_compare|mem_judge|mem_save|mem_save_prompt|mem_session_end|mem_session_summary|mem_update)$`): hook fired for `mcp__engram__mem_update` and `mcp__engram__mem_save`, did NOT fire for `mcp__engram__mem_search`; all three tool calls executed.
+  <!-- click:allow-secret synthetic sequential-placeholder PII used only for isolated guard verification; not real user data. -->
   - Run 2 (hook = real `click memory-guard` built from this branch, isolated CLICK_CLAUDE_HOME): `mem_update` with "CUIT 20-12345678-3 del asegurado" was blocked by PreToolUse ("blocked: detected pii") and never reached the MCP server; `mem_save` with "Store architecture decisions only" was allowed; audit log recorded deny(pii)/allow with content_sha256 only.
   - Not exercised live: the `mcp__plugin_engram_engram__` prefix (same regex alternation).
 - R4 decision: the regex matcher is proven to fire in current Claude Code, so no legacy fallback entry is added; the doctor probe below is the ongoing safety net.

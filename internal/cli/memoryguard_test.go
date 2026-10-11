@@ -112,6 +112,7 @@ func TestMemoryGuardCommand_PanicFailsClosedWithExitCode2(t *testing.T) {
 }
 
 // blockedContent trips the guard's pii/cuit-cuil rule wherever it appears in a payload.
+// click:allow-secret synthetic sequential-placeholder CUIT fixture for guard tests; not real PII.
 const blockedContent = "CUIT 20-12345678-3 del asegurado"
 
 func TestEvaluateMemoryGuard_DeniesEveryPersistingEngramToolInBothNameForms(t *testing.T) {
@@ -195,6 +196,7 @@ func TestEvaluateMemoryGuard_AllowsReadOnlyAndUnrelatedToolsWithoutScanning(t *t
 func TestMemoryGuardCommand_DeniesMemUpdateAndStandaloneForms(t *testing.T) {
 	for _, toolName := range []string{"mcp__plugin_engram_engram__mem_update", "mcp__engram__mem_save", "mcp__engram__mem_update"} {
 		t.Run(toolName, func(t *testing.T) {
+			// click:allow-secret synthetic sequential-placeholder CUIT input for the memory-guard unit test; not user data.
 			stdin := `{"session_id":"sess-3","cwd":"/repo","hook_event_name":"PreToolUse","tool_name":"` + toolName + `","tool_input":{"id":1,"content":"CUIT 20-12345678-3 del asegurado"}}`
 			stdout, stderr, err := execRootWithIO(t, t.TempDir(), stdin, "memory-guard")
 			if err != nil {

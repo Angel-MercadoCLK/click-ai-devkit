@@ -96,6 +96,7 @@ test('beforeToolCall: a persisting tool other than mem_save is scanned and block
   const proc = fakeChildProcess();
   let spawned = 0;
   const resultPromise = hooks.beforeToolCall(
+    // click:allow-secret synthetic sequential-placeholder input for adapter unit test; not user data.
     { tool_name: 'mcp__engram__mem_update', tool_input: { id: 1, content: 'CUIT 20-12345678-3' } },
     { spawnFn: () => { spawned += 1; return proc; } }
   );
@@ -110,6 +111,7 @@ test('beforeToolCall: a persisting tool other than mem_save is scanned and block
 test('beforeToolCall: a read-only Engram tool is allowed WITHOUT spawning', async () => {
   let spawned = 0;
   const result = await hooks.beforeToolCall(
+    // click:allow-secret synthetic sequential-placeholder query for adapter unit test; not user data.
     { tool_name: 'mcp__engram__mem_search', tool_input: { query: 'CUIT 20-12345678-3' } },
     { spawnFn: () => { spawned += 1; return fakeChildProcess(); } }
   );
