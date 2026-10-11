@@ -2,7 +2,7 @@
 
 ## Objective and status
 
-Make Click a Click Seguros layer on pinned gentle-ai v4.0.0, not a fork. Upstream owns ODD/RDD, permissions, runtime adapters, Engram lifecycle and model selection; Click owns business/memory guidance, its guard, installer and Engram Cloud enrollment. T01–T11a/b implementation is complete locally. **Current work: T11c publication-safety qualification, draft integration PR, and disposable Windows Actions result.** No Windows execution or remote delivery is yet claimed.
+Make Click a Click Seguros layer on pinned gentle-ai v4.0.0, not a fork. Upstream owns ODD/RDD, permissions, runtime adapters, Engram lifecycle and model selection; Click owns business/memory guidance, its guard, installer and Engram Cloud enrollment. T01–T11a/b implementation is complete locally. **Current work: T11c publication-safety qualification, draft integration PR, and disposable Windows Actions result.** A hosted Windows CI run was observed but failed three install-then-doctor CLI tests; the Windows smoke was skipped, and no successful Windows qualification is claimed.
 
 Detailed pre-condensation history is immutable in commit `363f18c` at this path; earlier narrative also exists in `55c523b`. These are history locators, not substitutes for current decisions, proof boundaries, risks or next steps retained here.
 
@@ -135,7 +135,23 @@ The five `click scan-diff` findings were verified as synthetic sequential-placeh
 - [x] Functional checks: `go test ./internal/cli -run 'TestMemoryGuard' -count=1` passed; `node --test internal/installer/assets/openclaw/click-memory-guard/plugins/hooks.test.js` passed; `go test ./internal/cli -run 'TestFilterSuppressed|TestScanDiff' -count=1` passed; `git diff --check` passed; `go test ./... -count=1` passed.
 - [ ] Parent pushes the authorized branch and opens the accepted-size-exception draft integration PR; inspect Actions result on GitHub-hosted `windows-latest` and retain the exact Windows smoke outcome. Draft PR/Actions are not merge or release authorization.
 
-No draft PR or Windows Actions result is claimed yet. T11 and overall status remain partial until this checklist and actual disposable Windows execution are complete.
+Publication evidence: commit `bdd9bf2` contains the five synthetic-fixture annotations; the committed outgoing scan passed (12,364 added lines inspected). Native assessment against `c68d733`: medium, 34 changed lines, `under_budget`; this remains the pending review boundary, not a new approval. Authorized branch push succeeded and draft integration PR [#71](https://github.com/Angel-MercadoCLK/click-ai-devkit/pull/71) targets `main`, with the explicit size exception recorded. No merge or release occurred. First Actions run [38102208626](https://github.com/Angel-MercadoCLK/click-ai-devkit/actions/runs/38102208626) passed Ubuntu but failed Windows tests before the package smoke; details follow. T11 remains partial until actual disposable Windows smoke passes.
+
+### T11c-ACL — [ ] preserve Windows ACLs in isolated CLI test fixtures
+
+Observed hosted Windows run `38102208626`, job `114360284776`, head `bdd9bf2` (Windows Server 2025, Go 1.25.0): build/vet and other packages passed, but `TestDoctorCommand_AfterInstall_Succeeds`, `TestUninstallCommand_ReversesInstall`, and `TestDoctorCommand_IgnoresMalformedRetiredModelMetadata` failed because Doctor found the Engram Cloud settings file lacked valid owner-only protection. Windows smoke was skipped after the CLI package failure. Do not weaken production ACL enforcement or Doctor health semantics.
+
+Source mapping identified a test-harness root cause: `replaceFixtureTree` copies isolated home files using ordinary `os.WriteFile`; `isolateStandardTargetHomes` and `syncStandardTargetFixtures` copy the home tree back to fixture roots after each command. This preserves bytes/POSIX mode but not Windows DACLs, so the next CLI invocation rehydrates settings.json without the protected DACL that the installer correctly applied. The malformed-model test's `models.json` write is incidental. This diagnosis is source-backed; a successful Windows rerun is still required to confirm the correction.
+
+**Authorized correction:** for regular files only, inspect `installer.OwnerOnly(source)` before copy; propagate inspection errors; after recreating destination bytes/mode, call `installer.Apply(destination)` only when the source was owner-only, propagating errors. This preserves deliberately insecure fixture state and leaves directory/symlink/unsupported-entry semantics unchanged. Do not touch product ACL or Doctor code.
+
+**Regression/checklist:**
+- [ ] RED/GREEN regression `TestReplaceFixtureTree_PreservesOwnerOnlyState`: secured source (created with `installer.Apply`) round-trips as owner-only; deliberately insecure source remains insecure on each platform. Do not claim the focused test is a Windows RED if it passes on Linux; the observed Windows CI failures above are the pre-fix RED evidence.
+- [ ] Focused CLI install/doctor regressions: `go test ./internal/cli -run 'TestReplaceFixtureTree|TestDoctorCommand_AfterInstall_Succeeds|TestUninstallCommand_ReversesInstall|TestDoctorCommand_IgnoresMalformedRetiredModelMetadata' -count=1`.
+- [ ] Full checks: `go test ./... -count=1`, `go build ./...`, `go vet ./...`, `git diff --check`; cross-compile CLI tests via `GOOS=windows GOARCH=amd64 go test -c` to a temporary output path (compilation only).
+- [ ] Parent reruns authorized disposable hosted Windows Actions after correction and records actual result; no local PowerShell or ordinary-profile execution.
+
+Local correction evidence: Luna high implemented the fixture-only copy change and secure/insecure regression; parent structural readback and independent Sol verification found no concrete blocker. The focused CLI tests, full Go suite, build, vet and diff check passed; parent full suite required the known sandbox Git/socket escalation and then passed. Windows CLI tests cross-compiled successfully (compilation only). The new focused test passes on Linux; the pre-fix hosted Windows failures above are the actual RED evidence, not an invented local RED. Product ACL and Doctor code are unchanged. The writer's final handoff stalled and was interrupted with edits preserved; fresh independent verification supplied the check results. Actual Windows rerun remains pending. Rollback unit: the fixture helper and its regression in `internal/cli/commands_test.go`.
 
 ## Historical tracker source
 

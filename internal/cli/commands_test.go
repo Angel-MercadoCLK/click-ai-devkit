@@ -275,6 +275,10 @@ func replaceFixtureTree(source, destination string) error {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("unsupported test fixture entry %q", path)
 		}
+		ownerOnly, err := installer.OwnerOnly(path)
+		if err != nil {
+			return fmt.Errorf("inspect test fixture security %q: %w", path, err)
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -282,8 +286,63 @@ func replaceFixtureTree(source, destination string) error {
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 			return err
 		}
-		return os.WriteFile(out, data, info.Mode().Perm())
+		if err := os.WriteFile(out, data, info.Mode().Perm()); err != nil {
+			return err
+		}
+		if ownerOnly {
+			if err := installer.Apply(out); err != nil {
+				return fmt.Errorf("preserve owner-only test fixture security %q: %w", out, err)
+			}
+		}
+		return nil
 	})
+}
+
+func TestReplaceFixtureTree_PreservesOwnerOnlyState(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ownerOnly bool
+	}{
+		{name: "secured source remains secured", ownerOnly: true},
+		{name: "insecure source remains insecure", ownerOnly: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := t.TempDir()
+			sourceFile := filepath.Join(source, "settings.json")
+			mode := os.FileMode(0o644)
+			if tc.ownerOnly {
+				mode = 0o600
+			}
+			if err := os.WriteFile(sourceFile, []byte(`{"fixture":true}`), mode); err != nil {
+				t.Fatalf("write source fixture: %v", err)
+			}
+			if tc.ownerOnly {
+				if err := installer.Apply(sourceFile); err != nil {
+					t.Fatalf("secure source fixture: %v", err)
+				}
+			}
+			gotSourceOwnerOnly, err := installer.OwnerOnly(sourceFile)
+			if err != nil {
+				t.Fatalf("inspect source fixture security: %v", err)
+			}
+			if gotSourceOwnerOnly != tc.ownerOnly {
+				t.Fatalf("source OwnerOnly() = %v, want %v", gotSourceOwnerOnly, tc.ownerOnly)
+			}
+
+			destination := filepath.Join(t.TempDir(), "home")
+			if err := replaceFixtureTree(source, destination); err != nil {
+				t.Fatalf("replace fixture tree: %v", err)
+			}
+			destinationFile := filepath.Join(destination, "settings.json")
+			gotDestinationOwnerOnly, err := installer.OwnerOnly(destinationFile)
+			if err != nil {
+				t.Fatalf("inspect copied fixture security: %v", err)
+			}
+			if gotDestinationOwnerOnly != tc.ownerOnly {
+				t.Fatalf("copied fixture OwnerOnly() = %v, want %v", gotDestinationOwnerOnly, tc.ownerOnly)
+			}
+		})
+	}
 }
 
 func execRoot(t *testing.T, claudeHome string, args ...string) (string, error) {
