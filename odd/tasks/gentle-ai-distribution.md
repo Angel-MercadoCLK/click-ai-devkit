@@ -2,7 +2,7 @@
 
 ## Objective and status
 
-Make Click a Click Seguros layer on pinned gentle-ai v4.0.0, not a fork. Upstream owns ODD/RDD, permissions, runtime adapters, Engram lifecycle and model selection; Click owns business/memory guidance, its guard, installer and Engram Cloud enrollment. T01–T11a/b implementation is complete locally. **Current work: T11c publication-safety qualification, draft integration PR, and disposable Windows Actions result.** A hosted Windows CI run was observed but failed three install-then-doctor CLI tests; the Windows smoke was skipped, and no successful Windows qualification is claimed.
+Make Click a Click Seguros layer on pinned gentle-ai v4.0.0, not a fork. Upstream owns ODD/RDD, permissions, runtime adapters, Engram lifecycle and model selection; Click owns business/memory guidance, its guard, installer and Engram Cloud enrollment. **T01–T11 implementation and disposable Windows package qualification are complete.** Draft integration PR #71 remains open; merge and release are not authorized. The final qualification evidence below governs current status; pending/failure statements in the chronological sections describe earlier attempts.
 
 Detailed pre-condensation history is immutable in commit `363f18c` at this path; earlier narrative also exists in `55c523b`. These are history locators, not substitutes for current decisions, proof boundaries, risks or next steps retained here.
 
@@ -34,8 +34,8 @@ Detailed pre-condensation history is immutable in commit `363f18c` at this path;
 | T08 | done T08a `0f6af6e` + correction `6d227c5`; T08b `68d1357` | Durable safe Click SDD plugin retirement and scoped teardown. |
 | T09 | done T09a `d69df87`; T09b1 `a1dcd96`; T09b2 S1–S4 `3c2e9ec`,`fd6edae`,`a3d548d`,`4573142` | Hash-qualified legacy OpenClaw cleanup; generic agent-builder retained; retired Click SDD source removed. |
 | T10 | done T10a `f4b16a9`; T10b `4263d91`; T10c `25907b0` | Managed pin doctor, ownership-aware rollback, partial-run qualification. |
-| T11a–b | T11a done `de3de2b`; T11b implementation `a2c63e8`, execution pending | Current docs/metadata refreshed; disposable Windows smoke implemented/reviewed, actual Windows result still required. |
-| T11c | active | Resolve five verified synthetic scan findings with narrow documented suppressions; qualify draft integration PR and retain Windows Actions result. |
+| T11a–b | done; final source `40c5161` | Docs refreshed; actual disposable Windows package smoke passed. |
+| T11c | done; PR #71 draft | Publication scan passed; fixture corrections verified by hosted Windows CI. |
 
 Acceptance: pinned upstream plus Click layer, no Click click-sdd artifacts, safe migration, guard covering persistent Engram tools, honest pin/health diagnostics, and rollback of proven Click-owned content only. T08 scoped backup and T10 rollback are verified with mocks; live upstream effects are not claimed.
 
@@ -88,7 +88,7 @@ Original source `2eb9b81aa70346df9874bd6555119bcdee0af065` based on `5db94c4`, 3
 - Sandbox `/tmp/.git` recovery false-root failures: `TestResolveGitExecutionContext_NonRepositorySelectorCreatesRecoveryRepoAndCleansItOnFailure`, `TestExecCommandRunner_CommandDirInitializationFailureIsClear`, `TestExecCommandRunner_NonRepositoryUsesInitializedIsolatedRepo`; passed elevated. `internal/selfupdate` loopback `TestPrepareRelease_OrdersVerificationBeforeExtraction` may also need escalation. Older-base ambient `TestDispatch_SubcommandRuntimeFailure_PrintsErrorExactlyOnceNoUsageDump` was repaired by fixture isolation in T04 S3. Do not mask failures or claim an unrun/passing environment.
 - At T11b implementation closure, no live upstream install/update/enrollment, real Cloud token use, real Windows package smoke, or remote operation had been verified. T08 marketplace option lifecycle has mocked validation only. Historical T04 warning `R2-fixture-copy-contract` at `internal/cli/commands_test.go:88-89` was preserved for exact-byte reapplication; changing it requires separate scope. Current remote authorization is limited to the explicitly listed GitHub operations above; no merge/release authority exists.
 
-## T11 plan — active
+## T11 execution history — closed by final qualification
 
 T11a/b were completed as bounded local work units. No SDD, live home, real credential, or network provisioning is authorized. T11 remains incomplete until the publication checklist below and actual Windows smoke execution are observed.
 
@@ -102,7 +102,7 @@ T11a closure: source `de3de2b`, 19 paths, 333 additions/328 deletions (661 autho
 
 Native medium slice `16fa864..de3de2b` also closes pending T10c; 21 paths/1054 native changed lines, due `slice_budget_reached`. Lineage `review-59e3910d9b31acea`, consolidated findings empty, exact acknowledgement consumed `sha256:310d3249813015f5709a60e15f08b07da1a99681db449dd83be70117a879b1ee`, target `sha256:8d24220c8ff1b960b168d96d086cfcc40d1fa7f2c6c383c31d3e19fb044ccbd3`, authority burned. No correction or trailing STATUS. `16fa864` is no longer pending; reviewed boundary is `de3de2b`. No Windows/live/remote claim. Passive tracker closure may advance the next base without losing any pending executable slice.
 
-### T11b — [ ] hermetic Windows package-smoke qualification
+### T11b — [x] hermetic Windows package-smoke qualification
 
 Audit the entire `scripts/windows-package-smoke.ps1` lifecycle and fixtures, not just its known undefined variable/Go stub. The existing script expects Click to remove shared upstream MCP registrations on uninstall, contradicting current ownership; correct that expectation and test the intended preservation. Also verify the smoke uses only isolated `HOME`/`USERPROFILE`/`XDG_CONFIG_HOME` and standard target directories; fake upstream installer must faithfully model selected agents/components, binary path and v4.0.0 output; cover install/update/failure/uninstall, shared Engram/Context7 retention, Click-only cleanup, rollback and cleanup-on-exit. Never touch a real profile. `pwsh`/`powershell` are absent locally, so tests/static checks can prepare this slice but **actual Windows execution remains pending** on a Windows host. Advisory forecast: roughly 250–500 changed lines before actual scoping and test inventory.
 
@@ -121,9 +121,9 @@ Audit the entire `scripts/windows-package-smoke.ps1` lifecycle and fixtures, not
 - [x] Source `a2c63e8`, six paths, 907 additions/258 deletions (1165 authored lines). DisposableRunner acknowledgement, actual Windows and GitHub-hosted markers checked before distribution access; local/self-hosted use rejected. Both existing Windows CI/release calls supply the switch. Fake Go validates exact pin/environment and stages its own executable; temporary standard homes/state and fixture-only PATH prevent real upstream/network calls. No product bypass. Actual HKCU effects are confined by the disposable hosted account, not spoofable environment markers.
 - Luna high implementation; parent readback/spot tests and independent Sol audit. Independent caught bare `go` fixture filename invalid for Windows execution; fixed to `.exe` on Windows. Final six focused manifest/fixture/workflow/doc tests, full `go test ./... -count=1`, build/vet/diff and Windows PE cross-compilation passed; full suite used approved elevation after known sandbox temp-Git/loopback failures. Guard/workflow/doc regression RED then GREEN observed; no actual PowerShell runtime RED/PASS claimed. No remaining concrete blocker in bounded independent audit.
 - Native high `3955bce..a2c63e8`, due `high_risk`/shell source, four concurrent lenses all findings empty. Lineage `review-804deba88cf0e851`; target `sha256:aae17ab78643cfc191f6063a10cf8a24197e7c3c14bd9d78c38c8bda8192ec2e`; exact acknowledgement consumed `sha256:a58bfdfab8d40cfb25c12ec444803fbbf8b5ba9ec013173c34d40df613ed1585`, authority burned. No native correction or trailing STATUS. Reviewed source boundary `a2c63e8`; earlier `c152890` base replaced by passive preparation `3955bce` before freeze.
-- [ ] Actual disposable Windows workflow run and retained result. Neither `pwsh` nor `powershell` is available locally. Static checks, compiled fixtures, cross-compilation and native patch review do not complete Windows acceptance. T11 stays partial until that observed run. At the T11b local-closure snapshot, no remote operation/push/PR/release had occurred. Rollback unit is the six source/test/workflow/doc paths together; do not remove safety switch in isolation.
+- [x] Actual disposable Windows workflow run and retained result. Neither `pwsh` nor `powershell` is available locally. Static checks, compiled fixtures, cross-compilation and native patch review do not complete Windows acceptance. T11 stays partial until that observed run. At the T11b local-closure snapshot, no remote operation/push/PR/release had occurred. Rollback unit is the six source/test/workflow/doc paths together; do not remove safety switch in isolation.
 
-### T11c — [ ] publication-safety and draft integration qualification
+### T11c — [x] publication-safety and draft integration qualification
 
 Current authorization (2026-10-10): use only SSH identity `github-trabajo` and `gh` identity `Angel-MercadoCLK` for `Angel-MercadoCLK/click-ai-devkit`; push only necessary branches, create draft test PRs, and inspect Actions results. **Do not merge or release.** The user accepted `size:exception` for one 19,081-authored-line draft integration tracker PR covering the original `main` `e845227`..`c68d733` range. This is a size exception only.
 
@@ -131,14 +131,14 @@ The five `click scan-diff` findings were verified as synthetic sequential-placeh
 
 **Checklist:**
 - [x] Added explicit synthetic-fixture-only `click:allow-secret` reasons immediately above all five flagged additions in `internal/cli/memoryguard_test.go`, `internal/installer/assets/openclaw/click-memory-guard/plugins/hooks.test.js`, and `odd/tasks/memory-guard-mutation-coverage.md`. Test data, behavior, scanner rules, and `.engram/config.json` are unchanged.
-- [ ] Scanner proof: `go run ./cmd/click scan-diff` must pass against the outgoing committed branch diff. The attempted command still reports the original five findings because `scan-diff` reads `main...HEAD` and excludes uncommitted worktree edits. Scanner unit tests pass; rerun the exact gate after the annotations are committed and before push. Previously observed RED was exit 1 with exactly five PII findings.
+- [x] Scanner proof: `go run ./cmd/click scan-diff` must pass against the outgoing committed branch diff. The attempted command still reports the original five findings because `scan-diff` reads `main...HEAD` and excludes uncommitted worktree edits. Scanner unit tests pass; rerun the exact gate after the annotations are committed and before push. Previously observed RED was exit 1 with exactly five PII findings.
 - [x] Functional checks: `go test ./internal/cli -run 'TestMemoryGuard' -count=1` passed; `node --test internal/installer/assets/openclaw/click-memory-guard/plugins/hooks.test.js` passed; `go test ./internal/cli -run 'TestFilterSuppressed|TestScanDiff' -count=1` passed; `git diff --check` passed; `go test ./... -count=1` passed.
-- [ ] Parent pushes the authorized branch and opens the accepted-size-exception draft integration PR; inspect Actions result on GitHub-hosted `windows-latest` and retain the exact Windows smoke outcome. Draft PR/Actions are not merge or release authorization.
+- [x] Parent pushes the authorized branch and opens the accepted-size-exception draft integration PR; inspect Actions result on GitHub-hosted `windows-latest` and retain the exact Windows smoke outcome. Draft PR/Actions are not merge or release authorization.
 
 <!-- click:allow-secret public GitHub Actions run/job identifiers, not personal data or credentials. -->
 Publication evidence: commit `bdd9bf2` contains the five synthetic-fixture annotations; the committed outgoing scan passed (12,364 added lines inspected). Native assessment against `c68d733`: medium, 34 changed lines, `under_budget`; this remains the pending review boundary, not a new approval. Authorized branch push succeeded and draft integration PR [#71](https://github.com/Angel-MercadoCLK/click-ai-devkit/pull/71) targets `main`, with the explicit size exception recorded. No merge or release occurred. First Actions run [38102208626](https://github.com/Angel-MercadoCLK/click-ai-devkit/actions/runs/38102208626) passed Ubuntu but failed Windows tests before the package smoke; details follow. T11 remains partial until actual disposable Windows smoke passes.
 
-### T11c-ACL — [ ] preserve Windows ACLs in isolated CLI test fixtures
+### T11c-ACL — [x] preserve Windows ACLs in isolated CLI test fixtures
 
 <!-- click:allow-secret public GitHub Actions run/job identifiers, not personal data or credentials. -->
 Observed hosted Windows run `38102208626`, job `114360284776`, head `bdd9bf2` (Windows Server 2025, Go 1.25.0): build/vet and other packages passed, but `TestDoctorCommand_AfterInstall_Succeeds`, `TestUninstallCommand_ReversesInstall`, and `TestDoctorCommand_IgnoresMalformedRetiredModelMetadata` failed because Doctor found the Engram Cloud settings file lacked valid owner-only protection. Windows smoke was skipped after the CLI package failure. Do not weaken production ACL enforcement or Doctor health semantics.
@@ -148,14 +148,14 @@ Source mapping identified a test-harness root cause: `replaceFixtureTree` copies
 **Authorized correction:** for regular files only, inspect `installer.OwnerOnly(source)` before copy; propagate inspection errors; after recreating destination bytes/mode, call `installer.Apply(destination)` only when the source was owner-only, propagating errors. This preserves deliberately insecure fixture state and leaves directory/symlink/unsupported-entry semantics unchanged. Do not touch product ACL or Doctor code.
 
 **Regression/checklist:**
-- [ ] RED/GREEN regression `TestReplaceFixtureTree_PreservesOwnerOnlyState`: secured source (created with `installer.Apply`) round-trips as owner-only; deliberately insecure source remains insecure on each platform. Do not claim the focused test is a Windows RED if it passes on Linux; the observed Windows CI failures above are the pre-fix RED evidence.
-- [ ] Focused CLI install/doctor regressions: `go test ./internal/cli -run 'TestReplaceFixtureTree|TestDoctorCommand_AfterInstall_Succeeds|TestUninstallCommand_ReversesInstall|TestDoctorCommand_IgnoresMalformedRetiredModelMetadata' -count=1`.
-- [ ] Full checks: `go test ./... -count=1`, `go build ./...`, `go vet ./...`, `git diff --check`; cross-compile CLI tests via `GOOS=windows GOARCH=amd64 go test -c` to a temporary output path (compilation only).
-- [ ] Parent reruns authorized disposable hosted Windows Actions after correction and records actual result; no local PowerShell or ordinary-profile execution.
+- [x] RED/GREEN regression `TestReplaceFixtureTree_PreservesOwnerOnlyState`: secured source (created with `installer.Apply`) round-trips as owner-only; deliberately insecure source remains insecure on each platform. Do not claim the focused test is a Windows RED if it passes on Linux; the observed Windows CI failures above are the pre-fix RED evidence.
+- [x] Focused CLI install/doctor regressions: `go test ./internal/cli -run 'TestReplaceFixtureTree|TestDoctorCommand_AfterInstall_Succeeds|TestUninstallCommand_ReversesInstall|TestDoctorCommand_IgnoresMalformedRetiredModelMetadata' -count=1`.
+- [x] Full checks: `go test ./... -count=1`, `go build ./...`, `go vet ./...`, `git diff --check`; cross-compile CLI tests via `GOOS=windows GOARCH=amd64 go test -c` to a temporary output path (compilation only).
+- [x] Parent reruns authorized disposable hosted Windows Actions after correction and records actual result; no local PowerShell or ordinary-profile execution.
 
 Local correction evidence: Luna high implemented the fixture-only copy change and secure/insecure regression; parent structural readback and independent Sol verification found no concrete blocker. The focused CLI tests, full Go suite, build, vet and diff check passed; parent full suite required the known sandbox Git/socket escalation and then passed. Windows CLI tests cross-compiled successfully (compilation only). The new focused test passes on Linux; the pre-fix hosted Windows failures above are the actual RED evidence, not an invented local RED. Product ACL and Doctor code are unchanged. The writer's final handoff stalled and was interrupted with edits preserved; fresh independent verification supplied the check results. Actual Windows rerun remains pending. Rollback unit: the fixture helper and its regression in `internal/cli/commands_test.go`.
 
-### T11c-MCP — [ ] align the Windows smoke dependency fixture
+### T11c-MCP — [x] align the Windows smoke dependency fixture
 
 <!-- click:allow-secret public GitHub Actions run/job identifiers, not personal data or credentials. -->
 Second hosted run [38113932027](https://github.com/Angel-MercadoCLK/click-ai-devkit/actions/runs/38113932027), head `c381b27`, confirms the fixture ACL correction: Ubuntu and Windows build/vet/full Go tests pass; the Windows package build also passes. Actual PowerShell smoke reaches update, then fails at line 197 because the fake upstream wrote a legacy HTTP Claude Context7 entry that the qualified managed-shape preflight correctly rejects. Do not relax production ownership validation.
@@ -164,12 +164,28 @@ Bounded delegated Luna-high correction: add a failing regression for the smoke f
 
 Local T11c-MCP evidence: Luna high added `TestMergeClaudeMCPProducesPinnedPreflightCompatibleConfig`, observed rejection of the old HTTP shape before correcting the fixture, then GREEN. The regression invokes production preflight read-only and checks unrelated MCP/root content preservation. Focused fixture/manifest tests, full Go tests, build, vet, diff check and fixture Windows cross-compilation passed; parent readback and focused rerun passed. Only fake dependency configuration changes; no production ownership rule changed. Hosted smoke rerun pending.
 
-### T11c-PS — [ ] diagnose nullable PowerShell file reads
+### T11c-PS — [x] diagnose nullable PowerShell file reads
 
 <!-- click:allow-secret public GitHub Actions run/job identifiers, not personal data or credentials. -->
 Third hosted run [38114600931](https://github.com/Angel-MercadoCLK/click-ai-devkit/actions/runs/38114600931), head `f1d4792`, passed both OS test suites and package build. Smoke failed with a null-valued method call; the runner hid the internal script line. The earlier Context7 conflict no longer appeared. Source shows an unsafe direct `(Get-Content -Raw ...).Contains(...)` after uninstall, where a legitimately empty retained guidance file is possible; this is a hypothesis until rerun diagnostics localize it.
 
 Bounded delegated correction: make the teardown text read null-safe without accepting remaining managed content; add explicit contextual failure for empty required assertion inputs and a script error location/stack diagnostic. Preserve all lifecycle assertions, safety guard, finally cleanup and nonzero failure. Add focused contract regressions before changing the script, then full checks and native risk assessment. Parent owns memory, commit and remote; no real-profile execution, merge or release.
+
+## Final qualification — complete, delivery still draft
+
+<!-- click:allow-secret public GitHub Actions run/job identifiers, not personal data or credentials. -->
+[CI run 38114972398](https://github.com/Angel-MercadoCLK/click-ai-devkit/actions/runs/38114972398) completed successfully at source `40c516128ad41fb13db73dd95ee7479014e25766`: Ubuntu build/vet/tests passed; Windows build/vet/tests, GoReleaser snapshot package, and `./scripts/windows-package-smoke.ps1 -DistDir dist -ExpectedVersion 'click version' -DisposableRunner` all passed. Windows job `114397956939` completed in 2m12s. This is actual execution on a disposable hosted Windows VM, not cross-compilation. External upstream CLIs remain executable offline fixtures; this does not claim live upstream installation/enrollment or real Cloud-token use.
+
+- `bdd9bf2`: five line-local synthetic-data dispositions, with scanner proof after commit.
+- `f3fd98a` / `c381b27`: preserve secure/insecure ACL state in test-home copies and identify public CI IDs; confirmed by Windows full tests.
+- `f1d4792`: fake Claude Context7 registration aligned with pinned upstream; focused regression RED→GREEN, foreign content retained.
+- `40c5161`: empty teardown guidance read safely; required assertions stay strict; PowerShell errors retain source location and rethrow/cleanup. Focused contract RED→GREEN, then full hosted smoke success.
+- Luna high wrote the corrections; parent reviewed every diff and reran focused checks. ACL change additionally had fresh independent Sol verification. Full local checks passed, using approved escalation only for known sandbox failures. No product ACL/preflight policy was weakened.
+- Native assessment at `40c5161` against `c68d733`: medium, 232 changed lines, `review_due=false`, `under_budget`. Preserve `c68d733` as the pending review boundary; this is not a new native approval or a reentry into any consumed lineage. A passive closure commit does not erase that pending range.
+- PR [#71](https://github.com/Angel-MercadoCLK/click-ai-devkit/pull/71) is the authorized oversized draft integration tracker. Branch pushes succeeded through the work identity. No main mutation, merge, tag or release occurred. Historical nonblocking findings remain deferred, not silently fixed.
+- CI warnings are nonblocking: Node20 action deprecation, unpinned GoReleaser latest, and announced hosted-image migration. Keep them as follow-ups rather than widening this qualification task.
+
+Next step: separately decide integration review/merge/release. Do not treat completed T11 or CI success as delivery authority.
 
 ## Historical tracker source
 
