@@ -36,7 +36,7 @@ The embedded manifest currently carries `click_version`, but the running CLI ver
 - [ ] Run focused regression tests, then `go test ./... -count=1`, `go build ./...`, `go vet ./...`, and `git diff --check`. Obtain green hosted Windows+Ubuntu PR CI before R02. No live profile execution.
 - **Route:** delegated direct writer; multi-file behavior/test/docs change. Keep implementation, regression tests, and user-facing release documentation in one work unit.
 - **Rollback boundary:** the release metadata contract, tag workflow smoke expectation, associated tests, and corresponding README wording revert together; do not roll back the already-published release.
-- **Commit:** pending; record exact commit and check results here after observed completion.
+- **Commit:** `db07cc5` (247 authored lines). Luna high implementation, parent readback/focused rerun and independent Sol full tests/build/vet/diff checks passed. Native high review of `c68d733..db07cc5` completed with four empty finding sets; exact acknowledgement burned lineage `review-86e8a3c6afdb7ee4`, revision `sha256:f60f7116d7a7b3217e14b5b2d232cb33614940d139b850483bd7735fe5bfac6c`. New reviewed source boundary: `db07cc5`. Hosted exact-head CI remains pending.
 
 ### R02 — Merge the qualified integration PR
 
