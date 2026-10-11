@@ -2,7 +2,7 @@
 
 ## Objective and status
 
-Ship the PR #71 Gentle AI distribution and ownership integration to installed Click users as v0.8.0, with release metadata that never points to an asset before GoReleaser has published it. **R01–R03 are pending.** This task list is the recovery record for the release; it does not itself merge, tag, publish, or approve native review.
+Ship the PR #71 Gentle AI distribution and ownership integration to installed Click users as v0.8.0, with release metadata that never points to an asset before GoReleaser has published it. **R01 and R02 are complete; R03 publication is pending.** This task list is the recovery record for the release; it does not itself merge, tag, publish, or approve native review.
 
 ## Problem and rationale
 
@@ -33,16 +33,16 @@ The embedded manifest currently carries `click_version`, but the running CLI ver
 - [x] Update the release snapshot smoke to validate that the packaged CLI prints a version line (the CI contract), not to compare a snapshot version against the previous stable bucket version.
 - [x] Keep Scoop metadata independently meaningful and internally valid: version, archive URL, and SHA-256 must have the expected format and remain consistent with one another. Do not require source dependency pins to equal Scoop artifact metadata.
 - [x] Update README/release qualification assertions to document the independent sources: CLI version is tag-injected, the embedded manifest contains runtime pins, and Scoop metadata describes published assets.
-- [ ] Run focused regression tests, then `go test ./... -count=1`, `go build ./...`, `go vet ./...`, and `git diff --check`. Obtain green hosted Windows+Ubuntu PR CI before R02. No live profile execution.
+- [x] Run focused regression tests, then `go test ./... -count=1`, `go build ./...`, `go vet ./...`, and `git diff --check`. Obtain green hosted Windows+Ubuntu PR CI before R02. No live profile execution.
 - **Route:** delegated direct writer; multi-file behavior/test/docs change. Keep implementation, regression tests, and user-facing release documentation in one work unit.
 - **Rollback boundary:** the release metadata contract, tag workflow smoke expectation, associated tests, and corresponding README wording revert together; do not roll back the already-published release.
 - **Commit:** `db07cc5` (247 authored lines). Luna high implementation, parent readback/focused rerun and independent Sol full tests/build/vet/diff checks passed. Native high review of `c68d733..db07cc5` completed with four empty finding sets; exact acknowledgement burned lineage `review-86e8a3c6afdb7ee4`, revision `sha256:f60f7116d7a7b3217e14b5b2d232cb33614940d139b850483bd7735fe5bfac6c`. New reviewed source boundary: `db07cc5`. Hosted exact-head CI remains pending.
 
 ### R02 — Merge the qualified integration PR
 
-- [ ] Confirm PR #71 is the intended work-repository PR, its head contains the completed R01 commit, and all required Ubuntu and Windows checks are green on the exact head.
-- [ ] Merge PR #71 to `main` under the explicit authorization above; record the merge commit and resulting main HEAD. Preserve the existing backup branches.
-- [ ] Confirm main CI passes for the merged commit. Do not tag if the merge/head identity or required checks are uncertain or failing.
+- [x] Confirm PR #71 is the intended work-repository PR, its head contains the completed R01 commit, and all required Ubuntu and Windows checks are green on the exact head.
+- [x] Merge PR #71 to `main` under the explicit authorization above; record the merge commit and resulting main HEAD. Preserve the existing backup branches.
+- [x] Confirm main CI passes for the merged commit. Do not tag if the merge/head identity or required checks are uncertain or failing.
 - **Route:** parent-owned GitHub state and merge operation; no parallel writer. Evidence is the exact PR head, check run identities/results, merge commit, and main CI result.
 - **Rollback:** no source rollback is automatic; stop and report if merge state is ambiguous. Do not force-reset or rewrite remote history.
 
@@ -72,4 +72,12 @@ The embedded manifest currently carries `click_version`, but the running CLI ver
 - R02: pending; wait for R01 and exact green PR CI.
 - R03: pending; wait for R02 and the successful tag workflow.
 
-**Next:** parent mirrors this updated task document to Engram and reads both copies back, then owns the review/commit boundary and exact-candidate hosted CI gate.
+## Verified delivery evidence
+
+<!-- click:allow-secret public GitHub Actions run identifiers, not personal data or credentials. -->
+- R01 complete: source `db07cc5`, passive verification record `a41c3841b6a2acceb2728b14e8e348626c6b84cd`; exact-head CI [38119308006](https://github.com/Angel-MercadoCLK/click-ai-devkit/actions/runs/38119308006) passed Ubuntu and Windows, including the actual packaged Windows smoke. Earlier pending statements above are historical checkpoints.
+<!-- click:allow-secret public GitHub Actions run identifiers, not personal data or credentials. -->
+- R02 complete: PR #71 merged as `f64e002e08ecc34f64a210e556b477a392e8f4fe`; main CI [38120711388](https://github.com/Angel-MercadoCLK/click-ai-devkit/actions/runs/38120711388) passed. Merge tree is identical to the reviewed/tested PR head. No admin bypass, force push, branch deletion, or backup mutation.
+- R03 pending. Tag `v0.8.0` is absent locally and remotely before publication. The release tag must select the verified merge commit above, not later task-record commits.
+
+**Next:** publish the exact verified merge commit as v0.8.0 and verify the tag workflow, release assets and Scoop metadata.
