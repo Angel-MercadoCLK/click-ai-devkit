@@ -21,8 +21,8 @@ configuración compartida de Engram/Context7. `click doctor` ofrece diagnóstico
 - **Sistema operativo:** Click se distribuye para Windows mediante Scoop y publica artefactos de
   release para macOS/Linux. La provisión de gentle-ai v4.0.0 en Windows requiere Go **1.25.10 o
   posterior**: no hay binario Windows upstream para este pin y Click usa el módulo/tag fijados con
-  `go install`. La ejecución del smoke de paquete en Windows sigue pendiente; no se afirma aquí
-  una validación en Windows.
+  `go install`. El smoke del paquete se ejecutó correctamente en un runner desechable de Windows;
+  los CLIs externos se probaron con fixtures offline, sin aprovisionamiento upstream en vivo.
 - **[Scoop](https://scoop.sh/):** gestor de paquetes para Windows usado para instalar y actualizar
   `click`.
 - **Git:** imprescindible por dos motivos independientes:
@@ -225,7 +225,7 @@ una prueba que falla, luego la implementación mínima para que pase. Ver la dec
 
 ## Release metadata and current contracts
 
-Current release metadata lives in `bucket/click.json`, `internal/manifest/manifest.yaml`, and `click --version`. Use those three sources together when validating Scoop metadata, packaged binary version output, and release notes.
+Release data has independent sources: GoReleaser injects the CLI version from the release tag via `ldflags`; `internal/manifest/manifest.yaml` embeds runtime dependency pins; and `bucket/click.json` describes the currently published Scoop artifact. Validate Scoop version, archive URL, and SHA-256 against one another, and validate the packaged CLI version independently.
 
 Para actualizar el binario de `click` mediante Scoop, la actualización del bucket requiere Git. Si
 Scoop indica que la versión instalada ya es la última mientras existe una etiqueta más nueva,

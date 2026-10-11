@@ -23,9 +23,6 @@ func TestLoad_ParsesEmbeddedManifest(t *testing.T) {
 	if m.SchemaVersion != 1 {
 		t.Errorf("SchemaVersion = %d, want 1", m.SchemaVersion)
 	}
-	if m.ClickVersion == "" {
-		t.Error("ClickVersion is empty, want a placeholder value")
-	}
 	if m.Engram.Version == "" {
 		t.Error("Engram.Version is empty, want a placeholder value")
 	}
@@ -72,7 +69,7 @@ func TestManifest_EngramCloudBlock(t *testing.T) {
 		},
 		{
 			name:  "absent block yields zero value",
-			input: "schema_version: 1\nclick_version: \"0.0.0\"\n",
+			input: "schema_version: 1\n",
 			want:  EngramCloud{},
 		},
 	}

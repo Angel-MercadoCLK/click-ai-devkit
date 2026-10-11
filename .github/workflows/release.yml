@@ -36,9 +36,7 @@ jobs:
 
       - name: Smoke packaged Windows click.exe
         shell: pwsh
-        run: |
-          $version = (Get-Content -Raw "bucket/click.json" | ConvertFrom-Json).version
-          ./scripts/windows-package-smoke.ps1 -DistDir dist -ExpectedVersion $version -DisposableRunner
+        run: ./scripts/windows-package-smoke.ps1 -DistDir dist -ExpectedVersion 'click version' -DisposableRunner
 
   goreleaser:
     runs-on: ubuntu-latest
@@ -59,13 +57,11 @@ jobs:
       - name: Prepare release manifest values
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           ENGRAM_VERSION_VALUE="$(tr -d '[:space:]' < ENGRAM_VERSION)"
-          export VERSION ENGRAM_VERSION_VALUE
+          export ENGRAM_VERSION_VALUE
           python - <<'PY'
           from pathlib import Path
           import os
-          version = os.environ["VERSION"]
           engram = os.environ["ENGRAM_VERSION_VALUE"]
           path = Path("internal/manifest/manifest.yaml")
           lines = path.read_text().splitlines()
@@ -73,9 +69,6 @@ jobs:
           in_engram = False
           for line in lines:
               stripped = line.strip()
-              if stripped.startswith("click_version:"):
-                  out.append(f'click_version: "{version}"')
-                  continue
               if stripped == "engram:":
                   in_engram = True
                   out.append(line)
@@ -94,9 +87,9 @@ jobs:
       # brews publishing is skip_upload=true (deferred fast-follow, D17) so no HOMEBREW_TAP_TOKEN yet.
       #
       # --skip=validate: the "Prepare release manifest values" step above INTENTIONALLY patches
-      # internal/manifest/manifest.yaml (click_version from the tag, engram version from
-      # ENGRAM_VERSION) so the built binary embeds the right values. That patch leaves the tree
-      # "dirty", and a plain `goreleaser release` ABORTS on a dirty tree (goreleaser.com/errors/dirty).
+      # internal/manifest/manifest.yaml (engram version from ENGRAM_VERSION) so the built binary
+      # embeds the right runtime pin. That patch leaves the tree "dirty", and a plain
+      # `goreleaser release` ABORTS on a dirty tree (goreleaser.com/errors/dirty).
       # This is exactly what broke the first v0.2.0 attempt. Skipping `validate` (the git-clean +
       # on-tag checks) is safe here because this job ONLY runs on a `v*` tag push, checks out that
       # exact tag with full history, and the sole modification is our own deterministic manifest

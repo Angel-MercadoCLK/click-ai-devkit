@@ -33,9 +33,9 @@ check.
 The release manifest pins gentle-ai v4.0.0. Install/update scope it to selected runtimes with the
 `full-gentleman` preset, components `engram,skills,context7,permissions,persona`, and persona
 `neutral` (D49). The managed binary uses checksum-qualified official archives on Linux/macOS. The
-v4.0.0 Windows path uses the exact module/tag with `go install`, requiring Go >=1.25.10. This
-repository has not yet run the package smoke on Windows; mock or cross-compile results are not a
-Windows execution result.
+v4.0.0 Windows path uses the exact module/tag with `go install`, requiring Go >=1.25.10. The
+disposable hosted Windows package smoke has passed. External CLIs were offline fixtures; no live
+upstream provisioning was performed, so this does not qualify live Gentle AI integration.
 
 Click uninstall removes only its owned content and user-scope Click plugins discovered in Claude
 Code's native plugin inventory. It retains plugin data, other scopes, marketplace declarations, shared
@@ -69,4 +69,5 @@ The actual safety boundary is the workflow's disposable
 `windows-latest` job; do not run it against a normal developer profile because provisioning may
 persist the managed binary directory in that Windows account's user PATH.
 
-`pwsh` and `powershell` were unavailable in the current Linux environment, so that acceptance remains pending until the disposable Windows workflow executes.
+`pwsh` and `powershell` are unavailable in the current Linux environment. Windows package smoke
+qualification therefore runs only in the disposable hosted Windows workflow described above.

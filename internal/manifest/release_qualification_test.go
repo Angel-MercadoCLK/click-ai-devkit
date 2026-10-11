@@ -375,7 +375,12 @@ func TestReleaseWorkflow_GatesPublicationOnWindowsQualification(t *testing.T) {
 	assertWorkflowContainsRun(t, job, "go test ./... -count=1")
 	assertWorkflowContainsRun(t, job, "go vet ./...")
 	assertWorkflowContainsRun(t, job, "goreleaser build --snapshot --clean --single-target")
-	assertWorkflowContainsRun(t, job, "./scripts/windows-package-smoke.ps1 -DistDir dist -ExpectedVersion $version -DisposableRunner")
+	assertWorkflowContainsRun(t, job, "./scripts/windows-package-smoke.ps1 -DistDir dist -ExpectedVersion 'click version' -DisposableRunner")
+	for _, step := range job.Steps {
+		if step.Name == "Smoke packaged Windows click.exe" && strings.Contains(step.Run, "bucket/click.json") {
+			t.Fatal("release snapshot smoke must not compare the snapshot CLI version with previously published Scoop metadata")
+		}
+	}
 
 	goreleaser, ok := release.Jobs["goreleaser"]
 	if !ok {
@@ -383,6 +388,19 @@ func TestReleaseWorkflow_GatesPublicationOnWindowsQualification(t *testing.T) {
 	}
 	if !workflowNeeds(goreleaser, "windows-release-qualification") {
 		t.Fatalf("goreleaser job needs = %#v, want it to depend on windows-release-qualification", goreleaser.Needs)
+	}
+
+	var prepareManifest string
+	for _, step := range goreleaser.Steps {
+		if step.Name == "Prepare release manifest values" {
+			prepareManifest = step.Run
+		}
+	}
+	if prepareManifest == "" || !strings.Contains(prepareManifest, "ENGRAM_VERSION") {
+		t.Fatal("release workflow must retain preparation of the pinned Engram runtime version")
+	}
+	if strings.Contains(prepareManifest, "click_version") || strings.Contains(prepareManifest, "GITHUB_REF_NAME") {
+		t.Fatal("release workflow must not patch the unused Click version from the tag into the runtime manifest")
 	}
 }
 
@@ -398,7 +416,9 @@ func TestGoReleaserBeforeHooks_RunRepositoryValidation(t *testing.T) {
 
 func TestReleaseDocumentation_MatchesCurrentTargetContracts(t *testing.T) {
 	readme := readText(t, filepath.Join("..", "..", "README.md"))
-	assertContains(t, readme, "Current release metadata lives in `bucket/click.json`, `internal/manifest/manifest.yaml`, and `click --version`.")
+	assertContains(t, readme, "GoReleaser injects the CLI version from the release tag via `ldflags`")
+	assertContains(t, readme, "`internal/manifest/manifest.yaml` embeds runtime dependency pins")
+	assertContains(t, readme, "`bucket/click.json` describes the currently published Scoop artifact")
 	assertContains(t, readme, "Click no escribe modelos nativos en esos runtimes.")
 	assertContains(t, readme, "Click conserva sus políticas de negocio/memoria")
 
@@ -409,7 +429,7 @@ func TestReleaseDocumentation_MatchesCurrentTargetContracts(t *testing.T) {
 	runbook := readText(t, filepath.Join("..", "..", "documentacion", "portability-runbook.md"))
 	assertContains(t, runbook, "Click no longer ships or installs `click-sdd`")
 	assertContains(t, runbook, "Click's model-selection commands are compatibility notices")
-	assertContains(t, runbook, "that acceptance remains pending")
+	assertContains(t, runbook, "hosted Windows package smoke has passed")
 	assertContains(t, runbook, "-DisposableRunner")
 	assertContains(t, runbook, "operational guard, not cryptographic runner detection")
 }

@@ -54,7 +54,6 @@ type EngramCloud struct {
 // Manifest is the parsed shape of manifest.yaml, per tech-spec.md §2.3.
 type Manifest struct {
 	SchemaVersion        int               `yaml:"schema_version"`
-	ClickVersion         string            `yaml:"click_version"`
 	GentleAI             GentleAI          `yaml:"gentle_ai"`
 	Engram               Engram            `yaml:"engram"`
 	Plugins              map[string]Plugin `yaml:"plugins"`
