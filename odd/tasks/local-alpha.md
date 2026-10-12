@@ -75,9 +75,16 @@ Create the first visible, locally runnable Click Dot alpha: an independent brows
 - [x] Added `.gitignore` and `.engram/config.json` for Click Dot.
 - [x] Created this tracker before any application source write.
 - [ ] Engram mirror under `odd/local-alpha/tasks` — pending; no mirror write has been confirmed yet.
-- [x] T1 implementation and checks completed; commit remains parent-managed and pending.
+- [x] T1 implementation, checks, and local commit completed: `038944955adfebaa619d572c3a89ac0e35a32cce`.
 - [ ] T2 implementation and checks pending.
-- [ ] No commits created yet; next step is a local T1 work-unit commit on `feat/local-alpha`. No remote is configured or authorized.
+- [x] Baseline committed on `feat/local-alpha`; no remote is configured or authorized.
+
+### Baseline review evidence
+
+- Native review: medium risk, one reliability lens, explicit candidate consent granted.
+- Approved and acknowledged under `review-fb09125bb7034e05`; authority burned. Committed tree `897a5bed6997cbe06b44a5d1c2b071c1186a7bb2` matches the reviewed tree.
+- Non-blocking advisory R3-001: launcher tests inspect source text. Follow-up subprocess tests should verify arguments, telemetry environment, signals, and exit propagation; these behaviors are not yet proven by runtime tests.
+- Review did not establish dependency-lock resolution correctness or run commands. Functional test/build evidence remains the separate writer/parent checks above.
 
 ## Delivery Slices
 
@@ -90,4 +97,4 @@ Dependency: runnable functional baseline → visual enhancement → T2 local cha
 
 ## Next Step
 
-Parent readback and local work-unit commit for the runnable functional baseline are pending; visual enhancement is the dependent next slice, then T2. Keep the Engram mirror pending (`unknown_project`); do not retry until the project is write-enabled. Baseline checks pass; no HTTP smoke or browser visual inspection was run after reducing the stylesheet.
+The reviewed functional baseline is committed. Next: visual enhancement, then T2. Keep the Engram mirror pending (`unknown_project`); do not retry until the project is write-enabled. Baseline checks pass; no HTTP smoke or browser visual inspection was run after reducing the stylesheet. The launcher-test advisory remains a separate follow-up, not a reopened review.
