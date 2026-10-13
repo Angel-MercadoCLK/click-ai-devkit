@@ -92,14 +92,15 @@ Build Click Dot into an independent, locally runnable assistant. Each installati
 
 ## Progress and Verification
 
-- Parent and independent verifier confirmed the two initial-attempt account race and cross-process storage regressions are fixed. `npm test` and `npm run typecheck` pass; the writer's isolated production build passes. Real OpenAI sign-in is untested. Authentication work-unit commit `253279ec1c7bfd44eeb0b1873a83472ca9834561` contains 1,181 authored changed lines excluding the lockfile and pre-existing generated `next-env.d.ts` change; keep its security behavior and regression tests together rather than removing proof to meet a planning heuristic. Native review remains pending; no push, PR, or merge was performed.
+- Parent and independent verifier confirmed the two initial-attempt account race and cross-process storage regressions are fixed. `npm test` and `npm run typecheck` pass; the writer's isolated production build passes. Real OpenAI sign-in is untested. Authentication work-unit commit `253279ec1c7bfd44eeb0b1873a83472ca9834561` contains 1,181 authored changed lines excluding the lockfile and pre-existing generated `next-env.d.ts` change; keep its security behavior and regression tests together rather than removing proof to meet a planning heuristic. Native review is approved and acknowledged; no push, PR, or merge was performed.
 
 - [x] Created a new git repository on `feat/local-alpha`.
 - [x] Added `.gitignore` and `.engram/config.json` for Click Dot.
 - [x] Created this tracker before any application source write.
 - [ ] Engram mirror under `odd/local-alpha/tasks` — pending; no mirror write has been confirmed yet.
 - [x] T1 implementation, checks, and local commit completed: `038944955adfebaa619d572c3a89ac0e35a32cce`.
-- [ ] T2 implementation and focused checks are complete; final closure requires parent readback/native review and a recorded work-unit commit. No real login/provider call was made. Local disconnect removes local credentials; remote revocation remains available through ChatGPT account settings. Engram mirror remains pending (`unknown_project`).
+- [x] T2 implementation, offline checks, work-unit commit, and native review are complete. Local disconnect removes local credentials; remote revocation remains available through ChatGPT account settings. Engram mirror remains pending (`unknown_project`).
+- [ ] T2 real-account sign-in verification remains pending; no real login or provider call was made.
 - [ ] T3 real chat/history pending T2.
 - [x] Baseline committed on `feat/local-alpha`; no remote is configured or authorized.
 
@@ -112,6 +113,12 @@ Build Click Dot into an independent, locally runnable assistant. Each installati
 
 ## Delivery Slices
 
+### Authentication review evidence
+
+- Explicitly granted four-lens native review approved the committed authentication slice through `f0edac9`; exact acknowledgement returned `authority: burned` for lineage `review-7e2000f520561103` and target `sha256:d7e3ee5ddaba4e4516b0d5fff58742f2756e100229202db2ab6e2039e3219fb4`. Reviewed tree: `f1d6e81206a9316a2043638a1e4519eb6613c307`.
+- No blocking finding or correction was opened. Three distinct non-blocking follow-up topics remain: isolate test environment/storage fixtures (`R2-001`); handle a status read racing an atomic credential replacement (`R3-001`, `R4-status-read-race`); recover from a retained initial registration after failed token exchange (`R3-002`). These advisories do not reopen this review and have not been implemented.
+- Reviewers inspected immutable patches; they did not run tests, perform dependency scanning, or verify a live sign-in. Existing functional checks remain separate evidence.
+
 Counts below distinguish historical inventory from future authored additions plus deletions. The historical 399-line total excludes `package-lock.json`, generated `AGENTS.md`, and ignored `tsconfig.tsbuildinfo`; it does not forecast the auth/chat work.
 
 1. **Runnable functional baseline — 399 authored file lines in the current snapshot.** Includes package/config/agent scaffold, `app/layout.tsx`, `app/page.tsx`, a 45-line basic `app/globals.css`, tests, README, and this tracker. It remains runnable by itself; `npm test`, `npm run typecheck`, and `npm run build` pass. This inventory is not a future diff estimate.
@@ -121,4 +128,4 @@ Dependency: T1 runnable baseline → T2 trusted local ChatGPT connection → T3 
 
 ## Next Step
 
-T2 auth corrections (including cross-process storage locking) and offline checks are complete. Keep T2 open until parent readback/native review and a work-unit commit are recorded; do not implement T3 until parent directs it. If a stale lock remains after a crash, stop all Click Dot processes using that file and manually `rmdir` the empty `.lock` directory; the app never reclaims one by PID or age. Keep the Engram mirror pending (`unknown_project`); no mirror write is confirmed. Preserve the pre-existing generated `next-env.d.ts` dev-path change. No real login/provider request was run. The launcher-test advisory remains a separate follow-up, not a reopened review.
+T2 implementation and offline verification are committed, reviewed, and acknowledged. Live account connection remains unverified; the user must perform the real browser authorization. T3 real chat remains pending. The advisory topics above are separate follow-up work, not an automatic correction or repeated review. If a stale lock remains after a crash, stop all Click Dot processes using that file and manually `rmdir` the empty `.lock` directory; the app never reclaims one by PID or age. Keep the Engram mirror pending (`unknown_project`); no mirror write is confirmed. Preserve the pre-existing generated `next-env.d.ts` dev-path change. No real login/provider request was run.
