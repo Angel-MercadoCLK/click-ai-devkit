@@ -122,6 +122,12 @@ Build Click Dot into an independent, locally runnable assistant. Each installati
 
 ## Delivery Slices
 
+### Chat review evidence
+
+- The user explicitly granted four-lens review of the committed chat/history slice through `e125da6`. Final capture approved without blocking findings or a correction. Exact acknowledgement returned `authority: burned` for lineage `review-6392fdfb351d9fb6`, target `sha256:e289640a295b5f78b05b459626dda3bcb4f61c2f4f2bd4631913e6721faef527`, and candidate tree `374881d0b7d8d08b04a6ef35ceba51f0b5a40459`. This review is terminal.
+- Four distinct non-blocking follow-ups remain, not fixed by this review: isolate mutable test history fixtures (`R2-001`); recover the busy UI when clearing history fails during streaming (`R3-clear-failure-stuck-busy`); refresh stale history after a revision conflict across tabs (`R3-stale-history-recovery`, `R4-stale-history-recovery`); check known history capacity before consuming inference (`R4-capacity-check-after-inference`). They do not reopen this candidate or authorize an automatic correction.
+- Reviewers inspected immutable patches, not live services. Previously recorded functional checks remain separate evidence. No account credentials were inspected and no real inference was requested. Next: user-run model loading, a short message, and reload/history verification in the local preview; report failures honestly. Prefer a single browser tab for this alpha, and reload if a history revision conflict occurs.
+
 ### Authentication review evidence
 
 - Explicitly granted four-lens native review approved the committed authentication slice through `f0edac9`; exact acknowledgement returned `authority: burned` for lineage `review-7e2000f520561103` and target `sha256:d7e3ee5ddaba4e4516b0d5fff58742f2756e100229202db2ab6e2039e3219fb4`. Reviewed tree: `f1d6e81206a9316a2043638a1e4519eb6613c307`.
