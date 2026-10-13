@@ -109,7 +109,8 @@ Build Click Dot into an independent, locally runnable assistant. Each installati
 - [x] T1 implementation, checks, and local commit completed: `038944955adfebaa619d572c3a89ac0e35a32cce`.
 - [x] T2 implementation, offline checks, work-unit commit, and native review are complete. Local disconnect removes local credentials; remote revocation remains available through ChatGPT account settings. Engram mirror remains pending (`unknown_project`).
 - [x] User reports successful browser sign-in; the implementation agent did not independently observe it. No real inference request was run.
-- [ ] T3 source and offline checks complete; parent readback, native review decision, and work-unit commit remain pending. No push, PR, merge, or real provider request was performed.
+- [x] T3 source, offline checks, parent readback, and work-unit commit completed: `cfcab71df5f016e04fe3d733dfb1c7452da76a36` (1,355 authored changed lines). Native review decision and user-run live inference remain pending. No push, PR, merge, or real provider request was performed.
+- [x] Independent cancellation reproduction now observes `abortAtCancel: true` and `historyCount: 0` (previously `false` and `1`). Parent reran `npm test`: all 3 test files passed. Independent verifier also reran typecheck successfully.
 - [x] Baseline committed on `feat/local-alpha`; no remote is configured or authorized.
 
 ### Baseline review evidence
@@ -136,4 +137,4 @@ Dependency: T1 runnable baseline → T2 trusted local ChatGPT connection → T3 
 
 ## Next Step
 
-T2 implementation and offline verification are committed, reviewed, and acknowledged. The user reports successful browser sign-in; the implementation agent did not independently observe it. T3 real chat/history source and offline checks are complete; parent readback, native review decision, and work-unit commit remain. The advisory topics above are separate follow-up work, not an automatic correction or repeated review. If a stale lock remains after a crash, stop all Click Dot processes using that file and manually `rmdir` the empty `.lock` directory; the app never reclaims one by PID or age. Keep the Engram mirror pending (`unknown_project`); no mirror write is confirmed. Preserve the pre-existing generated `next-env.d.ts` dev-path change. No real inference/provider request was run.
+T2 implementation and offline verification are committed, reviewed, and acknowledged. The user reports successful browser sign-in; the implementation agent did not independently observe it. T3 real chat/history is committed with parent and independent offline verification; native review decision and user-run live inference remain. The advisory topics above are separate follow-up work, not an automatic correction or repeated review. If a stale lock remains after a crash, stop all Click Dot processes using that file and manually `rmdir` the empty `.lock` directory; the app never reclaims one by PID or age. Keep the Engram mirror pending (`unknown_project`); no mirror write is confirmed. Preserve the pre-existing generated `next-env.d.ts` dev-path change. No real inference/provider request was run.
