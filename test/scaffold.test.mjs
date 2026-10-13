@@ -16,13 +16,15 @@ test("the agent disables default and parent-callable tools", () => {
   }
 });
 
-test("the browser scaffold offers honest per-install account setup without chat or tools", () => {
+test("the browser app offers honest per-install account setup and real chat without agent tools", () => {
   const page = read("app/page.tsx");
   const panel = read("app/auth-panel.tsx");
   assert.match(page, /AuthPanel/);
   assert.match(panel, /Continue with ChatGPT/);
   assert.match(panel, /sign-in alone does not grant model access/);
-  assert.match(panel, /Chat is not enabled in this alpha/);
+  assert.match(panel, /<ChatPanel/);
+  assert.match(panel, /session expired/);
+  assert.match(read("app/chat-panel.tsx"), /api\/chat\/stream/);
   assert.match(panel, /api\/auth\/status/);
   assert.doesNotMatch(page + panel, /useEveAgent|\/eve\/v1/);
 });

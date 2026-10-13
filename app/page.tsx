@@ -26,7 +26,7 @@ export default function HomePage() {
         </p>
 
         <AuthPanel canonicalOrigin={canonicalOrigin} />
-        <p className="next-step">This alpha has no chat or agent tools yet. Your account connection is not a model response.</p>
+        <p className="next-step">Chat uses your account’s available models. Conversations stay in private local storage; agent and operating-system tools are not enabled.</p>
       </section>
 
       <footer className="page-footer">

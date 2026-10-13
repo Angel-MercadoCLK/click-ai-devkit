@@ -27,6 +27,8 @@ export type Connection = {
   expiresAt: number;
 };
 
+export type ConnectionSnapshot = { connection: Connection; generation: number };
+
 type AuthData = {
   hostId: string;
   generation: number;
@@ -273,6 +275,27 @@ export async function getConnection() {
   return (await readData(filePath(), false)).connection;
 }
 
+export async function getConnectionSnapshot(): Promise<ConnectionSnapshot | undefined> {
+  const data = await readData(filePath(), false);
+  return data.connection ? { connection: data.connection, generation: data.generation } : undefined;
+}
+
+export async function withCurrentConnection<T>(
+  expected: ConnectionSnapshot,
+  action: () => Promise<T>,
+): Promise<T | undefined> {
+  const path = filePath();
+  return withFileLock(path, async () => {
+    const data = await readData(path, false);
+    const current = data.connection;
+    if (!current || data.generation !== expected.generation || current.subject !== expected.connection.subject
+      || current.clientId !== expected.connection.clientId || current.expiresAt !== expected.connection.expiresAt
+      || current.expiresAt <= Date.now()
+      || !current.scopes.includes("chatgpt.tokens.use.direct")) return undefined;
+    return action();
+  });
+}
+
 export async function clearConnection() {
   return transact((data) => {
     data.connection = undefined;
@@ -283,4 +306,12 @@ export async function clearConnection() {
 
 export async function getStoragePathForTests() {
   return filePath();
+}
+
+export async function withPrivateAccountFileLock<T>(path: string, action: () => Promise<T>) {
+  return withFileLock(path, action);
+}
+
+export async function assertPrivateAccountStoragePath(path: string) {
+  return ensurePrivateDirectory(path, false);
 }

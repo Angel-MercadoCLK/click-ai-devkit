@@ -77,16 +77,24 @@ Build Click Dot into an independent, locally runnable assistant. Each installati
 
 ### T3 — Deliver real streamed chat and local history
 
-- [ ] Connect the UI only to an authenticated, scope-authorized local ChatGPT session; retain the no-tools boundary.
-- [ ] Render genuine incremental assistant output and explicit submitted/streaming/complete/error states; never present test fixtures or demo text as provider success.
-- [ ] Persist and restore local conversation history without exposing credentials to browser storage; let the user start/clear conversations.
-- [ ] Add offline tests for stream projection, persistence, recovery, and error paths; document how to sign in and run locally.
+- [x] T3 implementation forecast: approximately 800–1,100 authored changed lines across the server-only SIWC transport/catalog, protected account-scoped history and guarded local routes, streaming chat UI, offline tests, and setup/security documentation. Actual authored diff is 1,355 lines excluding the pre-existing `next-env.d.ts` dev-path change; the cohesive offline coverage and security behavior were kept intact rather than reduced to meet the estimate.
+- [x] User reports that browser sign-in works for their account. This is user-reported manual evidence only; the implementation agent did not perform or independently observe the sign-in, and no real inference/provider request has been authorized for development verification.
+- [x] Keep the transport on the explicitly selected SIWC OAuth path (no API-key onboarding, API key inspection, or ambient credentials); use the current stored OAuth access token only when direct plan usage is granted and the token is unexpired. This slice deliberately requires explicit reauthorization after expiry; refresh-token rotation is out of scope.
+- [x] Route: one bounded single-writer delegated-direct implementation (the assigned worker owns source preparation and implementation); no additional writer or reviewer delegation from the worker. Functional checks use offline fixtures and temporary protected storage only; all model/provider calls are user-triggered in the local app, never from rendering, build, or tests.
+- [x] Functional verification: `npm test` PASS (3 test files, 0 failures; chat coverage includes split/multiline SSE and size/event limits), `npm run typecheck` PASS, `NEXT_BUILD_DIST_DIR=.next-chat-build npm run build` PASS, and `git diff --check` PASS. Offline coverage exercises local-origin/auth guards, bounded inputs and allowed model validation, account isolation, atomic history updates/clear races, SSE terminal success/failure/EOF, provider disconnect, local response-reader cancellation and incoming request abort (both abort upstream and save no turn), and expired/no-scope authorization. Real account or inference proof remains explicitly out of scope.
+- [x] Rollback remains limited to T3 chat UI, SIWC model/response transport, chat/history routes and protected history files, tests, and documentation; preserve the T1 scaffold and T2 account-connection behavior.
+- [x] Record source basis in README: [SIWC models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference) and [SIWC accounts and sessions](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions). The documented flow lists the signed-in account’s models from `/v1/models`, filters `visibility: "list"`, preserves order, and streams `/v1/responses` with `store: false`; inference is successful only after `response.completed`.
+
+- [x] Connect the UI only to an authenticated, scope-authorized local ChatGPT session; retain the no-tools boundary.
+- [x] Render genuine incremental assistant output and explicit submitted/streaming/complete/error states; never present test fixtures or demo text as provider success.
+- [x] Persist and restore local conversation history without exposing credentials to browser storage; let the user start/clear conversations.
+- [x] Add offline tests for stream projection, persistence, recovery, and error paths; document how to sign in and run locally.
 
 **Acceptance:** a locally signed-in user can send a message, see genuine streamed output and status, then reload and recover history. Unauthenticated, scope-denied, and failed requests show honest errors and never fabricate an assistant response. No OS tools, remote hosting, or credential reuse are enabled.
 
-**Checks:** pending T3. Planned checks: `npm test`, `npm run typecheck`, `npm run build`; a real provider smoke requires a separate explicit authorization and is not implied by offline tests.
+**Checks:** `npm test` PASS (3 files, 0 failures); `npm run typecheck` PASS after restoring the pre-existing `.next/dev/types` imports; `NEXT_BUILD_DIST_DIR=.next-chat-build npm run build` PASS (the isolated `.next-chat-build` output was removed and generated edits to `tsconfig.json`/`next-env.d.ts` were reverted to their pre-build baseline); `git diff --check` PASS. Tests use offline fakes and temporary protected storage. No real account or inference request was made.
 
-**Route evidence:** delegated direct; multi-file UI, stream, and persistence behavior.
+**Route evidence:** delegated direct; multi-file UI, stream, and persistence behavior. One bounded writer owns source preparation and implementation; offline tests/build are isolated from the running preview and use fixtures/temp storage only.
 
 **Rollback boundary:** remove only the authenticated chat UI, stream handling, local conversation storage, and associated tests/docs; preserve T1 and T2 account connection.
 
@@ -100,8 +108,8 @@ Build Click Dot into an independent, locally runnable assistant. Each installati
 - [ ] Engram mirror under `odd/local-alpha/tasks` — pending; no mirror write has been confirmed yet.
 - [x] T1 implementation, checks, and local commit completed: `038944955adfebaa619d572c3a89ac0e35a32cce`.
 - [x] T2 implementation, offline checks, work-unit commit, and native review are complete. Local disconnect removes local credentials; remote revocation remains available through ChatGPT account settings. Engram mirror remains pending (`unknown_project`).
-- [ ] T2 real-account sign-in verification remains pending; no real login or provider call was made.
-- [ ] T3 real chat/history pending T2.
+- [x] User reports successful browser sign-in; the implementation agent did not independently observe it. No real inference request was run.
+- [ ] T3 source and offline checks complete; parent readback, native review decision, and work-unit commit remain pending. No push, PR, merge, or real provider request was performed.
 - [x] Baseline committed on `feat/local-alpha`; no remote is configured or authorized.
 
 ### Baseline review evidence
@@ -128,4 +136,4 @@ Dependency: T1 runnable baseline → T2 trusted local ChatGPT connection → T3 
 
 ## Next Step
 
-T2 implementation and offline verification are committed, reviewed, and acknowledged. Live account connection remains unverified; the user must perform the real browser authorization. T3 real chat remains pending. The advisory topics above are separate follow-up work, not an automatic correction or repeated review. If a stale lock remains after a crash, stop all Click Dot processes using that file and manually `rmdir` the empty `.lock` directory; the app never reclaims one by PID or age. Keep the Engram mirror pending (`unknown_project`); no mirror write is confirmed. Preserve the pre-existing generated `next-env.d.ts` dev-path change. No real login/provider request was run.
+T2 implementation and offline verification are committed, reviewed, and acknowledged. The user reports successful browser sign-in; the implementation agent did not independently observe it. T3 real chat/history source and offline checks are complete; parent readback, native review decision, and work-unit commit remain. The advisory topics above are separate follow-up work, not an automatic correction or repeated review. If a stale lock remains after a crash, stop all Click Dot processes using that file and manually `rmdir` the empty `.lock` directory; the app never reclaims one by PID or age. Keep the Engram mirror pending (`unknown_project`); no mirror write is confirmed. Preserve the pre-existing generated `next-env.d.ts` dev-path change. No real inference/provider request was run.
