@@ -63,6 +63,20 @@ function fakeModels() {
   ] }), { headers: { "content-type": "application/json" } });
 }
 
+function catalogResponse(body, chunkBytes = 16_384, onCancel = () => {}) {
+  const bytes = new TextEncoder().encode(body);
+  let offset = 0;
+  return new Response(new ReadableStream({
+    pull(controller) {
+      if (offset >= bytes.byteLength) { controller.close(); return; }
+      const end = Math.min(offset + chunkBytes, bytes.byteLength);
+      controller.enqueue(bytes.subarray(offset, end));
+      offset = end;
+    },
+    cancel: onCancel,
+  }, { highWaterMark: 0 }), { headers: { "content-type": "application/json" } });
+}
+
 function responseStream(chunks, delay = 0) {
   let index = 0;
   return new Response(new ReadableStream({
@@ -95,6 +109,53 @@ test("model catalog keeps only listed models and sends the OAuth bearer only ups
   ]);
   assert.equal(calls[0].url, "https://api.openai.com/v1/models");
   assert.equal(calls[0].init.headers.authorization, `Bearer ${accessToken}`);
+});
+
+test("catalog accepts large chunked JSON and still returns only listed models in order", async () => {
+  const catalog = { models: [
+    { slug: "large-first", display_name: "First", visibility: "list" },
+    { slug: "hidden-large", display_name: "Hidden", visibility: "private" },
+    { slug: "large-second", display_name: "Second", visibility: "list" },
+  ], metadata: "" };
+  const padding = 626_192 - Buffer.byteLength(JSON.stringify(catalog), "utf8");
+  catalog.metadata = "x".repeat(padding);
+  const payload = JSON.stringify(catalog);
+  assert.equal(Buffer.byteLength(payload, "utf8"), 626_192);
+  assert.ok(Buffer.byteLength(payload, "utf8") > 512_000);
+  assert.ok(Buffer.byteLength(payload, "utf8") < 2 * 1024 * 1024);
+  const models = await listAvailableModels({ accessToken: "offline-synthetic-token" }, async () => catalogResponse(payload));
+  assert.deepEqual(models, [
+    { slug: "large-first", displayName: "First" },
+    { slug: "large-second", displayName: "Second" },
+  ]);
+});
+
+test("catalog applies the 2 MiB bound to UTF-8 bytes and cancels oversized bodies", async () => {
+  const payload = JSON.stringify({ models: [], metadata: "é".repeat(1_048_600) });
+  assert.ok(payload.length < 2 * 1024 * 1024);
+  assert.ok(Buffer.byteLength(payload, "utf8") > 2 * 1024 * 1024);
+  let canceled = false;
+  await assert.rejects(
+    () => listAvailableModels({ accessToken: "offline-synthetic-token" }, async () => catalogResponse(payload, 65_536, () => { canceled = true; })),
+    /invalid or too large/,
+  );
+  assert.equal(canceled, true);
+});
+
+test("models route accepts a synthetic account catalog larger than the previous limit", async () => {
+  await writeAuth();
+  const payload = JSON.stringify({ models: [
+    { slug: "route-first", display_name: "First", visibility: "list" },
+    { slug: "route-private", display_name: "Private", visibility: "private" },
+  ], metadata: "é".repeat(260_000) });
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), "https://api.openai.com/v1/models");
+    assert.equal(init.headers.authorization, `Bearer ${accessToken}`);
+    return catalogResponse(payload, 32_768);
+  };
+  const response = await modelsRoute.GET(localRequest("/api/chat/models"));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { models: [{ slug: "route-first", displayName: "First" }] });
 });
 
 test("Responses request is server-only, has no tools, and requires completed SSE across split multiline chunks", async () => {

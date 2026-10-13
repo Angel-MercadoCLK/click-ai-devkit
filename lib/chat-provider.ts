@@ -1,7 +1,7 @@
 import type { Connection } from "./auth-store.ts";
 
 const API = "https://api.openai.com/v1";
-const MAX_CATALOG_BYTES = 512_000;
+const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
 const MAX_INPUT_BYTES = 128_000;
 const MAX_RESPONSE_CHARS = 16_000;
 const MAX_EVENTS = 1_200;

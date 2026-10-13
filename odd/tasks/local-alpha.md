@@ -98,6 +98,21 @@ Build Click Dot into an independent, locally runnable assistant. Each installati
 
 **Rollback boundary:** remove only the authenticated chat UI, stream handling, local conversation storage, and associated tests/docs; preserve T1 and T2 account connection.
 
+### T4 — Raise the bounded model-catalog response limit
+
+- [x] Fix catalog parsing for valid account model-list responses larger than the old 512,000-byte cap. The user-provided upstream response measured 614,466 bytes; offline reproduction used valid JSON at 626,192 bytes.
+- [x] Raise only the model-catalog body bound to 2 MiB; preserve the 12-second timeout, model filtering/order/projection, 500-model output bound, and credential boundary.
+- [x] Add offline regressions proving valid oversized-for-old-limit catalog JSON is accepted, UTF-8 byte length (not character count) controls the limit, and bodies over 2 MiB are rejected with the reader canceled. Add a focused route test for the previously blocked/no-model outcome where practical.
+- [x] Do not use real credentials, make provider/catalog calls, mutate auth or conversation history, or expand UI/auth behavior. Parent may run a separately authorized one-shot catalog check after source review; this work itself does not claim live-fix verification.
+- [x] TDD is not configured; use ordinary offline functional tests. Route: delegated direct, single writer, since the bounded fix touches non-trivial transport and tests. Forecast: under 150 authored additions plus deletions. Required checks: `npm test`, `npm run typecheck`, and `git diff --check`; production build may be skipped because the transport response shape is unchanged.
+- [ ] Engram mirror `odd/local-alpha/tasks` remains pending until `click-dot` is recognized; preserve this local tracker as the source of progress meanwhile.
+
+**Acceptance:** valid UTF-8 JSON catalogs up to 2 MiB can be decoded and retain existing model filtering/order/output bounds; a response exceeding 2 MiB fails closed and its body reader is canceled.
+
+**Checks:** `npm test` PASS (3 files, 0 failures; focused catalog tests cover a chunked 626,192-byte valid JSON catalog, listed-model order/filtering, multibyte UTF-8 byte-bound rejection, reader cancellation above 2 MiB, and the local models route returning 200); `npm run typecheck` PASS; `git diff --check` PASS. Actual authored diff is 79 lines excluding the pre-existing `next-env.d.ts` dev-path change. Production build intentionally skipped because only the transport response-size bound and offline tests changed. No real credentials or provider/catalog call were used; live fix verification remains pending parent’s separately authorized one-shot check.
+
+**Rollback boundary:** revert only the model catalog response-size constant, its regression tests, and this T4 tracker record; preserve the streamed chat/auth behavior and existing history.
+
 ## Progress and Verification
 
 - Parent and independent verifier confirmed the two initial-attempt account race and cross-process storage regressions are fixed. `npm test` and `npm run typecheck` pass; the writer's isolated production build passes. Real OpenAI sign-in is untested. Authentication work-unit commit `253279ec1c7bfd44eeb0b1873a83472ca9834561` contains 1,181 authored changed lines excluding the lockfile and pre-existing generated `next-env.d.ts` change; keep its security behavior and regression tests together rather than removing proof to meet a planning heuristic. Native review is approved and acknowledged; no push, PR, or merge was performed.
@@ -111,6 +126,7 @@ Build Click Dot into an independent, locally runnable assistant. Each installati
 - [x] User reports successful browser sign-in; the implementation agent did not independently observe it. No real inference request was run.
 - [x] T3 source, offline checks, parent readback, and work-unit commit completed: `cfcab71df5f016e04fe3d733dfb1c7452da76a36` (1,355 authored changed lines). Native review decision and user-run live inference remain pending. No push, PR, merge, or real provider request was performed.
 - [x] Independent cancellation reproduction now observes `abortAtCancel: true` and `historyCount: 0` (previously `false` and `1`). Parent reran `npm test`: all 3 test files passed. Independent verifier also reran typecheck successfully.
+- [x] T4 offline catalog-size fix raises the response-body bound from 512,000 bytes to 2 MiB, preserving the existing timeout/filter/order/projection behavior. Valid chunked 626,192-byte JSON now reaches the local models route; UTF-8 payloads over 2 MiB are rejected and canceled. `npm test`, `npm run typecheck`, and `git diff --check` passed; no production build or live catalog request was run.
 - [x] Baseline committed on `feat/local-alpha`; no remote is configured or authorized.
 
 ### Baseline review evidence
