@@ -16,12 +16,15 @@ test("the agent disables default and parent-callable tools", () => {
   }
 });
 
-test("the browser scaffold makes the not-connected boundary explicit", () => {
+test("the browser scaffold offers honest per-install account setup without chat or tools", () => {
   const page = read("app/page.tsx");
-  assert.match(page, /Demo · Not connected/);
-  assert.match(page, /No provider connected/);
-  assert.match(page, /does not send messages anywhere/);
-  assert.doesNotMatch(page, /useEveAgent|fetch\s*\(|\/eve\/v1/);
+  const panel = read("app/auth-panel.tsx");
+  assert.match(page, /AuthPanel/);
+  assert.match(panel, /Continue with ChatGPT/);
+  assert.match(panel, /sign-in alone does not grant model access/);
+  assert.match(panel, /Chat is not enabled in this alpha/);
+  assert.match(panel, /api\/auth\/status/);
+  assert.doesNotMatch(page + panel, /useEveAgent|\/eve\/v1/);
 });
 
 test("development commands disable telemetry and use loopback only", () => {

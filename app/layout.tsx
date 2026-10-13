@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Click Dot — Local Alpha",
-  description: "A local-only preview of Click Dot. No AI provider is connected.",
+  description: "Connect your own ChatGPT account to Click Dot on this device.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

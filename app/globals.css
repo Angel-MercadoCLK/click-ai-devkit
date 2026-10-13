@@ -39,7 +39,23 @@ h1 { font-size: clamp(2.5rem, 8vw, 4.5rem); line-height: 1.05; }
 
 .connection-panel {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
   flex-wrap: wrap;
-  align-items: center;
   gap: 1rem;
+  margin-top: 2rem;
+  padding: 1.5rem;
+  border: 1px solid #d9ded6;
+  border-radius: 1rem;
+  background: #fff;
 }
+
+.connection-copy p { margin-block: 0.25rem; }
+.panel-label { color: #5f6e67; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.panel-value { font-size: 1.15rem; font-weight: 650; }
+.panel-note, .privacy-note, .next-step { color: #5f6e67; font-size: 0.92rem; }
+.privacy-note { margin: 0; }
+.action-button { width: fit-content; min-height: 2.75rem; padding: 0.7rem 1.1rem; border: 0; border-radius: 0.7rem; background: #244d3e; color: white; font: inherit; font-weight: 650; cursor: pointer; }
+.action-button.secondary { border: 1px solid #a7b4ac; background: white; color: #244d3e; }
+.action-button:disabled { cursor: wait; opacity: 0.65; }
+.feedback { margin: 0; color: #315e4c; }

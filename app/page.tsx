@@ -1,4 +1,8 @@
+import { AuthPanel } from "./auth-panel";
+import { callbackUri } from "../lib/siwc.ts";
+
 export default function HomePage() {
+  const canonicalOrigin = new URL(callbackUri()).origin;
   return (
     <main className="page-shell">
       <header className="topbar" aria-label="Click Dot local alpha">
@@ -12,29 +16,22 @@ export default function HomePage() {
       <section className="welcome" id="home" aria-labelledby="welcome-title">
         <div className="status-row" role="status">
           <span className="status-indicator" aria-hidden="true" />
-          <span>Demo · Not connected</span>
+          <span>Local account setup</span>
         </div>
 
         <h1 id="welcome-title">A quieter place to think.</h1>
         <p className="intro">
-          Click Dot is starting locally. This preview is not connected to an AI provider, and it
-          does not send messages anywhere.
+          Click Dot runs locally and connects to your own ChatGPT account. Authorize this installation
+          in your browser before using plan-backed features.
         </p>
 
-        <div className="connection-panel" aria-label="Connection status">
-          <div>
-            <p className="panel-label">Connection</p>
-          <p className="panel-value">No provider connected</p>
-          </div>
-          <span className="connection-badge">DEMO MODE</span>
-        </div>
-
-        <p className="next-step">Chat and provider settings will arrive in the next alpha step.</p>
+        <AuthPanel canonicalOrigin={canonicalOrigin} />
+        <p className="next-step">This alpha has no chat or agent tools yet. Your account connection is not a model response.</p>
       </section>
 
       <footer className="page-footer">
         <span>Runs on this machine</span>
-        <span>No model calls · No external tools</span>
+        <span>Credentials stay local · No external tools</span>
       </footer>
     </main>
   );

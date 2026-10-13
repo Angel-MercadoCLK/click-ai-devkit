@@ -10,11 +10,12 @@
     "build": "node scripts/next.mjs build",
     "start": "node scripts/next.mjs start",
     "typecheck": "tsc --noEmit",
-    "test": "node --test"
+    "test": "node --experimental-strip-types --test"
   },
   "dependencies": {
     "ai": "7.0.137",
     "eve": "0.77.0",
+    "jose": "6.2.12",
     "next": "16.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
