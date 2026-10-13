@@ -92,7 +92,7 @@ Build Click Dot into an independent, locally runnable assistant. Each installati
 
 ## Progress and Verification
 
-- Parent and independent verifier confirmed the two initial-attempt account race and cross-process storage regressions are fixed. `npm test` and `npm run typecheck` pass; the writer's isolated production build passes. Real OpenAI sign-in is untested. The authentication slice is 1,179 authored changed lines excluding the lockfile and pre-existing generated `next-env.d.ts` change; keep its security behavior and regression tests together rather than removing proof to meet a planning heuristic.
+- Parent and independent verifier confirmed the two initial-attempt account race and cross-process storage regressions are fixed. `npm test` and `npm run typecheck` pass; the writer's isolated production build passes. Real OpenAI sign-in is untested. Authentication work-unit commit `253279ec1c7bfd44eeb0b1873a83472ca9834561` contains 1,181 authored changed lines excluding the lockfile and pre-existing generated `next-env.d.ts` change; keep its security behavior and regression tests together rather than removing proof to meet a planning heuristic. Native review remains pending; no push, PR, or merge was performed.
 
 - [x] Created a new git repository on `feat/local-alpha`.
 - [x] Added `.gitignore` and `.engram/config.json` for Click Dot.
