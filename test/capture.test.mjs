@@ -545,3 +545,44 @@ test("T3 keeps the capture bridge as it was: no prepareScreen unless one is supp
   assert.deepEqual(JSON.parse(status), { available: true, enabled: true, paused: false, frames: 1, lastCapturedAt: 5 });
   Reflect.deleteProperty(globalThis, KEY);
 });
+
+test("the session identity changes on every enable, pause, resume and disable, and never on a no-op", async () => {
+  const { service } = makeService();
+  const seen = [service.session()];
+  const changed = (label) => {
+    const value = service.session();
+    assert.notEqual(value, seen.at(-1), label);
+    assert.ok(!seen.includes(value), `${label}: an earlier session id came back`);
+    seen.push(value);
+  };
+  const unchanged = (label) => assert.equal(service.session(), seen.at(-1), label);
+  service.pause();
+  unchanged("pause while off is a no-op");
+  service.enable();
+  changed("enable");
+  service.enable();
+  unchanged("enable while running is a no-op");
+  service.pause();
+  changed("pause");
+  service.pause();
+  unchanged("pause while paused is a no-op");
+  service.resume();
+  changed("resume");
+  service.disable();
+  changed("disable");
+  service.disable();
+  unchanged("disable while off is a no-op");
+  service.enable();
+  changed("enable after disable");
+  await flush();
+});
+
+test("the session identity does not change when a frame is stored", async () => {
+  const { service, clock } = makeService();
+  service.enable();
+  const id = service.session();
+  await flush();
+  await clock.tick();
+  assert.equal(service.status().frames > 1, true);
+  assert.equal(service.session(), id);
+});

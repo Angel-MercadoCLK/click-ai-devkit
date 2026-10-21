@@ -66,6 +66,11 @@ export type CaptureService = {
   pause(): void;
   resume(): void;
   status(): CaptureStatus;
+  /**
+   * Identity of the current capture session. It changes on every enable, pause, resume and disable, so a value read
+   * earlier and compared later tells whether capture was interrupted in between (even off then on again).
+   */
+  session(): number;
   /** Main process only. T2 publishes no way to read frames out of this process. */
   frames(): CaptureFrame[];
   dispose(): void;
@@ -139,6 +144,7 @@ export function createCaptureService({
 
   function start() {
     if (timer !== undefined) return;
+    generation += 1;
     timer = timers.setInterval(() => void tick(), intervalMs);
     void tick();
   }
@@ -179,6 +185,7 @@ export function createCaptureService({
       notify();
     },
     status,
+    session: () => generation,
     frames: () => ring.frames(),
     dispose() {
       enabled = false;

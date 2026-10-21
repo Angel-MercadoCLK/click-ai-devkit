@@ -218,6 +218,7 @@ async function start() {
       const status = service.status();
       return status.enabled && !status.paused;
     },
+    session: () => service.session(),
     ocr: createWindowsOcr(),
     patterns: () => {
       patterns ??= loadGuardPatterns(join(app.getAppPath(), "lib", "guard-patterns.json")).catch((error: unknown) => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { applyCapturePoll, INITIAL_CAPTURE_POLL, readCapturePoll, type CapturePollResult } from "../lib/capture-state.ts";
 
 type Model = { slug: string; displayName: string };
 type Message = { role: "user" | "assistant"; content: string; createdAt: number };
@@ -73,15 +74,18 @@ export function ChatPanel({ onAuthorizationExpired }: { onAuthorizationExpired: 
   // Whether Dot is currently allowed to see the screen. Only a yes/no is kept here.
   useEffect(() => {
     const current = new AbortController();
+    let polls = INITIAL_CAPTURE_POLL;
     async function poll() {
+      let result: CapturePollResult = { ok: false };
       try {
         const response = await fetch("/api/capture/status", { cache: "no-store", signal: current.signal });
-        if (!response.ok) throw new Error();
-        const value = await response.json() as { available?: unknown; enabled?: unknown; paused?: unknown };
-        setCaptureActive(value.available === true && value.enabled === true && value.paused === false);
+        if (response.ok) result = readCapturePoll(await response.json());
       } catch {
-        if (!current.signal.aborted) setCaptureActive(false);
+        // A failed read is not a "stopped"; see applyCapturePoll.
       }
+      if (current.signal.aborted) return;
+      polls = applyCapturePoll(polls, result);
+      setCaptureActive(polls.active);
     }
     void poll();
     const timer = window.setInterval(() => void poll(), CAPTURE_POLL_MS);

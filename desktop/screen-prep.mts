@@ -71,6 +71,7 @@ export type ScreenPreparer = () => Promise<PreparedScreen>;
 export function createScreenPreparer({
   frames,
   isCapturing,
+  session,
   ocr,
   patterns,
   redact,
@@ -80,6 +81,8 @@ export function createScreenPreparer({
   frames(): CaptureFrame[];
   /** False once capture is paused or off; a result that finishes after that is discarded. */
   isCapturing(): boolean;
+  /** Identity of the capture session; it changes on every pause, off, resume and on (CaptureService.session). */
+  session(): number;
   ocr: OcrFn;
   /** Loads (once) the compiled guard patterns. Rejecting here means nothing is sent. */
   patterns(): Promise<CompiledGuardRule[]>;
@@ -91,6 +94,7 @@ export function createScreenPreparer({
 
   async function prepare(): Promise<PreparedScreen> {
     if (!isCapturing()) throw new ScreenPrepareError("capture-stopped");
+    const startedIn = session();
     const frame = frames().at(-1);
     if (!frame) throw new ScreenPrepareError("no-frame");
     if (now() - frame.capturedAt > maxFrameAgeMs) throw new ScreenPrepareError("stale-frame");
@@ -113,8 +117,9 @@ export function createScreenPreparer({
     } catch (error) {
       throw error instanceof ScreenPrepareError ? error : new ScreenPrepareError("redaction-failed");
     }
-    // Paused or turned off while this was running: the user asked Dot to stop looking, so the result is dropped.
-    if (!isCapturing()) throw new ScreenPrepareError("capture-stopped");
+    // Paused or turned off while this was running, even if capture came back on since (a different session): the
+    // user asked Dot to stop looking, so the result is dropped.
+    if (!isCapturing() || session() !== startedIn) throw new ScreenPrepareError("capture-stopped");
     return { image: result.image, mime: result.mime, hiddenRegions: regions.length, capturedAt: frame.capturedAt };
   }
 

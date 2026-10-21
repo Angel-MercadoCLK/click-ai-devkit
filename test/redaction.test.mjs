@@ -278,6 +278,7 @@ function makePreparer(overrides = {}) {
   const preparer = prep.createScreenPreparer({
     frames: () => [frame({ capturedAt: 500 }), frame()],
     isCapturing: () => true,
+    session: () => 1,
     ocr: async () => { calls.ocr += 1; return layout(["write to maria@example.com now"]); },
     patterns: async () => patterns,
     redact: async (png, size, rects) => { calls.redact += 1; calls.rects = rects; return { image: Buffer.from("REDACTED"), mime: "image/png" }; },
@@ -320,6 +321,53 @@ test("a result that finishes after capture was paused or turned off is discarded
   let capturing = true;
   const { preparer } = makePreparer({ redact: async () => { capturing = false; return { image: Buffer.from("R"), mime: "image/png" }; }, isCapturing: () => capturing });
   await assert.rejects(preparer(), (error) => error.code === "capture-stopped");
+});
+
+test("a frame from an earlier capture session is discarded when capture went off and on, or paused and resumed, during OCR", async () => {
+  const { createCaptureService } = await import("../desktop/capture.mts");
+  const scenarios = [
+    ["off then on", (service) => { service.disable(); service.enable(); }],
+    ["paused then resumed", (service) => { service.pause(); service.resume(); }],
+  ];
+  for (const [label, interrupt] of scenarios) {
+    const service = createCaptureService({
+      capture: async () => ({ image: Buffer.from("PNG"), width: 10, height: 10 }),
+      timers: { setInterval: () => 1, clearInterval() {}, now: () => 1_000 },
+      log() {},
+    });
+    service.enable();
+    await new Promise((resolve) => setImmediate(resolve));
+    let ocrStarted;
+    const started = new Promise((resolve) => { ocrStarted = resolve; });
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const preparer = prep.createScreenPreparer({
+      frames: () => service.frames(),
+      isCapturing: () => service.status().enabled && !service.status().paused,
+      session: () => service.session(),
+      ocr: async () => { ocrStarted(); await gate; return layout(["write to maria@example.com now"]); },
+      patterns: async () => patterns,
+      redact: async () => ({ image: Buffer.from("REDACTED"), mime: "image/png" }),
+      now: () => 1_000,
+    });
+    const pending = preparer();
+    const outcome = pending.then(() => "returned", (error) => error.code);
+    await started;
+    interrupt(service);
+    release();
+    assert.equal(await outcome, "capture-stopped", label);
+  }
+});
+
+test("an uninterrupted run returns the redacted image and the session identity is read when preparation starts", async () => {
+  let id = 7;
+  const reads = [];
+  const { preparer } = makePreparer({ session: () => { reads.push(id); return id; } });
+  const result = await preparer();
+  assert.equal(result.image.toString(), "REDACTED");
+  assert.equal(reads[0], 7);
+  const { preparer: changing } = makePreparer({ session: () => id++ });
+  await assert.rejects(changing(), (error) => error.code === "capture-stopped");
 });
 
 test("concurrent requests share one OCR run, and the next request starts a new one", async () => {
