@@ -4,6 +4,7 @@ node_modules/
 .output/
 dist/
 coverage/
+release/
 
 # Local secrets and runtime state
 .env

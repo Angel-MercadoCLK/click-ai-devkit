@@ -1,0 +1,26 @@
+appId: com.click.dot
+productName: Click Dot
+copyright: Click
+asar: false
+npmRebuild: false
+directories:
+  output: release
+files:
+  - package.json
+  - desktop/dist/**/*
+  - desktop/assets/**/*
+  - .next/**/*
+  - "!.next/cache/**"
+  - "!.next/dev/**"
+  - "!**/*.map"
+  - "!**/node_modules/.cache/**"
+  # Binaries installed for the Linux build host are useless in a Windows package.
+  - "!**/node_modules/@next/swc-linux-*/**"
+  - "!**/node_modules/@img/*linux*/**"
+  - "!**/node_modules/@rolldown/binding-linux-*/**"
+win:
+  target:
+    - target: dir
+      arch: x64
+  # rcedit needs wine when packaging from Linux/WSL; icon and version resources are applied by the release pipeline.
+  signAndEditExecutable: false
