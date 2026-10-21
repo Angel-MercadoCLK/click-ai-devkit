@@ -24,5 +24,5 @@ win:
   target:
     - target: dir
       arch: x64
-  # rcedit needs wine when packaging from Linux/WSL; icon and version resources are applied by the release pipeline.
+  # rcedit needs wine when packaging from Linux/WSL; the exe therefore has no custom icon or version resources yet (tracked in D5).
   signAndEditExecutable: false

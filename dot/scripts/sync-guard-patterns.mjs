@@ -5,8 +5,8 @@
 // The YAML has a small, fixed shape, so it is parsed here line by line without a YAML dependency. Anything the
 // parser does not recognise is an error: a silently dropped rule would mean personal data left the machine.
 // Dot and the devkit must agree on what a pattern matches. Both sides are meant to run the same golden corpus,
-// test/fixtures/guard-corpus.json. The Dot side is test/guard-patterns.test.mjs; the devkit-side parity test
-// that runs this corpus through internal/guard is a later task and is not implemented yet.
+// test/fixtures/guard-corpus.json. The Dot side is test/guard-patterns.test.mjs; the devkit side is
+// internal/guard/dot_corpus_test.go, which runs the same corpus against the embedded Go patterns.
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

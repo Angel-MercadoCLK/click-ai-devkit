@@ -847,3 +847,76 @@ func TestDotPackageFactoryIsReplaceable(t *testing.T) {
 		t.Fatal("factory must drive InspectDot")
 	}
 }
+
+func TestDotSyncNeverReplacesInstallPathWithoutClickMarker(t *testing.T) {
+	for name, seed := range map[string]func(t *testing.T, path string){
+		"foreign directory": func(t *testing.T, path string) {
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(path, "user-notes.txt"), []byte("mine"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"hand-unzipped Dot without marker": func(t *testing.T, path string) {
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(path, "Click Dot.exe"), []byte("manual"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"plain file": func(t *testing.T, path string) {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("not a folder"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newDotHarness(t)
+			h.release(testDotVersion, validDotZip(t, "one"))
+			seed(t, h.installDir())
+			before := snapshotDotTree(t, h.installDir())
+
+			res, err := h.manager.Sync(context.Background(), testDotVersion)
+			if err == nil {
+				t.Fatalf("Sync must refuse a path Click does not own, got %+v", res)
+			}
+			if after := snapshotDotTree(t, h.installDir()); after != before {
+				t.Fatalf("foreign content changed:\nbefore %s\nafter  %s", before, after)
+			}
+			if len(h.fetched) != 0 || len(h.runs) != 0 || len(h.started) != 0 {
+				t.Fatalf("nothing may be downloaded, stopped or started: fetched=%v runs=%v started=%v", h.fetched, h.runs, h.started)
+			}
+		})
+	}
+}
+
+// snapshotDotTree renders every path and file content under root (or root itself when it is a file).
+func snapshotDotTree(t *testing.T, root string) string {
+	t.Helper()
+	var b strings.Builder
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		b.WriteString(rel)
+		if !d.IsDir() {
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return readErr
+			}
+			b.WriteString("=" + string(data))
+		}
+		b.WriteString(";")
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}

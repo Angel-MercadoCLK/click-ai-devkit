@@ -254,6 +254,13 @@ func (m DotManager) Sync(ctx context.Context, expectedVersion string) (DotResult
 	version := plan.Version
 	result := DotResult{Version: version, Path: p.exe}
 
+	// Same ownership rule as Remove: an existing path without the Click marker is never replaced.
+	if _, statErr := os.Lstat(p.installDir); statErr == nil {
+		if _, markerErr := os.Lstat(p.marker); markerErr != nil {
+			return DotResult{}, fmt.Errorf("%s ya existe y no tiene la marca de Click; no se modifica. Muévalo o elimínelo para que Click instale Click Dot", p.installDir)
+		}
+	}
+
 	before := m.Inspect()
 	if before.ExePresent && before.Version == version {
 		result.Outcome = DotCurrent
