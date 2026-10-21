@@ -1,12 +1,14 @@
-import { app, BrowserWindow, dialog, globalShortcut, Menu, nativeImage, safeStorage, session, shell, Tray } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, Menu, nativeImage, safeStorage, screen, session, shell, Tray } from "electron";
 import type { Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createCaptureController, createCaptureService, describeCapture, installCaptureController, type CaptureController, type CaptureService } from "./capture.mts";
 import { configureEnvironment, dotUrl, TOGGLE_SHORTCUT } from "./config.mts";
 import { PortInUseError } from "./listen.mts";
 import { isAllowedNavigation, isSignInUrl, systemBrowserTarget } from "./navigation.mts";
-import { DEFAULT_PREFERENCES, LOGIN_ITEM_ARGS, loadPreferences, savePreferences, shouldManageLoginItem, startsHidden, type Preferences } from "./preferences.mts";
+import { createPreferenceStore, DEFAULT_PREFERENCES, LOGIN_ITEM_ARGS, loadPreferences, shouldManageLoginItem, startsHidden } from "./preferences.mts";
 import { installStorageProtector } from "./protector.mts";
+import { createScreenCapture } from "./screen-capture.mts";
 import { startDotServer } from "./server.mts";
 
 const assets = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
@@ -18,7 +20,9 @@ let quitting = false;
 let reloadOnFocus = false;
 let started = false;
 let showWhenStarted = false;
-let preferences: Preferences = { ...DEFAULT_PREFERENCES };
+let preferences: ReturnType<typeof createPreferenceStore> | undefined;
+let captureService: CaptureService | undefined;
+let captureController: CaptureController | undefined;
 
 function showWindow() {
   if (!window || window.isDestroyed()) window = createWindow();
@@ -91,29 +95,66 @@ function applyLoginItem(enabled: boolean) {
   app.setLoginItemSettings({ openAtLogin: enabled, args: LOGIN_ITEM_ARGS });
 }
 
-function createTray(preferencesFile: string) {
-  tray = new Tray(nativeImage.createFromPath(join(assets, "tray.png")));
-  tray.setToolTip("Click Dot");
-  tray.on("click", showWindow);
+function trayIcon(capturing: boolean) {
+  return nativeImage.createFromPath(join(assets, capturing ? "tray-capturing.png" : "tray.png"));
+}
+
+function reportTrayError(message: string, error: unknown) {
+  console.error(message, error);
+  dialog.showErrorBox("Click Dot", `${message} Nothing was changed.`);
+}
+
+/** Rebuilt on every capture change so the tray, the tooltip and the page always tell the same story. */
+function refreshTray() {
+  if (!tray) return;
+  const status = captureController?.status() ?? { enabled: false, paused: false, frames: 0, lastCapturedAt: null };
+  const capture = describeCapture(status);
+  tray.setImage(trayIcon(capture.capturing));
+  tray.setToolTip(capture.tooltip);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "Open Dot", click: showWindow },
       {
+        label: "Let Dot see my screen",
+        type: "checkbox",
+        checked: status.enabled,
+        click: (item) => {
+          const turningOn = item.checked;
+          captureController
+            ?.apply(turningOn ? "enable" : "disable")
+            .catch((error: unknown) => {
+              console.error("Could not change the screen capture setting.", error);
+              dialog.showErrorBox(
+                "Click Dot",
+                turningOn
+                  ? "Click Dot could not turn on screen capture. Nothing was changed."
+                  : "Screen capture is stopped, but Click Dot could not save that choice, so it may start again next time.",
+              );
+            })
+            .finally(refreshTray);
+        },
+      },
+      {
+        label: capture.pauseLabel,
+        enabled: capture.pauseEnabled,
+        click: () => {
+          void captureController?.apply(status.paused ? "resume" : "pause").catch(() => {});
+        },
+      },
+      { type: "separator" },
+      {
         label: "Start with Windows",
         type: "checkbox",
-        checked: preferences.startAtLogin,
+        checked: preferences?.get().startAtLogin ?? DEFAULT_PREFERENCES.startAtLogin,
         click: (item) => {
-          savePreferences(preferencesFile, { startAtLogin: item.checked })
-            .then((saved) => {
-              preferences = saved;
-              applyLoginItem(saved.startAtLogin);
-            })
+          preferences
+            ?.update({ startAtLogin: item.checked })
+            .then((saved) => applyLoginItem(saved.startAtLogin))
             .catch((error: unknown) => {
               // Keep the menu, the saved file and the OS login item telling the same story.
-              item.checked = preferences.startAtLogin;
-              console.error("Could not save the Start with Windows preference.", error);
-              dialog.showErrorBox("Click Dot", "Click Dot could not save the Start with Windows setting. Nothing was changed.");
-            });
+              reportTrayError("Click Dot could not save the Start with Windows setting.", error);
+            })
+            .finally(refreshTray);
         },
       },
       { type: "separator" },
@@ -128,6 +169,12 @@ function createTray(preferencesFile: string) {
   );
 }
 
+function createTray() {
+  tray = new Tray(trayIcon(false));
+  tray.on("click", showWindow);
+  refreshTray();
+}
+
 async function start() {
   Menu.setApplicationMenu(null);
   const userData = app.getPath("userData");
@@ -140,9 +187,30 @@ async function start() {
 
   const preferencesFile = join(userData, "desktop-preferences.json");
   const loaded = await loadPreferences(preferencesFile);
-  preferences = loaded ?? { ...DEFAULT_PREFERENCES };
+  const store = createPreferenceStore(preferencesFile, loaded ?? { ...DEFAULT_PREFERENCES });
+  preferences = store;
   // An unreadable preferences file leaves the OS login item exactly as it is.
   if (loaded) applyLoginItem(loaded.startAtLogin);
+
+  // Screen capture runs here, in the main process, so web permissions stay denied. Frames stay in memory only.
+  let shownState = "";
+  captureService = createCaptureService({
+    capture: createScreenCapture({ screen, desktopCapturer }),
+    // New frames do not change the tray; only the on/off/paused state does.
+    onChange: (status) => {
+      const state = `${status.enabled}:${status.paused}`;
+      if (state === shownState) return;
+      shownState = state;
+      refreshTray();
+    },
+  });
+  captureController = createCaptureController({
+    service: captureService,
+    saveEnabled: async (enabled) => {
+      await store.update({ captureEnabled: enabled });
+    },
+  });
+  installCaptureController(globalThis, captureController);
 
   try {
     server = await startDotServer(app.getAppPath());
@@ -157,7 +225,9 @@ async function start() {
     return;
   }
 
-  createTray(preferencesFile);
+  createTray();
+  // The saved choice carries over restarts; a pause does not.
+  if (loaded?.captureEnabled) captureService.enable();
   if (!globalShortcut.register(TOGGLE_SHORTCUT, toggleWindow)) {
     console.error(`Could not register the ${TOGGLE_SHORTCUT} shortcut; it may be in use by another program.`);
   }
@@ -196,6 +266,7 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on("will-quit", () => {
     globalShortcut.unregisterAll();
+    captureService?.dispose();
     server?.close();
   });
   app.whenReady().then(start).catch(failStart);

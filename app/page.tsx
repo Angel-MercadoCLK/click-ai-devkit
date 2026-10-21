@@ -1,4 +1,5 @@
 import { AuthPanel } from "./auth-panel";
+import { CapturePanel } from "./capture-panel";
 import { callbackUri } from "../lib/siwc.ts";
 
 export default function HomePage() {
@@ -24,6 +25,8 @@ export default function HomePage() {
           Click Dot runs locally and connects to your own ChatGPT account. Authorize this installation
           in your browser before using plan-backed features.
         </p>
+
+        <CapturePanel />
 
         <AuthPanel canonicalOrigin={canonicalOrigin} />
         <p className="next-step">Chat uses your account’s available models. Conversations stay in private local storage; agent and operating-system tools are not enabled.</p>

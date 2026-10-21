@@ -80,13 +80,13 @@ test("sign-in hands the whole flow to the system browser so its callback finds t
 
 test("start at login defaults to on and persists the user's choice", async () => {
   const file = join(scratch, "prefs", "desktop-preferences.json");
-  assert.deepEqual(await preferences.loadPreferences(file), { startAtLogin: true });
+  assert.deepEqual(await preferences.loadPreferences(file), { startAtLogin: true, captureEnabled: false });
   assert.equal(JSON.parse(await readFile(file, "utf8")).startAtLogin, true);
 
-  assert.deepEqual(await preferences.savePreferences(file, { startAtLogin: false }), { startAtLogin: false });
-  assert.deepEqual(await preferences.loadPreferences(file), { startAtLogin: false });
-  assert.deepEqual(await preferences.savePreferences(file, { startAtLogin: true }), { startAtLogin: true });
-  assert.deepEqual(await preferences.loadPreferences(file), { startAtLogin: true });
+  assert.deepEqual(await preferences.savePreferences(file, { startAtLogin: false, captureEnabled: false }), { startAtLogin: false, captureEnabled: false });
+  assert.deepEqual(await preferences.loadPreferences(file), { startAtLogin: false, captureEnabled: false });
+  assert.deepEqual(await preferences.savePreferences(file, { startAtLogin: true, captureEnabled: false }), { startAtLogin: true, captureEnabled: false });
+  assert.deepEqual(await preferences.loadPreferences(file), { startAtLogin: true, captureEnabled: false });
 });
 
 test("corrupt or unexpected preferences are reported as unknown without crashing", async () => {

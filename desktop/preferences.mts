@@ -2,16 +2,16 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { dirname } from "node:path";
 
-export type Preferences = { startAtLogin: boolean };
+export type Preferences = { startAtLogin: boolean; captureEnabled: boolean };
 
-export const DEFAULT_PREFERENCES: Preferences = { startAtLogin: true };
+export const DEFAULT_PREFERENCES: Preferences = { startAtLogin: true, captureEnabled: false };
 export const LOGIN_ITEM_ARGS = ["--hidden"];
 
 const DISABLE_LOGIN_ITEM_FLAG = "--no-login-item";
 const DISABLE_LOGIN_ITEM_ENV = "CLICK_DOT_DISABLE_LOGIN_ITEM";
 
 export async function savePreferences(file: string, preferences: Preferences): Promise<Preferences> {
-  const next: Preferences = { startAtLogin: preferences.startAtLogin === true };
+  const next: Preferences = { startAtLogin: preferences.startAtLogin === true, captureEnabled: preferences.captureEnabled === true };
   await mkdir(dirname(file), { recursive: true });
   const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
   await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`);
@@ -35,12 +35,35 @@ export async function loadPreferences(file: string): Promise<Preferences | undef
   try {
     const parsed: unknown = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && typeof (parsed as Preferences).startAtLogin === "boolean") {
-      return { startAtLogin: (parsed as Preferences).startAtLogin };
+      const { startAtLogin, captureEnabled } = parsed as Partial<Preferences>;
+      // Files written before screen capture existed have no captureEnabled: that means off, and they stay valid.
+      if (captureEnabled === undefined) return { startAtLogin: startAtLogin as boolean, captureEnabled: false };
+      if (typeof captureEnabled === "boolean") return { startAtLogin: startAtLogin as boolean, captureEnabled };
     }
   } catch {
     // Fall through: unknown.
   }
   return undefined;
+}
+
+/**
+ * Holds the current preferences and saves changes one at a time, so two settings changed together
+ * (for example from the tray and from the page) cannot overwrite each other.
+ */
+export function createPreferenceStore(file: string, initial: Preferences) {
+  let current = initial;
+  let queue: Promise<unknown> = Promise.resolve();
+  return {
+    get: () => current,
+    update(patch: Partial<Preferences>): Promise<Preferences> {
+      const result = queue.then(async () => {
+        current = await savePreferences(file, { ...current, ...patch });
+        return current;
+      });
+      queue = result.catch(() => {});
+      return result;
+    },
+  };
 }
 
 /** Only packaged builds register a login item, and the smoke/testing switches can turn it off entirely. */

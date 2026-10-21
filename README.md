@@ -41,6 +41,14 @@ npm run desktop:pack:win   # unpacked Windows x64 app in release/win-unpacked
 - Choosing **Continue with ChatGPT** in the desktop window opens Click Dot in the system browser; choose **Continue with ChatGPT** there to finish signing in, because the callback must reach the same browser that started it. The desktop window refreshes when you come back to it.
 - Every web permission request (camera, microphone, screen, notifications) is denied in this version.
 
+### Screen capture
+
+- Off by default. Turn it on from the Click Dot window ("Let Dot see your screen") or from the tray ("Let Dot see my screen"). Your choice is remembered across restarts.
+- While it is on, the window shows "Dot can see your screen" and the tray icon shows a red dot with the tooltip "Click Dot — seeing your screen".
+- Pause at any time from the window or the tray. Pausing is for the current session only, so a restart resumes capture if it was on.
+- Dot captures your main display every 10 seconds and keeps only the last 6 frames (about one minute) in memory. Frames are never written to disk and are dropped when you pause, turn capture off, or quit.
+- Capture runs inside the desktop app, and web pages still get no screen, camera or microphone permission. In a plain browser or `npm run dev`, capture is unavailable. Frames are not sent anywhere yet.
+
 ## Account and runtime boundary
 
 - The browser page is not connected to the eve agent runtime. No `/eve/v1` routes or agent tools are exposed. Chat accepts only a user message and a model from the current account’s catalog; it does not accept tools, system roles, arbitrary provider arguments, URLs, or OS capabilities.
