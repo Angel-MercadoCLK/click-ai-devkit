@@ -17,6 +17,7 @@ Assumptions (not user requirements; confirm or correct):
 - A2 — Desktop shell is Electron: it can host the existing Next.js/Node server and provides screen capture, tray, autostart and global shortcuts natively. Tauri would need a Node sidecar for the existing code.
 - A3 — Model access keeps the existing per-user Sign in with ChatGPT flow; image input through `POST /v1/responses` must be verified before T3.
 - A4 — "si se lo permites": capture is off until the user turns it on, shows a visible indicator while active, and can be paused at any time.
+- A5 — T2 capture design: when the user turns capture on, Dot captures the primary display every 10 seconds into an in-memory ring buffer of the last 6 frames (about one minute). Frames are never written to disk and are dropped on pause, quit or capture off. The on/off choice persists across restarts. While capturing, the tray icon and tooltip show it, and the chat window shows a visible "Dot can see your screen" indicator with Pause. Capture runs in the Electron main process (`desktopCapturer`), so web permissions stay denied.
 
 Known constraint: current storage fails closed on native Windows until private ACLs can be verified (README). T1 must solve protected storage on Windows.
 
@@ -29,7 +30,7 @@ Open risk: S5 sends screenshots that may contain insured-party personal data to 
 | T1a | S2, S3 | Electron shell on Windows: tray, autostart, global shortcut opening Dot's chat window, in-process Next server on a fixed loopback port, storage protector injection | delegated (writer trigger a: parallel with T1b, disjoint surfaces) | done (interactive Windows checks pending T7) | 6f57bcf (deps), a4465d1 |
 | T1b | S2, S3 | Windows-protected credential/history storage (DPAPI through the injected protector); unchanged POSIX behavior; native Windows without protector keeps failing closed | delegated (writer trigger a: parallel with T1a) | done (real Windows checks pending T7) | fd779d9 |
 | T1c | S2, S3 | Shell hardening from native review advisories: subframe navigation guard, startup failure dialog, second launch before server ready, tray preference save failure, unreadable preferences leave login item alone, visible encryption-unavailable warning | inline (small, ~85 lines) | done | see L10 |
-| T2 | S3, S4 | Opt-in screen capture: permission, visible indicator, pause, bounded local retention | TBD | pending | |
+| T2 | S3, S4 | Opt-in screen capture: permission, visible indicator, pause, bounded local retention (A5) | delegated (context backstop: parent session is long) | in progress | |
 | T3 | S5, S6 | Send captured screen images to the model in chat with local personal-data blurring; verify SIWC image input | TBD | pending | |
 | T4 | S2 | Call Dot from Claude Code/Codex (local MCP server exposed by Dot) | TBD | pending | |
 | T5 | S1 | Click Dot Windows release pipeline: packaged artifact, checksums, GitHub release | TBD | pending | |
