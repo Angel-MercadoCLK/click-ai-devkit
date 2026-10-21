@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "generatedBy": "scripts/sync-guard-patterns.mjs",
+  "source": {
+    "file": "internal/guard/patterns.yaml",
+    "sha256": "19fe6f34aa1197eea21d1e989cf988e2f43dc0313c8b6900f75ffa4a589c0e60"
+  },
+  "rules": [
+    {
+      "id": "pii/email",
+      "category": "pii",
+      "source": "\\b[A-Z0-9._%+\\-]+@[A-Z0-9.\\-]+\\.[A-Z]{2,}\\b",
+      "ignoreCase": true
+    },
+    {
+      "id": "pii/dni",
+      "category": "pii",
+      "source": "\\b(?:dni|documento|cedula|carnet)\\b[:\\s#-]*[0-9]{7,8}\\b",
+      "ignoreCase": true
+    },
+    {
+      "id": "pii/cuit-cuil",
+      "category": "pii",
+      "source": "\\b[0-9]{2}-?[0-9]{8}-?[0-9]\\b",
+      "ignoreCase": false
+    },
+    {
+      "id": "pii/phone",
+      "category": "pii",
+      "source": "(?:\\+54\\s?9?\\s?[0-9]{2,4}[\\s-]?[0-9]{3,4}[\\s-]?[0-9]{4}\\b|(?:tel[eé]fono|celular|whatsapp|phone)[:\\s-]*[0-9]{2,4}[\\s-]?[0-9]{3,4}[\\s-]?[0-9]{4}\\b)",
+      "ignoreCase": true
+    },
+    {
+      "id": "amounts/ars-symbol",
+      "category": "amounts",
+      "source": "\\$\\s?[0-9]+(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?\\b",
+      "ignoreCase": true
+    },
+    {
+      "id": "amounts/ars-code",
+      "category": "amounts",
+      "source": "\\bARS\\s?[0-9]+(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?\\b",
+      "ignoreCase": true
+    },
+    {
+      "id": "policy-numbers/placeholder",
+      "category": "policy-numbers",
+      "source": "\\b(?:p[oó]liza|policy|pol)\\b[:\\s#-]*[A-Z0-9-]*[0-9][A-Z0-9-]*\\b",
+      "ignoreCase": true
+    },
+    {
+      "id": "claim-ids/placeholder",
+      "category": "claim-ids",
+      "source": "\\b(?:siniestro|claim|sin)\\b[:\\s#-]*[A-Z0-9-]*[0-9][A-Z0-9-]*\\b",
+      "ignoreCase": true
+    },
+    {
+      "id": "customer-identifiers/placeholder",
+      "category": "customer-identifiers",
+      "source": "\\b(?:customer|cliente)[-_\\s]*(?:id|identifier|number|nro)?[:\\s#-]*[A-Z0-9-]*[0-9][A-Z0-9-]*\\b",
+      "ignoreCase": true
+    },
+    {
+      "id": "secrets/aws-access-key-id",
+      "category": "secrets",
+      "source": "\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b",
+      "ignoreCase": false
+    },
+    {
+      "id": "secrets/aws-secret-access-key",
+      "category": "secrets",
+      "source": "\\baws_secret_access_key\\b\\s*[:=]\\s*[A-Za-z0-9/+]{40}",
+      "ignoreCase": true
+    },
+    {
+      "id": "secrets/github-token",
+      "category": "secrets",
+      "source": "\\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\\b",
+      "ignoreCase": false
+    },
+    {
+      "id": "secrets/github-pat",
+      "category": "secrets",
+      "source": "\\bgithub_pat_[A-Za-z0-9_]{20,}\\b",
+      "ignoreCase": false
+    },
+    {
+      "id": "secrets/private-key-pem",
+      "category": "secrets",
+      "source": "-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----",
+      "ignoreCase": false
+    },
+    {
+      "id": "secrets/jwt",
+      "category": "secrets",
+      "source": "\\beyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\b",
+      "ignoreCase": false
+    },
+    {
+      "id": "secrets/slack-token",
+      "category": "secrets",
+      "source": "\\bxox[baprs]-[A-Za-z0-9-]+\\b",
+      "ignoreCase": false
+    },
+    {
+      "id": "secrets/openai-anthropic-key",
+      "category": "secrets",
+      "source": "\\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\\b",
+      "ignoreCase": false
+    },
+    {
+      "id": "secrets/generic-keyword-value",
+      "category": "secrets",
+      "source": "\\b(?:api[_-]?key|apikey|secret|password|passwd|token)\\b\\s*[:=]\\s*[A-Za-z0-9_\\-+/.=!@#$%^&*]{8,}",
+      "ignoreCase": true
+    },
+    {
+      "id": "secrets/bearer-token",
+      "category": "secrets",
+      "source": "\\bbearer\\s+[A-Za-z0-9_\\-.+/=]{16,}\\b",
+      "ignoreCase": true
+    }
+  ]
+}
