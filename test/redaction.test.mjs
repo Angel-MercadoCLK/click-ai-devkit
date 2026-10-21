@@ -103,10 +103,11 @@ test("words with unusable boxes are ignored instead of producing bad regions", (
 });
 
 test("a very long line is scanned in windows, so a match late in it is still found", () => {
-  const filler = Array.from({ length: 150 }, () => "lorem").join(" ");
+  // Sized from the window so the line always spans several windows, whatever the window size is.
+  const filler = Array.from({ length: Math.ceil((redaction.MAX_LINE_CHARS * 1.5) / 6) }, () => "lorem").join(" ");
   assert.ok(filler.length > redaction.MAX_LINE_CHARS * 1.4);
   const words = layout([`${filler} maria@example.com ${filler}`], { left: 0 });
-  const regions = redaction.findSensitiveRegions(words, { width: 20_000, height: 300 }, patterns);
+  const regions = redaction.findSensitiveRegions(words, { width: 200_000, height: 300 }, patterns);
   assert.ok(regions.some((region) => region.rules.includes("pii/email")));
 });
 
