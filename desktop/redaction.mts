@@ -169,15 +169,16 @@ function mergeOverlapping(regions: SensitiveRegion[]): SensitiveRegion[] {
 
 /**
  * Finds the screen areas that hold text matching a guard rule. Each OCR line is scanned, and so is every pair of
- * neighbouring lines (joined by a space) so a value wrapped across two lines is still found. A match covers every
+ * neighbouring lines (joined by a space, and again with no space) so a value wrapped across two lines is still found. A match covers every
  * word it touches; the result is one padded rectangle per OCR line involved, clamped to the image, with
  * overlapping rectangles merged.
  */
 export function findSensitiveRegions(words: OcrWord[], image: { width: number; height: number }, rules: CompiledGuardRule[]): SensitiveRegion[] {
   const lines = buildLines(words);
   const found: SensitiveRegion[] = [];
-  const cover = (candidates: Array<{ line: LineText; offset: number }>, text: string) => {
+  const cover = (candidates: Array<{ line: LineText; offset: number }>, text: string, keep: (hit: Hit) => boolean = () => true) => {
     for (const hit of scanText(text, rules)) {
+      if (!keep(hit)) continue;
       for (const { line, offset } of candidates) {
         const covered = line.words.filter((_, index) => {
           const start = offset + line.starts[index];
@@ -194,6 +195,14 @@ export function findSensitiveRegions(words: OcrWord[], image: { width: number; h
     const next = lines[index + 1];
     if (next) {
       cover([{ line: lines[index], offset: 0 }, { line: next, offset: lines[index].text.length + 1 }], `${lines[index].text} ${next.text}`);
+      // A value can also break mid-word ("maria.gomez@" / "example.com"), so scan the pair joined directly too.
+      // Only hits that cross the line break count, and not when a value already ends the first line on its own,
+      // otherwise "maria@example.com" + "plain" would read as one longer address and hide "plain".
+      const first = lines[index];
+      const boundary = first.text.length;
+      const endsLine = new Set(scanText(first.text, rules).filter((hit) => hit.end === boundary).map((hit) => hit.rule));
+      cover([{ line: first, offset: 0 }, { line: next, offset: boundary }], `${first.text}${next.text}`,
+        (hit) => hit.start < boundary && hit.end > boundary && !endsLine.has(hit.rule));
     }
   }
   return mergeOverlapping(found);

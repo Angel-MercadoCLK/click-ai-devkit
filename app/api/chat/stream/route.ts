@@ -3,6 +3,7 @@ import { authorizedConnection, isConnectionSnapshot, isRecord, noStore, readBoun
 import { listAvailableModels, streamChatResponse, formatLocalEvent, ScreenImageRejectedError, type ChatInputMessage } from "../../../../lib/chat-provider.ts";
 import { appendCompletedTurn, getConversation, listConversations } from "../../../../lib/conversation-store.ts";
 import { PREVIEW_ID_PATTERN, screenPreviews, toDataUrl } from "../../../../lib/screen-previews.ts";
+import { getCaptureController, readCaptureStatus } from "../../../../lib/capture-controller.ts";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -70,6 +71,13 @@ export async function POST(request: Request) {
   // Taken (and so spent) only after every other check passed. An unknown, used or expired id sends nothing.
   let userContent: ChatInputMessage["content"] = prompt;
   if (screenPreviewId !== undefined) {
+    // Checked at send time: a preview prepared before the user paused or turned capture off is never sent.
+    const controller = getCaptureController();
+    const capture = controller ? readCaptureStatus(controller) : undefined;
+    if (!capture?.enabled || capture.paused) {
+      screenPreviews().clear();
+      return Response.json({ error: "Screen capture is paused or off, so the screen was not attached." }, { status: 409, headers: noStore });
+    }
     const screen = screenPreviews().take(screenPreviewId);
     if (!screen) return Response.json({ error: "The screen preview expired. Prepare it again before sending." }, { status: 410, headers: noStore });
     userContent = [{ type: "input_text", text: prompt }, { type: "input_image", image_url: toDataUrl(screen) }];

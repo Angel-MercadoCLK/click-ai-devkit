@@ -66,6 +66,9 @@ function installController(controller) {
   globalThis[CONTROLLER_KEY] = controller;
 }
 
+// Sending a screen requires capture to be on and not paused, as it is in the desktop app.
+const installCapturing = () => installController({ status: () => ({ enabled: true, paused: false, frames: 1, lastCapturedAt: Date.now() }), apply: async () => ({}) });
+
 async function freshRevision() {
   const snapshot = await authStore.getConnectionSnapshot();
   await historyStore.clearConversations(snapshot);
@@ -288,7 +291,22 @@ test("text-only messages through the stream route are unchanged: no image part, 
   assert.deepEqual(history.conversations[0].messages.map((m) => m.content), ["Plain", "Seen"]);
 });
 
+test("a prepared preview is never sent once capture is paused, off or unavailable, and pending previews are dropped", async () => {
+  for (const state of [{ enabled: true, paused: true }, { enabled: false, paused: false }, undefined]) {
+    const revision = await freshRevision();
+    const { id } = previews.screenPreviews().put({ image: PNG, mime: "image/png" });
+    if (state) installController({ status: () => ({ ...state, frames: 0, lastCapturedAt: null }), apply: async () => ({}) });
+    else delete globalThis[CONTROLLER_KEY];
+    const calls = installFetch(() => goodStream());
+    const response = await streamRoute.POST(localRequest("/api/chat/stream", json({ conversationId: crypto.randomUUID(), revision, model: "model-first", prompt: "Look", screenPreviewId: id })));
+    assert.equal(response.status, 409, JSON.stringify(state));
+    assert.equal(responsesCalls(calls).length, 0, "nothing goes upstream");
+    assert.equal(previews.screenPreviews().size(), 0, "pending previews are dropped");
+  }
+});
+
 test("a screen preview id becomes input_text plus input_image, and the history keeps a marker instead of the image", async () => {
+  installCapturing();
   const revision = await freshRevision();
   const { id } = previews.screenPreviews().put({ image: PNG, mime: "image/png" });
   const calls = installFetch(() => goodStream());
@@ -312,6 +330,7 @@ test("a screen preview id becomes input_text plus input_image, and the history k
 });
 
 test("a preview can be used once; unknown, used, expired and malformed ids never reach the provider", async () => {
+  installCapturing();
   const revision = await freshRevision();
   const { id } = previews.screenPreviews().put({ image: PNG, mime: "image/png" });
   const calls = installFetch(() => goodStream());
@@ -371,6 +390,7 @@ test("the browser can never supply image bytes: image-shaped fields are rejected
 });
 
 test("when the model rejects the image the page gets the clear message, nothing leaks, and nothing is saved", async () => {
+  installCapturing();
   const revision = await freshRevision();
   const { id } = previews.screenPreviews().put({ image: PNG, mime: "image/png" });
   installFetch(() => new Response(JSON.stringify({ error: { message: "model cannot take image: SECRET-UPSTREAM" } }), { status: 400 }));

@@ -67,6 +67,15 @@ test("a value wrapped across two lines is found by scanning neighbouring lines t
   assert.equal(regions.some((region) => region.x < trailing.x + trailing.w && region.x + region.w > trailing.x && region.y < trailing.y + trailing.h && region.y + region.h > trailing.y), false);
 });
 
+test("a value split mid-word across two lines is found by also joining the lines without a space", () => {
+  const words = layout(["contact maria.gomez@", "example.com today"]);
+  const regions = redaction.findSensitiveRegions(words, IMAGE, patterns);
+  const covers = (word) => regions.some((region) => region.x <= word.x && region.x + region.w >= word.x + word.w && region.y <= word.y && region.y + region.h >= word.y + word.h);
+  assert.ok(covers(words.find((word) => word.text === "maria.gomez@")), "first half hidden");
+  assert.ok(covers(words.find((word) => word.text === "example.com")), "second half hidden");
+  assert.equal(covers(words.find((word) => word.text === "today")), false, "unrelated words stay visible");
+});
+
 test("several matches give several regions, and overlapping ones are merged", () => {
   const separate = redaction.findSensitiveRegions(layout(["maria@example.com", "plain line", "DNI 12345678"]), IMAGE, patterns);
   assert.equal(separate.length, 2);

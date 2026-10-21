@@ -405,7 +405,8 @@ test("the stream route accepts exactly one new field, screenPreviewId, and still
     assert.equal(response.status, 400, JSON.stringify(extra));
   }
   const withUnknownPreview = await streamRoute.POST(localRequest("/api/chat/stream", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ conversationId: crypto.randomUUID(), revision, model: "model-first", prompt: "Hello", screenPreviewId: "A".repeat(22) }) }));
-  assert.equal(withUnknownPreview.status, 410);
+  // The field is accepted (not 400); without desktop capture running, the screen is refused before the id is used.
+  assert.equal(withUnknownPreview.status, 409);
   const textOnly = await streamRoute.POST(localRequest("/api/chat/stream", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ conversationId: crypto.randomUUID(), revision, model: "model-first", prompt: "Hello" }) }));
   assert.equal(textOnly.status, 200);
   assert.match(await textOnly.text(), /event: completed/);
