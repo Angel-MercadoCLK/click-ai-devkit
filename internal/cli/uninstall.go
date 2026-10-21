@@ -282,15 +282,21 @@ func runUninstall(cmd *cobra.Command) error {
 	}
 
 	// Click Dot (Windows only): stop it, remove its install folder, Start Menu shortcut and
-	// start-at-login entry. Its user data is preserved. Nothing is added to the output elsewhere.
+	// start-at-login entry. Its user data is preserved. Dot is a supplementary integration (D45), so
+	// a removal error is a Spanish warning, never a failed uninstall step; the step is rendered
+	// directly (instead of through runStep) so a failure is not announced as "desinstalado".
 	if installer.DotSupported() {
-		runStep("Click Dot", "Quitando Click Dot…", "Click Dot desinstalado (si estaba instalado); los datos de usuario de Click Dot se conservan", false, func() error {
-			result, removeErr := installer.RemoveDot(cmd.Context())
-			for _, warning := range result.Warnings {
-				fmt.Fprintln(out, r.Warn("Click Dot: "+warning+"."))
-			}
-			return removeErr
-		})
+		fmt.Fprintln(out, r.Step("Quitando Click Dot…"))
+		result, removeErr := installer.RemoveDot(cmd.Context())
+		if removeErr != nil {
+			fmt.Fprintln(out, r.Warn(fmt.Sprintf("No se pudo quitar Click Dot por completo: %v. El resto de la desinstalación continúa; revisa la carpeta de Click Dot manualmente.", removeErr)))
+		} else if len(result.Warnings) == 0 || result.Outcome == installer.DotRemoved {
+			fmt.Fprintln(out, r.Success("Click Dot desinstalado (si estaba instalado); los datos de usuario de Click Dot se conservan"))
+		}
+		for _, warning := range result.Warnings {
+			fmt.Fprintln(out, r.Warn("Click Dot: "+warning+"."))
+		}
+		outcomes = append(outcomes, uninstallStepOutcome{label: "Click Dot"})
 	}
 
 	// Pruning step (PR C): removes empty Click-specific keys that the external `claude` CLI

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -40,7 +39,6 @@ const (
 	dotMaxArchiveEntries  = 50000
 	dotSwapAttempts       = 5
 	dotSwapRetryDelay     = 300 * time.Millisecond
-	dotDownloadTimeout    = 15 * time.Minute
 	dotMaxRedirects       = 5
 	dotPowerShellRelative = "System32/WindowsPowerShell/v1.0/powershell.exe"
 	dotTaskkillRelative   = "System32/taskkill.exe"
@@ -101,6 +99,9 @@ type DotManager struct {
 	// LoginItems edits HKCU Run on Windows; nil means there is nothing to clean.
 	LoginItems DotLoginStore
 	Sleep      func(time.Duration)
+	// Rename and RemoveAll default to os.Rename and os.RemoveAll; tests inject failures.
+	Rename    func(oldPath, newPath string) error
+	RemoveAll func(path string) error
 
 	// Zero values select the production limits; tests lower them to prove the guards.
 	MaxArchiveBytes   int64
@@ -253,6 +254,7 @@ func (m DotManager) Sync(ctx context.Context, expectedVersion string) (DotResult
 	}
 	version := plan.Version
 	result := DotResult{Version: version, Path: p.exe}
+	result.Warnings = append(result.Warnings, m.cleanOrphans(p.programs)...)
 
 	// Same ownership rule as Remove: an existing path without the Click marker is never replaced.
 	if _, statErr := os.Lstat(p.installDir); statErr == nil {
@@ -300,8 +302,17 @@ func (m DotManager) Sync(ctx context.Context, expectedVersion string) (DotResult
 		return DotResult{}, fmt.Errorf("no se pudo registrar la versión instalada: %w", err)
 	}
 
-	m.stopDot(ctx)
+	wasRunning := m.stopDot(ctx)
 	if err := m.swapInstallDir(p.installDir, app); err != nil {
+		// The previous install is back in place (swapInstallDir restores it). If this call is what
+		// stopped it, leave the user with the Dot they had instead of nothing.
+		if wasRunning && before.ExePresent && m.Start != nil {
+			if startErr := m.Start(p.exe); startErr != nil {
+				err = fmt.Errorf("%w; además no se pudo volver a iniciar la versión anterior de Click Dot: %v", err, startErr)
+			} else {
+				err = fmt.Errorf("%w; se volvió a iniciar la versión anterior de Click Dot", err)
+			}
+		}
 		return DotResult{}, err
 	}
 
@@ -332,8 +343,26 @@ func (m DotManager) Remove(ctx context.Context) (DotResult, error) {
 		return DotResult{}, err
 	}
 	result := DotResult{Outcome: DotNotInstalled, Path: p.installDir}
-	var errs []error
 
+	// Ownership comes first: nothing is stopped, unregistered or deleted unless the install folder
+	// carries the Click marker. Without proof the folder, the shortcut and the login entry may belong
+	// to a hand-installed Dot, so they all stay exactly as they are.
+	info, err := os.Lstat(p.installDir)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return result, nil
+	case err != nil:
+		return result, fmt.Errorf("carpeta de instalación: %w", err)
+	case info.Mode()&os.ModeSymlink == 0 && !info.IsDir():
+		result.Warnings = append(result.Warnings, p.installDir+" no es una carpeta; se conservó")
+		return result, nil
+	}
+	if _, markerErr := os.Lstat(p.marker); markerErr != nil {
+		result.Warnings = append(result.Warnings, p.installDir+" no tiene el marcador de Click; se conservó porque no se puede confirmar que sea de Click")
+		return result, nil
+	}
+
+	var errs []error
 	m.stopDot(ctx)
 
 	if m.LoginItems != nil {
@@ -346,24 +375,10 @@ func (m DotManager) Remove(ctx context.Context) (DotResult, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		errs = append(errs, fmt.Errorf("acceso directo del menú Inicio: %w", err))
 	}
-
-	info, err := os.Lstat(p.installDir)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-	case err != nil:
+	if err := m.removeAllRetry(p.installDir); err != nil {
 		errs = append(errs, fmt.Errorf("carpeta de instalación: %w", err))
-	case info.Mode()&os.ModeSymlink == 0 && !info.IsDir():
-		result.Warnings = append(result.Warnings, p.installDir+" no es una carpeta; se conservó")
-	default:
-		if _, markerErr := os.Lstat(p.marker); markerErr != nil {
-			result.Warnings = append(result.Warnings, p.installDir+" no tiene el marcador de Click; se conservó porque no se puede confirmar que sea de Click")
-			break
-		}
-		if err := m.removeAllRetry(p.installDir); err != nil {
-			errs = append(errs, fmt.Errorf("carpeta de instalación: %w", err))
-		} else {
-			result.Outcome = DotRemoved
-		}
+	} else {
+		result.Outcome = DotRemoved
 	}
 	return result, errors.Join(errs...)
 }
@@ -403,13 +418,15 @@ func (m DotManager) systemTool(relative string) string {
 	return filepath.Join(root, relative)
 }
 
-// stopDot ends a running Click Dot. taskkill exits non-zero when nothing is running, and a real
-// failure surfaces later as a locked-directory error from the swap, so the result is not fatal here.
-func (m DotManager) stopDot(ctx context.Context) {
+// stopDot ends a running Click Dot and reports whether it did: taskkill exits non-zero when no such
+// process exists, which is how callers learn whether Dot was running. A real failure to stop surfaces
+// later as a locked-directory error from the swap, so the result is never fatal here.
+func (m DotManager) stopDot(ctx context.Context) bool {
 	if m.Run == nil {
-		return
+		return false
 	}
-	_, _ = m.Run(ctx, m.systemTool(dotTaskkillRelative), "/IM", dotProcessName, "/F")
+	_, err := m.Run(ctx, m.systemTool(dotTaskkillRelative), "/IM", dotProcessName, "/F")
+	return err == nil
 }
 
 func (m DotManager) fetchExpectedChecksum(ctx context.Context, base, asset string) ([]byte, error) {
@@ -466,7 +483,7 @@ func (m DotManager) swapInstallDir(installDir, next string) error {
 		aside = installDir + ".old-" + randomSuffix()
 		var renameErr error
 		for attempt := 0; attempt < dotSwapAttempts; attempt++ {
-			if renameErr = os.Rename(installDir, aside); renameErr == nil {
+			if renameErr = m.rename(installDir, aside); renameErr == nil {
 				break
 			}
 			m.sleep(dotSwapRetryDelay)
@@ -477,22 +494,71 @@ func (m DotManager) swapInstallDir(installDir, next string) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("no se pudo inspeccionar %s: %w", installDir, err)
 	}
-	if err := os.Rename(next, installDir); err != nil {
+	if err := m.rename(next, installDir); err != nil {
 		if aside != "" {
-			_ = os.Rename(aside, installDir)
+			_ = m.rename(aside, installDir)
 		}
 		return fmt.Errorf("no se pudo instalar Click Dot en %s: %w", installDir, err)
 	}
 	if aside != "" {
-		_ = os.RemoveAll(aside)
+		_ = m.removeAll(aside)
 	}
 	return nil
+}
+
+func (m DotManager) rename(oldPath, newPath string) error {
+	if m.Rename != nil {
+		return m.Rename(oldPath, newPath)
+	}
+	return os.Rename(oldPath, newPath)
+}
+
+func (m DotManager) removeAll(path string) error {
+	if m.RemoveAll != nil {
+		return m.RemoveAll(path)
+	}
+	return os.RemoveAll(path)
+}
+
+var (
+	// MkdirTemp's random part is decimal; the aside suffix is hex (randomSuffix) or, if the random
+	// source fails, a decimal timestamp. Anything else is not something Click created.
+	dotStagingOrphan = regexp.MustCompile(`^\.click-dot-staging-[0-9]+$`)
+	dotAsideOrphan   = regexp.MustCompile(`^` + regexp.QuoteMeta(dotInstallDirName) + `\.old-(?:[0-9a-f]{12}|[0-9]+)$`)
+)
+
+// cleanOrphans removes the staging folders and renamed-aside installs a previous run left behind in
+// programs (a locked delete or a crash). Only directories that match Click's exact naming are
+// touched, and every failure is returned as a warning: cleanup never blocks an install.
+func (m DotManager) cleanOrphans(programs string) []string {
+	entries, err := os.ReadDir(programs)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return []string{fmt.Sprintf("no se pudo revisar %s en busca de restos de instalaciones anteriores: %v", programs, err)}
+	}
+	var warnings []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if !dotStagingOrphan.MatchString(name) && !dotAsideOrphan.MatchString(name) {
+			continue
+		}
+		path := filepath.Join(programs, name)
+		if info, err := os.Lstat(path); err != nil || !info.IsDir() {
+			continue
+		}
+		if err := m.removeAll(path); err != nil {
+			warnings = append(warnings, fmt.Sprintf("no se pudo eliminar el resto de una instalación anterior %s: %v", name, err))
+		}
+	}
+	return warnings
 }
 
 func (m DotManager) removeAllRetry(path string) error {
 	var err error
 	for attempt := 0; attempt < dotSwapAttempts; attempt++ {
-		if err = os.RemoveAll(path); err == nil {
+		if err = m.removeAll(path); err == nil {
 			return nil
 		}
 		m.sleep(dotSwapRetryDelay)
@@ -534,51 +600,4 @@ func randomSuffix() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b[:])
-}
-
-var dotAllowedDownloadHosts = []string{"github.com", "githubusercontent.com"}
-
-func dotHostAllowed(host string) bool {
-	host = strings.ToLower(host)
-	for _, allowed := range dotAllowedDownloadHosts {
-		if host == allowed || strings.HasSuffix(host, "."+allowed) {
-			return true
-		}
-	}
-	return false
-}
-
-// fetchDotAsset is the production download: HTTPS only, a bounded redirect chain restricted to GitHub
-// hosts, no automatic decompression (the digest covers the exact bytes), and no credentials.
-func fetchDotAsset(ctx context.Context, rawURL string) (io.ReadCloser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	if req.URL.Scheme != "https" || !dotHostAllowed(req.URL.Hostname()) {
-		return nil, errors.New("la descarga requiere HTTPS desde GitHub")
-	}
-	client := &http.Client{
-		Timeout:   dotDownloadTimeout,
-		Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, DisableCompression: true},
-		CheckRedirect: func(next *http.Request, via []*http.Request) error {
-			if len(via) > dotMaxRedirects {
-				return errors.New("demasiadas redirecciones")
-			}
-			if next.URL.Scheme != "https" || !dotHostAllowed(next.URL.Hostname()) {
-				return errors.New("la redirección sale de GitHub o no usa HTTPS")
-			}
-			next.Header.Del("Authorization")
-			return nil
-		},
-	}
-	response, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode != http.StatusOK {
-		response.Body.Close()
-		return nil, fmt.Errorf("HTTP %d", response.StatusCode)
-	}
-	return response.Body, nil
 }

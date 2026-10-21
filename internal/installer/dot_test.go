@@ -920,3 +920,277 @@ func snapshotDotTree(t *testing.T, root string) string {
 	}
 	return b.String()
 }
+
+// seedUnownedDot lays down a hand-installed Dot (no Click marker) plus the paths a careless uninstall
+// would touch: the Start Menu shortcut and a Run entry that launches that exe.
+func seedUnownedDot(t *testing.T, h *dotHarness) (exe string) {
+	t.Helper()
+	if err := os.MkdirAll(h.installDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe = filepath.Join(h.installDir(), "Click Dot.exe")
+	if err := os.WriteFile(exe, []byte("hand-installed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(h.shortcut()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.shortcut(), []byte("someone-elses-lnk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.login.entries = map[string]string{"electron.app.Electron": `"` + exe + `"`}
+	return exe
+}
+
+func TestDotRemoveWithoutMarkerHasNoSideEffects(t *testing.T) {
+	h := newDotHarness(t)
+	exe := seedUnownedDot(t, h)
+
+	res, err := h.manager.Remove(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.runs) != 0 {
+		t.Fatalf("ownership must be proven before stopping any process, ran %v", h.runNames())
+	}
+	if readDotFile(t, h.shortcut()) != "someone-elses-lnk" {
+		t.Fatal("the shortcut must be kept when the install is not Click-owned")
+	}
+	if len(h.login.deleted) != 0 {
+		t.Fatalf("login entries must be kept, deleted %v", h.login.deleted)
+	}
+	if readDotFile(t, exe) != "hand-installed" {
+		t.Fatal("the folder must be kept")
+	}
+	if res.Outcome == DotRemoved || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "marcador") {
+		t.Fatalf("res = %+v", res)
+	}
+}
+
+func TestDotRemoveKeepsPlainFileWithoutSideEffects(t *testing.T) {
+	h := newDotHarness(t)
+	if err := os.MkdirAll(filepath.Dir(h.installDir()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.installDir(), []byte("not a folder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(h.shortcut()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.shortcut(), []byte("lnk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.manager.Remove(context.Background())
+	if err != nil || len(h.runs) != 0 || len(res.Warnings) != 1 {
+		t.Fatalf("res=%+v err=%v runs=%v", res, err, h.runs)
+	}
+	if readDotFile(t, h.shortcut()) != "lnk" {
+		t.Fatal("shortcut must be kept")
+	}
+}
+
+func TestDotRemoveWithMarkerStopsThenCleansEverything(t *testing.T) {
+	h := newDotHarness(t)
+	seedInstalledDot(t, h)
+	if err := os.MkdirAll(filepath.Dir(h.shortcut()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.shortcut(), []byte("lnk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.login.entries = map[string]string{"electron.app.Electron": `"` + filepath.Join(h.installDir(), "Click Dot.exe") + `"`}
+	res, err := h.manager.Remove(context.Background())
+	if err != nil || res.Outcome != DotRemoved {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if got := h.runNames(); len(got) != 1 || got[0] != "taskkill.exe" {
+		t.Fatalf("commands = %v", got)
+	}
+	if len(h.login.deleted) != 1 {
+		t.Fatalf("deleted = %v", h.login.deleted)
+	}
+	for _, gone := range []string{h.installDir(), h.shortcut()} {
+		if _, err := os.Lstat(gone); !os.IsNotExist(err) {
+			t.Fatalf("%s must be removed", gone)
+		}
+	}
+}
+
+// failNextRename makes the rename that moves the staged package into place fail, like a directory
+// another process still holds, while every other rename (including the restore) works.
+func failStagedRename(h *dotHarness) {
+	h.manager.Rename = func(oldPath, newPath string) error {
+		if filepath.Base(newPath) == "Click Dot" && strings.Contains(oldPath, ".click-dot-staging-") {
+			return errors.New("acceso denegado")
+		}
+		return os.Rename(oldPath, newPath)
+	}
+}
+
+func TestDotSyncRestartsPreviousDotWhenSwapFailsAfterStoppingIt(t *testing.T) {
+	h := newDotHarness(t)
+	h.release("1.2.2", validDotZip(t, "old"))
+	h.release(testDotVersion, validDotZip(t, "new"))
+	if _, err := h.manager.Sync(context.Background(), "1.2.2"); err != nil {
+		t.Fatal(err)
+	}
+	h.runs, h.started = nil, nil
+	failStagedRename(h)
+
+	_, err := h.manager.Sync(context.Background(), testDotVersion)
+	if err == nil || !strings.Contains(err.Error(), "no se pudo instalar Click Dot") {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "se volvió a iniciar") {
+		t.Fatalf("the warning must say the previous Dot was started again: %v", err)
+	}
+	if got := readDotFile(t, filepath.Join(h.installDir(), "Click Dot.exe")); got != "exe-old" {
+		t.Fatalf("previous install must be restored, exe = %q", got)
+	}
+	if len(h.started) != 1 || h.started[0] != filepath.Join(h.installDir(), "Click Dot.exe") {
+		t.Fatalf("previous Dot must be restarted once, started = %v", h.started)
+	}
+}
+
+func TestDotSyncDoesNotRestartDotThatWasNotRunning(t *testing.T) {
+	h := newDotHarness(t)
+	h.release("1.2.2", validDotZip(t, "old"))
+	h.release(testDotVersion, validDotZip(t, "new"))
+	if _, err := h.manager.Sync(context.Background(), "1.2.2"); err != nil {
+		t.Fatal(err)
+	}
+	h.started = nil
+	h.runError = func(name string, args []string) error {
+		if strings.HasSuffix(name, "taskkill.exe") {
+			return errors.New("ERROR: no se encontró el proceso")
+		}
+		return nil
+	}
+	failStagedRename(h)
+
+	_, err := h.manager.Sync(context.Background(), testDotVersion)
+	if err == nil || strings.Contains(err.Error(), "se volvió a iniciar") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(h.started) != 0 {
+		t.Fatalf("Dot was not running; nothing to restart, started = %v", h.started)
+	}
+}
+
+func TestDotSyncReportsFailedRestartAfterSwapFailure(t *testing.T) {
+	h := newDotHarness(t)
+	h.release("1.2.2", validDotZip(t, "old"))
+	h.release(testDotVersion, validDotZip(t, "new"))
+	if _, err := h.manager.Sync(context.Background(), "1.2.2"); err != nil {
+		t.Fatal(err)
+	}
+	h.startErr = errors.New("no arranca")
+	failStagedRename(h)
+	_, err := h.manager.Sync(context.Background(), testDotVersion)
+	if err == nil || !strings.Contains(err.Error(), "no se pudo volver a iniciar") || !strings.Contains(err.Error(), "no arranca") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDotSyncSuccessfulUpdateStillStartsNewDotOnce(t *testing.T) {
+	h := newDotHarness(t)
+	h.release("1.2.2", validDotZip(t, "old"))
+	h.release(testDotVersion, validDotZip(t, "new"))
+	if _, err := h.manager.Sync(context.Background(), "1.2.2"); err != nil {
+		t.Fatal(err)
+	}
+	h.started = nil
+	if _, err := h.manager.Sync(context.Background(), testDotVersion); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.started) != 1 {
+		t.Fatalf("started = %v", h.started)
+	}
+}
+
+func seedDotOrphans(t *testing.T, h *dotHarness) (orphans, keep []string) {
+	t.Helper()
+	programs := filepath.Join(h.local, "Programs")
+	for _, name := range []string{".click-dot-staging-123456789", "Click Dot.old-0a1b2c3d4e5f", "Click Dot.old-1700000000000000000"} {
+		dir := filepath.Join(programs, name)
+		if err := os.MkdirAll(filepath.Join(dir, "app"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "app", "file.bin"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		orphans = append(orphans, dir)
+	}
+	// Anything that is not exactly Click's own naming must be left alone.
+	for _, name := range []string{"Click Dot.old-notes", "Click Dot.old-", ".click-dot-staging-", ".click-dot-staging-abc", "Click Dot.older-0a1b2c3d4e5f", "Other App", "Other App.old-0a1b2c3d4e5f", ".click-dot-staging", "Click Dot.old"} {
+		dir := filepath.Join(programs, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		keep = append(keep, dir)
+	}
+	// A plain file with a Click name is not a directory Click created.
+	file := filepath.Join(programs, ".click-dot-staging-777")
+	if err := os.WriteFile(file, []byte("f"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	keep = append(keep, file)
+	return orphans, keep
+}
+
+func TestDotSyncRemovesOnlyClickOrphansAtStart(t *testing.T) {
+	h := newDotHarness(t)
+	h.release(testDotVersion, validDotZip(t, "one"))
+	orphans, keep := seedDotOrphans(t, h)
+
+	res, err := h.manager.Sync(context.Background(), testDotVersion)
+	if err != nil || res.Outcome != DotInstalled || len(res.Warnings) != 0 {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	for _, gone := range orphans {
+		if _, err := os.Lstat(gone); !os.IsNotExist(err) {
+			t.Errorf("orphan %s must be removed", gone)
+		}
+	}
+	for _, kept := range keep {
+		if _, err := os.Lstat(kept); err != nil {
+			t.Errorf("%s must be preserved: %v", kept, err)
+		}
+	}
+}
+
+func TestDotSyncOrphanCleanupFailureIsOnlyAWarning(t *testing.T) {
+	h := newDotHarness(t)
+	h.release(testDotVersion, validDotZip(t, "one"))
+	orphans, _ := seedDotOrphans(t, h)
+	h.manager.RemoveAll = func(path string) error {
+		if path == orphans[0] {
+			return errors.New("en uso")
+		}
+		return os.RemoveAll(path)
+	}
+	res, err := h.manager.Sync(context.Background(), testDotVersion)
+	if err != nil || res.Outcome != DotInstalled {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "en uso") || !strings.Contains(res.Warnings[0], filepath.Base(orphans[0])) {
+		t.Fatalf("warnings = %v", res.Warnings)
+	}
+	if _, err := os.Lstat(orphans[1]); !os.IsNotExist(err) {
+		t.Fatal("one failing orphan must not stop the others from being cleaned")
+	}
+}
+
+func TestDotSyncCleansOrphansWhenAlreadyCurrent(t *testing.T) {
+	h := newDotHarness(t)
+	seedInstalledDot(t, h)
+	orphans, _ := seedDotOrphans(t, h)
+	res, err := h.manager.Sync(context.Background(), testDotVersion)
+	if err != nil || res.Outcome != DotCurrent {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if _, err := os.Lstat(orphans[0]); !os.IsNotExist(err) {
+		t.Fatal("orphans must be cleaned even when nothing needs installing")
+	}
+}

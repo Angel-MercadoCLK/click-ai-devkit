@@ -34,6 +34,37 @@ func TestCheckDotStates(t *testing.T) {
 	}
 }
 
+func TestCheckDotOnDevelopmentBuildNeverSuggestsInstallOrUpdate(t *testing.T) {
+	exe := `C:\Users\Ana\AppData\Local\Programs\Click Dot\Click Dot.exe`
+	for name, status := range map[string]installer.DotStatus{
+		"absent":             {Supported: true, ExePath: exe},
+		"marker without exe": {Supported: true, ExePath: exe, MarkerPresent: true, Version: "1.2.3"},
+		"exe without marker": {Supported: true, ExePath: exe, ExePresent: true},
+	} {
+		for _, build := range []string{"dev", "", "1.2.3-SNAPSHOT-abc"} {
+			t.Run(name+"/"+build, func(t *testing.T) {
+				got := CheckDot(status, build)
+				if !got.Healthy || !got.Warning {
+					t.Fatalf("CheckDot = %+v", got)
+				}
+				if strings.Contains(got.Detail, "click install") || strings.Contains(got.Detail, "click update") {
+					t.Fatalf("development builds skip Dot, so the advice would not work: %q", got.Detail)
+				}
+				if !strings.Contains(got.Detail, "builds publicados") {
+					t.Fatalf("detail must say Dot is only installed by released builds: %q", got.Detail)
+				}
+			})
+		}
+	}
+}
+
+func TestCheckDotAbsentOnReleaseBuildStillSuggestsInstall(t *testing.T) {
+	got := CheckDot(installer.DotStatus{Supported: true}, "1.2.3")
+	if !strings.Contains(got.Detail, "click install") || !strings.Contains(got.Detail, "click update") || !got.Warning {
+		t.Fatalf("CheckDot = %+v", got)
+	}
+}
+
 func TestReportHealthyIgnoresWarnings(t *testing.T) {
 	report := Report{Checks: []CheckResult{{Name: "a", Healthy: true}, {Name: "Click Dot", Healthy: true, Warning: true}}}
 	if !report.Healthy() {

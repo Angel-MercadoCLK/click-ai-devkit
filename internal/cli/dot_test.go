@@ -32,6 +32,7 @@ type cliDotRig struct {
 	runs    []string
 	started []string
 	fetchOK bool
+	manager installer.DotManager
 }
 
 func newCLIDotRig(t *testing.T, goos string) *cliDotRig {
@@ -61,6 +62,7 @@ func newCLIDotRig(t *testing.T, goos string) *cliDotRig {
 		Start: func(exe string) error { rig.started = append(rig.started, exe); return nil },
 		Sleep: func(time.Duration) {},
 	}
+	rig.manager = manager
 	t.Cleanup(installer.SetDotManagerFactoryForTests(func() installer.DotManager { return manager }))
 	return rig
 }
@@ -395,5 +397,70 @@ func TestRollbackOffWindowsOutputUnchanged(t *testing.T) {
 	out, err := execRoot(t, home, "rollback")
 	if err != nil || strings.Contains(out, "Click Dot") {
 		t.Fatalf("rollback err=%v\n%s", err, out)
+	}
+}
+
+type failingLoginStore struct{}
+
+func (failingLoginStore) Entries() (map[string]string, error) {
+	return nil, errors.New("el registro está bloqueado")
+}
+func (failingLoginStore) Delete(string) error { return nil }
+
+// A Dot removal error is supplementary (D45): it renders as a Spanish warning, the rest of the
+// uninstall is unaffected and the command still succeeds.
+func TestUninstallDotRemovalErrorIsANonFatalWarning(t *testing.T) {
+	setCLIVersion(t, cliDotVersion)
+	rig := newCLIDotRig(t, "windows")
+	rig.publish(cliDotVersion)
+	home := dotCLIHome(t)
+	if out, err := execRoot(t, home, "install"); err != nil {
+		t.Fatalf("install error = %v\n%s", err, out)
+	}
+	failing := rig.manager
+	failing.LoginItems = failingLoginStore{}
+	t.Cleanup(installer.SetDotManagerFactoryForTests(func() installer.DotManager { return failing }))
+
+	out, err := execRoot(t, home, "uninstall")
+	if err != nil {
+		t.Fatalf("a Dot removal error must not fail uninstall: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "[warn] No se pudo quitar Click Dot") || !strings.Contains(out, "el registro está bloqueado") {
+		t.Fatalf("output lacks the Dot warning:\n%s", out)
+	}
+	if strings.Contains(out, "Click Dot desinstalado") || strings.Contains(out, "[FAIL]") || strings.Contains(out, "Desinstalación incompleta") {
+		t.Fatalf("a failed Dot removal must not be reported as done or as a failed step:\n%s", out)
+	}
+	if !strings.Contains(out, "Desinstalación completa.") {
+		t.Fatalf("uninstall must finish normally:\n%s", out)
+	}
+}
+
+func TestUninstallDotWithoutMarkerKeepsItWithWarningAndNoProcessKill(t *testing.T) {
+	setCLIVersion(t, cliDotVersion)
+	rig := newCLIDotRig(t, "windows")
+	home := dotCLIHome(t)
+	if err := os.MkdirAll(rig.installDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(rig.installDir(), "Click Dot.exe")
+	if err := os.WriteFile(foreign, []byte("hand-installed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := execRoot(t, home, "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall error = %v\n%s", err, out)
+	}
+	if got, readErr := os.ReadFile(foreign); readErr != nil || string(got) != "hand-installed" {
+		t.Fatalf("unowned Dot must be kept: %v", readErr)
+	}
+	if len(rig.runs) != 0 {
+		t.Fatalf("no process may be stopped without ownership proof, ran %v", rig.runs)
+	}
+	if strings.Contains(out, "Click Dot desinstalado") {
+		t.Fatalf("a kept folder must not be reported as uninstalled:\n%s", out)
+	}
+	if !strings.Contains(out, "[warn] Click Dot: ") || !strings.Contains(out, "marcador de Click") {
+		t.Fatalf("output lacks the ownership warning:\n%s", out)
 	}
 }

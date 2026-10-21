@@ -15,6 +15,19 @@ func CheckDot(status installer.DotStatus, buildVersion string) CheckResult {
 	warn := func(detail string) CheckResult {
 		return CheckResult{Name: name, Healthy: true, Warning: true, Detail: detail}
 	}
+	// Development builds have no release to download from, so `click install`/`click update` skip
+	// Dot there: the advice below would not work, and the honest answer is who does install it.
+	const devNote = "Click Dot solo lo instalan los builds publicados de click; este es un build de desarrollo"
+	if expected == "" {
+		switch {
+		case !status.ExePresent && !status.MarkerPresent:
+			return warn("no instalado; " + devNote)
+		case !status.ExePresent:
+			return warn(fmt.Sprintf("falta %s; %s", status.ExePath, devNote))
+		case status.Version == "":
+			return warn("instalado sin versión registrada por Click; " + devNote)
+		}
+	}
 	switch {
 	case !status.ExePresent && !status.MarkerPresent:
 		return warn("no instalado; ejecute `click install` o `click update`")
