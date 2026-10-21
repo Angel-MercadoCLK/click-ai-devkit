@@ -6,6 +6,32 @@ on:
       - "v*"
 
 jobs:
+  # Click Dot checks (same as CI). The Windows package itself is built in the Windows job below.
+  dot-qualification:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dot
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: dot/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
   windows-release-qualification:
     runs-on: windows-latest
     steps:
@@ -38,9 +64,46 @@ jobs:
         shell: pwsh
         run: ./scripts/windows-package-smoke.ps1 -DistDir dist -ExpectedVersion 'click version' -DisposableRunner
 
+      # Click Dot is built on Windows so its native dependencies match the platform it runs on, then
+      # handed to the goreleaser job as an artifact. The asset name uses the tag without the
+      # leading "v" (click-dot_<version>_windows_amd64.zip), matching the click archives.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: dot/package-lock.json
+
+      - name: Install Click Dot dependencies
+        working-directory: dot
+        run: npm ci
+
+      - name: Build Click Dot Windows package
+        shell: pwsh
+        run: node scripts/package-dot.mjs --version $env:GITHUB_REF_NAME
+
+      - name: Verify Click Dot zip layout
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zipPath = (Get-ChildItem -Path 'dot/release' -Filter 'click-dot_*_windows_amd64.zip' | Select-Object -First 1).FullName
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+          try {
+            if (-not ($zip.Entries.FullName -contains 'Click Dot.exe')) { throw 'Click Dot.exe is not at the zip root' }
+          } finally { $zip.Dispose() }
+
+      - name: Upload Click Dot package
+        uses: actions/upload-artifact@v4
+        with:
+          name: click-dot-windows
+          path: dot/release/click-dot_*_windows_amd64.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
   goreleaser:
     runs-on: ubuntu-latest
-    needs: windows-release-qualification
+    needs: [windows-release-qualification, dot-qualification]
     permissions:
       contents: write
     steps:
@@ -81,6 +144,15 @@ jobs:
               out.append(line)
           path.write_text("\n".join(out) + "\n")
           PY
+
+      # Brings click-dot_<version>_windows_amd64.zip to dot/release/, where .goreleaser.yaml lists it
+      # in checksum.extra_files and release.extra_files. If the artifact is missing or misnamed the
+      # release fails before publishing.
+      - name: Download Click Dot package
+        uses: actions/download-artifact@v4
+        with:
+          name: click-dot-windows
+          path: dot/release
 
       # v0.1: the scoop manifest is published into THIS repo (bucket/ folder), so the default
       # Actions GITHUB_TOKEN is enough — no SCOOP_BUCKET_TOKEN secret to create or manage.

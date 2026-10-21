@@ -36,8 +36,19 @@ archives:
       - zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
+# Click Dot ships in the same release as `click`: the zip is built by the release workflow (see
+# scripts/package-dot.mjs and the windows-release-qualification job) into dot/release/ BEFORE
+# GoReleaser runs. Listing it in extra_files adds it to checksums.txt (the Go installer verifies the
+# download against that file) and uploads it to this same GitHub release.
+#
+# The glob embeds {{ .Version }} (tag without the leading "v"), so a missing or misnamed zip makes
+# the release fail at the checksum step, before anything is published. Do not turn the glob into a
+# wildcard to "make it optional": a release without Dot must not be published silently.
+# Keys: https://goreleaser.com/customization/checksum/ and https://goreleaser.com/customization/release/
 checksum:
   name_template: checksums.txt
+  extra_files:
+    - glob: ./dot/release/click-dot_{{ .Version }}_windows_amd64.zip
 
 changelog:
   use: git
@@ -46,6 +57,8 @@ release:
   github:
     owner: Angel-MercadoCLK
     name: click-ai-devkit
+  extra_files:
+    - glob: ./dot/release/click-dot_{{ .Version }}_windows_amd64.zip
 
 # v0.1: publish the scoop manifest into THIS same repo (no separate scoop-bucket repo).
 # Devs add it with: scoop bucket add click https://github.com/Angel-MercadoCLK/click-ai-devkit
