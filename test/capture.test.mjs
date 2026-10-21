@@ -525,3 +525,23 @@ test("a controller failure is reported without leaking its message", async () =>
   assert.equal((await response.text()).includes("secret"), false);
   Reflect.deleteProperty(globalThis, KEY);
 });
+
+test("T3 keeps the capture bridge as it was: no prepareScreen unless one is supplied, and status and actions never return pixels", async () => {
+  const { service } = makeService();
+  const plain = capture.createCaptureController({ service, saveEnabled: async () => {} });
+  assert.deepEqual(Object.keys(plain).sort(), ["apply", "status"]);
+  const prepared = async () => ({ image: Buffer.from("redacted"), mime: "image/png", hiddenRegions: 0, capturedAt: 1 });
+  const withScreen = capture.createCaptureController({ service, saveEnabled: async () => {}, prepareScreen: prepared });
+  assert.deepEqual(Object.keys(withScreen).sort(), ["apply", "prepareScreen", "status"]);
+  assert.equal(withScreen.prepareScreen, prepared);
+
+  Reflect.set(globalThis, KEY, { status: () => ({ enabled: true, paused: false, frames: 1, lastCapturedAt: 5 }), apply: async () => ({ enabled: true, paused: false, frames: 1, lastCapturedAt: 5 }), prepareScreen: async () => ({ image: Buffer.from("secret-pixels"), mime: "image/png", hiddenRegions: 0, capturedAt: 1 }) });
+  const status = await (await get()).text();
+  const action = await (await post({ action: "enable" })).text();
+  for (const raw of [status, action]) {
+    assert.equal(raw.includes("secret-pixels"), false);
+    assert.equal(raw.includes("prepareScreen"), false);
+  }
+  assert.deepEqual(JSON.parse(status), { available: true, enabled: true, paused: false, frames: 1, lastCapturedAt: 5 });
+  Reflect.deleteProperty(globalThis, KEY);
+});

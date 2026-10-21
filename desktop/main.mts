@@ -8,7 +8,10 @@ import { PortInUseError } from "./listen.mts";
 import { isAllowedNavigation, isSignInUrl, systemBrowserTarget } from "./navigation.mts";
 import { createPreferenceStore, DEFAULT_PREFERENCES, initialPreferences, LOGIN_ITEM_ARGS, loadPreferences, shouldManageLoginItem, startsHidden } from "./preferences.mts";
 import { installStorageProtector } from "./protector.mts";
+import { createWindowsOcr } from "./ocr.mts";
+import { loadGuardPatterns, type CompiledGuardRule } from "./redaction.mts";
 import { createScreenCapture } from "./screen-capture.mts";
+import { createNativeRedactor, createScreenPreparer } from "./screen-prep.mts";
 import { startDotServer } from "./server.mts";
 
 const assets = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
@@ -205,8 +208,29 @@ async function start() {
       refreshTray();
     },
   });
+  // Chat gets the newest frame only after local OCR and redaction. The patterns file ships beside the app
+  // (lib/guard-patterns.json); if it cannot be read, preparing a screen fails and nothing is sent.
+  const service = captureService;
+  let patterns: Promise<CompiledGuardRule[]> | undefined;
+  const prepareScreen = createScreenPreparer({
+    frames: () => service.frames(),
+    isCapturing: () => {
+      const status = service.status();
+      return status.enabled && !status.paused;
+    },
+    ocr: createWindowsOcr(),
+    patterns: () => {
+      patterns ??= loadGuardPatterns(join(app.getAppPath(), "lib", "guard-patterns.json")).catch((error: unknown) => {
+        patterns = undefined;
+        throw error;
+      });
+      return patterns;
+    },
+    redact: createNativeRedactor(nativeImage),
+  });
   captureController = createCaptureController({
     service: captureService,
+    prepareScreen,
     saveEnabled: async (enabled) => {
       await store.update({ captureEnabled: enabled });
     },

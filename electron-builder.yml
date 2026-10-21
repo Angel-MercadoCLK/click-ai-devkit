@@ -9,6 +9,8 @@ files:
   - package.json
   - desktop/dist/**/*
   - desktop/assets/**/*
+  # Personal-data patterns read by the Electron main process at runtime (screen redaction).
+  - lib/guard-patterns.json
   - .next/**/*
   - "!.next/cache/**"
   - "!.next/dev/**"

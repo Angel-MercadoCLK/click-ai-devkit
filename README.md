@@ -47,7 +47,17 @@ npm run desktop:pack:win   # unpacked Windows x64 app in release/win-unpacked
 - While it is on, the window shows "Dot can see your screen" and the tray icon shows a red dot with the tooltip "Click Dot — seeing your screen".
 - Pause at any time from the window or the tray. Pausing is for the current session only, so a restart resumes capture if it was on.
 - Dot captures your main display every 10 seconds and keeps only the last 6 frames (about one minute) in memory. Frames are never written to disk and are dropped when you pause, turn capture off, or quit.
-- Capture runs inside the desktop app, and web pages still get no screen, camera or microphone permission. In a plain browser or `npm run dev`, capture is unavailable. Frames are not sent anywhere yet.
+- Capture runs inside the desktop app, and web pages still get no screen, camera or microphone permission. In a plain browser or `npm run dev`, capture is unavailable. Frames leave the computer only as described in "Screen in chat".
+
+### Screen in chat
+
+- When screen capture is on, each chat message includes your latest screen image by default. Before sending, the composer shows the exact image with "N regions hidden" and a checkbox to leave the screen out of that message.
+- Before an image leaves your computer, Dot finds text on it with Windows' built-in OCR and pixelates every area matching the Click memory-guard patterns (emails, document numbers, phones, amounts, policy, claim and customer IDs, credentials). The model still sees the rest of the screen. Text recognition can miss text, and faces and photos are not hidden.
+- Everything runs locally in memory: the frame is handed to a Windows PowerShell helper over stdin and is never written to disk. If OCR, the pattern file or redaction fails, nothing is attached and the composer says why; you can then send the message without the screen.
+- The redacted image is held server-side for two minutes under a one-use id; the browser never sends image bytes. Images are not saved in history, which keeps only "[screen attached]". One image per message, up to 4 MB.
+- Image input depends on the selected model. If a model refuses the image, Dot says so; choose another model.
+- To check a model on demand, POST `{"model":"<slug>"}` to `/api/chat/vision-probe` with the local Origin header. It sends a synthetic 64x64 image and reports only status and error code.
+- To refresh the vendored patterns: `node scripts/sync-guard-patterns.mjs <click-ai-devkit>/internal/guard/patterns.yaml`. The corpus `test/fixtures/guard-corpus.json` is meant to be shared with the devkit.
 
 ## Account and runtime boundary
 

@@ -2,14 +2,18 @@
 //
 // Capture itself runs in the Electron main process. Next runs in that same process, so main publishes a small
 // controller on `globalThis[Symbol.for("click-dot.capture-controller")]` (the same pattern as the storage
-// protector). Everything read from it here is validated, and only counts and times ever leave: no frame, and
-// no way to reach one, is exposed to the page.
+// protector). Everything read from it here is validated. Status leaves only as counts and times; the one image
+// that can leave is the already-redacted one from `prepareScreen`, never a raw frame.
+
+import { SCREEN_IMAGE_MAX_BYTES, type ScreenImage } from "./screen-previews.ts";
 
 export type CaptureStatus = { enabled: boolean; paused: boolean; frames: number; lastCapturedAt: number | null };
 export type CaptureAction = "enable" | "disable" | "pause" | "resume";
 export type CaptureController = {
   status(): unknown;
   apply(action: CaptureAction): Promise<unknown>;
+  /** Present only in the desktop app. Resolves with an already-redacted image; see `prepareScreen` below. */
+  prepareScreen?(): Promise<unknown>;
 };
 
 export const CAPTURE_CONTROLLER_KEY = Symbol.for("click-dot.capture-controller");
@@ -53,6 +57,73 @@ export function parseCaptureAction(value: unknown): CaptureAction | undefined {
   if (keys.length !== 1 || keys[0] !== "action") return undefined;
   const { action } = value as { action: unknown };
   return CAPTURE_ACTIONS.find((known) => known === action);
+}
+
+export type PreparedScreen = ScreenImage & { hiddenRegions: number; capturedAt: number };
+export type ScreenPrepareCode =
+  | "unavailable"
+  | "no-frame"
+  | "stale-frame"
+  | "capture-stopped"
+  | "ocr-unavailable"
+  | "ocr-failed"
+  | "patterns-unavailable"
+  | "redaction-failed"
+  | "too-large"
+  | "invalid-result";
+
+/** Fixed wording for the page. The desktop app's own error text never crosses this boundary. */
+export const SCREEN_PREPARE_MESSAGES: Record<ScreenPrepareCode, string> = {
+  unavailable: "Screen capture is available in the desktop app.",
+  "no-frame": "Dot has no screen image yet. Wait a few seconds and try again.",
+  "stale-frame": "The latest screen image is out of date. Try again in a few seconds.",
+  "capture-stopped": "Screen capture is paused or off.",
+  "ocr-unavailable": "This computer has no text recognition language installed, so Dot cannot hide personal data. Nothing was attached.",
+  "ocr-failed": "Dot could not check the screen for personal data. Nothing was attached.",
+  "patterns-unavailable": "Dot could not load its personal-data rules. Nothing was attached.",
+  "redaction-failed": "Dot could not hide personal data in the screen image. Nothing was attached.",
+  "too-large": "The screen image is too large to attach.",
+  "invalid-result": "Dot could not prepare the screen image. Nothing was attached.",
+};
+
+export class ScreenPrepareError extends Error {
+  readonly code: ScreenPrepareCode;
+
+  constructor(code: ScreenPrepareCode) {
+    super(SCREEN_PREPARE_MESSAGES[code]);
+    this.code = code;
+  }
+}
+
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const hasPrefix = (bytes: Uint8Array, prefix: number[]) => bytes.length > prefix.length && prefix.every((value, index) => bytes[index] === value);
+
+/** Accepts only a PNG or JPEG within the image budget, with its declared type matching its bytes. */
+export function sanitizePreparedScreen(value: unknown): PreparedScreen | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { image, mime, hiddenRegions, capturedAt } = value as Record<string, unknown>;
+  if (!ArrayBuffer.isView(image) || image.byteLength < 16 || image.byteLength > SCREEN_IMAGE_MAX_BYTES) return undefined;
+  const bytes = new Uint8Array(image.buffer, image.byteOffset, image.byteLength);
+  if (mime === "image/png" ? !hasPrefix(bytes, PNG_MAGIC) : mime === "image/jpeg" ? !hasPrefix(bytes, [0xff, 0xd8, 0xff]) : true) return undefined;
+  if (typeof hiddenRegions !== "number" || !Number.isInteger(hiddenRegions) || hiddenRegions < 0 || hiddenRegions > 10_000) return undefined;
+  if (typeof capturedAt !== "number" || !Number.isFinite(capturedAt)) return undefined;
+  return { image: new Uint8Array(bytes), mime: mime as PreparedScreen["mime"], hiddenRegions, capturedAt };
+}
+
+/** Asks the desktop app for the redacted screen. Every failure is mapped to a known code; no raw error crosses. */
+export async function prepareScreen(controller: CaptureController): Promise<PreparedScreen> {
+  if (typeof controller.prepareScreen !== "function") throw new ScreenPrepareError("unavailable");
+  let result: unknown;
+  try {
+    result = await controller.prepareScreen();
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    const known = Object.keys(SCREEN_PREPARE_MESSAGES).find((candidate) => candidate === code && candidate !== "unavailable" && candidate !== "invalid-result");
+    throw new ScreenPrepareError((known as ScreenPrepareCode | undefined) ?? "invalid-result");
+  }
+  const prepared = sanitizePreparedScreen(result);
+  if (!prepared) throw new ScreenPrepareError("invalid-result");
+  return prepared;
 }
 
 export class CaptureRequestError extends Error {

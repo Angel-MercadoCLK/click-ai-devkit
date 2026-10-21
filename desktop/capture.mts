@@ -1,3 +1,5 @@
+import type { PreparedScreen } from "./screen-prep.mts";
+
 /** Name shared with lib/capture-controller.ts, which reads globalThis[Symbol.for(CAPTURE_CONTROLLER_KEY)]. */
 export const CAPTURE_CONTROLLER_KEY = "click-dot.capture-controller";
 
@@ -186,10 +188,14 @@ export function createCaptureService({
   };
 }
 
-/** What the web side calls, through globalThis. No frame is reachable from here. */
+/**
+ * What the web side calls, through globalThis. No raw frame is reachable from here: the only image that leaves is
+ * the one `prepareScreen` returns, already redacted.
+ */
 export type CaptureController = {
   status(): CaptureStatus;
   apply(action: CaptureAction): Promise<CaptureStatus>;
+  prepareScreen?(): Promise<PreparedScreen>;
 };
 
 const ACTIONS: readonly CaptureAction[] = ["enable", "disable", "pause", "resume"];
@@ -199,7 +205,16 @@ const ACTIONS: readonly CaptureAction[] = ["enable", "disable", "pause", "resume
  * Turning capture on is saved first and does not happen if saving fails. Turning it off stops capture first
  * and then saves, so a failed save never leaves the screen being watched.
  */
-export function createCaptureController({ service, saveEnabled }: { service: CaptureService; saveEnabled(enabled: boolean): Promise<void> }): CaptureController {
+export function createCaptureController({
+  service,
+  saveEnabled,
+  prepareScreen,
+}: {
+  service: CaptureService;
+  saveEnabled(enabled: boolean): Promise<void>;
+  /** Optional: OCR, redact and return the newest frame for chat. Without it the controller offers no screen image. */
+  prepareScreen?: () => Promise<PreparedScreen>;
+}): CaptureController {
   let queue: Promise<unknown> = Promise.resolve();
 
   async function run(action: CaptureAction): Promise<CaptureStatus> {
@@ -226,6 +241,7 @@ export function createCaptureController({ service, saveEnabled }: { service: Cap
 
   return {
     status: () => service.status(),
+    ...(prepareScreen ? { prepareScreen } : {}),
     apply(action) {
       if (!ACTIONS.includes(action)) return Promise.reject(new TypeError("Unknown screen capture action."));
       const result = queue.then(() => run(action));

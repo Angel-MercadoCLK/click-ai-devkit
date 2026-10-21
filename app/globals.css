@@ -108,3 +108,12 @@ h1 { font-size: clamp(2.5rem, 8vw, 4.5rem); line-height: 1.05; }
   .chat-main { min-height: 22rem; }
   .chat-actions { justify-content: flex-start; }
 }
+
+.screen-attach { display: grid; gap: 0.5rem; padding: 0.7rem; border: 1px solid #d9ded6; border-radius: 0.7rem; background: #f7f9f6; }
+.screen-attach p { margin: 0; }
+.chat-composer .screen-toggle { display: flex; align-items: center; gap: 0.5rem; color: #172320; font-size: 0.9rem; font-weight: 650; }
+.screen-preview { display: grid; gap: 0.4rem; margin: 0; }
+.screen-preview img { width: 100%; max-height: 9rem; object-fit: contain; border: 1px solid #cbd4cc; border-radius: 0.5rem; background: white; }
+.screen-preview figcaption { color: #5f6e67; font-size: 0.82rem; }
+.screen-failed { display: grid; gap: 0.5rem; color: #8a2a1f; font-size: 0.9rem; }
+.screen-failed-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }

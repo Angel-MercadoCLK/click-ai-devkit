@@ -394,3 +394,19 @@ test("history reads and writes stay private and reject invalid model request sur
   assert.equal(extraField.status, 400);
   assert.deepEqual((await (await historyRoute.GET(localRequest("/api/chat/history"))).json()).conversations, []);
 });
+
+test("the stream route accepts exactly one new field, screenPreviewId, and still rejects every other extra field", async () => {
+  globalThis.fetch = async (url) => String(url).endsWith("/models") ? fakeModels() : responseStream([deltaFrame, completeFrame]);
+  const snapshot = await authStore.getConnectionSnapshot();
+  await historyStore.clearConversations(snapshot);
+  const revision = (await historyStore.listConversations(snapshot)).revision;
+  for (const extra of [{ tools: [] }, { instructions: "x" }, { role: "system" }, { image: "data:image/png;base64,AAAA" }, { store: true }]) {
+    const response = await streamRoute.POST(localRequest("/api/chat/stream", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ conversationId: crypto.randomUUID(), revision, model: "model-first", prompt: "Hello", ...extra }) }));
+    assert.equal(response.status, 400, JSON.stringify(extra));
+  }
+  const withUnknownPreview = await streamRoute.POST(localRequest("/api/chat/stream", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ conversationId: crypto.randomUUID(), revision, model: "model-first", prompt: "Hello", screenPreviewId: "A".repeat(22) }) }));
+  assert.equal(withUnknownPreview.status, 410);
+  const textOnly = await streamRoute.POST(localRequest("/api/chat/stream", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ conversationId: crypto.randomUUID(), revision, model: "model-first", prompt: "Hello" }) }));
+  assert.equal(textOnly.status, 200);
+  assert.match(await textOnly.text(), /event: completed/);
+});

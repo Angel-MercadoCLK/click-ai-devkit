@@ -1,11 +1,14 @@
 import { withCurrentConnection } from "../../../../lib/auth-store.ts";
 import { authorizedConnection, isConnectionSnapshot, isRecord, noStore, readBoundedJson, rejectNonLocal } from "../../../../lib/chat-http.ts";
-import { listAvailableModels, streamChatResponse, formatLocalEvent, type ChatInputMessage } from "../../../../lib/chat-provider.ts";
+import { listAvailableModels, streamChatResponse, formatLocalEvent, ScreenImageRejectedError, type ChatInputMessage } from "../../../../lib/chat-provider.ts";
 import { appendCompletedTurn, getConversation, listConversations } from "../../../../lib/conversation-store.ts";
+import { PREVIEW_ID_PATTERN, screenPreviews, toDataUrl } from "../../../../lib/screen-previews.ts";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+/** Saved in history instead of the image, which is never stored. */
+const SCREEN_ATTACHED_MARKER = "[screen attached]";
 const conversationIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function POST(request: Request) {
@@ -20,15 +23,19 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "The request body is invalid.";
     return Response.json({ error: message }, { status: 400, headers: noStore });
   }
-  if (!isRecord(body) || Object.keys(body).some((key) => !["conversationId", "revision", "model", "prompt"].includes(key))
+  if (!isRecord(body) || Object.keys(body).some((key) => !["conversationId", "revision", "model", "prompt", "screenPreviewId"].includes(key))
     || typeof body.conversationId !== "string" || !conversationIdPattern.test(body.conversationId)
     || !Number.isSafeInteger(body.revision) || (body.revision as number) < 0
     || typeof body.model !== "string" || !/^[a-zA-Z0-9._:-]{1,120}$/.test(body.model)
     || typeof body.prompt !== "string" || body.prompt.trim().length === 0 || body.prompt.length > 8_000) {
     return Response.json({ error: "Send a valid message, model, and conversation." }, { status: 400, headers: noStore });
   }
-  const { conversationId, revision, model, prompt } = body as {
-    conversationId: string; revision: number; model: string; prompt: string;
+  // The only way to attach a screen is the opaque id of a preview this server prepared; image bytes are never accepted.
+  if (body.screenPreviewId !== undefined && (typeof body.screenPreviewId !== "string" || !PREVIEW_ID_PATTERN.test(body.screenPreviewId))) {
+    return Response.json({ error: "Send a valid message, model, and conversation." }, { status: 400, headers: noStore });
+  }
+  const { conversationId, revision, model, prompt, screenPreviewId } = body as {
+    conversationId: string; revision: number; model: string; prompt: string; screenPreviewId?: string;
   };
 
   let history;
@@ -60,7 +67,14 @@ export async function POST(request: Request) {
     context.unshift({ role: item.role, content: item.content });
     chars += item.content.length;
   }
-  context.push({ role: "user", content: prompt });
+  // Taken (and so spent) only after every other check passed. An unknown, used or expired id sends nothing.
+  let userContent: ChatInputMessage["content"] = prompt;
+  if (screenPreviewId !== undefined) {
+    const screen = screenPreviews().take(screenPreviewId);
+    if (!screen) return Response.json({ error: "The screen preview expired. Prepare it again before sending." }, { status: 410, headers: noStore });
+    userContent = [{ type: "input_text", text: prompt }, { type: "input_image", image_url: toDataUrl(screen) }];
+  }
+  context.push({ role: "user", content: userContent });
   const activeConversationId = prior?.id ?? conversationId;
   const responseAbort = new AbortController();
   const signal = AbortSignal.any([request.signal, responseAbort.signal]);
@@ -81,13 +95,19 @@ export async function POST(request: Request) {
               if (!send(formatLocalEvent("delta", { text: event.text }))) return;
             } else {
               if (signal.aborted) return;
-              await appendCompletedTurn(snapshot, revision, activeConversationId, model, prompt, answer, signal);
+              await appendCompletedTurn(snapshot, revision, activeConversationId, model, screenPreviewId === undefined ? prompt : `${prompt}\n\n${SCREEN_ATTACHED_MARKER}`, answer, signal);
               if (signal.aborted) return;
               send(formatLocalEvent("completed", {}));
             }
           }
-        } catch {
-          if (!signal.aborted) send(formatLocalEvent("error", { message: "ChatGPT could not complete and save this response. Try again or reconnect if your session expired." }));
+        } catch (error) {
+          if (!signal.aborted) {
+            send(formatLocalEvent("error", {
+              message: error instanceof ScreenImageRejectedError
+                ? error.message
+                : "ChatGPT could not complete and save this response. Try again or reconnect if your session expired.",
+            }));
+          }
         } finally {
           try { controller.close(); } catch { /* The browser already closed the local stream. */ }
         }

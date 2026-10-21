@@ -7,6 +7,21 @@ type Message = { role: "user" | "assistant"; content: string; createdAt: number 
 type Conversation = { id: string; title: string; updatedAt: number; messages: Message[] };
 type History = { revision: number; conversations: Conversation[] };
 type ChatStatus = "idle" | "submitted" | "streaming" | "complete" | "error";
+type ScreenPreview = { previewId: string; image: string; hiddenRegions: number; preparedAt: number };
+type ScreenState = { kind: "none" } | { kind: "preparing" } | { kind: "ready"; preview: ScreenPreview } | { kind: "failed"; message: string };
+
+const CAPTURE_POLL_MS = 4000;
+/** A preview older than this is refreshed (and shown again) before it can be sent. The server drops it after two minutes. */
+const PREVIEW_MAX_AGE_MS = 60_000;
+
+function readPreview(value: unknown): Omit<ScreenPreview, "preparedAt"> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { previewId, image, hiddenRegions } = value as Record<string, unknown>;
+  if (typeof previewId !== "string" || !/^[A-Za-z0-9_-]{22}$/.test(previewId)) return undefined;
+  if (typeof image !== "string" || !/^data:image\/(png|jpeg);base64,/.test(image)) return undefined;
+  if (typeof hiddenRegions !== "number" || !Number.isInteger(hiddenRegions) || hiddenRegions < 0) return undefined;
+  return { previewId, image, hiddenRegions };
+}
 
 function newId() {
   return globalThis.crypto.randomUUID();
@@ -25,6 +40,10 @@ export function ChatPanel({ onAuthorizationExpired }: { onAuthorizationExpired: 
   const [notice, setNotice] = useState("");
   const [historyLoading, setHistoryLoading] = useState(true);
   const controller = useRef<AbortController | null>(null);
+  const [captureActive, setCaptureActive] = useState(false);
+  const [includeScreen, setIncludeScreen] = useState(true);
+  const [screen, setScreen] = useState<ScreenState>({ kind: "none" });
+  const previewRequest = useRef<AbortController | null>(null);
 
   async function refreshHistory(signal?: AbortSignal) {
     const response = await fetch("/api/chat/history", { cache: "no-store", signal });
@@ -50,6 +69,61 @@ export function ChatPanel({ onAuthorizationExpired }: { onAuthorizationExpired: 
       controller.current?.abort();
     };
   }, []);
+
+  // Whether Dot is currently allowed to see the screen. Only a yes/no is kept here.
+  useEffect(() => {
+    const current = new AbortController();
+    async function poll() {
+      try {
+        const response = await fetch("/api/capture/status", { cache: "no-store", signal: current.signal });
+        if (!response.ok) throw new Error();
+        const value = await response.json() as { available?: unknown; enabled?: unknown; paused?: unknown };
+        setCaptureActive(value.available === true && value.enabled === true && value.paused === false);
+      } catch {
+        if (!current.signal.aborted) setCaptureActive(false);
+      }
+    }
+    void poll();
+    const timer = window.setInterval(() => void poll(), CAPTURE_POLL_MS);
+    return () => {
+      current.abort();
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  async function prepareScreen() {
+    previewRequest.current?.abort();
+    const request = new AbortController();
+    previewRequest.current = request;
+    setScreen({ kind: "preparing" });
+    try {
+      const response = await fetch("/api/capture/preview", { method: "POST", cache: "no-store", signal: request.signal });
+      const payload = await response.json().catch(() => ({})) as { error?: string };
+      const preview = response.ok ? readPreview(payload) : undefined;
+      if (!preview) throw new Error(response.ok ? "Dot could not prepare the screen image. Nothing was attached." : payload.error ?? "Dot could not prepare the screen image. Nothing was attached.");
+      setScreen({ kind: "ready", preview: { ...preview, preparedAt: Date.now() } });
+    } catch (error) {
+      if (request.signal.aborted) return;
+      setScreen({ kind: "failed", message: error instanceof Error ? error.message : "Dot could not prepare the screen image. Nothing was attached." });
+    } finally {
+      if (previewRequest.current === request) previewRequest.current = null;
+    }
+  }
+
+  // Prepare the redacted preview once the user starts a message; drop it when capture stops or the toggle goes off.
+  const hasDraft = draft.trim().length > 0;
+  const wantsScreen = captureActive && includeScreen;
+  useEffect(() => {
+    if (!wantsScreen) {
+      previewRequest.current?.abort();
+      previewRequest.current = null;
+      setScreen((current) => current.kind === "none" ? current : { kind: "none" });
+      return;
+    }
+    if (hasDraft && screen.kind === "none" && status !== "submitted" && status !== "streaming") void prepareScreen();
+  }, [wantsScreen, hasDraft, screen.kind, status]);
+
+  useEffect(() => () => previewRequest.current?.abort(), []);
 
   async function loadModels() {
     setLoadingModels(true);
@@ -131,6 +205,22 @@ export function ChatPanel({ onAuthorizationExpired }: { onAuthorizationExpired: 
     event.preventDefault();
     const prompt = draft.trim();
     if (!prompt || !selectedModel || controller.current || historyLoading) return;
+    if (!wantsScreen) {
+      await submit(prompt);
+      return;
+    }
+    if (screen.kind !== "ready") return;
+    // The thumbnail on screen is exactly what gets sent. An old one is replaced first, and the user sees the new one.
+    if (Date.now() - screen.preview.preparedAt > PREVIEW_MAX_AGE_MS) {
+      setNotice("The screen image was refreshed. Check it, then send again.");
+      void prepareScreen();
+      return;
+    }
+    await submit(prompt, screen.preview.previewId);
+  }
+
+  async function submit(prompt: string, screenPreviewId?: string) {
+    setScreen({ kind: "none" });
     setDraft("");
     setSubmittedPrompt(prompt);
     setLiveText("");
@@ -143,7 +233,7 @@ export function ChatPanel({ onAuthorizationExpired }: { onAuthorizationExpired: 
       const response = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ conversationId: activeId, revision: history.revision, model: selectedModel, prompt }),
+        body: JSON.stringify({ conversationId: activeId, revision: history.revision, model: selectedModel, prompt, ...(screenPreviewId ? { screenPreviewId } : {}) }),
         signal: activeController.signal,
       });
       if (!response.ok || !response.body) {
@@ -258,11 +348,38 @@ export function ChatPanel({ onAuthorizationExpired }: { onAuthorizationExpired: 
           <form className="chat-composer" onSubmit={sendMessage}>
             <label htmlFor="message-input">Message</label>
             <textarea id="message-input" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={8000} rows={3} placeholder="Ask a question…" disabled={busy || historyLoading} />
+            {captureActive && (
+              <div className="screen-attach">
+                <label className="screen-toggle">
+                  <input type="checkbox" checked={includeScreen} onChange={(event) => setIncludeScreen(event.target.checked)} disabled={busy} />
+                  <span>Include my screen in this message</span>
+                </label>
+                {includeScreen && screen.kind === "none" && <p className="panel-note">Start typing and Dot will prepare your screen with personal data hidden.</p>}
+                {includeScreen && screen.kind === "preparing" && <p className="panel-note" role="status">Hiding personal data on your screen…</p>}
+                {includeScreen && screen.kind === "ready" && (
+                  <figure className="screen-preview">
+                    <img src={screen.preview.image} alt="Preview of the screen image that will be sent, with personal data hidden" />
+                    <figcaption>
+                      {screen.preview.hiddenRegions === 1 ? "1 region hidden" : `${screen.preview.hiddenRegions} regions hidden`}. Text recognition can miss things, and faces and photos are not hidden. This image is sent to ChatGPT and is not saved here.
+                    </figcaption>
+                  </figure>
+                )}
+                {includeScreen && screen.kind === "failed" && (
+                  <div className="screen-failed" role="alert">
+                    <p>{screen.message}</p>
+                    <div className="screen-failed-actions">
+                      <button className="action-button secondary" type="button" onClick={() => void prepareScreen()} disabled={busy}>Try again</button>
+                      <button className="action-button secondary" type="button" onClick={() => void submit(draft.trim())} disabled={busy || !draft.trim() || !selectedModel || historyLoading}>Send without the screen</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="composer-footer">
               <span className="panel-note">Only completed responses are saved on this device.</span>
               {busy
                 ? <button className="action-button secondary" type="button" onClick={cancelResponse}>Cancel response</button>
-                : <button className="action-button" type="submit" disabled={!selectedModel || !draft.trim() || historyLoading}>Send message</button>}
+                : <button className="action-button" type="submit" disabled={!selectedModel || !draft.trim() || historyLoading || (wantsScreen && screen.kind !== "ready")}>Send message</button>}
             </div>
           </form>
         </div>
