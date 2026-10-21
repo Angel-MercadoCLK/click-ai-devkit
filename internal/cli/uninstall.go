@@ -281,6 +281,18 @@ func runUninstall(cmd *cobra.Command) error {
 		}
 	}
 
+	// Click Dot (Windows only): stop it, remove its install folder, Start Menu shortcut and
+	// start-at-login entry. Its user data is preserved. Nothing is added to the output elsewhere.
+	if installer.DotSupported() {
+		runStep("Click Dot", "Quitando Click Dot…", "Click Dot desinstalado (si estaba instalado); los datos de usuario de Click Dot se conservan", false, func() error {
+			result, removeErr := installer.RemoveDot(cmd.Context())
+			for _, warning := range result.Warnings {
+				fmt.Fprintln(out, r.Warn("Click Dot: "+warning+"."))
+			}
+			return removeErr
+		})
+	}
+
 	// Pruning step (PR C): removes empty Click-specific keys that the external `claude` CLI
 	// subprocess leaves as orphaned empty maps. Runs after all uninstall actions to ensure we clean
 	// up what the `claude` process did. Gated on selection.Claude, mirroring every other

@@ -334,6 +334,8 @@ func runInstall(cmd *cobra.Command) error {
 		}
 	}
 
+	syncDotStep(cmd, out, r, dotInstallVerb)
+
 	fmt.Fprintln(out, r.Info("Instalación completa."))
 	return nil
 }

@@ -65,7 +65,9 @@ func runDoctor(cmd *cobra.Command) error {
 	report := doctor.Run(cfg)
 	for _, c := range report.Checks {
 		line := fmt.Sprintf("%s: %s", c.Name, c.Detail)
-		if c.Healthy {
+		if c.Healthy && c.Warning {
+			fmt.Fprintln(out, r.Warn(line))
+		} else if c.Healthy {
 			fmt.Fprintln(out, r.Success(line))
 		} else {
 			fmt.Fprintln(out, r.Fail(line))
