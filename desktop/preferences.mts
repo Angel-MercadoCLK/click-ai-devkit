@@ -19,14 +19,18 @@ export async function savePreferences(file: string, preferences: Preferences): P
   return next;
 }
 
-/** Reads the saved choice. A missing file is a first run: the default (on) is recorded. */
-export async function loadPreferences(file: string): Promise<Preferences> {
+/**
+ * Reads the saved choice. A missing file is a first run: the default (on) is recorded.
+ * Returns undefined when the file exists but cannot be read or understood, so callers leave the OS
+ * login item untouched instead of re-enabling an autostart the user may have turned off.
+ */
+export async function loadPreferences(file: string): Promise<Preferences | undefined> {
   let raw: string;
   try {
     raw = await readFile(file, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return savePreferences(file, DEFAULT_PREFERENCES);
-    return { ...DEFAULT_PREFERENCES };
+    return undefined;
   }
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -34,9 +38,9 @@ export async function loadPreferences(file: string): Promise<Preferences> {
       return { startAtLogin: (parsed as Preferences).startAtLogin };
     }
   } catch {
-    // Fall through to the default.
+    // Fall through: unknown.
   }
-  return { ...DEFAULT_PREFERENCES };
+  return undefined;
 }
 
 /** Only packaged builds register a login item, and the smoke/testing switches can turn it off entirely. */

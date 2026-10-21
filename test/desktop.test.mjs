@@ -89,12 +89,20 @@ test("start at login defaults to on and persists the user's choice", async () =>
   assert.deepEqual(await preferences.loadPreferences(file), { startAtLogin: true });
 });
 
-test("corrupt or unexpected preferences fall back to the safe default without crashing", async () => {
+test("corrupt or unexpected preferences are reported as unknown without crashing", async () => {
+  // Unknown means "leave the OS login item as it is": never re-enable autostart the user turned off.
   for (const [index, content] of ["{not json", "[]", "null", '{"startAtLogin":"yes"}', ""].entries()) {
     const file = join(scratch, `bad-${index}.json`);
     await writeFile(file, content);
-    assert.deepEqual(await preferences.loadPreferences(file), { startAtLogin: true }, content);
+    assert.equal(await preferences.loadPreferences(file), undefined, content);
+    assert.equal(await readFile(file, "utf8"), content, "the file is left untouched");
   }
+});
+
+test("an unreadable preferences file is reported as unknown, not as the default", async () => {
+  const file = join(scratch, "prefs-is-a-directory");
+  await mkdir(file);
+  assert.equal(await preferences.loadPreferences(file), undefined);
 });
 
 test("the login item is only managed for packaged builds and can be disabled", () => {
