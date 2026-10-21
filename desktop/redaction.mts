@@ -10,9 +10,16 @@ export type OcrWord = { text: string; x: number; y: number; w: number; h: number
 export type Rect = { x: number; y: number; w: number; h: number };
 export type SensitiveRegion = Rect & { rules: string[] };
 
-/** A longer line is scanned in overlapping windows, so a very long OCR line cannot stall the matcher. */
-export const MAX_LINE_CHARS = 500;
-const WINDOW_OVERLAP_CHARS = 120;
+/**
+ * A longer line is scanned in overlapping windows, so a very long OCR line cannot stall the matcher. Windows overlap
+ * by half, so any match up to LONG_TOKEN_CHARS long lies whole inside some window; a space-free run longer than that
+ * cannot be checked by the rules reliably and is hidden as a long token instead.
+ */
+export const MAX_LINE_CHARS = 2_000;
+const WINDOW_OVERLAP_CHARS = MAX_LINE_CHARS / 2;
+const LONG_TOKEN_CHARS = WINDOW_OVERLAP_CHARS;
+export const LONG_TOKEN_RULE = "redaction/long-token";
+const LONG_TOKEN = new RegExp(`\\S{${LONG_TOKEN_CHARS + 1},}`, "g");
 const MAX_RULES = 200;
 const MAX_RULE_SOURCE_CHARS = 2_000;
 export const MIN_BLOCK_PIXELS = 8;
@@ -74,6 +81,9 @@ function scanWindow(text: string, offset: number, rules: CompiledGuardRule[], hi
 /** Every match of every rule in `text`, as character spans. */
 export function scanText(text: string, rules: CompiledGuardRule[]): Hit[] {
   const hits: Hit[] = [];
+  for (const match of text.matchAll(LONG_TOKEN)) {
+    if (match.index !== undefined) hits.push({ rule: LONG_TOKEN_RULE, start: match.index, end: match.index + match[0].length });
+  }
   if (text.length <= MAX_LINE_CHARS) {
     scanWindow(text, 0, rules, hits);
     return hits;

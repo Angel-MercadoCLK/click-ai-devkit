@@ -135,3 +135,18 @@ test("loading the patterns fails closed on a missing, malformed or unexpected fi
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("a long secret inside a long line is still found whole, and an over-long token is hidden as a long token", () => {
+  // A 250-char JWT starting at offset 300 of a 600-char line used to straddle two scan windows and be missed.
+  const segment = (length) => "A".repeat(length);
+  const jwt = `eyJ${segment(80)}.${segment(80)}.${segment(85)}`;
+  const line = `${"word ".repeat(60)}${jwt} ${"tail ".repeat(10)}`;
+  const jwtHits = redaction.scanText(line, compiled).filter((hit) => hit.rule.startsWith("secrets/") && line.slice(hit.start, hit.end).includes(jwt.slice(0, 40)));
+  assert.ok(jwtHits.some((hit) => hit.start <= line.indexOf(jwt) && hit.end >= line.indexOf(jwt) + jwt.length), "the whole JWT is one hit");
+
+  const token = "x".repeat(1_500);
+  const longLine = `${"word ".repeat(300)}${token} ${"tail ".repeat(100)}`;
+  const longHits = redaction.scanText(longLine, compiled).filter((hit) => hit.rule === redaction.LONG_TOKEN_RULE);
+  assert.deepEqual(longHits.map((hit) => [hit.start, hit.end]), [[longLine.indexOf(token), longLine.indexOf(token) + token.length]]);
+  assert.deepEqual(redaction.scanText("plain short words only", compiled), []);
+});
