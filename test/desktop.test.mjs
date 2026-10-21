@@ -105,6 +105,14 @@ test("an unreadable preferences file is reported as unknown, not as the default"
   assert.equal(await preferences.loadPreferences(file), undefined);
 });
 
+test("unknown preferences are seeded from the real OS login item, never from the default", () => {
+  // A later save writes the seed back to disk, so it must match what the OS already does.
+  assert.deepEqual(preferences.initialPreferences(undefined, false), { startAtLogin: false, captureEnabled: false });
+  assert.deepEqual(preferences.initialPreferences(undefined, true), { startAtLogin: true, captureEnabled: false });
+  const saved = { startAtLogin: false, captureEnabled: true };
+  assert.deepEqual(preferences.initialPreferences(saved, true), saved);
+});
+
 test("the login item is only managed for packaged builds and can be disabled", () => {
   assert.equal(preferences.shouldManageLoginItem({ isPackaged: true, argv: ["app.exe"], env: {} }), true);
   assert.equal(preferences.shouldManageLoginItem({ isPackaged: false, argv: [], env: {} }), false);

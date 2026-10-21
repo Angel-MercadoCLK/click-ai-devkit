@@ -47,6 +47,14 @@ export async function loadPreferences(file: string): Promise<Preferences | undef
 }
 
 /**
+ * The preferences to start from. When the saved file is unknown, seed start-at-login from what the OS
+ * login item already does, because the next save writes the seed back and must not re-enable autostart.
+ */
+export function initialPreferences(loaded: Preferences | undefined, osStartAtLogin: boolean): Preferences {
+  return loaded ?? { startAtLogin: osStartAtLogin, captureEnabled: false };
+}
+
+/**
  * Holds the current preferences and saves changes one at a time, so two settings changed together
  * (for example from the tray and from the page) cannot overwrite each other.
  */

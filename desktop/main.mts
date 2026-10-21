@@ -6,7 +6,7 @@ import { createCaptureController, createCaptureService, describeCapture, install
 import { configureEnvironment, dotUrl, TOGGLE_SHORTCUT } from "./config.mts";
 import { PortInUseError } from "./listen.mts";
 import { isAllowedNavigation, isSignInUrl, systemBrowserTarget } from "./navigation.mts";
-import { createPreferenceStore, DEFAULT_PREFERENCES, LOGIN_ITEM_ARGS, loadPreferences, shouldManageLoginItem, startsHidden } from "./preferences.mts";
+import { createPreferenceStore, DEFAULT_PREFERENCES, initialPreferences, LOGIN_ITEM_ARGS, loadPreferences, shouldManageLoginItem, startsHidden } from "./preferences.mts";
 import { installStorageProtector } from "./protector.mts";
 import { createScreenCapture } from "./screen-capture.mts";
 import { startDotServer } from "./server.mts";
@@ -187,7 +187,8 @@ async function start() {
 
   const preferencesFile = join(userData, "desktop-preferences.json");
   const loaded = await loadPreferences(preferencesFile);
-  const store = createPreferenceStore(preferencesFile, loaded ?? { ...DEFAULT_PREFERENCES });
+  const osStartAtLogin = app.getLoginItemSettings({ args: LOGIN_ITEM_ARGS }).openAtLogin;
+  const store = createPreferenceStore(preferencesFile, initialPreferences(loaded, osStartAtLogin));
   preferences = store;
   // An unreadable preferences file leaves the OS login item exactly as it is.
   if (loaded) applyLoginItem(loaded.startAtLogin);
