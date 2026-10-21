@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { chmod, lstat, mkdir, open, rename, rmdir, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, parse, sep } from "node:path";
+import { PROTECTED_OVERHEAD_BYTES, openJson, sealText, storagePlatform, windowsStorageProtector } from "./storage-protector.ts";
 
 export type AuthAttempt = {
   state: string;
@@ -39,6 +40,8 @@ type AuthData = {
 
 const locks = new Map<string, Promise<void>>();
 const filePath = () => process.env.CLICK_DOT_AUTH_FILE ?? join(homedir(), ".config", "click-dot", "auth.json");
+// Bound for an encrypted auth file on native Windows (the POSIX path has never bounded it).
+const MAX_PROTECTED_FILE_BYTES = 2_000_000 + PROTECTED_OVERHEAD_BYTES;
 const emptyData = (): AuthData => ({ hostId: `urn:uuid:${randomUUID()}`, generation: 0, attempts: {} });
 
 type LockIdentity = { device: number; inode: number };
@@ -52,7 +55,7 @@ async function acquireProcessLock(path: string): Promise<LockIdentity> {
     try {
       await mkdir(lockPath, { mode: 0o700 });
       const info = await lstat(lockPath);
-      if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid() || (info.mode & 0o777) !== 0o700) {
+      if (!info.isDirectory() || info.isSymbolicLink() || !isOwnerPrivate(info, 0o700)) {
         throw new Error("Local account lock is not private.");
       }
       return { device: info.dev, inode: info.ino };
@@ -62,7 +65,7 @@ async function acquireProcessLock(path: string): Promise<LockIdentity> {
         if (isMissing(statError)) return undefined;
         throw statError;
       });
-      if (info && (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid() || (info.mode & 0o777) !== 0o700)) {
+      if (info && (!info.isDirectory() || info.isSymbolicLink() || !isOwnerPrivate(info, 0o700))) {
         throw new Error("An unsafe local account lock exists; refusing to modify auth state.");
       }
       if (Date.now() >= deadline) {
@@ -80,8 +83,8 @@ function isAlreadyExists(error: unknown) {
 async function releaseProcessLock(path: string, expected: LockIdentity) {
   const lockPath = `${path}.lock`;
   const info = await lstat(lockPath);
-  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid()
-    || info.dev !== expected.device || info.ino !== expected.inode || (info.mode & 0o777) !== 0o700) {
+  if (!info.isDirectory() || info.isSymbolicLink() || !isOwnerPrivate(info, 0o700)
+    || info.dev !== expected.device || info.ino !== expected.inode) {
     throw new Error("Local account lock identity changed; refusing to remove it.");
   }
   await rmdir(lockPath);
@@ -107,6 +110,13 @@ async function withFileLock<T>(path: string, action: () => Promise<T>): Promise<
   }
 }
 
+// On native Windows with a protector, uid and mode bits do not exist: privacy comes from the per-user
+// encryption of the file contents and from the per-user application data directory.
+function isOwnerPrivate(info: Stats, mode: number) {
+  if (windowsStorageProtector()) return true;
+  return info.uid === uid() && (info.mode & 0o777) === mode;
+}
+
 function uid() {
   const current = process.getuid?.();
   if (current === undefined) throw new Error("Private local account storage is unavailable on this platform.");
@@ -114,13 +124,16 @@ function uid() {
 }
 
 async function ensurePrivateDirectory(path: string, create: boolean) {
-  if (process.platform === "win32") {
+  const windowsProtected = windowsStorageProtector() !== undefined;
+  if (storagePlatform() === "win32" && !windowsProtected) {
     throw new Error("Local account storage is not supported on native Windows until its ACL can be verified.");
   }
   if (!isAbsolute(path)) throw new Error("Local account storage path must be absolute.");
   const dir = dirname(path);
-  const absolute = dir.split(sep).filter(Boolean);
-  let current = parse(dir).root;
+  const { root } = parse(dir);
+  // Split below the root so a Windows drive or UNC root such as C:\ is never treated as a path segment.
+  const absolute = dir.slice(root.length).split(sep).filter(Boolean);
+  let current = root;
   for (const [index, part] of absolute.entries()) {
     current = join(current, part);
     let info;
@@ -137,6 +150,7 @@ async function ensurePrivateDirectory(path: string, create: boolean) {
       info = await lstat(current);
     }
     if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Local account storage path contains an unsafe directory.");
+    if (windowsProtected) continue;
     const isFinal = index === absolute.length - 1;
     const stickyTempDirectory = (current === "/tmp" || current === "/var/tmp") && (info.mode & 0o1000) !== 0;
     if ((info.mode & 0o022) !== 0 && !stickyTempDirectory) throw new Error("Local account storage path is writable by another user.");
@@ -152,7 +166,8 @@ function isMissing(error: unknown) {
 }
 
 async function readData(path: string, create: boolean): Promise<AuthData> {
-  if (constants.O_NOFOLLOW === undefined) throw new Error("Safe local file access is unavailable on this platform.");
+  const protector = windowsStorageProtector();
+  if (!protector && constants.O_NOFOLLOW === undefined) throw new Error("Safe local file access is unavailable on this platform.");
   if (!await ensurePrivateDirectory(path, create)) return emptyData();
   let handle;
   try {
@@ -165,10 +180,10 @@ async function readData(path: string, create: boolean): Promise<AuthData> {
     const info = await handle.stat();
     const pathInfo = await lstat(path);
     if (!info.isFile() || pathInfo.isSymbolicLink() || info.dev !== pathInfo.dev || info.ino !== pathInfo.ino
-      || info.nlink !== 1 || info.uid !== uid() || (info.mode & 0o777) !== 0o600) {
+      || info.nlink !== 1 || !isOwnerPrivate(info, 0o600) || (protector && info.size > MAX_PROTECTED_FILE_BYTES)) {
       throw new Error("Local account storage file is not private.");
     }
-    const data = JSON.parse(await handle.readFile("utf8")) as Partial<AuthData>;
+    const data = (protector ? openJson(protector, await handle.readFile()) : JSON.parse(await handle.readFile("utf8"))) as Partial<AuthData>;
     if (typeof data.hostId !== "string" || !data.attempts || typeof data.attempts !== "object") {
       throw new Error("Local account storage is invalid.");
     }
@@ -179,14 +194,16 @@ async function readData(path: string, create: boolean): Promise<AuthData> {
 }
 
 async function writeData(path: string, data: AuthData) {
-  if (constants.O_NOFOLLOW === undefined) throw new Error("Safe local file access is unavailable on this platform.");
+  const protector = windowsStorageProtector();
+  if (!protector && constants.O_NOFOLLOW === undefined) throw new Error("Safe local file access is unavailable on this platform.");
   await ensurePrivateDirectory(path, true);
+  const payload = protector ? sealText(protector, JSON.stringify(data)) : JSON.stringify(data);
   const temp = `${path}.${randomUUID()}.tmp`;
   const handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
   try {
     const info = await handle.stat();
-    if (!info.isFile() || info.nlink !== 1 || info.uid !== uid() || (info.mode & 0o777) !== 0o600) throw new Error("Private local account storage could not be created.");
-    await handle.writeFile(JSON.stringify(data), "utf8");
+    if (!info.isFile() || info.nlink !== 1 || !isOwnerPrivate(info, 0o600)) throw new Error("Private local account storage could not be created.");
+    await handle.writeFile(payload, "utf8");
     await handle.sync();
   } finally {
     await handle.close();
@@ -194,14 +211,14 @@ async function writeData(path: string, data: AuthData) {
   try {
     try {
       const existing = await lstat(path);
-      if (!existing.isFile() || existing.isSymbolicLink() || existing.nlink !== 1 || existing.uid !== uid() || (existing.mode & 0o777) !== 0o600) {
+      if (!existing.isFile() || existing.isSymbolicLink() || existing.nlink !== 1 || !isOwnerPrivate(existing, 0o600)) {
         throw new Error("Local account storage file is not private.");
       }
     } catch (error) {
       if (!isMissing(error)) throw error;
     }
     await rename(temp, path);
-    await chmod(path, 0o600);
+    if (!protector) await chmod(path, 0o600);
   } catch (error) {
     await unlink(temp).catch(() => undefined);
     throw error;

@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { chmod, lstat, open, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { PROTECTED_OVERHEAD_BYTES, openJson, sealText, windowsStorageProtector } from "./storage-protector.ts";
 import { assertPrivateAccountStoragePath, getStoragePathForTests, withCurrentConnection, withPrivateAccountFileLock, type Connection, type ConnectionSnapshot } from "./auth-store.ts";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string; createdAt: number };
@@ -61,12 +62,14 @@ function validateDocument(value: unknown): HistoryDocument {
   return document as HistoryDocument;
 }
 
+// On native Windows with a protector there are no uid or mode bits; the file is encrypted instead.
 async function readDocument(path: string): Promise<HistoryDocument> {
-  if (constants.O_NOFOLLOW === undefined) throw new Error("Safe local conversation storage is unavailable on this platform.");
+  const protector = windowsStorageProtector();
+  if (!protector && constants.O_NOFOLLOW === undefined) throw new Error("Safe local conversation storage is unavailable on this platform.");
   if (!await assertPrivateAccountStoragePath(path)) return defaultDocument();
   let handle;
   try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   } catch (error) {
     if (isMissing(error)) return defaultDocument();
     throw error;
@@ -75,13 +78,18 @@ async function readDocument(path: string): Promise<HistoryDocument> {
     const info = await handle.stat();
     const pathInfo = await lstat(path);
     if (!info.isFile() || pathInfo.isSymbolicLink() || info.dev !== pathInfo.dev || info.ino !== pathInfo.ino
-      || info.nlink !== 1 || info.uid !== uid() || (info.mode & 0o777) !== 0o600 || info.size > MAX_FILE_BYTES) {
+      || info.nlink !== 1 || !isOwnerPrivate(info, 0o600) || info.size > (protector ? MAX_FILE_BYTES + PROTECTED_OVERHEAD_BYTES : MAX_FILE_BYTES)) {
       throw new Error("Local conversation history is not private or exceeds its storage limit.");
     }
-    return validateDocument(JSON.parse(await handle.readFile("utf8")));
+    return validateDocument(protector ? openJson(protector, await handle.readFile()) : JSON.parse(await handle.readFile("utf8")));
   } finally {
     await handle.close();
   }
+}
+
+function isOwnerPrivate(info: Stats, mode: number) {
+  if (windowsStorageProtector()) return true;
+  return info.uid === uid() && (info.mode & 0o777) === mode;
 }
 
 function assertNotAborted(signal?: AbortSignal) {
@@ -90,17 +98,19 @@ function assertNotAborted(signal?: AbortSignal) {
 
 async function writeDocument(path: string, document: HistoryDocument, signal?: AbortSignal) {
   assertNotAborted(signal);
-  if (constants.O_NOFOLLOW === undefined) throw new Error("Safe local conversation storage is unavailable on this platform.");
+  const protector = windowsStorageProtector();
+  if (!protector && constants.O_NOFOLLOW === undefined) throw new Error("Safe local conversation storage is unavailable on this platform.");
   const content = JSON.stringify(document);
   if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) throw new Error("Local conversation history reached its storage limit.");
+  const payload = protector ? sealText(protector, content) : content;
   const temporary = `${path}.${randomUUID()}.tmp`;
-  const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
   try {
     const info = await handle.stat();
-    if (!info.isFile() || info.nlink !== 1 || info.uid !== uid() || (info.mode & 0o777) !== 0o600) {
+    if (!info.isFile() || info.nlink !== 1 || !isOwnerPrivate(info, 0o600)) {
       throw new Error("Private local conversation storage could not be created.");
     }
-    await handle.writeFile(content, "utf8");
+    await handle.writeFile(payload, "utf8");
     await handle.sync();
     assertNotAborted(signal);
   } catch (error) {
@@ -112,14 +122,14 @@ async function writeDocument(path: string, document: HistoryDocument, signal?: A
   try {
     try {
       const existing = await lstat(path);
-      if (!existing.isFile() || existing.isSymbolicLink() || existing.nlink !== 1 || existing.uid !== uid() || (existing.mode & 0o777) !== 0o600) {
+      if (!existing.isFile() || existing.isSymbolicLink() || existing.nlink !== 1 || !isOwnerPrivate(existing, 0o600)) {
         throw new Error("Local conversation history is not private.");
       }
     } catch (error) {
       if (!isMissing(error)) throw error;
     }
     await rename(temporary, path);
-    await chmod(path, 0o600);
+    if (!protector) await chmod(path, 0o600);
   } catch (error) {
     await unlink(temporary).catch(() => undefined);
     throw error;
