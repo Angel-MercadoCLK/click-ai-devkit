@@ -45,6 +45,7 @@ test("builds a loopback authorization request with PKCE and a stable install ide
 test("uses the issued registration for a no-secret token exchange and trusts token scopes", async () => {
   const attempt = { nonce: "nonce-fixture", verifier: "verifier-fixture", state: "state", expiresAt: Date.now() + 1000,
     redirectUri: "http://127.0.0.1:3003/auth/callback", expectedClientId: "issued-client", generation: 0 };
+  // click:allow-secret synthetic test data; not real personal data.
   const idToken = await new SignJWT({ nonce: attempt.nonce, email: "person@example.test", sub: "subject-1" })
     .setProtectedHeader({ alg: "RS256", kid: "fixture-key" })
     .setIssuer("https://auth.openai.com")
@@ -66,6 +67,7 @@ test("uses the issued registration for a no-secret token exchange and trusts tok
   assert.equal(requestBody.get("client_id"), "issued-client");
   assert.equal(requestBody.has("client_secret"), false);
   assert.equal(requestBody.get("resource"), "https://api.openai.com/v1");
+  // click:allow-secret synthetic test data; not real personal data.
   assert.equal(connection.email, "person@example.test");
   assert.equal(connection.subject, "subject-1");
   assert.equal(connection.issuer, "https://auth.openai.com");

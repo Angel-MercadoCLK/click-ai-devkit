@@ -1,14 +1,16 @@
 {
   "version": 1,
-  "description": "Golden corpus for the memory-guard patterns. Each case lists every rule id that must match the text (an empty list means none may match). Expected values were produced by the Go RE2 engine in click-ai-devkit internal/guard and checked against Dot's JS conversion. The devkit should run this same file in its own test (parity test: later task). All data is synthetic.",
+  "description": "Golden corpus for the memory-guard patterns. Each case lists every rule id that must match the text (an empty list means none may match). Expected values were produced by the Go RE2 engine in click-ai-devkit internal/guard and checked against Dot's JS conversion. The devkit runs this same file in internal/guard/dot_corpus_test.go. All data is synthetic.",
   "cases": [
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "Customer email juan.perez@example.com.ar",
       "rules": [
         "pii/email"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "contact: SOPORTE@EXAMPLE.ORG today",
       "rules": [
         "pii/email"
@@ -19,18 +21,21 @@
       "rules": []
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "DNI 12345678 asociado al caso",
       "rules": [
         "pii/dni"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "Documento: 8765432",
       "rules": [
         "pii/dni"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "carnet #12345678 vigente",
       "rules": [
         "pii/dni"
@@ -41,12 +46,14 @@
       "rules": []
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "CUIT 20-12345678-3 validado",
       "rules": [
         "pii/cuit-cuil"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "id 20123456783 sin guiones",
       "rules": [
         "pii/cuit-cuil"
@@ -57,48 +64,56 @@
       "rules": []
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "Teléfono +54 11 5555-1234 del asegurado",
       "rules": [
         "pii/phone"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "celular 11 5555 1234",
       "rules": [
         "pii/phone"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "WhatsApp: 351-555-1234",
       "rules": [
         "pii/phone"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "call +54 9 11 5555 1234 now",
       "rules": [
         "pii/phone"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "Reserva aprobada por $ 123.456,78",
       "rules": [
         "amounts/ars-symbol"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "total $1,234.50 due",
       "rules": [
         "amounts/ars-symbol"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "Monto ARS 250000 pendiente",
       "rules": [
         "amounts/ars-code"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "ars 1.500,00",
       "rules": [
         "amounts/ars-code"
@@ -109,18 +124,21 @@
       "rules": []
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "Guardar póliza POL-ABC12345",
       "rules": [
         "policy-numbers/placeholder"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "Pol 12-345-6 vigente",
       "rules": [
         "policy-numbers/placeholder"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "Policy AB-12345 total",
       "rules": [
         "policy-numbers/placeholder"
@@ -135,18 +153,21 @@
       "rules": []
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "Siniestro SIN-2026-000123 escalado",
       "rules": [
         "claim-ids/placeholder"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "Sin 123456 fue rechazado",
       "rules": [
         "claim-ids/placeholder"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "siniestro 1ABCDE escalado",
       "rules": [
         "claim-ids/placeholder"
@@ -161,12 +182,14 @@
       "rules": []
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "customer-id CLI-998877",
       "rules": [
         "customer-identifiers/placeholder"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "Cliente nro 4455",
       "rules": [
         "customer-identifiers/placeholder"
@@ -177,6 +200,7 @@
       "rules": []
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "AWS access key AKIAIOSFODNN7EXAMPLE leaked",
       "rules": [
         "secrets/aws-access-key-id"
@@ -187,66 +211,77 @@
       "rules": []
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "aws_secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
       "rules": [
         "secrets/aws-secret-access-key"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "leaked token ghp_16C7e42F292c6912E7710c838347Ae178B4a in logs",
       "rules": [
         "secrets/github-token"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "github_pat_11AAAAAAA0abcdefghijklmnopqrstuvwxyz0123456789",
       "rules": [
         "secrets/github-pat"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "-----BEGIN RSA PRIVATE KEY-----",
       "rules": [
         "secrets/private-key-pem"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "-----BEGIN PRIVATE KEY-----",
       "rules": [
         "secrets/private-key-pem"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "session eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U leaked",
       "rules": [
         "secrets/jwt"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "xoxb-EXAMPLE-FAKE-TOKEN-FOR-TESTS-ONLY",
       "rules": [
         "secrets/slack-token"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "OPENAI_API_KEY sk-1234567890abcdefghijklmnopqrstuvwxyzABCDEF committed",
       "rules": [
         "secrets/openai-anthropic-key"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "sk-ant-api03-1234567890abcdefghijklmnopqrstuvwxyz",
       "rules": [
         "secrets/openai-anthropic-key"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "api_key: abcdef1234567890 in .env",
       "rules": [
         "secrets/generic-keyword-value"
       ]
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "password=Str0ngP@ssw0rd12026 in config",
       "rules": [
         "secrets/generic-keyword-value"
@@ -257,6 +292,7 @@
       "rules": []
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "Authorization: Bearer AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 sent",
       "rules": [
         "secrets/bearer-token"
@@ -271,6 +307,7 @@
       "rules": []
     },
     {
+      "note": "click:allow-secret synthetic corpus case; not real data.",
       "text": "email maria@example.com and DNI 12345678 and $ 50,00",
       "rules": [
         "pii/email",

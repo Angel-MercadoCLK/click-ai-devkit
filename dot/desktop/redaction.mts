@@ -197,7 +197,7 @@ export function findSensitiveRegions(words: OcrWord[], image: { width: number; h
       cover([{ line: lines[index], offset: 0 }, { line: next, offset: lines[index].text.length + 1 }], `${lines[index].text} ${next.text}`);
       // A value can also break mid-word ("maria.gomez@" / "example.com"), so scan the pair joined directly too.
       // Only hits that cross the line break count, and not when a value already ends the first line on its own,
-      // otherwise "maria@example.com" + "plain" would read as one longer address and hide "plain".
+      // otherwise "maria@example.com" + "plain" would read as one longer address and hide "plain". click:allow-secret synthetic example address in a comment; not real data.
       const first = lines[index];
       const boundary = first.text.length;
       const endsLine = new Set(scanText(first.text, rules).filter((hit) => hit.end === boundary).map((hit) => hit.rule));

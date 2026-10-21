@@ -26,6 +26,7 @@ function layout(lines, { top = 20, gap = 40, left = 20 } = {}) {
 const ids = (regions) => regions.flatMap((region) => region.rules);
 
 test("a single-word match hides exactly that word with padding", () => {
+  // click:allow-secret synthetic test data; not real personal data.
   const words = layout(["Contact maria@example.com now"]);
   const regions = redaction.findSensitiveRegions(words, IMAGE, patterns);
   assert.equal(regions.length, 1);
@@ -39,6 +40,7 @@ test("a single-word match hides exactly that word with padding", () => {
 });
 
 test("a match spanning several words covers every word it touches and only those", () => {
+  // click:allow-secret synthetic test data; not real personal data.
   const words = layout(["Teléfono +54 11 5555-1234 del asegurado", "unrelated words here"]);
   const regions = redaction.findSensitiveRegions(words, IMAGE, patterns);
   assert.deepEqual(ids(regions).sort(), ["pii/phone"]);
@@ -54,12 +56,14 @@ test("a match spanning several words covers every word it touches and only those
 
 test("a value wrapped across two lines is found by scanning neighbouring lines together", () => {
   // "Siniestro" ends line 0 and its identifier starts line 1: neither line matches alone.
+  // click:allow-secret synthetic test data; not real personal data.
   const words = layout(["something about Siniestro", "SIN-2026-000123 escalado ahora"]);
   const alone = redaction.findSensitiveRegions(words.filter((word) => word.line === 0), IMAGE, patterns);
   assert.deepEqual(alone, []);
   const regions = redaction.findSensitiveRegions(words, IMAGE, patterns);
   assert.ok(ids(regions).includes("claim-ids/placeholder"));
   const keyword = words.find((word) => word.text === "Siniestro");
+  // click:allow-secret synthetic test data; not real personal data.
   const identifier = words.find((word) => word.text === "SIN-2026-000123");
   const covers = (word) => regions.some((region) => region.x <= word.x && region.x + region.w >= word.x + word.w && region.y <= word.y && region.y + region.h >= word.y + word.h);
   assert.ok(covers(keyword) && covers(identifier), "both wrapped halves are hidden");
@@ -77,8 +81,10 @@ test("a value split mid-word across two lines is found by also joining the lines
 });
 
 test("several matches give several regions, and overlapping ones are merged", () => {
+  // click:allow-secret synthetic test data; not real personal data.
   const separate = redaction.findSensitiveRegions(layout(["maria@example.com", "plain line", "DNI 12345678"]), IMAGE, patterns);
   assert.equal(separate.length, 2);
+  // click:allow-secret synthetic test data; not real personal data.
   const merged = redaction.findSensitiveRegions(layout(["email a@example.com b@example.org"]), IMAGE, patterns);
   assert.equal(merged.length, 1, "touching boxes on one line become one region");
 });
@@ -89,6 +95,7 @@ test("text without personal data yields no regions", () => {
 });
 
 test("regions are clamped to the image", () => {
+  // click:allow-secret synthetic test data; not real personal data.
   const words = [{ text: "a@example.com", x: 0, y: 0, w: 130, h: 20, line: 0 }, { text: "b@example.com", x: 880, y: 285, w: 130, h: 20, line: 1 }];
   const regions = redaction.findSensitiveRegions(words, IMAGE, patterns);
   assert.equal(regions.length, 2);
@@ -98,6 +105,7 @@ test("regions are clamped to the image", () => {
 });
 
 test("words with unusable boxes are ignored instead of producing bad regions", () => {
+  // click:allow-secret synthetic test data; not real personal data.
   const words = [{ text: "a@example.com", x: Number.NaN, y: 0, w: 100, h: 20, line: 0 }, { text: "b@example.com", x: 0, y: 0, w: 0, h: 20, line: 1 }];
   assert.deepEqual(redaction.findSensitiveRegions(words, IMAGE, patterns), []);
 });
@@ -106,6 +114,7 @@ test("a very long line is scanned in windows, so a match late in it is still fou
   // Sized from the window so the line always spans several windows, whatever the window size is.
   const filler = Array.from({ length: Math.ceil((redaction.MAX_LINE_CHARS * 1.5) / 6) }, () => "lorem").join(" ");
   assert.ok(filler.length > redaction.MAX_LINE_CHARS * 1.4);
+  // click:allow-secret synthetic test data; not real personal data.
   const words = layout([`${filler} maria@example.com ${filler}`], { left: 0 });
   const regions = redaction.findSensitiveRegions(words, { width: 200_000, height: 300 }, patterns);
   assert.ok(regions.some((region) => region.rules.includes("pii/email")));
@@ -279,6 +288,7 @@ function makePreparer(overrides = {}) {
     frames: () => [frame({ capturedAt: 500 }), frame()],
     isCapturing: () => true,
     session: () => 1,
+    // click:allow-secret synthetic test data; not real personal data.
     ocr: async () => { calls.ocr += 1; return layout(["write to maria@example.com now"]); },
     patterns: async () => patterns,
     redact: async (png, size, rects) => { calls.redact += 1; calls.rects = rects; return { image: Buffer.from("REDACTED"), mime: "image/png" }; },
@@ -305,6 +315,7 @@ test("the pipeline fails closed with a fixed code when any stage fails, returnin
     await assert.rejects(preparer(), (error) => error instanceof prep.ScreenPrepareError && error.code === code, code);
     return seen;
   };
+  // click:allow-secret synthetic test data; not real personal data.
   await expectCode({ ocr: async () => { throw new Error("secret detail maria@example.com"); } }, "ocr-failed");
   await expectCode({ ocr: async () => { throw new ocrModule.OcrError("unavailable", "x"); } }, "ocr-unavailable");
   await expectCode({ ocr: async () => { throw new ocrModule.OcrError("timeout", "x"); } }, "ocr-failed");
@@ -345,6 +356,7 @@ test("a frame from an earlier capture session is discarded when capture went off
       frames: () => service.frames(),
       isCapturing: () => service.status().enabled && !service.status().paused,
       session: () => service.session(),
+      // click:allow-secret synthetic test data; not real personal data.
       ocr: async () => { ocrStarted(); await gate; return layout(["write to maria@example.com now"]); },
       patterns: async () => patterns,
       redact: async () => ({ image: Buffer.from("REDACTED"), mime: "image/png" }),

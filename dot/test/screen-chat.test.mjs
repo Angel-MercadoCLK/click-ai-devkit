@@ -149,6 +149,7 @@ test("the reader accepts only a bounded PNG or JPEG whose bytes match its declar
 test("prepareScreen maps every failure to a known code and never forwards the raw error", async () => {
   await assert.rejects(reader.prepareScreen({ status() {}, apply() {} }), (error) => error.code === "unavailable");
   const failing = (error) => ({ status() {}, apply() {}, prepareScreen: async () => { throw error; } });
+  // click:allow-secret synthetic test data; not real personal data.
   await assert.rejects(reader.prepareScreen(failing(Object.assign(new Error("secret: maria@example.com"), { code: "ocr-failed" }))), (error) => error.code === "ocr-failed" && !/secret|maria/.test(error.message));
   await assert.rejects(reader.prepareScreen(failing(Object.assign(new Error("x"), { code: "made-up" }))), (error) => error.code === "invalid-result");
   await assert.rejects(reader.prepareScreen(failing(new Error("plain"))), (error) => error.code === "invalid-result");
@@ -191,6 +192,7 @@ test("the preview route returns a data URL, the hidden-region count and an opaqu
 
 test("the preview route reports a fixed, non-leaking reason when preparation fails and stores nothing", async () => {
   previews.screenPreviews().clear();
+  // click:allow-secret synthetic test data; not real personal data.
   installController({ status: () => ({}), apply: async () => ({}), prepareScreen: async () => { throw Object.assign(new Error("maria@example.com leaked in stack"), { code: "ocr-failed" }); } });
   const response = await previewRoute.POST(localRequest("/api/capture/preview", { method: "POST" }));
   assert.equal(response.status, 409);

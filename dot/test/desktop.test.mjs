@@ -42,6 +42,7 @@ test("navigation stays on the Click Dot loopback origin", () => {
     "https://auth.openai.com/api/accounts/authorize",
     "http://localhost:47321/",
     "http://127.0.0.1:3000/",
+    // click:allow-secret synthetic test data; not real personal data.
     "http://127.0.0.1:47321@evil.example/",
     "https://127.0.0.1:47321/",
     "http://127.0.0.1.evil.example:47321/",
@@ -56,6 +57,7 @@ test("navigation stays on the Click Dot loopback origin", () => {
 
 test("only https links leave the app, and they open in the system browser", () => {
   assert.equal(navigation.externalUrlToOpen("https://auth.openai.com/api/accounts/authorize?x=1"), "https://auth.openai.com/api/accounts/authorize?x=1");
+  // click:allow-secret synthetic test data; not real personal data.
   for (const rejected of ["http://example.com/", "file:///C:/x", "javascript:alert(1)", "ms-msdt:/id", "data:text/html,hi", "https://user:pw@example.com/", "nonsense", ""]) {
     assert.equal(navigation.externalUrlToOpen(rejected), undefined, rejected);
   }
@@ -73,6 +75,7 @@ test("sign-in hands the whole flow to the system browser so its callback finds t
   // The callback lands in the system browser; starting there keeps the attempt cookie in that browser.
   assert.equal(navigation.systemBrowserTarget("https://auth.openai.com/api/accounts/authorize?x=1"), "http://127.0.0.1:47321/");
   assert.equal(navigation.systemBrowserTarget("https://example.com/docs"), "https://example.com/docs");
+  // click:allow-secret synthetic test data; not real personal data.
   for (const rejected of ["http://example.com/", "javascript:alert(1)", "https://user:pw@auth.openai.com/", "nonsense"]) {
     assert.equal(navigation.systemBrowserTarget(rejected), undefined, rejected);
   }

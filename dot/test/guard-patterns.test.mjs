@@ -83,9 +83,9 @@ test("the sync script fails loudly on anything unexpected", () => {
   }
 });
 
-test("the committed JSON is exactly what the script generates from the devkit YAML when it is available", async (t) => {
-  const devkit = process.env.CLICK_DEVKIT_PATTERNS;
-  if (!devkit) return t.skip("set CLICK_DEVKIT_PATTERNS to the devkit patterns.yaml to check the vendored copy");
+test("the committed JSON is exactly what the script generates from the devkit YAML", async () => {
+  // Dot lives inside the devkit repository, so the source of truth is always next door.
+  const devkit = process.env.CLICK_DEVKIT_PATTERNS ?? fileURLToPath(new URL("../../internal/guard/patterns.yaml", import.meta.url));
   const result = spawnSync(process.execPath, [scriptPath, devkit, "--check"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 });
