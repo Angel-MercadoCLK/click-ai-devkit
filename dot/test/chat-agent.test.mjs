@@ -269,6 +269,7 @@ test("a command that is not read-only asks on the mascot, and Permitir runs it",
   assert.equal(pending.summary, "Remove-Item old.txt");
   assert.match(pending.detail, /C:\\work/);
   assert.match(pending.detail, /Puede modificar tu equipo/);
+  assert.match(pending.detail, /Motivo: fixture/, "the card says why the classifier asked");
   assert.equal(pending.alwaysOffered, true);
   assert.deepEqual(fake.calls.powershell, [], "nothing runs before the user decides");
   assert.deepEqual(statuses(events, "call_1"), ["waiting_approval"]);

@@ -177,11 +177,25 @@ test("output beyond 64 KiB per stream is cut and flagged truncated, and the proc
   assert.equal(procs[0].state.killed, false, "truncation does not kill the process");
 });
 
+test("a truncated stream keeps its end, where a failing command prints its error", async () => {
+  const { runner, procs } = setup();
+  const pending = runner.runPowerShell(request());
+  await tick();
+  procs[0].out("a".repeat(40 * 1024));
+  procs[0].out("b".repeat(40 * 1024));
+  procs[0].out("ERROR at the end");
+  procs[0].close(1);
+  const result = await pending;
+  assert.ok(result.stdout.endsWith("bERROR at the end"), "the last bytes are kept");
+  assert.ok(!result.stdout.startsWith("a".repeat(30 * 1024)), "the first bytes are the ones dropped");
+  assert.equal(result.truncated, true);
+});
+
 test("the cap never leaves half of a multi-byte character", async () => {
   const { runner, procs } = setup({ options: { limits: { streamBytes: 10 } } });
   const pending = runner.runPowerShell(request());
   await tick();
-  procs[0].out(Buffer.from("aaaaaaaa✓✓")); // 8 bytes, then two 3-byte characters; the cap lands inside the first.
+  procs[0].out(Buffer.from("✓✓aaaaaaaa")); // two 3-byte characters, then 8 bytes; the cut lands inside the second.
   procs[0].close(0);
   const result = await pending;
   assert.equal(result.stdout, "aaaaaaaa");

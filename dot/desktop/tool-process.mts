@@ -114,6 +114,7 @@ export type ProcessOutcome = {
   startFailed: boolean;
 };
 
+/** Keeps the LAST `limit` bytes of a stream: a failing command prints its error at the end. */
 class CappedBuffer {
   private chunks: Buffer[] = [];
   private size = 0;
@@ -125,39 +126,33 @@ class CappedBuffer {
   }
 
   push(chunk: Buffer) {
-    const room = this.limit - this.size;
-    if (room <= 0) {
-      this.truncated = this.truncated || chunk.length > 0;
-      return;
-    }
-    if (chunk.length > room) {
-      this.chunks.push(chunk.subarray(0, room));
-      this.size += room;
-      this.truncated = true;
-      return;
-    }
+    if (chunk.length === 0) return;
     this.chunks.push(chunk);
     this.size += chunk.length;
+    while (this.size > this.limit) {
+      const head = this.chunks[0]!;
+      const excess = this.size - this.limit;
+      this.truncated = true;
+      if (head.length <= excess) {
+        this.chunks.shift();
+        this.size -= head.length;
+      } else {
+        this.chunks[0] = head.subarray(excess);
+        this.size -= excess;
+      }
+    }
   }
 
   text() {
-    return decodeUtf8(Buffer.concat(this.chunks), this.truncated);
-  }
-}
-
-/** UTF-8 decode that drops a partial character left at the end by a byte cap. */
-export function decodeUtf8(bytes: Buffer, capped = false) {
-  let end = bytes.length;
-  if (capped) {
-    for (let back = 1; back <= 4 && back <= bytes.length; back += 1) {
-      const byte = bytes[bytes.length - back]!;
-      if ((byte & 0xc0) === 0x80) continue;
-      const needed = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
-      if (needed > back) end = bytes.length - back;
-      break;
+    let bytes = Buffer.concat(this.chunks);
+    if (this.truncated) {
+      // The cut may have landed inside a character: drop its leftover continuation bytes.
+      let start = 0;
+      while (start < bytes.length && start < 3 && (bytes[start]! & 0xc0) === 0x80) start += 1;
+      bytes = bytes.subarray(start);
     }
+    return bytes.toString("utf8");
   }
-  return bytes.subarray(0, end).toString("utf8");
 }
 
 /** Cuts `text` to at most `maxBytes` of UTF-8 without splitting a character. */

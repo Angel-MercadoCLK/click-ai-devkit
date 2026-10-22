@@ -198,8 +198,12 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentTurn
       return `The command is too long to review (limit ${MAX_REVIEWABLE_CHARS} characters). Split it into smaller commands.`;
     }
     let readOnly = false;
-    try { readOnly = (await abortable(runner.classifyPowerShell(command), signal)).readOnly === true; }
-    catch {
+    let reason = "the read-only check could not run";
+    try {
+      const verdict = await abortable(runner.classifyPowerShell(command), signal);
+      readOnly = verdict.readOnly === true;
+      if (typeof verdict.reason === "string" && verdict.reason) reason = verdict.reason.slice(0, 300);
+    } catch {
       // A classifier that fails means "needs approval", unless the turn was stopped.
       throwIfAborted(signal);
     }
@@ -211,7 +215,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentTurn
         const answer = await ask({
           tool: "PowerShell",
           summary: command,
-          detail: `Carpeta: ${cwd ?? "tu carpeta de usuario"}\nPuede modificar tu equipo`,
+          detail: `Carpeta: ${cwd ?? "tu carpeta de usuario"}\nPuede modificar tu equipo\nMotivo: ${reason}`,
           alwaysOffered: true,
         });
         if (answer !== "allow" && answer !== "always") {
