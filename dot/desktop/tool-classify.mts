@@ -240,6 +240,9 @@ export function decideReadOnly(statements: PsStatement[]): Classification {
       const name = command.toLowerCase();
       const canonical = ALIASES[name] ?? name;
       if (args.some((arg) => NETWORK_PATH.test(arg))) return needsApproval(`${command} with a network path needs approval.`);
+      // `FileSystem::\\server\share` and `Microsoft.PowerShell.Core\FileSystem::...` name a provider path, which can be a
+      // network share the plain check above does not see.
+      if (args.some((arg) => arg.includes("::"))) return needsApproval(`${command} with a provider-qualified path needs approval.`);
       if (name === "git") {
         const verdict = checkGit(args);
         if (!verdict.readOnly) return verdict;

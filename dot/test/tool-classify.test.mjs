@@ -339,6 +339,13 @@ test("network paths need approval so a read never leaks credentials to another m
   allowed(stmt(["Get-ChildItem", "C:\\Users\\angel"]));
 });
 
+test("provider-qualified paths need approval, since they can name a network share", () => {
+  rejected(/provider|network/i, stmt(["Get-Content", "FileSystem::\\\\server\\share\\file"]));
+  rejected(/provider|network/i, stmt(["Get-ChildItem", "Microsoft.PowerShell.Core\\FileSystem::\\\\server\\share"]));
+  rejected(/provider|network/i, stmt(["gci", "FileSystem:://server/share"]));
+  rejected(/provider|network/i, stmt(["Test-Path", "-Path:FileSystem::\\\\server\\share"]));
+});
+
 test("git checks the pieces of an argument PowerShell 5.1 could re-split, and rejects quotes", () => {
   rejected(/output/i, stmt(["git", "log", "--since=a --output=x"]));
   rejected(/-c/i, stmt(["git", "log", "--grep=a -c"]));
