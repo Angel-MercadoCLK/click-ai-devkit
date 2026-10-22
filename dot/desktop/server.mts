@@ -12,12 +12,14 @@ type CreateNext = (options: { dev: boolean; dir: string; hostname: string; port:
  * Runs the production Next.js server inside this process, on loopback only.
  * Next.js is imported lazily so the environment is fully configured before it loads.
  */
-export async function startDotServer(dir: string): Promise<Server> {
+export async function startDotServer(dir: string, options: { workingDirectory?: string } = {}): Promise<Server> {
   // Same setup as Next.js standalone output: serve the config serialized at build time.
   Object.assign(process.env, { NODE_ENV: "production" });
   process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(await loadBuiltNextConfig(dir));
   // Next.js resolves project paths against the working directory, which is arbitrary for a desktop launch.
-  process.chdir(dir);
+  // `dir` may be inside app.asar, which is not a real directory and cannot be the working directory,
+  // so the caller can name a real one (a per-user directory) instead.
+  process.chdir(options.workingDirectory ?? dir);
   // At runtime the CommonJS entry point is the factory itself; the bundled typings model it differently under NodeNext.
   const { default: next } = (await import("next")) as unknown as { default: CreateNext };
   const app = next({ dev: false, dir, hostname: DOT_HOST, port: DOT_PORT });

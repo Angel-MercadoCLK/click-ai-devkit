@@ -1,7 +1,7 @@
 appId: com.click.dot
 productName: Click Dot
 copyright: Click
-asar: false
+asar: true
 npmRebuild: false
 directories:
   output: release
@@ -16,13 +16,59 @@ files:
   - "!.next/dev/**"
   - "!**/*.map"
   - "!**/node_modules/.cache/**"
-  # Binaries installed for the Linux build host are useless in a Windows package.
-  - "!**/node_modules/@next/swc-linux-*/**"
+  # The Next.js server never loads SWC at runtime, and native binaries for the Linux build host are useless in a
+  # Windows package.
+  - "!**/node_modules/@next/swc-*/**"
   - "!**/node_modules/@img/*linux*/**"
-  - "!**/node_modules/@rolldown/binding-linux-*/**"
+  # Production dependencies the packaged app never loads. Everything below is outside the dependency closure of
+  # next, react and react-dom (the only packages the Next.js server build and the Electron main process require
+  # at runtime; `jose` is bundled into the server chunks, and `ai`, `eve` and `zod` are not imported by the app).
+  # test/desktop.test.mjs checks that this list never removes a package the runtime needs.
+  - "!**/node_modules/@ai-sdk/**"
+  - "!**/node_modules/@oxc-project/**"
+  - "!**/node_modules/@rolldown/**"
+  - "!**/node_modules/@standard-schema/spec/**"
+  - "!**/node_modules/@vercel/oidc/**"
+  - "!**/node_modules/@workflow/**"
+  - "!**/node_modules/ai/**"
+  - "!**/node_modules/consola/**"
+  - "!**/node_modules/crossws/**"
+  - "!**/node_modules/db0/**"
+  - "!**/node_modules/env-runner/**"
+  - "!**/node_modules/eve/**"
+  - "!**/node_modules/eventsource-parser/**"
+  - "!**/node_modules/exsolve/**"
+  - "!**/node_modules/h3/**"
+  - "!**/node_modules/hookable/**"
+  - "!**/node_modules/httpxy/**"
+  - "!**/node_modules/jose/**"
+  - "!**/node_modules/json-schema/**"
+  - "!**/node_modules/nf3/**"
+  - "!**/node_modules/nitro/**"
+  - "!**/node_modules/ocache/**"
+  - "!**/node_modules/pathe/**"
+  - "!**/node_modules/rolldown/**"
+  - "!**/node_modules/rou3/**"
+  - "!**/node_modules/srvx/**"
+  - "!**/node_modules/undici/**"
+  - "!**/node_modules/unenv/**"
+  - "!**/node_modules/unstorage/**"
+  - "!**/node_modules/zod/**"
+# Fuses are flipped on the packaged exe by electron-builder (via @electron/fuses). Click Dot does not use
+# ELECTRON_RUN_AS_NODE (its only child process is PowerShell), NODE_OPTIONS, --inspect or file:// pages.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableCookieEncryption: true
+  grantFileProtocolExtraPrivileges: false
+  onlyLoadAppFromAsar: true
+  enableEmbeddedAsarIntegrityValidation: true
 win:
   target:
     - target: dir
       arch: x64
-  # rcedit needs wine when packaging from Linux/WSL; the exe therefore has no custom icon or version resources yet (tracked in D5).
-  signAndEditExecutable: false
+  icon: desktop/assets/icon.png
+  # Edits the exe resources (icon, ProductName, version) with resedit, which is pure JavaScript and runs on Linux and
+  # Windows alike. Code signing is not set up yet, so only that step is skipped.
+  signExecutable: false

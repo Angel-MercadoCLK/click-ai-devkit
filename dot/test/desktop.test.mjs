@@ -198,3 +198,96 @@ test("a missing or malformed build output gives a clear error", async () => {
     await assert.rejects(nextConfig.loadBuiltNextConfig(dir), /npm run desktop:build/, content);
   }
 });
+
+// Release hardening (electron-builder.yml). The file is read as text on purpose: Dot has no YAML dependency.
+const builderConfig = await readFile(new URL("../electron-builder.yml", import.meta.url), "utf8");
+const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+const lockPackages = JSON.parse(await readFile(new URL("../package-lock.json", import.meta.url), "utf8")).packages;
+
+function builderValue(key) {
+  return builderConfig.match(new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, "m"))?.[1];
+}
+
+function excludedPackages() {
+  return [...builderConfig.matchAll(/^\s*-\s*"!\*\*\/node_modules\/((?:@[^/"]+\/)?[^/"*]+)\/\*\*"/gm)].map((match) => match[1]);
+}
+
+// Same resolution the package manager used: a package's dependency lives in its own node_modules or an ancestor's.
+function dependencyClosure(roots) {
+  const seen = new Set();
+  const pending = roots.map((name) => `node_modules/${name}`);
+  while (pending.length > 0) {
+    const path = pending.pop();
+    if (seen.has(path)) continue;
+    seen.add(path);
+    const entry = lockPackages[path];
+    const names = Object.keys({ ...entry.dependencies, ...entry.optionalDependencies, ...entry.peerDependencies });
+    for (const name of names) {
+      let base = path;
+      for (;;) {
+        const candidate = `${base}/node_modules/${name}`.replace(/^\//, "");
+        if (lockPackages[candidate]) {
+          pending.push(candidate);
+          break;
+        }
+        const cut = base.lastIndexOf("/node_modules/");
+        if (cut === -1) {
+          if (lockPackages[`node_modules/${name}`]) pending.push(`node_modules/${name}`);
+          break;
+        }
+        base = base.slice(0, cut);
+      }
+    }
+  }
+  return new Set([...seen].map((path) => path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length)));
+}
+
+test("the packaged exe disables the Node escape hatches and only loads app code from a validated asar", () => {
+  assert.equal(builderValue("asar"), "true");
+  const fuses = {
+    runAsNode: "false",
+    enableNodeOptionsEnvironmentVariable: "false",
+    enableNodeCliInspectArguments: "false",
+    enableCookieEncryption: "true",
+    grantFileProtocolExtraPrivileges: "false",
+    onlyLoadAppFromAsar: "true",
+    enableEmbeddedAsarIntegrityValidation: "true",
+  };
+  for (const [fuse, value] of Object.entries(fuses)) assert.equal(builderValue(fuse), value, fuse);
+});
+
+test("the exe gets its icon and version resources without needing wine", async () => {
+  assert.equal(builderValue("icon"), "desktop/assets/icon.png");
+  // Resource editing stays on (the default); only code signing, which is not set up yet, is skipped.
+  assert.equal(builderValue("signExecutable"), "false");
+  assert.equal(builderValue("signAndEditExecutable"), undefined);
+  assert.equal(builderValue("productName"), "Click Dot");
+  await readFile(new URL("../desktop/assets/icon.png", import.meta.url));
+});
+
+test("the package never excludes a dependency the desktop shell or the Next.js server needs", async () => {
+  const mainImports = new Set();
+  for (const file of ["main", "server", "ocr", "screen-capture", "capture", "redaction", "protector", "preferences"]) {
+    const source = await readFile(new URL(`../desktop/${file}.mts`, import.meta.url), "utf8");
+    for (const match of source.matchAll(/\bfrom\s+"((?:@[^/"]+\/)?[^"./][^"/]*)(?:\/[^"]*)?"/g)) mainImports.add(match[1]);
+    for (const match of source.matchAll(/\bimport\("((?:@[^/"]+\/)?[^"./][^"/]*)(?:\/[^"]*)?"\)/g)) mainImports.add(match[1]);
+  }
+  mainImports.delete("electron"); // supplied by the Electron runtime, never packaged as a dependency
+  const needed = dependencyClosure(["next", "react", "react-dom", ...[...mainImports].filter((name) => !name.startsWith("node:"))]);
+  const excluded = excludedPackages();
+  assert.ok(excluded.length > 0);
+  for (const name of excluded) assert.equal(needed.has(name), false, `${name} is needed at runtime but excluded from the package`);
+});
+
+test("every production dependency is either needed at runtime or explicitly excluded from the package", () => {
+  const needed = dependencyClosure(["next", "react", "react-dom"]);
+  const excluded = new Set(excludedPackages());
+  for (const name of Object.keys(packageJson.dependencies)) {
+    assert.ok(needed.has(name) || excluded.has(name), `${name}: add it to the runtime check or exclude it in electron-builder.yml`);
+  }
+});
+
+test("Next.js never writes its response cache next to the read-only app", async () => {
+  const { default: nextConfigObject } = await import("../next.config.ts");
+  assert.equal(nextConfigObject.experimental?.isrFlushToDisk, false);
+});

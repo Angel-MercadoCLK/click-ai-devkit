@@ -40,6 +40,8 @@ npm run desktop:pack:win   # unpacked Windows x64 app in release/win-unpacked
 - Start with Windows is on by default for packaged builds and can be turned off from the tray menu. Pass `--no-login-item` (or set `CLICK_DOT_DISABLE_LOGIN_ITEM=1`) to never register it, for example in smoke tests.
 - Choosing **Continue with ChatGPT** in the desktop window opens Click Dot in the system browser; choose **Continue with ChatGPT** there to finish signing in, because the callback must reach the same browser that started it. The desktop window refreshes when you come back to it.
 - Every web permission request (camera, microphone, screen, notifications) is denied in this version.
+- The packaged app ships as a validated `app.asar` (embedded integrity check on Windows) and the exe has these Electron fuses set: `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and `--inspect` are disabled, cookie encryption is on, and only the asar is loaded. Next.js keeps its response cache in memory and never writes inside the install directory, which is replaced on update. Packaging edits the exe resources (icon, ProductName, version) with resedit, so it works from Linux or WSL without wine; it needs network access to fetch electron-builder's icon tools.
+- Code signing is not set up yet, so Windows Smart App Control may block a freshly built unsigned `Click Dot.exe`.
 
 ### Screen capture
 

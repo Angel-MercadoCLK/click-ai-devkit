@@ -239,7 +239,7 @@ async function start() {
   installCaptureController(globalThis, captureController);
 
   try {
-    server = await startDotServer(app.getAppPath());
+    server = await startDotServer(app.getAppPath(), { workingDirectory: userData });
   } catch (error) {
     const message =
       error instanceof PortInUseError
