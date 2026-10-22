@@ -16,7 +16,7 @@ test("the agent disables default and parent-callable tools", () => {
   }
 });
 
-test("the browser app offers honest per-install account setup and real chat without agent tools", () => {
+test("the browser app offers honest per-install account setup and real chat without the eve agent runtime", () => {
   const page = read("app/page.tsx");
   const panel = read("app/auth-panel.tsx");
   assert.match(page, /AuthPanel/);

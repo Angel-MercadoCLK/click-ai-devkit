@@ -158,7 +158,7 @@ test("models route accepts a synthetic account catalog larger than the previous 
   assert.deepEqual(await response.json(), { models: [{ slug: "route-first", displayName: "First" }] });
 });
 
-test("Responses request is server-only, has no tools, and requires completed SSE across split multiline chunks", async () => {
+test("plain Responses request is server-only, has no tools, and requires completed SSE across split multiline chunks", async () => {
   const connection = await authStore.getConnection();
   let requestBody;
   let requestHeaders;

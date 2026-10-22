@@ -250,6 +250,7 @@ body:has(.mascot-root) { height: 100vh; min-height: 0; overflow: hidden; line-he
 .agent-card-summary { margin: 0; }
 .agent-card-detail { max-height: 150px; margin: 0; padding: 8px; overflow: auto; border-radius: 8px; background: #f1f3ee; font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-card-error { margin: 0; color: #8a2a1f; font-size: 12px; }
+.agent-card-note { margin: 0; color: #5f6e67; font-size: 12px; white-space: pre-line; overflow-wrap: anywhere; }
 .agent-question { display: grid; min-width: 0; margin: 0; padding: 0; gap: 6px; border: 0; }
 .agent-question legend { padding: 0; font-weight: 600; }
 .agent-options { display: grid; gap: 5px; }
@@ -266,3 +267,20 @@ button.agent-option > span, button.agent-option > small { grid-column: 1; }
 .agent-action:disabled, .agent-option:disabled, .agent-link:disabled { cursor: default; opacity: 0.6; }
 .agent-link { margin-left: auto; padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: #244d3e; font: inherit; font-size: 12px; font-weight: 650; text-decoration: underline; cursor: pointer; }
 .agent-action:focus-visible, .agent-option:focus-visible, .agent-option:has(input:focus-visible), .agent-link:focus-visible { outline: 2px solid #315e4c; outline-offset: 2px; }
+
+/* Dot's tool calls in the chat: one line per call with a status chip and a collapsed output tail. */
+.tool-activity { display: grid; justify-self: start; width: min(92%, 48rem); margin: 0; padding: 0; gap: 0.4rem; list-style: none; }
+.tool-line { padding: 0.4rem 0.6rem; border: 1px solid #d9ded6; border-radius: 0.6rem; background: #f7f9f6; font-size: 0.82rem; }
+.tool-line-head { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.tool-line-name { flex: none; color: #52635a; font-weight: 700; }
+.tool-line-summary { min-width: 0; flex: 1; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.tool-chip { flex: none; padding: 1px 8px; border-radius: 999px; background: #e1eee5; color: #244d3e; font-size: 0.72rem; font-weight: 650; }
+.tool-chip.is-running { background: #e3ecf7; color: #234a73; }
+.tool-chip.is-waiting_approval { background: #ffe2a8; color: #6b4300; }
+.tool-chip.is-denied { background: #ececec; color: #4a4a4a; }
+.tool-chip.is-error { background: #f8dcd7; color: #8a2a1f; }
+.tool-line-output { margin-top: 0.3rem; }
+.tool-line-output summary { color: #244d3e; cursor: pointer; font-size: 0.74rem; font-weight: 650; }
+.tool-line-output pre { max-height: 9rem; margin: 0.3rem 0 0; padding: 0.4rem; overflow: auto; border-radius: 0.4rem; background: #edf1ec; font: 0.74rem/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.compact-chat .tool-activity { width: 94%; gap: 4px; }
+.compact-chat .tool-line { padding: 4px 8px; font-size: 12px; }

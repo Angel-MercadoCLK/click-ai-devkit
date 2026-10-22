@@ -12,7 +12,7 @@ const card = await import("../app/mascot/agent-choices.ts");
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 const session = (overrides = {}) => ({ id: "s1", project: "alpha", state: "trabajando", action: "Ejecutando npm test", updatedAt: 1, ...overrides });
-const pending = (overrides = {}) => ({ id: "p1", tool: "Bash", summary: "Ejecutando npm test", detail: "npm test", project: "alpha", alwaysOffered: true, questions: null, ...overrides });
+const pending = (overrides = {}) => ({ id: "p1", kind: "claude-code", tool: "Bash", summary: "Ejecutando npm test", detail: "npm test", project: "alpha", alwaysOffered: true, questions: null, ...overrides });
 const body = (overrides = {}) => ({ sessions: [session()], pending: null, queued: 0, ...overrides });
 
 // --- reading the state -----------------------------------------------------------------------------------------
@@ -37,6 +37,8 @@ test("anything malformed is not a state", () => {
     body({ sessions: [session({ id: 5 })] }),
     body({ sessions: ["x"] }),
     body({ pending: pending({ alwaysOffered: "yes" }) }),
+    body({ pending: pending({ kind: "other" }) }),
+    body({ pending: { ...pending(), kind: undefined } }),
     body({ pending: pending({ questions: "x" }) }),
     body({ pending: pending({ questions: [{ question: "Q?", header: "H", multiSelect: "no", options: [] }] }) }),
     body({ pending: pending({ questions: [{ question: "Q?", header: "H", multiSelect: false, options: [{ label: 1, description: "" }] }] }) }),

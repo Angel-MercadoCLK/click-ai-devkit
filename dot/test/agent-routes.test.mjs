@@ -335,7 +335,8 @@ test("the state route needs the control cookie and the local Host, and does not 
   assert.equal(ok.headers.get("cache-control"), "no-store, private");
   const state = await ok.json();
   assert.equal(state.pending.id, held.id);
-  assert.deepEqual(Object.keys(state.pending).sort(), ["alwaysOffered", "detail", "id", "project", "questions", "summary", "tool"]);
+  assert.deepEqual(Object.keys(state.pending).sort(), ["alwaysOffered", "detail", "id", "kind", "project", "questions", "summary", "tool"]);
+  assert.equal(state.pending.kind, "claude-code");
   assert.equal(state.pending.alwaysOffered, true);
   assert.equal(state.queued, 0);
   assert.equal(state.sessions[0].state, "te necesita");

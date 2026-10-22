@@ -4,8 +4,11 @@
 import type { AgentSessionView, SessionState } from "./agent-sessions.ts";
 
 export type AgentQuestion = { question: string; header: string; multiSelect: boolean; options: { label: string; description: string }[] };
+/** Where a request comes from: a Claude Code hook, or one of Dot's own tools asking before it acts. */
+export type PendingKind = "claude-code" | "dot-tool";
+export const PENDING_KINDS: readonly PendingKind[] = ["claude-code", "dot-tool"];
 /** What the card needs and nothing more: no working directory, no raw payload. */
-export type PendingView = { id: string; tool: string; summary: string; detail: string; project: string; alwaysOffered: boolean; questions: AgentQuestion[] | null };
+export type PendingView = { id: string; kind: PendingKind; tool: string; summary: string; detail: string; project: string; alwaysOffered: boolean; questions: AgentQuestion[] | null };
 export type AgentState = { sessions: AgentSessionView[]; pending: PendingView | null; queued: number };
 export type AgentAttention = "idle" | "working" | "needs";
 
@@ -42,10 +45,11 @@ function readPending(value: unknown): PendingView | null | undefined {
   if (value === null) return null;
   if (!isRecord(value)) return undefined;
   const { id, tool, summary, detail, project, alwaysOffered } = value;
+  const kind = PENDING_KINDS.find((candidate) => candidate === value.kind);
   const questions = readQuestions(value.questions);
   if (typeof id !== "string" || typeof tool !== "string" || typeof summary !== "string" || typeof detail !== "string" || typeof project !== "string" || typeof alwaysOffered !== "boolean") return undefined;
-  if (questions === undefined) return undefined;
-  return { id, tool, summary, detail, project, alwaysOffered, questions };
+  if (questions === undefined || !kind) return undefined;
+  return { id, kind, tool, summary, detail, project, alwaysOffered, questions };
 }
 
 /** Reads a state response body; anything malformed is not a state. */

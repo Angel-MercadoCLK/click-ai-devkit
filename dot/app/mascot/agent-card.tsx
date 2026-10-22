@@ -23,8 +23,10 @@ function CardContent({ pending, queued, busy, failed, onDecide }: CardProps) {
   const { questions } = pending;
   const [selection, setSelection] = useState(() => emptySelection(questions ?? []));
   const asking = questions !== null;
+  // A request from one of Dot's own tools (PowerShell, Claude Code): there is no terminal to hand it back to.
+  const own = pending.kind === "dot-tool";
   return (
-    <section className="agent-card" role="group" aria-label={`Claude Code te necesita en ${pending.project}`}>
+    <section className="agent-card" role="group" aria-label={own ? `Dot quiere usar ${pending.tool}` : `Claude Code te necesita en ${pending.project}`}>
       <header className="agent-card-header">
         <span className="agent-card-project">{pending.project}</span>
         {queued > 0 && <span className="agent-card-queue" title="Peticiones en espera">+{queued} más</span>}
@@ -59,13 +61,19 @@ function CardContent({ pending, queued, busy, failed, onDecide }: CardProps) {
               </fieldset>
             ))}
           </>
+        ) : own ? (
+          <>
+            <p className="agent-card-summary">Dot quiere usar <b>{pending.tool}</b></p>
+            <pre className="agent-card-detail">{pending.summary}</pre>
+            {pending.detail && <p className="agent-card-note">{pending.detail}</p>}
+          </>
         ) : (
           <>
             <p className="agent-card-summary">Quiere usar <b>{pending.tool}</b></p>
             {pending.detail && <pre className="agent-card-detail">{pending.detail}</pre>}
           </>
         )}
-        {failed && <p className="agent-card-error" role="status">No se pudo enviar tu respuesta. Responde en la terminal.</p>}
+        {failed && <p className="agent-card-error" role="status">{own ? "No se pudo enviar tu respuesta. Inténtalo de nuevo." : "No se pudo enviar tu respuesta. Responde en la terminal."}</p>}
       </div>
       <footer className="agent-card-actions">
         {asking ? (
@@ -79,11 +87,11 @@ function CardContent({ pending, queued, busy, failed, onDecide }: CardProps) {
             <button className="agent-action primary" type="button" disabled={busy} onClick={() => onDecide("allow")}>Permitir</button>
             <button className="agent-action" type="button" disabled={busy} onClick={() => onDecide("deny")}>Denegar</button>
             {pending.alwaysOffered && (
-              <button className="agent-action" type="button" disabled={busy} title="Permitir y recordar esta regla" onClick={() => onDecide("always")}>Siempre</button>
+              <button className="agent-action" type="button" disabled={busy} title={own ? "Permitir este comando exacto hasta que cierres Dot" : "Permitir y recordar esta regla"} onClick={() => onDecide("always")}>Siempre</button>
             )}
           </>
         )}
-        <button className="agent-link" type="button" disabled={busy} onClick={() => onDecide("terminal")}>Responder en la terminal</button>
+        {!own && <button className="agent-link" type="button" disabled={busy} onClick={() => onDecide("terminal")}>Responder en la terminal</button>}
       </footer>
     </section>
   );

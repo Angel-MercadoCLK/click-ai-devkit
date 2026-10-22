@@ -4,6 +4,9 @@ import { listAvailableModels, streamChatResponse, formatLocalEvent, ScreenImageR
 import { appendCompletedTurn, getConversation, listConversations } from "../../../../lib/conversation-store.ts";
 import { PREVIEW_ID_PATTERN, screenPreviews, toDataUrl } from "../../../../lib/screen-previews.ts";
 import { getCaptureController, readCaptureStatus } from "../../../../lib/capture-controller.ts";
+import { hasControlAccess } from "../../../../lib/control-token.ts";
+import { runAgentTurn, toolSummaryLine } from "../../../../lib/agent-loop.ts";
+import { getToolRunner } from "../../../../lib/tool-runner.ts";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -15,6 +18,8 @@ const conversationIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][
 export async function POST(request: Request) {
   const rejected = rejectNonLocal(request, true);
   if (rejected) return rejected;
+  // Chat can now act on the machine, so it needs the same per-launch control cookie as the other control routes.
+  if (!hasControlAccess(request)) return Response.json({ error: "Request rejected." }, { status: 403, headers: noStore });
   const snapshot = await authorizedConnection();
   if (!isConnectionSnapshot(snapshot)) return snapshot;
 
@@ -86,6 +91,9 @@ export async function POST(request: Request) {
   const activeConversationId = prior?.id ?? conversationId;
   const responseAbort = new AbortController();
   const signal = AbortSignal.any([request.signal, responseAbort.signal]);
+  // With the tool runtime (Windows desktop app) the model gets tools; without it this is plain chat.
+  const runner = getToolRunner();
+  const savedPrompt = screenPreviewId === undefined ? prompt : `${prompt}\n\n${SCREEN_ATTACHED_MARKER}`;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const send = (event: Uint8Array) => {
@@ -96,6 +104,24 @@ export async function POST(request: Request) {
       void (async () => {
         let answer = "";
         try {
+          if (runner) {
+            const result = await runAgentTurn({
+              connection: snapshot.connection,
+              model,
+              input: context,
+              runner,
+              signal,
+              emit: (event) => (event.type === "delta" ? send(formatLocalEvent("delta", { text: event.text })) : send(formatLocalEvent("tool", event.tool))),
+            });
+            if (signal.aborted) return;
+            // Only the prompt and the final text are kept, plus one line saying which tools were used.
+            const summary = toolSummaryLine(result.tools);
+            const saved = summary && result.text.length + 2 + summary.length <= 16_000 ? `${result.text}\n\n${summary}` : result.text;
+            await appendCompletedTurn(snapshot, revision, activeConversationId, model, savedPrompt, saved, signal);
+            if (signal.aborted) return;
+            send(formatLocalEvent("completed", {}));
+            return;
+          }
           for await (const event of streamChatResponse(snapshot.connection, model, context, fetch, signal)) {
             if (signal.aborted) return;
             if (event.type === "delta") {
@@ -103,7 +129,7 @@ export async function POST(request: Request) {
               if (!send(formatLocalEvent("delta", { text: event.text }))) return;
             } else {
               if (signal.aborted) return;
-              await appendCompletedTurn(snapshot, revision, activeConversationId, model, screenPreviewId === undefined ? prompt : `${prompt}\n\n${SCREEN_ATTACHED_MARKER}`, answer, signal);
+              await appendCompletedTurn(snapshot, revision, activeConversationId, model, savedPrompt, answer, signal);
               if (signal.aborted) return;
               send(formatLocalEvent("completed", {}));
             }

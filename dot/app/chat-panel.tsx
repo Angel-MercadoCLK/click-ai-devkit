@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Composer, FULL_LABELS, MessageList } from "./chat/parts";
 import { applyCapturePoll, INITIAL_CAPTURE_POLL, readCapturePoll, type CapturePollResult } from "../lib/capture-state.ts";
+import { applyToolEvent, readToolEvent, type ToolEvent } from "../lib/tool-events.ts";
 
 export type Model = { slug: string; displayName: string };
 export type Message = { role: "user" | "assistant"; content: string; createdAt: number };
@@ -40,6 +41,8 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
   const [submittedPrompt, setSubmittedPrompt] = useState("");
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [liveText, setLiveText] = useState("");
+  /** The tool calls of the message being answered (or of the last one), in the order the model made them. */
+  const [tools, setTools] = useState<ToolEvent[]>([]);
   const [notice, setNotice] = useState("");
   const [historyLoading, setHistoryLoading] = useState(true);
   const controller = useRef<AbortController | null>(null);
@@ -158,6 +161,7 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
     setDraft("");
     setSubmittedPrompt("");
     setLiveText("");
+    setTools([]);
     setNotice("");
     setStatus("idle");
   }
@@ -166,7 +170,7 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
     controller.current?.abort();
     controller.current = null;
     setStatus("error");
-    setNotice("Response canceled. Partial output was not saved.");
+    setNotice("Response stopped. Partial output was not saved, and anything a tool already did is not undone.");
   }
 
   async function clearHistory() {
@@ -201,6 +205,7 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
     controller.current = null;
     setActiveId(conversation.id);
     setLiveText("");
+    setTools([]);
     setDraft("");
     setSubmittedPrompt("");
     setNotice("");
@@ -230,11 +235,13 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
     setDraft("");
     setSubmittedPrompt(prompt);
     setLiveText("");
+    setTools([]);
     setNotice("");
     setStatus("submitted");
     const activeController = new AbortController();
     controller.current = activeController;
     let sawCompleted = false;
+    const seenTools = new Set<string>();
     try {
       const response = await fetch("/api/chat/stream", {
         method: "POST",
@@ -262,7 +269,13 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
           const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
           if (data) {
             const payload = JSON.parse(data) as { text?: string; message?: string };
-            if (type === "delta" && typeof payload.text === "string") {
+            const tool = type === "tool" ? readToolEvent(payload) : undefined;
+            if (tool) {
+              setStatus("streaming");
+              // Text streamed before a tool call was only the model thinking aloud; the saved answer is the last round's.
+              if (!seenTools.has(tool.id)) { seenTools.add(tool.id); setLiveText(""); }
+              setTools((current) => applyToolEvent(current, tool));
+            } else if (type === "delta" && typeof payload.text === "string") {
               setStatus("streaming");
               setLiveText((current) => current + payload.text);
             } else if (type === "completed") {
@@ -302,7 +315,7 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
     models, selectedModel, setSelectedModel, loadingModels, loadModels,
     history, historyLoading, activeId, draft, setDraft, status, liveText, submittedPrompt, notice,
     captureActive, includeScreen, setIncludeScreen, screen, prepareScreen, wantsScreen,
-    activeConversation, messages, busy,
+    activeConversation, messages, busy, tools,
     sendMessage, submit, cancelResponse, beginNewConversation, clearHistory, removeConversation, openConversation,
   };
 }
@@ -361,7 +374,7 @@ export function ChatPanel({ onAuthorizationExpired }: { onAuthorizationExpired: 
       <p className="chat-live" role="status" aria-live="polite">
         {notice || (status === "submitted" ? "Message submitted to ChatGPT." : status === "streaming" ? "ChatGPT is streaming a response." : status === "complete" ? "Response complete and saved locally." : status === "error" ? "Response ended without being saved as complete." : "Ready when you are.")}
       </p>
-      <p className="privacy-note">Responses are requested with remote storage disabled. Chat history is stored separately from credentials in private local storage. No tools are enabled.</p>
+      <p className="privacy-note">Responses are requested with remote storage disabled. Chat history is stored separately from credentials in private local storage. In the Dot desktop app on Windows, Dot can also run PowerShell, hand tasks to Claude Code and look at your shared screen: read-only commands run on their own, anything else asks first on the mascot.</p>
     </section>
   );
 }
