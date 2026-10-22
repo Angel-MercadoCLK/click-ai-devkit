@@ -47,6 +47,9 @@ func TestPreflightGentleAIRegistrations_RejectsSameNameEntriesWithExtraState(t *
 		pick TargetSelection
 	}{
 		{"Claude custom env", "claude", `{"mcpServers":{"engram":{"command":"engram","args":["mcp","--tools=agent"],"env":{"TOKEN":"user-owned"}}}}`, TargetSelection{Claude: true}},
+		{"Claude custom env with stdio type", "claude", `{"mcpServers":{"engram":{"type":"stdio","command":"engram","args":["mcp","--tools=agent"],"env":{"TOKEN":"user-owned"}}}}`, TargetSelection{Claude: true}},
+		{"Claude non-stdio type", "claude", `{"mcpServers":{"engram":{"type":"http","command":"engram","args":["mcp","--tools=agent"]}}}`, TargetSelection{Claude: true}},
+		{"Claude null env", "claude", `{"mcpServers":{"engram":{"command":"engram","args":["mcp","--tools=agent"],"env":null}}}`, TargetSelection{Claude: true}},
 		{"Codex custom args", "codex", "[mcp_servers.context7]\nurl = \"https://mcp.context7.com/mcp\"\nheaders = { authorization = \"user-owned\" }\n", TargetSelection{Codex: true}},
 		{"OpenClaw custom args", "openclaw", `{"mcp":{"servers":{"context7":{"type":"remote","url":"https://mcp.context7.com/mcp","headers":{"Authorization":"user-owned"}}}}}`, TargetSelection{OpenClaw: true}},
 	}
@@ -99,6 +102,53 @@ func TestPreflightGentleAIRegistrations_AllowsExactExistingManagedShapes(t *test
 	if err := PreflightGentleAIRegistrations(Config{ClaudeHome: claudeHome, CodexHome: codexHome}, TargetSelection{Claude: true, Codex: true}); err != nil {
 		t.Fatalf("preflight rejected exact upstream-compatible existing entries: %v", err)
 	}
+}
+
+// Claude Code stores a server added with `claude mcp add` (as engram's own setup does) with an
+// explicit stdio type and an empty env. That is the same registration gentle-ai merges into.
+func TestPreflightGentleAIRegistrations_AllowsClaudeCodeNormalizedEngramShape(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "engram", "bin", "engram.exe")
+	defer setEngramLookPathForTest(t, bin, nil)()
+	cases := []struct {
+		name string
+		data string
+	}{
+		{"stdio type and empty env", `{"mcpServers":{"engram":{"type":"stdio","command":` + jsonString(t, bin) + `,"args":["mcp","--tools=agent"],"env":{}}}}`},
+		{"stdio type only", `{"mcpServers":{"engram":{"type":"stdio","command":"engram","args":["mcp","--tools=agent"]}}}`},
+		{"empty env only", `{"mcpServers":{"engram":{"command":"engram","args":["mcp","--tools=agent"],"env":{}}}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Config{ClaudeHome: t.TempDir()}
+			path := cfg.Context7ConfigPath()
+			if err := os.WriteFile(path, []byte(tc.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := PreflightGentleAIRegistrations(cfg, TargetSelection{Claude: true}); err != nil {
+				t.Fatalf("preflight rejected Claude Code's normalized engram registration: %v", err)
+			}
+			found, err := HasGentleAIEngramMCP(cfg)
+			if err != nil || !found {
+				t.Fatalf("HasGentleAIEngramMCP() = %v, %v; want true, nil", found, err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.data {
+				t.Fatalf("preflight changed the registration: got %q, want %q", got, tc.data)
+			}
+		})
+	}
+}
+
+func jsonString(t *testing.T, s string) string {
+	t.Helper()
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 func TestPreflightGentleAIRegistrations_AllowsPinnedContext7Shapes(t *testing.T) {
