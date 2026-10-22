@@ -62,8 +62,8 @@ test("the nearest work area is the one holding the point, else the closest", () 
   assert.deepEqual(mascot.nearestWorkArea({ x: 5000, y: 10 }, [FULL_HD, right]), right);
 });
 
-test("the three window modes have fixed sizes: mascot only, compact menu, chat bubble beside the mascot", () => {
-  assert.deepEqual(mascot.MASCOT_MODES, ["collapsed", "menu", "chat"]);
+test("the window modes have fixed sizes: mascot only, compact menu, chat bubble and approval card beside the mascot", () => {
+  assert.deepEqual(mascot.MASCOT_MODES, ["collapsed", "menu", "chat", "approval"]);
   assert.deepEqual(mascot.MODE_SIZES.collapsed, { width: SIZE, height: SIZE });
   assert.ok(mascot.MODE_SIZES.menu.width < 260 && mascot.MODE_SIZES.menu.height < 320, "the menu stays compact");
   // The chat bubble is about 360 x 520 and sits next to the mascot, so the window adds the mascot column.
@@ -363,7 +363,7 @@ test("the controller is published for the page the same way the capture controll
   assert.equal(mascot.WINDOW_CONTROLLER_KEY, "click-dot.window-controller");
   assert.equal(Symbol.keyFor(windowMode.WINDOW_CONTROLLER_KEY), mascot.WINDOW_CONTROLLER_KEY);
   const installed = target[Symbol.for("click-dot.window-controller")];
-  assert.deepEqual(Object.keys(installed).sort(), ["moveTo", "setMode", "state"]);
+  assert.deepEqual(Object.keys(installed).sort(), ["moveTo", "setMode", "showInactive", "state"]);
   installed.setMode("menu");
   assert.equal(controller.state().mode, "menu");
 });

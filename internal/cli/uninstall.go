@@ -173,7 +173,7 @@ func runUninstall(cmd *cobra.Command) error {
 	// to still be exported, which a developer tearing down their setup has almost never kept — keying
 	// the teardown off it would drop the engram-cloud step from the plan and orphan engram-cloud.json
 	// on exactly the machines that have one. Presence of the record is the accurate teardown signal.
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: installer.EngramCloudStatePresent(cfg)})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: installer.EngramCloudStatePresent(cfg), DotHooks: installer.DotSupported()})
 	if err := installer.SnapshotTargetPlan(cfg, plan); err != nil {
 		return err
 	}
@@ -263,6 +263,10 @@ func runUninstall(cmd *cobra.Command) error {
 		case installer.StepActionUnregisterMemoryGuard:
 			runStep("memory-guard", "Quitando memory-guard…", "memory-guard eliminado", false, func() error {
 				return installer.UnregisterMemoryGuardHook(cfg)
+			})
+		case installer.StepActionUnregisterDotHooks:
+			runStep("hooks de Click Dot", "Quitando hooks de Click Dot…", "Hooks de Click Dot eliminados", false, func() error {
+				return installer.UnregisterDotHooks(cfg)
 			})
 		case installer.StepActionRemoveEngramCloudSessionSync:
 			runStep("sincronización de sesión de Engram Cloud", "Quitando sincronización de sesión de Engram Cloud…", "Sincronización de sesión de Engram Cloud eliminada", false, func() error {
