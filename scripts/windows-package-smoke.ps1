@@ -9,9 +9,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Shared guard: refuses anything but the disposable GitHub-hosted Windows smoke workflow.
-. (Join-Path $PSScriptRoot 'windows-runner-guard.ps1')
-Assert-DisposableWindowsRunner -DisposableRunner ([bool]$DisposableRunner) -Label 'Windows package smoke'
+# This is an operational guard, not cryptographic runner detection. The real isolation boundary is
+# the disposable GitHub-hosted windows-latest job.
+if (-not $DisposableRunner) {
+  throw 'Pass -DisposableRunner only from the disposable GitHub-hosted Windows smoke workflow.'
+}
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+  throw 'The Windows package smoke requires a Windows runner.'
+}
+if ($env:GITHUB_ACTIONS -ne 'true' -or
+    $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or
+    $env:RUNNER_OS -ne 'Windows') {
+  throw 'The Windows package smoke requires a disposable GitHub-hosted Windows runner.'
+}
 
 function Assert-Contains {
   param([string]$Actual, [string]$Expected, [string]$Context)
