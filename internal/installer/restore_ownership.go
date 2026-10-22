@@ -287,8 +287,12 @@ func parseSettingsStrict(raw []byte) (map[string]any, error) {
 		if !ok || hooks == nil {
 			return nil, fmt.Errorf("installer: la estructura de hooks de settings.json no es válida")
 		}
-		if preToolUse, ok := hooks["PreToolUse"]; ok {
-			entries, ok := preToolUse.([]any)
+		for _, event := range dotHookEvents {
+			eventEntries, ok := hooks[event.name]
+			if !ok {
+				continue
+			}
+			entries, ok := eventEntries.([]any)
 			if !ok {
 				return nil, fmt.Errorf("installer: la estructura de hooks de settings.json no es válida")
 			}
@@ -427,6 +431,9 @@ func prepareSettingsRestore(current, backup []byte, existed bool) ([]byte, bool,
 			entries = append(entries, map[string]any{"matcher": matcher, "hooks": []any{hook}})
 			setPreToolUseEntries(currentSettings, entries)
 		}
+	}
+	if err := restoreClickDotHooks(currentSettings, backupSettings); err != nil {
+		return nil, false, false, err
 	}
 	updatedState, err := json.Marshal(currentSettings)
 	if err != nil {

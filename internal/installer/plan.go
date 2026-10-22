@@ -33,6 +33,9 @@ type TargetPlan struct {
 
 type PlanOptions struct {
 	CloudResolvable bool
+	// DotHooks adds the Click Dot agent-companion hook steps (Windows, when Click Dot is part of the
+	// run). It is false everywhere else, so no other platform's plan changes.
+	DotHooks bool
 }
 
 type StepActionKind string
@@ -65,6 +68,8 @@ const (
 	StepActionRemoveMarketplacePlugins        StepActionKind = "remove-marketplace-plugins"
 	StepActionStripClaudeManagedBlock         StepActionKind = "strip-claude-managed-block"
 	StepActionUnregisterMemoryGuard           StepActionKind = "unregister-memory-guard"
+	StepActionRegisterDotHooks                StepActionKind = "register-dot-hooks"
+	StepActionUnregisterDotHooks              StepActionKind = "unregister-dot-hooks"
 	StepActionRemoveEngram                    StepActionKind = "remove-engram"
 	StepActionRemoveContext7                  StepActionKind = "remove-context7"
 	StepActionRemoveOpenClawPlugin            StepActionKind = "remove-openclaw-plugin"
@@ -219,6 +224,7 @@ var installActionOrder = []StepActionKind{
 	StepActionSyncOpenClawSkills,
 	StepActionSyncCodexGuidance,
 	StepActionSyncCodexMCP,
+	StepActionRegisterDotHooks,
 }
 
 var updateActionOrder = []StepActionKind{
@@ -237,6 +243,7 @@ var updateActionOrder = []StepActionKind{
 	StepActionSyncOpenClawSkills,
 	StepActionSyncCodexGuidance,
 	StepActionSyncCodexMCP,
+	StepActionRegisterDotHooks,
 }
 
 func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions) TargetPlan {
@@ -289,6 +296,11 @@ func BuildTargetPlan(cfg Config, selection TargetSelection, options PlanOptions)
 			Step{ID: "plugins", Target: PlanTargetShared, Label: "plugins", Snapshot: []SnapshotDecl{snapshot(cfg.KnownMarketplacesPath(), DriftPolicyNonVeto), snapshot(cfg.InstalledPluginsPath(), DriftPolicyNonVeto)}},
 			Step{ID: "memory-guard", Target: PlanTargetShared, Label: "memory guard", Snapshot: []SnapshotDecl{snapshot(cfg.SettingsPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionWriteClaudeManagedBlock, StepActionRegisterMemoryGuard}, UpdateActions: []StepActionKind{StepActionWriteClaudeManagedBlock, StepActionRegisterMemoryGuard}, UninstallActions: []StepActionKind{StepActionStripClaudeManagedBlock, StepActionUnregisterMemoryGuard}, DoctorChecks: []DoctorCheckKind{DoctorCheckMemoryGuard}},
 		)
+	}
+	if options.DotHooks && selection.Claude {
+		// Click Dot's agent-companion hooks live in the same settings.json as the memory guard, so the
+		// snapshot declaration is shared (SnapshotSpecs deduplicates by path).
+		steps = append(steps, Step{ID: "dot-hooks", Target: PlanTargetShared, Label: "hooks de Dot", Snapshot: []SnapshotDecl{snapshot(cfg.SettingsPath(), DriftPolicyManagedContentVeto)}, InstallActions: []StepActionKind{StepActionRegisterDotHooks}, UpdateActions: []StepActionKind{StepActionRegisterDotHooks}, UninstallActions: []StepActionKind{StepActionUnregisterDotHooks}})
 	}
 	steps = append(steps, Step{ID: "sdd-assets", Target: PlanTargetShared, Label: "SDD assets", Snapshot: []SnapshotDecl{snapshot(cfg.TargetSelectionPath(), DriftPolicyWholeFileVeto)}, UninstallActions: []StepActionKind{StepActionRemoveTargetSelection}})
 	return TargetPlan{Selection: selection, Capabilities: capabilities, Steps: steps}

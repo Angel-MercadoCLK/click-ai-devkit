@@ -129,7 +129,7 @@ func runInstall(cmd *cobra.Command) error {
 	if err := preflightGentleAI(cfg, selection); err != nil {
 		return err
 	}
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, DotHooks: dotHooksPlanOption()})
 	fmt.Fprintln(out, r.Info("Capacidades seleccionadas: "+plan.CapabilitiesSummary()))
 	fmt.Fprintln(out, r.Info("Resumen final de instalación: "+strings.Join(plan.StepLabels(), " → ")))
 
@@ -137,7 +137,7 @@ func runInstall(cmd *cobra.Command) error {
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot — all BEFORE step 1 below (the first external `claude` subprocess invocation). A
 	// decline here means zero writes: nothing below this point has run yet.
-	proceed, sharedReader, err := confirmAndSnapshot(cmd, out, r, cfg, plan, nonInteractive, installWriteStepsForSelection(cfg, cloudResolvable, selection))
+	proceed, sharedReader, err := confirmAndSnapshot(cmd, out, r, cfg, plan, nonInteractive, withDotHooksPreview(installWriteStepsForSelection(cfg, cloudResolvable, selection), plan, plan.InstallActionKinds()))
 	if err != nil {
 		return err
 	}
@@ -258,6 +258,9 @@ func runInstall(cmd *cobra.Command) error {
 			}); err != nil {
 				return err
 			}
+		case installer.StepActionRegisterDotHooks:
+			// Needs Click Dot on disk: executed right after the Click Dot sync step below.
+			continue
 		case installer.StepActionRegisterMemoryGuard:
 			if err := r.RunStep("Registrando memory-guard…", "memory-guard registrado", func() error {
 				return installer.RegisterMemoryGuardHook(cfg)
@@ -335,6 +338,9 @@ func runInstall(cmd *cobra.Command) error {
 	}
 
 	syncDotStep(cmd, out, r, dotInstallVerb)
+	if planHasAction(plan.InstallActionKinds(), installer.StepActionRegisterDotHooks) {
+		registerDotHooksStep(out, r, cfg, dotInstallVerb)
+	}
 
 	fmt.Fprintln(out, r.Info("Instalación completa."))
 	return nil

@@ -89,13 +89,13 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err := preflightGentleAI(cfg, selection); err != nil {
 		return err
 	}
-	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable})
+	plan := installer.BuildTargetPlan(cfg, selection, installer.PlanOptions{CloudResolvable: cloudResolvable, DotHooks: dotHooksPlanOption()})
 
 	// install-preview/install-backup (spec): show the write plan and ask for confirmation unless
 	// --yes/--non-interactive/non-TTY says to skip straight through, then take the run-start
 	// snapshot before the first external `claude` subprocess invocation. A decline here means zero
 	// writes: nothing below this point has run yet.
-	proceed, sharedReader, err := confirmAndSnapshot(cmd, out, r, cfg, plan, isNonInteractiveInstall(cmd, out), updateWriteSteps(m.Engram.Version, cfg, cloudResolvable))
+	proceed, sharedReader, err := confirmAndSnapshot(cmd, out, r, cfg, plan, isNonInteractiveInstall(cmd, out), withDotHooksPreview(updateWriteSteps(m.Engram.Version, cfg, cloudResolvable), plan, plan.UpdateActionKinds()))
 	if err != nil {
 		return err
 	}
@@ -164,6 +164,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			}); err != nil {
 				return err
 			}
+		case installer.StepActionRegisterDotHooks:
+			// Needs Click Dot on disk: executed right after the Click Dot sync step below.
+			continue
 		case installer.StepActionRegisterMemoryGuard:
 			if err := r.RunStep("Re-registrando memory-guard…", "memory-guard sincronizado", func() error {
 				return installer.RegisterMemoryGuardHook(cfg)
@@ -290,6 +293,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	syncDotStep(cmd, out, r, dotUpdateVerb)
+	if planHasAction(plan.UpdateActionKinds(), installer.StepActionRegisterDotHooks) {
+		registerDotHooksStep(out, r, cfg, dotUpdateVerb)
+	}
 
 	fmt.Fprintln(out, r.Info("Update completo."))
 	return nil

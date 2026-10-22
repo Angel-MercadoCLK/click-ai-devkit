@@ -260,23 +260,34 @@ func writeSettingsFile(path string, settings map[string]any) error {
 }
 
 func getPreToolUseEntries(settings map[string]any) []any {
+	return getHookEntries(settings, "PreToolUse")
+}
+
+func setPreToolUseEntries(settings map[string]any, entries []any) {
+	setHookEntries(settings, "PreToolUse", entries)
+}
+
+// getHookEntries returns the entry list registered for one hook event, or nil when absent.
+func getHookEntries(settings map[string]any, event string) []any {
 	hooks, ok := settings["hooks"].(map[string]any)
 	if !ok {
 		return nil
 	}
-	entries, _ := hooks["PreToolUse"].([]any)
+	entries, _ := hooks[event].([]any)
 	return entries
 }
 
-func setPreToolUseEntries(settings map[string]any, entries []any) {
+// setHookEntries stores one hook event's entry list, pruning the event key when the list is empty
+// and the whole hooks key when nothing remains.
+func setHookEntries(settings map[string]any, event string, entries []any) {
 	hooks, ok := settings["hooks"].(map[string]any)
 	if !ok || hooks == nil {
 		hooks = map[string]any{}
 	}
 	if len(entries) == 0 {
-		delete(hooks, "PreToolUse")
+		delete(hooks, event)
 	} else {
-		hooks["PreToolUse"] = entries
+		hooks[event] = entries
 	}
 	if len(hooks) == 0 {
 		delete(settings, "hooks")
