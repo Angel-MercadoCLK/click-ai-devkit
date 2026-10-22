@@ -291,3 +291,10 @@ test("Next.js never writes its response cache next to the read-only app", async 
   const { default: nextConfigObject } = await import("../next.config.ts");
   assert.equal(nextConfigObject.experimental?.isrFlushToDisk, false);
 });
+
+test("the home page is rendered per request so its canonical origin uses the running port", async () => {
+  // A page prerendered at build time froze PORT's default (3000); the desktop app on 47321 then redirected to a
+  // blocked origin and never left "Checking this device…".
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /^export const dynamic = "force-dynamic";$/m);
+});

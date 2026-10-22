@@ -517,7 +517,7 @@ func TestDotPackageSmokeRunsDisposableRunnerGuardFirst(t *testing.T) {
 	if guardIndex < 0 || resolveIndex < 0 || extractIndex < 0 || guardIndex > resolveIndex || guardIndex > extractIndex {
 		t.Fatal("Click Dot package smoke must run the disposable-runner guard before touching the package or the filesystem")
 	}
-	for _, expected := range []string{"--no-login-item", "CLICK_DOT_DISABLE_LOGIN_ITEM", "} finally {"} {
+	for _, expected := range []string{"--no-login-item", "CLICK_DOT_DISABLE_LOGIN_ITEM", "} finally {", "canonicalOrigin"} {
 		if !strings.Contains(smoke, expected) {
 			t.Errorf("Click Dot package smoke missing %q", expected)
 		}

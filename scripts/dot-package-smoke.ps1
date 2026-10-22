@@ -122,6 +122,15 @@ try {
   if (-not $homePage.Content.Contains('Click Dot')) {
     throw "$dotOrigin/ returned 200 but the body does not contain 'Click Dot'."
   }
+  # The page redirects to its canonical origin on load; a stale origin (for example a build-time default port)
+  # is blocked by the app's navigation guard and leaves the page stuck before sign-in. The RSC payload escapes
+  # quotes, so match both the escaped and the plain JSON form.
+  $escapedOrigin = 'canonicalOrigin\":\"' + $dotOrigin + '\"'
+  $plainOrigin = 'canonicalOrigin":"' + $dotOrigin + '"'
+  if (-not ($homePage.Content.Contains($escapedOrigin) -or $homePage.Content.Contains($plainOrigin))) {
+    throw "The home page does not use $dotOrigin as its canonical origin; the app would redirect to a blocked origin."
+  }
+
 
   $status = Invoke-DotRequest -Path '/api/auth/status'
   if ($null -eq $status -or $status.StatusCode -ne 200) {
