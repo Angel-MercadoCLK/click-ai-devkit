@@ -3,40 +3,43 @@ import type { Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCaptureController, createCaptureService, describeCapture, installCaptureController, type CaptureController, type CaptureService } from "./capture.mts";
-import { configureEnvironment, dotUrl, TOGGLE_SHORTCUT } from "./config.mts";
+import { configureEnvironment, mascotUrl, TOGGLE_SHORTCUT } from "./config.mts";
 import { PortInUseError } from "./listen.mts";
+import { createMascotController, installWindowController, mascotWindowOptions, type MascotController, type Point, type Rect } from "./mascot.mts";
 import { isAllowedNavigation, isSignInUrl, systemBrowserTarget } from "./navigation.mts";
-import { createPreferenceStore, DEFAULT_PREFERENCES, initialPreferences, LOGIN_ITEM_ARGS, loadPreferences, shouldManageLoginItem, startsHidden } from "./preferences.mts";
+import { createPreferenceStore, DEFAULT_PREFERENCES, initialPreferences, LOGIN_ITEM_ARGS, loadPreferences, shouldManageLoginItem } from "./preferences.mts";
 import { installStorageProtector } from "./protector.mts";
 import { createWindowsOcr } from "./ocr.mts";
 import { loadGuardPatterns, type CompiledGuardRule } from "./redaction.mts";
 import { createScreenCapture } from "./screen-capture.mts";
 import { createNativeRedactor, createScreenPreparer } from "./screen-prep.mts";
 import { startDotServer } from "./server.mts";
+import { installVoiceController } from "./speech.mts";
 
 const assets = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
 
 let window: BrowserWindow | undefined;
+let mascot: MascotController | undefined;
+let pendingPosition: Point | undefined;
+let positionTimer: NodeJS.Timeout | undefined;
 let tray: Tray | undefined;
 let server: Server | undefined;
 let quitting = false;
 let reloadOnFocus = false;
 let started = false;
-let showWhenStarted = false;
 let preferences: ReturnType<typeof createPreferenceStore> | undefined;
 let captureService: CaptureService | undefined;
 let captureController: CaptureController | undefined;
 
 function showWindow() {
-  if (!window || window.isDestroyed()) window = createWindow();
-  if (window.isMinimized()) window.restore();
-  window.show();
-  window.focus();
+  if (!window || window.isDestroyed()) createMascot();
+  mascot?.show();
 }
 
+/** Ctrl+Shift+Space: the chat bubble opens beside the mascot, or closes when it is the open one. */
 function toggleWindow() {
-  if (window && !window.isDestroyed() && window.isVisible() && window.isFocused()) window.hide();
-  else showWindow();
+  if (!window || window.isDestroyed()) createMascot();
+  mascot?.toggleChat();
 }
 
 function openExternal(url: string) {
@@ -47,22 +50,59 @@ function openExternal(url: string) {
   void shell.openExternal(target);
 }
 
-function createWindow() {
-  const created = new BrowserWindow({
-    width: 460,
-    height: 740,
-    show: false,
-    title: "Click Dot",
-    icon: join(assets, "icon.png"),
-    backgroundColor: "#ffffff",
-    autoHideMenuBar: true,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      devTools: !app.isPackaged,
+/** Work areas of every display, primary first. */
+function workAreas(): Rect[] {
+  const primary = screen.getPrimaryDisplay();
+  return [primary, ...screen.getAllDisplays().filter((display) => display.id !== primary.id)].map((display) => display.workArea);
+}
+
+/** Dragging reports a position many times a second; write it once the mascot settles. */
+function schedulePositionSave(position: Point) {
+  pendingPosition = position;
+  clearTimeout(positionTimer);
+  positionTimer = setTimeout(flushPosition, 400);
+}
+
+function flushPosition() {
+  clearTimeout(positionTimer);
+  const position = pendingPosition;
+  pendingPosition = undefined;
+  if (!position) return;
+  preferences?.update({ mascotPosition: position }).catch((error: unknown) => console.error("Could not save the mascot position.", error));
+}
+
+/** Tells the page the shell changed the mode (shortcut or tray). The script is a constant; nothing is interpolated. */
+function announceMode(created: BrowserWindow) {
+  if (created.isDestroyed()) return;
+  created.webContents.executeJavaScript('window.dispatchEvent(new Event("click-dot:mode"))').catch(() => {});
+}
+
+function createMascot() {
+  const created = new BrowserWindow({ ...mascotWindowOptions({ devTools: !app.isPackaged }), icon: join(assets, "icon.png") });
+  window = created;
+  mascot = createMascotController({
+    window: {
+      // GTK/X11 ignore programmatic resizes of a non-resizable window; Windows (the target) does not, and toggling the
+      // flag there would bring back the frame shadow. The user still cannot resize the window by hand.
+      setBounds: (bounds) => {
+        if (process.platform !== "linux") return created.setBounds(bounds);
+        created.setResizable(true);
+        created.setBounds(bounds);
+        created.setResizable(false);
+      },
+      show: () => created.show(),
+      showInactive: () => created.showInactive(),
+      hide: () => created.hide(),
+      focus: () => created.focus(),
+      isVisible: () => created.isVisible(),
     },
+    workAreas,
+    primaryWorkArea: () => screen.getPrimaryDisplay().workArea,
+    position: preferences?.get().mascotPosition,
+    savePosition: schedulePositionSave,
+    onNativeMode: () => announceMode(created),
   });
+  installWindowController(globalThis, mascot);
   const contents = created.webContents;
   const guard = (event: { preventDefault(): void }, url: string) => {
     if (isAllowedNavigation(url)) return;
@@ -89,7 +129,7 @@ function createWindow() {
     reloadOnFocus = false;
     contents.reload();
   });
-  void created.loadURL(dotUrl());
+  void created.loadURL(mascotUrl());
   return created;
 }
 
@@ -116,7 +156,7 @@ function refreshTray() {
   tray.setToolTip(capture.tooltip);
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "Open Dot", click: showWindow },
+      { label: "Mostrar a Dot", click: showWindow },
       {
         label: "Let Dot see my screen",
         type: "checkbox",
@@ -237,6 +277,8 @@ async function start() {
     },
   });
   installCaptureController(globalThis, captureController);
+  // "Voz": Windows speech recognition through a PowerShell helper; installs nothing off Windows.
+  installVoiceController(globalThis);
 
   try {
     server = await startDotServer(app.getAppPath(), { workingDirectory: userData });
@@ -257,9 +299,15 @@ async function start() {
   if (!globalShortcut.register(TOGGLE_SHORTCUT, toggleWindow)) {
     console.error(`Could not register the ${TOGGLE_SHORTCUT} shortcut; it may be in use by another program.`);
   }
-  window = createWindow();
+  createMascot();
+  // Keep the mascot on a visible display when monitors come and go.
+  const reposition = () => mascot?.reposition();
+  screen.on("display-added", reposition);
+  screen.on("display-removed", reposition);
+  screen.on("display-metrics-changed", reposition);
   started = true;
-  if (!startsHidden(process.argv) || showWhenStarted) window.once("ready-to-show", showWindow);
+  // The mascot is the whole app, so it appears on every start (including start with Windows) without taking focus.
+  window?.once("ready-to-show", () => mascot?.showInactive());
   if (!encryptionAvailable) {
     void dialog.showMessageBox({
       type: "warning",
@@ -281,14 +329,14 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    // Before the local server listens, a window would only show a connection error.
+    // Before the local server listens, a window would only show a connection error; the mascot appears on start anyway.
     if (started) showWindow();
-    else showWhenStarted = true;
   });
   // The tray keeps the app alive when every window is closed.
   app.on("window-all-closed", () => {});
   app.on("before-quit", () => {
     quitting = true;
+    flushPosition();
   });
   app.on("will-quit", () => {
     globalShortcut.unregisterAll();
