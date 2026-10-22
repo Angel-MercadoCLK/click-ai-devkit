@@ -244,10 +244,28 @@ func readJSONConfig(path string) (map[string]any, error) {
 	return root, nil
 }
 
+// matchesEngramJSONEntry accepts the server gentle-ai writes ({command, args}) and the same server as
+// Claude Code stores it after `claude mcp add`, with "type": "stdio" and an empty "env". Any other key,
+// a non-empty env or another type is user-owned state.
 func matchesEngramJSONEntry(value any) bool {
 	entry, ok := value.(map[string]any)
-	if !ok || len(entry) != 2 || !stringArrayEquals(entry["args"], []string{"mcp", "--tools=agent"}) {
+	if !ok || !stringArrayEquals(entry["args"], []string{"mcp", "--tools=agent"}) {
 		return false
+	}
+	for key, field := range entry {
+		switch key {
+		case "command", "args":
+		case "type":
+			if field != "stdio" {
+				return false
+			}
+		case "env":
+			if env, isMap := field.(map[string]any); !isMap || len(env) != 0 {
+				return false
+			}
+		default:
+			return false
+		}
 	}
 	command, ok := entry["command"].(string)
 	if !ok {
