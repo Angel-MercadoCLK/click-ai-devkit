@@ -2,8 +2,9 @@ import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, Menu, nati
 import type { Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { agentHookFile, createAgentHookToken, installAgentHook, releaseAgentRequests, removeAgentHookFile, writeAgentHookFile } from "./agent-hook.mts";
 import { createCaptureController, createCaptureService, describeCapture, installCaptureController, type CaptureController, type CaptureService } from "./capture.mts";
-import { configureEnvironment, dotOrigin, mascotUrl, TOGGLE_SHORTCUT } from "./config.mts";
+import { configureEnvironment, DOT_PORT, dotOrigin, mascotUrl, TOGGLE_SHORTCUT } from "./config.mts";
 import { controlCookieDetails, createControlToken, installControlToken } from "./control-token.mts";
 import { PortInUseError } from "./listen.mts";
 import { createMascotController, installWindowController, mascotWindowOptions, type MascotController, type Point, type Rect } from "./mascot.mts";
@@ -32,6 +33,8 @@ let showWhenStarted = false;
 let preferences: ReturnType<typeof createPreferenceStore> | undefined;
 let captureService: CaptureService | undefined;
 let captureController: CaptureController | undefined;
+/** The Claude Code hook discovery file and the token it holds; both exist only while the server listens. */
+let hookDiscovery: { file: string; token: string } | undefined;
 
 function showWindow() {
   if (!window || window.isDestroyed()) createMascot();
@@ -79,6 +82,12 @@ function announceMode(created: BrowserWindow) {
   created.webContents.executeJavaScript('window.dispatchEvent(new Event("click-dot:mode"))').catch(() => {});
 }
 
+/** Tells the page Claude Code needs the user, so it reads the pending request now. Constant script, nothing interpolated. */
+function announceAttention(created: BrowserWindow) {
+  if (created.isDestroyed()) return;
+  created.webContents.executeJavaScript('window.dispatchEvent(new Event("click-dot:agent"))').catch(() => {});
+}
+
 function createMascot() {
   const created = new BrowserWindow({ ...mascotWindowOptions({ devTools: !app.isPackaged }), icon: join(assets, "icon.png") });
   window = created;
@@ -103,6 +112,7 @@ function createMascot() {
     position: preferences?.get().mascotPosition,
     savePosition: schedulePositionSave,
     onNativeMode: () => announceMode(created),
+    onAttention: () => announceAttention(created),
   });
   installWindowController(globalThis, mascot);
   const contents = created.webContents;
@@ -289,6 +299,10 @@ async function start() {
   // "Voz": Windows speech recognition through a PowerShell helper; installs nothing off Windows.
   installVoiceController(globalThis);
 
+  // Per-launch token for the Claude Code hook relay (`click dot-hook`). The endpoint refuses everything until it is published.
+  const agentHookToken = createAgentHookToken();
+  installAgentHook(globalThis, agentHookToken);
+
   try {
     server = await startDotServer(app.getAppPath(), { workingDirectory: userData });
   } catch (error) {
@@ -300,6 +314,15 @@ async function start() {
     quitting = true;
     app.quit();
     return;
+  }
+
+  // The relay finds the port and token here. Without the file the companion stays quiet and Claude Code asks in its terminal.
+  const discoveryFile = agentHookFile(userData, process.env);
+  try {
+    await writeAgentHookFile(discoveryFile, { port: DOT_PORT, token: agentHookToken, pid: process.pid });
+    hookDiscovery = { file: discoveryFile, token: agentHookToken };
+  } catch (error) {
+    console.error("Could not write the Claude Code hook discovery file.", error);
   }
 
   createTray();
@@ -349,6 +372,9 @@ if (!app.requestSingleInstanceLock()) {
     flushPosition();
   });
   app.on("will-quit", () => {
+    // Nobody may be left waiting for a window that is gone, and the token must not outlive this launch.
+    releaseAgentRequests(globalThis);
+    if (hookDiscovery) removeAgentHookFile(hookDiscovery.file, hookDiscovery.token);
     globalShortcut.unregisterAll();
     captureService?.dispose();
     server?.close();

@@ -27,7 +27,7 @@ export function readControlGate(): ControlGate {
 }
 
 /** Hashing first makes both inputs the same length, so the comparison never depends on where they differ. */
-function sameSecret(expected: string, supplied: string) {
+export function sameSecret(expected: string, supplied: string) {
   const digest = (value: string) => createHash("sha256").update(value).digest();
   return timingSafeEqual(digest(expected), digest(supplied));
 }

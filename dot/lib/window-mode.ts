@@ -3,16 +3,18 @@
 // and the `/api/window` route validates everything before it reaches it. The page never gets more than a mode name and a
 // pair of integers; there is no preload and no generic IPC.
 
-export type WindowMode = "collapsed" | "menu" | "chat";
+export type WindowMode = "collapsed" | "menu" | "chat" | "approval";
 export type WindowAnchor = { horizontal: "left" | "right"; vertical: "top" | "bottom" };
 export type WindowState = { mode: WindowMode; anchor: WindowAnchor };
 export type WindowController = {
   state(): unknown;
   setMode(mode: WindowMode): void;
   moveTo(x: number, y: number): void;
+  /** Brings the window up without taking focus, also when it is hidden in the tray. Used when Claude Code needs the user. */
+  showInactive?(): void;
 };
 
-export const WINDOW_MODES: readonly WindowMode[] = ["collapsed", "menu", "chat"];
+export const WINDOW_MODES: readonly WindowMode[] = ["collapsed", "menu", "chat", "approval"];
 export const WINDOW_CONTROLLER_KEY = Symbol.for("click-dot.window-controller");
 export const WINDOW_MAX_BODY_BYTES = 256;
 /** Far beyond any real desktop; a larger number is not a window position. */
@@ -57,8 +59,9 @@ export function sanitizeWindowState(value: unknown): WindowState | undefined {
 export function getWindowController(): WindowController | undefined {
   const candidate = (globalThis as Record<symbol, unknown>)[WINDOW_CONTROLLER_KEY];
   if (!candidate || typeof candidate !== "object") return undefined;
-  const { state, setMode, moveTo } = candidate as Partial<WindowController>;
+  const { state, setMode, moveTo, showInactive } = candidate as Partial<WindowController>;
   if (typeof state !== "function" || typeof setMode !== "function" || typeof moveTo !== "function") return undefined;
+  if (showInactive !== undefined && typeof showInactive !== "function") return undefined;
   return candidate as WindowController;
 }
 
@@ -120,9 +123,13 @@ export async function readWindowRequest(request: Request): Promise<WindowRequest
   return result;
 }
 
-/** Clicking the mascot opens the menu, or closes whatever is open. Mirrors the shell's own transition. */
-export function nextMascotMode(mode: WindowMode): WindowMode {
-  return mode === "collapsed" ? "menu" : "collapsed";
+/**
+ * Clicking the mascot opens the menu, or closes whatever is open. Mirrors the shell's own transition. When Claude Code is
+ * waiting for the user and the card was put away, clicking the mascot brings the card back instead of the menu.
+ */
+export function nextMascotMode(mode: WindowMode, requestWaiting = false): WindowMode {
+  if (mode !== "collapsed") return "collapsed";
+  return requestWaiting ? "approval" : "menu";
 }
 
 /** Pointer travel before a press on the mascot counts as a drag instead of a click. */

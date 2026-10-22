@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { agentAttention } from "../../lib/agent-state.ts";
 import { mascotIndicator } from "../../lib/capture-state.ts";
-import { dragTarget, exceedsDragThreshold, nextMascotMode } from "../../lib/window-mode.ts";
+import { dragTarget, exceedsDragThreshold, nextMascotMode, type WindowMode } from "../../lib/window-mode.ts";
 import { useAuthConnection } from "../auth-panel";
 import { CompactChat, type ChatSeed } from "../chat/compact-chat";
+import { AgentCard } from "./agent-card";
 import { Spark } from "./spark";
+import { useAgent } from "./use-agent";
 import { useCaptureView } from "./use-capture";
 import { useMascotWindow } from "./use-window";
 import { useVoice } from "./use-voice";
@@ -24,11 +27,12 @@ function Glyph({ kind }: { kind: "pause" | "play" | "cancel" }) {
 
 type Press = { pointerStart: { x: number; y: number }; windowStart: { x: number; y: number }; dragging: boolean };
 
-/** The companion: a mascot that opens a three-button menu and a compact chat bubble. */
+/** The companion: a mascot that opens a three-button menu, a compact chat bubble and the Claude Code approval card. */
 export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   const auth = useAuthConnection(canonicalOrigin);
   const win = useMascotWindow();
   const capture = useCaptureView();
+  const agent = useAgent();
   const [seed, setSeed] = useState<ChatSeed | null>(null);
   const [chatOpened, setChatOpened] = useState(false);
   const { mode, anchor, setMode } = win;
@@ -39,6 +43,39 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
       void setMode("chat");
     },
   });
+
+  const { pending } = agent.state;
+  const pendingId = pending?.id ?? null;
+  // The mode the card interrupted, so the menu or the chat comes back once the request is over.
+  const modeBeforeCard = useRef<WindowMode | null>(null);
+
+  // A new request brings the card up; the shell has already shown the mascot without taking focus. Putting the card
+  // away by hand (the mascot, Escape) is respected until the next request arrives.
+  useEffect(() => {
+    if (!pendingId || mode === "approval") return;
+    modeBeforeCard.current = mode;
+    void setMode("approval");
+    // Only a new request forces the card; the user's own mode changes in between are theirs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingId]);
+
+  // The card is gone (answered, handed back or timed out): leave its window size.
+  useEffect(() => {
+    if (mode !== "approval" || pendingId) return;
+    const back = modeBeforeCard.current ?? "collapsed";
+    modeBeforeCard.current = null;
+    void setMode(back === "approval" ? "collapsed" : back);
+  }, [mode, pendingId, setMode]);
+
+  // The card is on screen once it has rendered in a window that has its size: tell the server, or it hands the request
+  // back to the terminal after 2 s.
+  const cardShown = mode === "approval" && pendingId !== null;
+  useEffect(() => {
+    if (!cardShown || !pendingId) return;
+    const frame = window.requestAnimationFrame(() => void agent.ack(pendingId));
+    return () => window.cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardShown, pendingId]);
 
   const press = useRef<Press | null>(null);
   const pendingMove = useRef<{ x: number; y: number } | null>(null);
@@ -104,12 +141,13 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
     const current = press.current;
     press.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    if (current && !current.dragging) void setMode(nextMascotMode(mode));
+    if (current && !current.dragging) void setMode(nextMascotMode(mode, pendingId !== null));
   }
 
   const { indicator } = capture;
   // Capture keeps the ring, the visible text and the pause control; listening has its own ring, cancel and label part.
-  const view = mascotIndicator(indicator, voice.listening);
+  const attention = agentAttention(agent.state);
+  const view = mascotIndicator(indicator, voice.listening, attention);
   const { sharing } = view;
   const voiceChoice = voiceAvailability({ connected: auth.status === null ? null : auth.status.connected, listening: voice.listening });
   const pauseCapture = () => view.pause && void capture.act(view.pause.action);
@@ -144,6 +182,19 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
           <button className="menu-button" type="button" onClick={() => void setMode("chat")}>
             <span>Mensaje</span>
           </button>
+          {agent.state.sessions.length > 0 && (
+            <ul className="menu-sessions" aria-label="Sesiones de Claude Code">
+              {agent.state.sessions.map((session) => (
+                <li className="menu-session" key={session.id} data-state={session.state === "te necesita" ? "needs" : session.state === "trabajando" ? "working" : "done"}>
+                  <span className="menu-session-head">
+                    <b>{session.project}</b>
+                    <span className="menu-session-state">{session.state}</span>
+                  </span>
+                  {session.action && <small title={session.action}>{session.action}</small>}
+                </li>
+              ))}
+            </ul>
+          )}
           {(voice.message || capture.failed) && <p className="menu-note" role="status" title={voice.message || undefined}>{voice.message || "No se pudo cambiar la captura de pantalla."}</p>}
         </nav>
       )}
@@ -155,6 +206,10 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
             {indicator === "paused" ? "Reanudar" : "Pausar"}
           </button>
         </div>
+      )}
+
+      {mode === "approval" && pending && (
+        <AgentCard pending={pending} queued={agent.state.queued} busy={agent.busy} failed={agent.failed} onDecide={(choice, answers) => void agent.decide(pending.id, choice, answers)} />
       )}
 
       {chatOpened && (
@@ -186,7 +241,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
         </section>
       )}
 
-      <div className="mascot-spot" data-ring={view.ring} data-listening={view.listening}>
+      <div className="mascot-spot" data-ring={view.ring} data-listening={view.listening} data-agent={view.agent}>
         <div
           className="mascot-body"
           role="button"
@@ -201,12 +256,13 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
-              void setMode(nextMascotMode(mode));
+              void setMode(nextMascotMode(mode, pendingId !== null));
             }
           }}
         >
           <Spark />
         </div>
+        {view.agent !== "idle" && <span className="mascot-agent" aria-hidden="true">{view.agent === "needs" ? "!" : ""}</span>}
         {mode === "collapsed" && view.sharingText && <span className="mascot-label" role="status">{view.sharingText}</span>}
         {mode === "collapsed" && view.pause && (
           <button className="mascot-badge" type="button" aria-label={view.pause.name} title={view.pause.name} disabled={capture.busy} onClick={pauseCapture}><Glyph kind={view.pause.glyph} /></button>

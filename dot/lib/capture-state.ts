@@ -55,6 +55,8 @@ export function applyCaptureViewPoll(state: CaptureViewPollState, result: Captur
 // What the mascot shows when capture and "Voz" are both going on. Capture is what the user must always be able to see,
 // so it keeps the ring, the visible text and the pause control; listening gets its own visual and its own cancel.
 
+export type AgentLook = "idle" | "working" | "needs";
+
 export type MascotIndicatorView = {
   /** Always the capture state; listening never replaces it. */
   ring: CaptureIndicator;
@@ -64,11 +66,15 @@ export type MascotIndicatorView = {
   pause: { action: "pause" | "resume"; name: "Pausar" | "Reanudar"; glyph: "pause" | "play" } | null;
   listening: boolean;
   cancel: boolean;
-  /** Accessible name of the mascot: capture first, then listening. */
+  /** What Claude Code is doing, from the companion's session list; needing the user wins over working. */
+  agent: AgentLook;
+  /** Accessible name of the mascot: capture first, then Claude Code, then listening. */
   label: string;
 };
 
-export function mascotIndicator(indicator: CaptureIndicator, listening: boolean): MascotIndicatorView {
+const AGENT_TEXT: Record<AgentLook, string | null> = { idle: null, working: "Claude Code está trabajando", needs: "Claude Code te necesita" };
+
+export function mascotIndicator(indicator: CaptureIndicator, listening: boolean, agent: AgentLook = "idle"): MascotIndicatorView {
   const sharing = indicator === "live" || indicator === "paused";
   const sharingText = indicator === "live" ? "Viendo tu pantalla" : indicator === "paused" ? "Pantalla en pausa" : null;
   const pause = indicator === "live"
@@ -76,6 +82,6 @@ export function mascotIndicator(indicator: CaptureIndicator, listening: boolean)
     : indicator === "paused"
       ? ({ action: "resume", name: "Reanudar", glyph: "play" } as const)
       : null;
-  const label = [sharingText, listening ? "Escuchando…" : null].filter(Boolean).join(". ") || "Dot";
-  return { ring: indicator, sharing, sharingText, pause, listening, cancel: listening, label };
+  const label = [sharingText, AGENT_TEXT[agent], listening ? "Escuchando…" : null].filter(Boolean).join(". ") || "Dot";
+  return { ring: indicator, sharing, sharingText, pause, listening, cancel: listening, agent, label };
 }

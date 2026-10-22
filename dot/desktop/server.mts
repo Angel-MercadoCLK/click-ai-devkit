@@ -3,6 +3,23 @@ import { DOT_HOST, DOT_PORT } from "./config.mts";
 import { listenOnLoopback } from "./listen.mts";
 import { loadBuiltNextConfig } from "./next-config.mts";
 
+/**
+ * A permission request from the Claude Code hook is held for up to 105 s (the relay itself waits 110 s), so the server
+ * must not cut a request that is waiting for its answer. Node does not time out a pending response on its own:
+ * `timeout` (an idle socket) is off, `keepAliveTimeout` only applies between requests, and `requestTimeout` and
+ * `headersTimeout` only watch the incoming request. They are set here so a Node default change cannot cut a held request.
+ */
+export const HELD_REQUEST_LIMIT_MS = 110_000;
+
+export function createDotHttpServer(handle: (request: IncomingMessage, response: ServerResponse) => void): Server {
+  const server = createServer(handle);
+  server.timeout = 0;
+  server.requestTimeout = 300_000;
+  server.headersTimeout = 60_000;
+  server.keepAliveTimeout = 5_000;
+  return server;
+}
+
 type CreateNext = (options: { dev: boolean; dir: string; hostname: string; port: number }) => {
   prepare(): Promise<void>;
   getRequestHandler(): (request: IncomingMessage, response: ServerResponse) => Promise<void>;
@@ -25,7 +42,7 @@ export async function startDotServer(dir: string, options: { workingDirectory?: 
   const app = next({ dev: false, dir, hostname: DOT_HOST, port: DOT_PORT });
   await app.prepare();
   const handle = app.getRequestHandler();
-  const server = createServer((request, response) => {
+  const server = createDotHttpServer((request, response) => {
     handle(request, response).catch((error: unknown) => {
       console.error("Request failed.", error);
       if (!response.headersSent) response.statusCode = 500;

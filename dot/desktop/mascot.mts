@@ -3,22 +3,23 @@
 
 export type Rect = { x: number; y: number; width: number; height: number };
 export type Point = { x: number; y: number };
-export type MascotMode = "collapsed" | "menu" | "chat";
+export type MascotMode = "collapsed" | "menu" | "chat" | "approval";
 /** Which corner of the window holds the mascot: the menu or chat opens toward the side with more room. */
 export type Anchor = { horizontal: "left" | "right"; vertical: "top" | "bottom" };
 
-export const MASCOT_MODES: readonly MascotMode[] = ["collapsed", "menu", "chat"];
+export const MASCOT_MODES: readonly MascotMode[] = ["collapsed", "menu", "chat", "approval"];
 export const MASCOT_SIZE = 96;
 export const MASCOT_MARGIN = 16;
 
 /**
- * Window size per mode. The menu is the mascot plus three buttons; the chat is the ~360 x 520 bubble with the mascot
- * column beside it (360 + 12 gap + 96).
+ * Window size per mode. The menu is the mascot plus three buttons and the list of Claude Code sessions; the chat is the
+ * ~360 x 520 bubble with the mascot column beside it (360 + 12 gap + 96); the approval card is ~332 wide beside the mascot.
  */
 export const MODE_SIZES: Record<MascotMode, { width: number; height: number }> = {
   collapsed: { width: MASCOT_SIZE, height: MASCOT_SIZE },
-  menu: { width: 204, height: 256 },
+  menu: { width: 240, height: 316 },
   chat: { width: 468, height: 520 },
+  approval: { width: 440, height: 360 },
 };
 
 const isMode = (value: unknown): value is MascotMode => MASCOT_MODES.some((mode) => mode === value);
@@ -151,6 +152,8 @@ export type MascotControllerOptions = {
   savePosition: (position: Point) => void;
   /** Called when the app (not the page) changed the mode, so the page can follow. */
   onNativeMode?: (mode: MascotMode) => void;
+  /** Called when the app brought the mascot up because Claude Code needs the user, so the page looks at once instead of on its next poll. */
+  onAttention?: () => void;
 };
 
 export type MascotController = ReturnType<typeof createMascotController>;
@@ -208,6 +211,12 @@ export function createMascotController(options: MascotControllerOptions) {
       reposition();
       win.showInactive();
     },
+    /** Claude Code needs the user: the mascot comes up (also from the tray) without taking focus from what they are doing. */
+    attention() {
+      reposition();
+      win.showInactive();
+      options.onAttention?.();
+    },
     toggleChat() {
       const visible = win.isVisible();
       const next = nextModeOnShortcut(mode, visible);
@@ -228,5 +237,6 @@ export function installWindowController(target: object, controller: MascotContro
     state: () => controller.state(),
     setMode: (mode: MascotMode) => controller.setMode(mode, "page"),
     moveTo: (x: number, y: number) => controller.moveTo(x, y),
+    showInactive: () => controller.attention(),
   });
 }

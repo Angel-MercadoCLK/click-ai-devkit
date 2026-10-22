@@ -127,9 +127,9 @@ body:has(.mascot-root) { height: 100vh; min-height: 0; overflow: hidden; line-he
 .mascot-root[data-mode="menu"][data-v="top"] { flex-direction: column-reverse; }
 .mascot-root[data-mode="menu"][data-h="right"] { align-items: flex-end; }
 .mascot-root[data-mode="menu"][data-h="left"] { align-items: flex-start; }
-.mascot-root[data-mode="chat"][data-h="left"] { flex-direction: row-reverse; }
-.mascot-root[data-mode="chat"][data-v="bottom"] .mascot-spot { align-self: flex-end; }
-.mascot-root[data-mode="chat"][data-v="top"] .mascot-spot { align-self: flex-start; }
+.mascot-root[data-mode="chat"][data-h="left"], .mascot-root[data-mode="approval"][data-h="left"] { flex-direction: row-reverse; }
+.mascot-root[data-mode="chat"][data-v="bottom"] .mascot-spot, .mascot-root[data-mode="approval"][data-v="bottom"] .mascot-spot { align-self: flex-end; }
+.mascot-root[data-mode="chat"][data-v="top"] .mascot-spot, .mascot-root[data-mode="approval"][data-v="top"] .mascot-spot { align-self: flex-start; }
 .mascot-root[data-mode="collapsed"][data-h="right"] { justify-content: flex-end; }
 
 .mascot-spot { position: relative; flex: none; width: 96px; height: 96px; }
@@ -187,6 +187,27 @@ body:has(.mascot-root) { height: 100vh; min-height: 0; overflow: hidden; line-he
 .mascot-root[data-v="top"] .menu-chip { top: 10px; bottom: auto; }
 .mascot-root[data-h="right"] .menu-chip { right: 102px; }
 .mascot-root[data-h="left"] .menu-chip { left: 102px; }
+/* Claude Code on the mascot: a dot in the free corner (the pause badge is top-left, the listening cancel top-right). */
+.mascot-agent { position: absolute; right: 2px; bottom: 2px; display: grid; width: 20px; height: 20px; place-items: center; border: 2px solid #231a13; border-radius: 50%; color: #231a13; font-size: 12px; font-weight: 800; line-height: 1; pointer-events: none; }
+[data-agent="working"] .mascot-agent { background: #5aa0ff; }
+[data-agent="needs"] .mascot-agent { background: #ffb02e; }
+@media (prefers-reduced-motion: no-preference) {
+  [data-agent="working"] .mascot-agent { animation: agent-pulse 1.6s ease-in-out infinite; }
+  [data-agent="needs"] .mascot-agent { animation: agent-nudge 1.2s ease-in-out infinite; }
+}
+@keyframes agent-pulse { 50% { opacity: 0.5; } }
+@keyframes agent-nudge { 50% { transform: scale(1.18); } }
+
+/* Claude Code sessions in the menu: project, state, latest action. Two rows show; the rest scroll. */
+.menu-sessions { display: grid; max-height: 76px; margin: 0; padding: 0; gap: 4px; overflow-y: auto; list-style: none; }
+.menu-session { display: grid; min-width: 0; gap: 0; padding: 3px 8px; border: 1px solid #d9ded6; border-radius: 8px; background: #ffffff; box-shadow: 0 1px 3px rgb(23 35 32 / 0.18); }
+.menu-session-head { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; }
+.menu-session-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-session-state { flex: none; color: #5f6e67; font-size: 10px; font-weight: 650; }
+.menu-session[data-state="needs"] { border-color: #e0a030; }
+.menu-session[data-state="needs"] .menu-session-state { color: #8a5a00; }
+.menu-session[data-state="working"] .menu-session-state { color: #2c5fb3; }
+.menu-session small { overflow: hidden; color: #5f6e67; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .menu-button:focus-visible, .mascot-badge:focus-visible, .bubble-close:focus-visible, .compact-link:focus-visible { outline: 2px solid #315e4c; outline-offset: 2px; }
 .menu-note { overflow: hidden; margin: 0; padding: 3px 8px; border-radius: 8px; background: #ffffff; color: #8a2a1f; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -219,3 +240,29 @@ body:has(.mascot-root) { height: 100vh; min-height: 0; overflow: hidden; line-he
 .compact-chat .screen-preview img { max-height: 5.5rem; }
 .compact-chat .screen-preview figcaption, .compact-chat .panel-note { font-size: 11px; }
 .compact-notice { margin: 0; padding: 4px 12px; color: #8a2a1f; font-size: 11px; }
+
+/* The approval card: a permission request or a question from Claude Code, beside the mascot like the chat bubble. */
+.agent-card { display: flex; min-width: 0; min-height: 0; flex: 1 1 auto; flex-direction: column; overflow: hidden; border: 1px solid #e0a030; border-radius: 16px; background: #ffffff; user-select: text; }
+.agent-card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #e2e7e0; background: #fff7e8; font-weight: 700; }
+.agent-card-project { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-card-queue { flex: none; padding: 1px 8px; border-radius: 999px; background: #ffe2a8; font-size: 11px; font-weight: 650; }
+.agent-card-body { display: grid; min-height: 0; flex: 1; align-content: start; gap: 8px; padding: 10px 12px; overflow-y: auto; }
+.agent-card-summary { margin: 0; }
+.agent-card-detail { max-height: 150px; margin: 0; padding: 8px; overflow: auto; border-radius: 8px; background: #f1f3ee; font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-card-error { margin: 0; color: #8a2a1f; font-size: 12px; }
+.agent-question { display: grid; min-width: 0; margin: 0; padding: 0; gap: 6px; border: 0; }
+.agent-question legend { padding: 0; font-weight: 600; }
+.agent-options { display: grid; gap: 5px; }
+.agent-option { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 8px; padding: 6px 10px; border: 1px solid #d9ded6; border-radius: 10px; background: #ffffff; color: #172320; font: inherit; text-align: left; cursor: pointer; }
+.agent-option > span { grid-column: 2; font-weight: 650; }
+.agent-option > small { grid-column: 2; color: #5f6e67; font-size: 11px; }
+button.agent-option { grid-template-columns: 1fr; }
+button.agent-option > span, button.agent-option > small { grid-column: 1; }
+.agent-option:hover { background: #fff7ee; }
+.agent-option:has(input:checked) { border-color: #244d3e; background: #eaf0eb; }
+.agent-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; border-top: 1px solid #e2e7e0; }
+.agent-action { padding: 5px 12px; border: 1px solid #d9ded6; border-radius: 10px; background: #f5f5ef; color: #172320; font: inherit; font-weight: 650; cursor: pointer; }
+.agent-action.primary { border-color: #244d3e; background: #244d3e; color: #ffffff; }
+.agent-action:disabled, .agent-option:disabled, .agent-link:disabled { cursor: default; opacity: 0.6; }
+.agent-link { margin-left: auto; padding: 4px 6px; border: 0; border-radius: 6px; background: transparent; color: #244d3e; font: inherit; font-size: 12px; font-weight: 650; text-decoration: underline; cursor: pointer; }
+.agent-action:focus-visible, .agent-option:focus-visible, .agent-option:has(input:focus-visible), .agent-link:focus-visible { outline: 2px solid #315e4c; outline-offset: 2px; }
