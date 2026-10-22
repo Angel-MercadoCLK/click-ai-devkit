@@ -7,6 +7,8 @@ import { getCaptureController, readCaptureStatus } from "../../../../lib/capture
 import { hasControlAccess } from "../../../../lib/control-token.ts";
 import { runAgentTurn, toolSummaryLine } from "../../../../lib/agent-loop.ts";
 import { getToolRunner } from "../../../../lib/tool-runner.ts";
+import { selectEngine } from "../../../../lib/engine.ts";
+import { handleCodexStream } from "../../../../lib/engine-stream.ts";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -20,6 +22,10 @@ export async function POST(request: Request) {
   if (rejected) return rejected;
   // Chat can now act on the machine, so it needs the same per-launch control cookie as the other control routes.
   if (!hasControlAccess(request)) return Response.json({ error: "Request rejected." }, { status: 403, headers: noStore });
+  // Codex, when it is running and signed in, answers on its own login and keeps the history itself, so Dot's own ChatGPT
+  // sign-in and local store are not involved. Every other state continues below, unchanged.
+  const codex = await selectEngine().catch(() => null);
+  if (codex) return handleCodexStream(request, codex.engine);
   const snapshot = await authorizedConnection();
   if (!isConnectionSnapshot(snapshot)) return snapshot;
 

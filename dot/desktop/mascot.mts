@@ -18,12 +18,13 @@ export const MASCOT_SIZE = 96;
 const ISLAND_ANCHOR: Anchor = { horizontal: "left", vertical: "top" };
 
 /**
- * Window size per mode (px). collapsed is the thin bar that only hovering turns into the pill; compact is the one-line pill
+ * Window size per mode (px). collapsed is an invisible hot strip on the top edge that only hovering turns into the pill (nothing is
+ * drawn in it, so with nothing going on there is no visible bar); compact is the one-line pill
  * (character, latest action, session count); the others are the expanded island: sessions and quick actions, the chat, and the
  * permission or question card.
  */
 export const MODE_SIZES: Record<MascotMode, { width: number; height: number }> = {
-  collapsed: { width: 180, height: 7 },
+  collapsed: { width: 180, height: 4 },
   compact: { width: 500, height: 44 },
   menu: { width: 640, height: 300 },
   chat: { width: 600, height: 560 },
@@ -105,6 +106,12 @@ export type MascotControllerOptions = {
   onNativeMode?: (mode: MascotMode) => void;
   /** Called when the app brought the island up because Claude Code needs the user, so the page looks at once instead of on its next poll. */
   onAttention?: () => void;
+  /** Whether the user has hidden Dot (the tray item "Ocultar Dot"), as saved from the last run. */
+  hidden?: boolean;
+  /** Called when the user hides or shows Dot, so the choice can be saved and the tray can say what it does next. */
+  onHiddenChange?: (hidden: boolean) => void;
+  /** Called after anything that can change what the island shows (mode, visibility), so a poller can start or stop. */
+  onChange?: () => void;
 };
 
 export type MascotController = ReturnType<typeof createMascotController>;
@@ -113,6 +120,7 @@ export function createMascotController(options: MascotControllerOptions) {
   const { window: win } = options;
 
   let mode: MascotMode = "collapsed";
+  let hidden = options.hidden === true;
   let bounds: Rect = islandBounds(mode, options.primaryWorkArea());
 
   /** Windows can drop the topmost state of a window that was shown inactive or resized, so every show and resize asserts it again. */
@@ -129,11 +137,46 @@ export function createMascotController(options: MascotControllerOptions) {
   };
   layout();
 
+  const changed = () => options.onChange?.();
+
+  /**
+   * Hidden by the user, the window is on screen only while something needs it: any card, or the pill the page asks for while the
+   * screen is shared. At rest (collapsed) there is no strip either, so nothing is on screen and nothing can be hovered.
+   */
+  function syncHidden() {
+    if (!hidden) return;
+    if (mode === "collapsed") {
+      if (win.isVisible()) win.hide();
+    } else if (!win.isVisible()) {
+      win.showInactive();
+      stayOnTop();
+    }
+  }
+
   function setMode(next: MascotMode, source: "page" | "native") {
     if (!isMode(next)) throw new TypeError("Unknown mascot mode.");
     mode = next;
     layout();
+    syncHidden();
     if (source === "native") options.onNativeMode?.(mode);
+    changed();
+  }
+
+  /** The tray's "Ocultar Dot" / "Mostrar Dot": hiding closes whatever is open and takes the island off screen until it is shown again. */
+  function setHidden(next: boolean) {
+    if (hidden === next) return;
+    hidden = next;
+    mode = "collapsed";
+    layout();
+    if (hidden) {
+      if (win.isVisible()) win.hide();
+    } else {
+      win.showInactive();
+      stayOnTop();
+    }
+    options.onNativeMode?.(mode);
+    options.onHiddenChange?.(hidden);
+    changed();
   }
 
   /** The island is fixed at the top center. A move request from an older page is accepted and changes nothing. */
@@ -142,31 +185,40 @@ export function createMascotController(options: MascotControllerOptions) {
   /** After a display change: the island follows the primary work area. */
   function reposition() {
     layout();
+    changed();
   }
 
   return {
     position: (): Point => ({ x: bounds.x, y: bounds.y }),
-    state: () => ({ mode, anchor: { ...ISLAND_ANCHOR } }),
+    state: () => ({ mode, anchor: { ...ISLAND_ANCHOR }, hidden }),
     setMode,
+    setHidden,
     moveTo,
     reposition,
+    /** Summoning Dot (the tray icon, a second launch): the resting island shows nothing, so it opens the menu. */
     show() {
       reposition();
+      if (mode === "collapsed") setMode("menu", "native");
       win.show();
       stayOnTop();
       win.focus();
+      changed();
     },
+    /** The quiet show at startup. Hidden by the user, the island stays off screen until something needs it. */
     showInactive() {
       reposition();
+      if (hidden && mode === "collapsed") return;
       win.showInactive();
       stayOnTop();
+      changed();
     },
-    /** Claude Code needs the user: the island comes up (also from the tray) without taking focus from what they are doing. */
+    /** Claude Code needs the user: the island comes up (also from the tray, also while hidden) without taking focus from what they are doing. */
     attention() {
       reposition();
       win.showInactive();
       stayOnTop();
       options.onAttention?.();
+      changed();
     },
     toggleChat() {
       const visible = win.isVisible();
@@ -177,6 +229,7 @@ export function createMascotController(options: MascotControllerOptions) {
         stayOnTop();
         win.focus();
       } else if (next === "chat") win.focus();
+      changed();
     },
   };
 }

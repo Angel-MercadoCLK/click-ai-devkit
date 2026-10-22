@@ -172,7 +172,7 @@ test("the existing labels the packaged smoke test asserts are still there, and t
 });
 
 test("the card offers Permitir, Denegar, Siempre only when it is offered, and Responder en la terminal", async () => {
-  const source = await read("app/mascot/agent-card.tsx");
+  const source = await read("app/mascot/agent-card.tsx") + await read("app/mascot/agent-card-view.ts");
   for (const label of ["Permitir", "Denegar", "Siempre", "Responder en la terminal", "Responder"]) assert.ok(source.includes(label), label);
   assert.match(source, /alwaysOffered\s*&&/);
   assert.match(source, /"checkbox"/);

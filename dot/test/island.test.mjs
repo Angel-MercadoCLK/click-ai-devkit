@@ -40,21 +40,33 @@ test("an unknown state falls back to idle instead of breaking the character", ()
   for (const state of look.LENTE_STATES) assert.equal(look.readLenteState(state), state);
 });
 
-test("the character is drawn in code: an SVG component, breathing and blinking, still under reduced motion, and no image assets", async () => {
+test("the character is drawn in code and alive: an SVG component driven by one animation-frame loop, with a gentler profile for reduced motion and no image assets", async () => {
   const source = await read("app/mascot/lente.tsx");
   assert.match(source, /<svg/);
   assert.match(source, /export function Lente/);
   assert.doesNotMatch(source, /<img|\.png|\.jpg|\.svg"|url\(\s*["']?http/i);
+  assert.match(source, /requestAnimationFrame/);
+  assert.match(source, /cancelAnimationFrame/, "the loop stops when the character goes away");
+  assert.match(source, /prefers-reduced-motion: reduce/, "the profile follows the Windows animation setting, live");
+  assert.match(source, /subscribeCursor/);
   const css = await read("app/globals.css");
-  for (const selector of [".lente-body", ".lente-iris", ".lente-orbit", ".lente-badge"]) assert.ok(css.includes(selector), selector);
-  assert.match(css, /@keyframes lente-breathe/);
-  assert.match(css, /@keyframes lente-blink/);
-  assert.match(css, /@keyframes lente-orbit/);
-  // Every lente animation sits inside a prefers-reduced-motion: no-preference block.
+  for (const selector of [".lente-body", ".lente-eye", ".lente-iris", ".lente-orbit", ".lente-badge"]) assert.ok(css.includes(selector), selector);
+  // The old CSS loops were gated off by "Animation effects" in Windows, which left the character static. Nothing of that is left.
+  assert.doesNotMatch(css, /@keyframes lente-(breathe|blink|orbit|nudge)/);
+  assert.doesNotMatch(css, /animation:[^;]*lente-(breathe|blink|orbit|nudge)/);
+  // What stays in CSS is the capture ring's pulse, and it is the only lente animation, gated like before.
   const animated = css.split("@media").filter((block) => /animation:[^;]*lente-/.test(block));
-  assert.ok(animated.length > 0);
-  for (const block of animated) assert.match(block, /^\s*\(prefers-reduced-motion: no-preference\)/);
-  assert.doesNotMatch(css.replace(/@media \(prefers-reduced-motion: no-preference\)[^@]*?\n}\n/g, ""), /animation:[^;]*lente-/);
+  assert.equal(animated.length, 1);
+  assert.match(animated[0], /^\s*\(prefers-reduced-motion: no-preference\)/);
+  assert.match(animated[0], /lente-pulse/);
+  assert.doesNotMatch(css, /\.lente[^{]*\{[^}]*transition:\s*all/);
+});
+
+test("the character moves with transforms and opacity only, so it never lays out again", async () => {
+  const source = await read("app/mascot/lente.tsx");
+  assert.doesNotMatch(source, /\.style\.(width|height|top|left|margin|padding)\b/);
+  for (const property of ['"transform"', '"opacity"']) assert.ok(source.includes(property), property);
+  assert.match(source, /will-change|translate3d/);
 });
 
 test("the old Spark is gone and nothing imports it", async () => {

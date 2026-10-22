@@ -4,12 +4,13 @@
 // pair of integers; there is no preload and no generic IPC.
 
 /**
- * The island's window modes. collapsed: the thin bar (nothing is happening); compact: the pill (an agent works or something
- * is new, or the pointer is on the bar); menu: sessions and quick actions; chat: the conversation; approval: the card Dot needs answered.
+ * The island's window modes. collapsed: an invisible hot strip on the top edge (nothing is happening, nothing is drawn); compact: the
+ * pill (an agent works or something is new, or the pointer is on the strip); menu: sessions and quick actions; chat: the conversation; approval: the card Dot needs answered.
  */
 export type WindowMode = "collapsed" | "compact" | "menu" | "chat" | "approval";
 export type WindowAnchor = { horizontal: "left" | "right"; vertical: "top" | "bottom" };
-export type WindowState = { mode: WindowMode; anchor: WindowAnchor };
+/** `hidden` is present (and true) only while the user has hidden Dot from the tray; otherwise the field is absent. */
+export type WindowState = { mode: WindowMode; anchor: WindowAnchor; hidden?: true };
 export type WindowController = {
   state(): unknown;
   setMode(mode: WindowMode): void;
@@ -19,6 +20,36 @@ export type WindowController = {
 };
 
 export const WINDOW_MODES: readonly WindowMode[] = ["collapsed", "compact", "menu", "chat", "approval"];
+/**
+ * The window size of each mode (px), the page's copy of the desktop shell's `MODE_SIZES` (a test keeps them equal). The
+ * page needs it to morph the island's shape from the old size to the new one, because the window itself resizes at once.
+ */
+export const ISLAND_SIZES: Record<WindowMode, { width: number; height: number }> = {
+  collapsed: { width: 180, height: 4 },
+  compact: { width: 500, height: 44 },
+  menu: { width: 640, height: 300 },
+  chat: { width: 600, height: 560 },
+  approval: { width: 640, height: 340 },
+};
+
+/** Whether the window gets smaller going from one mode to the next (the page fades its content out before asking for that). */
+export function islandShrinks(from: WindowMode, to: WindowMode): boolean {
+  const a = ISLAND_SIZES[from];
+  const b = ISLAND_SIZES[to];
+  return b.width * b.height < a.width * a.height;
+}
+
+/**
+ * How the island's shape should grow from one mode to the next: the inset (in percent of the new size) the shape starts at,
+ * so it unfolds from the old size. A shape that shrinks has nothing to grow: the page fades its content out first instead.
+ */
+export function islandMorph(from: WindowMode, to: WindowMode): { grows: boolean; insetX: number; insetY: number } {
+  const a = ISLAND_SIZES[from];
+  const b = ISLAND_SIZES[to];
+  if (b.width * b.height <= a.width * a.height) return { grows: false, insetX: 0, insetY: 0 };
+  const round = (value: number) => Math.round(Math.max(0, Math.min(99.9, value)) * 100) / 100;
+  return { grows: true, insetX: round(((1 - a.width / b.width) / 2) * 100), insetY: round((1 - a.height / b.height) * 100) };
+}
 export const WINDOW_CONTROLLER_KEY = Symbol.for("click-dot.window-controller");
 export const WINDOW_MAX_BODY_BYTES = 256;
 /** Far beyond any real desktop; a larger number is not a window position. */
@@ -53,12 +84,12 @@ export function parseWindowRequest(value: unknown): WindowRequest | undefined {
 /** Copies only the known fields out of a state value; anything malformed is rejected whole. */
 export function sanitizeWindowState(value: unknown): WindowState | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const { mode, anchor } = value as Record<string, unknown>;
+  const { mode, anchor, hidden } = value as Record<string, unknown>;
   const knownMode = WINDOW_MODES.find((candidate) => candidate === mode);
   if (!knownMode || !anchor || typeof anchor !== "object") return undefined;
   const { horizontal, vertical } = anchor as Record<string, unknown>;
   if ((horizontal !== "left" && horizontal !== "right") || (vertical !== "top" && vertical !== "bottom")) return undefined;
-  return { mode: knownMode, anchor: { horizontal, vertical } };
+  return { mode: knownMode, anchor: { horizontal, vertical }, ...(hidden === true ? { hidden: true as const } : {}) };
 }
 
 export function getWindowController(): WindowController | undefined {
@@ -129,7 +160,7 @@ export async function readWindowRequest(request: Request): Promise<WindowRequest
 }
 
 /**
- * Clicking the island opens the menu from the thin bar or the pill, or closes whatever is open. When Claude Code is waiting
+ * Clicking the island opens the menu from the strip or the pill, or closes whatever is open. When Claude Code is waiting
  * for the user and the card was put away, clicking the island brings the card back instead of the menu.
  */
 export function nextMascotMode(mode: WindowMode, requestWaiting = false): WindowMode {

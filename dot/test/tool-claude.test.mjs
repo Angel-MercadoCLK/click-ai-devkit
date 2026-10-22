@@ -478,3 +478,103 @@ test("describeToolUse shortens targets", () => {
   assert.equal(describeToolUse("Mystery", {}), "Claude Code: Mystery");
   assert.equal(describeToolUse("Evil\nName", {}), "Claude Code: EvilName");
 });
+
+// Soft interrupt (background tasks) -------------------------------------------------------------------------------
+
+const processModule = await import("../desktop/tool-process.mts");
+
+function signalled() {
+  const proc = controlled();
+  const signals = [];
+  proc.child.kill = (signal) => { signals.push(signal ?? "default"); proc.state.killed = true; };
+  return { ...proc, signals };
+}
+
+function interruptRun({ graceful, signal } = {}) {
+  const proc = signalled();
+  const timers = manualTimers();
+  const kills = [];
+  const interrupt = new AbortController();
+  const pending = processModule.runProcess({
+    spawn: () => proc.child,
+    executable: "claude",
+    args: [],
+    options: { windowsHide: true, shell: false, stdio: ["pipe", "pipe", "pipe"] },
+    timeoutMs: 30 * 60_000,
+    maxStreamBytes: 1024,
+    timers,
+    killTree: (pid) => kills.push(pid),
+    signal,
+    interrupt: { signal: interrupt.signal, graceMs: 5_000, graceful },
+  });
+  return { proc, timers, kills, interrupt, pending };
+}
+
+test("a graceful interrupt sends SIGINT and leaves the tree alone while the process stops in time", async () => {
+  const { proc, timers, kills, interrupt, pending } = interruptRun({ graceful: true });
+  interrupt.abort();
+  assert.deepEqual(proc.signals, ["SIGINT"]);
+  assert.deepEqual(kills, []);
+  proc.close(130);
+  const outcome = await pending;
+  assert.equal(outcome.aborted, true);
+  assert.equal(outcome.exitCode, 130);
+  assert.deepEqual(kills, []);
+  assert.equal(timers.pending.size, 0);
+});
+
+test("a graceful interrupt kills the tree once the grace period passes", async () => {
+  const { proc, timers, kills, interrupt, pending } = interruptRun({ graceful: true });
+  interrupt.abort();
+  assert.deepEqual(kills, []);
+  timers.fire(5_000);
+  const outcome = await pending;
+  assert.equal(outcome.aborted, true);
+  assert.deepEqual(kills, [888]);
+  assert.deepEqual(proc.signals, ["SIGINT", "default"]);
+});
+
+test("a non-graceful interrupt (Windows) kills the tree at once without SIGINT", async () => {
+  const { proc, kills, interrupt, pending } = interruptRun({ graceful: false });
+  interrupt.abort();
+  const outcome = await pending;
+  assert.equal(outcome.aborted, true);
+  assert.deepEqual(kills, [888]);
+  assert.deepEqual(proc.signals, ["default"]);
+});
+
+test("an interrupt that is already aborted starts nothing, and a run without one still ends with aborted false", async () => {
+  const spawned = [];
+  const interrupt = new AbortController();
+  interrupt.abort();
+  const outcome = await processModule.runProcess({
+    spawn: () => { spawned.push(1); return controlled().child; },
+    executable: "claude",
+    args: [],
+    options: { windowsHide: true, shell: false, stdio: ["pipe", "pipe", "pipe"] },
+    timeoutMs: 1000,
+    maxStreamBytes: 1024,
+    timers: manualTimers(),
+    killTree: () => {},
+    interrupt: { signal: interrupt.signal, graceMs: 5_000, graceful: true },
+  });
+  assert.equal(outcome.aborted, true);
+  assert.equal(spawned.length, 0);
+
+  const plain = controlled();
+  const done = processModule.runProcess({
+    spawn: () => plain.child,
+    executable: "claude",
+    args: [],
+    options: { windowsHide: true, shell: false, stdio: ["pipe", "pipe", "pipe"] },
+    timeoutMs: 1000,
+    maxStreamBytes: 1024,
+    timers: manualTimers(),
+    killTree: () => {},
+  });
+  plain.out("hi");
+  plain.close(0);
+  const ended = await done;
+  assert.equal(ended.aborted, false);
+  assert.equal(ended.stdout, "hi");
+});

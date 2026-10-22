@@ -16,7 +16,15 @@ import {
 // --verbose --permission-mode acceptEdits` in the project folder; stdout is NDJSON that this module parses as it
 // arrives: tool_use blocks become short progress lines, the final `result` line becomes the tool result.
 
-export type ClaudeRequest = { task: string; cwd: string; signal: AbortSignal; onProgress(line: string): void };
+export type ClaudeRequest = {
+  task: string;
+  cwd: string;
+  signal: AbortSignal;
+  onProgress(line: string): void;
+  /** Background tasks: aborting this stops the run softly (see `ProcessRequest.interrupt`); `signal` stops it at once. */
+  interrupt?: AbortSignal;
+  interruptGraceMs?: number;
+};
 export type ClaudeResult = {
   ok: boolean;
   result: string;
@@ -201,7 +209,11 @@ export type ClaudeDeps = {
   killTree: KillTree;
   whichClaude: WhichClaude;
   limits: ToolLimits;
+  /** SIGINT first, tree kill after a grace period. Defaults to off on Windows, where SIGINT cannot be graceful. */
+  gracefulInterrupt?: boolean;
 };
+
+export const DEFAULT_INTERRUPT_GRACE_MS = 5_000;
 
 const stderrQuote = (stderr: string) => {
   const first = stderr.split(/\r?\n/).map((part) => oneLine(part)).find((part) => part.length > 0);
@@ -258,6 +270,15 @@ export function createClaudeRunner(deps: ClaudeDeps): (request: ClaudeRequest) =
         killTree: deps.killTree,
         onStdout: (chunk) => parser.write(chunk),
         collectStdout: false,
+        ...(request.interrupt
+          ? {
+              interrupt: {
+                signal: request.interrupt,
+                graceMs: request.interruptGraceMs ?? DEFAULT_INTERRUPT_GRACE_MS,
+                graceful: deps.gracefulInterrupt ?? deps.platform !== "win32",
+              },
+            }
+          : {}),
       });
       if (!outcome.aborted && !outcome.timedOut) parser.end();
 

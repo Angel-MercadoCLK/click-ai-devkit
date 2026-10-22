@@ -4,7 +4,8 @@ import { dirname } from "node:path";
 
 /** Top-left corner of the mascot in screen coordinates. Optional: older files and first runs have none. */
 export type MascotPosition = { x: number; y: number };
-export type Preferences = { startAtLogin: boolean; captureEnabled: boolean; mascotPosition?: MascotPosition };
+/** `islandHidden` is present (and true) only while the user has hidden Dot from the tray; a file without it means visible. */
+export type Preferences = { startAtLogin: boolean; captureEnabled: boolean; mascotPosition?: MascotPosition; islandHidden?: boolean };
 
 /** Far beyond any real desktop; keeps a corrupt number from ever reaching window placement. */
 const POSITION_LIMIT = 100_000;
@@ -29,6 +30,8 @@ export async function savePreferences(file: string, preferences: Preferences): P
     captureEnabled: preferences.captureEnabled === true,
     // Never written unless it is a valid position, so files stay as they were for users who never moved the mascot.
     ...(isMascotPosition(preferences.mascotPosition) ? { mascotPosition: { x: preferences.mascotPosition.x, y: preferences.mascotPosition.y } } : {}),
+    // Likewise only written while hidden, so files stay as they were for users who never hid Dot.
+    ...(preferences.islandHidden === true ? { islandHidden: true as const } : {}),
   };
   await mkdir(dirname(file), { recursive: true });
   const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
@@ -53,10 +56,12 @@ export async function loadPreferences(file: string): Promise<Preferences | undef
   try {
     const parsed: unknown = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && typeof (parsed as Preferences).startAtLogin === "boolean") {
-      const { startAtLogin, captureEnabled, mascotPosition } = parsed as Partial<Preferences>;
+      const { startAtLogin, captureEnabled, mascotPosition, islandHidden } = parsed as Partial<Preferences>;
       // Files written before the mascot existed have no position; one of the wrong shape makes the file unknown.
       if ("mascotPosition" in parsed && !isMascotPosition(mascotPosition)) return undefined;
-      const position = mascotPosition ? { mascotPosition } : {};
+      // The same goes for the hidden choice: it is a boolean when it is there at all, and only true is kept.
+      if ("islandHidden" in parsed && typeof islandHidden !== "boolean") return undefined;
+      const position = { ...(mascotPosition ? { mascotPosition } : {}), ...(islandHidden === true ? { islandHidden: true as const } : {}) };
       // Files written before screen capture existed have no captureEnabled: that means off, and they stay valid.
       if (captureEnabled === undefined) return { startAtLogin: startAtLogin as boolean, captureEnabled: false, ...position };
       if (typeof captureEnabled === "boolean") return { startAtLogin: startAtLogin as boolean, captureEnabled, ...position };

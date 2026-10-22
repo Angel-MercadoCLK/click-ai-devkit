@@ -81,12 +81,45 @@ export function MessageList({ chat, labels }: { chat: Chat; labels: ChatLabels }
 }
 
 export function Composer({ chat, labels, rows = 3 }: { chat: Chat; labels: ChatLabels; rows?: number }) {
-  const { draft, setDraft, busy, historyLoading, captureActive, includeScreen, setIncludeScreen, screen, selectedModel, wantsScreen } = chat;
+  const { draft, setDraft, busy, historyLoading, captureActive, includeScreen, setIncludeScreen, screen, selectedModel, wantsScreen, attachments } = chat;
+  const codex = chat.engine === "codex";
+  /** Files dropped on the card or pasted into the message box. Without Codex they are refused with a reason, never opened by the page. */
+  const takeFiles = (files: FileList | null | undefined, event: { preventDefault(): void }) => {
+    if (!files || files.length === 0) return false;
+    event.preventDefault();
+    if (!busy) void chat.attachFiles(Array.from(files));
+    return true;
+  };
   return (
-    <form className="chat-composer" onSubmit={chat.sendMessage}>
+    <form
+      className="chat-composer"
+      onSubmit={chat.sendMessage}
+      onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) event.preventDefault(); }}
+      onDrop={(event) => { takeFiles(event.dataTransfer?.files, event); }}
+    >
       <label htmlFor="message-input">{labels.message}</label>
-      <textarea id="message-input" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={8000} rows={rows} placeholder={labels.placeholder} disabled={busy || historyLoading} />
-      {captureActive && (
+      {attachments.length > 0 && (
+        <ul className="attachment-chips" aria-label="Archivos adjuntos">
+          {attachments.map((item) => (
+            <li className="attachment-chip" data-kind={item.kind} key={item.id}>
+              <span title={item.name}>{item.name}</span>
+              <button type="button" aria-label={`Quitar ${item.name}`} title="Quitar" onClick={() => chat.removeAttachment(item.id)} disabled={busy}>×</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <textarea
+        id="message-input"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onPaste={(event) => { takeFiles(event.clipboardData?.files, event); }}
+        maxLength={8000}
+        rows={rows}
+        placeholder={labels.placeholder}
+        disabled={busy || historyLoading}
+      />
+      {captureActive && codex && <p className="panel-note">Codex puede mirar tu pantalla cuando se lo pidas.</p>}
+      {captureActive && !codex && (
         <div className="screen-attach">
           <label className="screen-toggle">
             <input type="checkbox" checked={includeScreen} onChange={(event) => setIncludeScreen(event.target.checked)} disabled={busy} />

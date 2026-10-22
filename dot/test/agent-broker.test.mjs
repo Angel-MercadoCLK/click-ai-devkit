@@ -460,3 +460,100 @@ test("quitting releases a Dot request too, and a full queue refuses at once", as
   await tick();
   assert.equal(first.value, "none");
 });
+
+// --- Codex requests (kind "codex") ----------------------------------------------------------------------------
+
+const codex = (extra = {}) => ({
+  tool: "Codex",
+  summary: "npm test",
+  detail: "Carpeta: C:\\work\\alpha",
+  alwaysOffered: true,
+  ...extra,
+});
+
+const codexQuestions = [
+  { question: "Which database?", header: "DB", multiSelect: false, options: [{ label: "Postgres", description: "SQL" }, { label: "SQLite", description: "" }] },
+];
+
+test("a Codex request becomes a pending card of kind codex and is not a Claude Code session", () => {
+  const { broker, shown } = setup();
+  broker.requestCodexApproval(codex());
+  const { pending, sessions } = broker.state();
+  assert.equal(shown.length, 1);
+  assert.deepEqual({ ...pending, id: "x" }, { id: "x", kind: "codex", tool: "Codex", summary: "npm test", detail: "Carpeta: C:\\work\\alpha", project: "Codex", alwaysOffered: true, questions: null });
+  assert.deepEqual(sessions, []);
+});
+
+test("Permitir, Denegar and Siempre answer a Codex request with exactly that choice, Siempre only when offered", async () => {
+  const { broker } = setup();
+  for (const choice of ["allow", "deny", "always"]) {
+    const answer = settled(broker.requestCodexApproval(codex()));
+    assert.deepEqual(broker.decide(broker.state().pending.id, choice), { ok: true });
+    await tick();
+    assert.deepEqual(answer.value, { choice });
+  }
+  broker.requestCodexApproval(codex({ alwaysOffered: false }));
+  assert.deepEqual(broker.decide(broker.state().pending.id, "always"), { ok: false, status: 400, error: "Siempre is not offered for this request." });
+  assert.equal(broker.decide(broker.state().pending.id, "terminal").ok, false);
+});
+
+test("a Codex request keeps the 2 s ack and 105 s decision timers and answers none when they run out", async () => {
+  const { broker, timers } = setup();
+  const unacked = settled(broker.requestCodexApproval(codex()));
+  timers.advance(2_000);
+  await tick();
+  assert.deepEqual(unacked.value, { choice: "none" });
+  const acked = settled(broker.requestCodexApproval(codex()));
+  assert.equal(broker.ack(broker.state().pending.id), true);
+  timers.advance(105_000);
+  await tick();
+  assert.deepEqual(acked.value, { choice: "none" });
+  assert.equal(timers.pending(), 0);
+});
+
+test("a Codex request with questions needs answers that match them, and carries them back keyed by question", async () => {
+  const { broker } = setup();
+  const answer = settled(broker.requestCodexApproval(codex({ summary: "Te hace una pregunta", questions: codexQuestions, alwaysOffered: false })));
+  const { id, questions } = broker.state().pending;
+  assert.deepEqual(questions, codexQuestions);
+  assert.equal(broker.decide(id, "allow").ok, false, "answers are required");
+  assert.equal(broker.decide(id, "allow", { "Which database?": "Oracle" }).ok, false, "a label that is not an option is refused");
+  assert.equal(broker.decide(id, "always").ok, false);
+  assert.equal(broker.decide(id, "deny", { "Which database?": "Postgres" }).ok, false, "a denial carries no answers");
+  assert.deepEqual(broker.decide(id, "allow", { "Which database?": "SQLite" }), { ok: true });
+  await tick();
+  assert.deepEqual(answer.value, { choice: "allow", answers: { "Which database?": "SQLite" } });
+});
+
+test("a Codex request aborted by its caller, a full queue and quitting all answer none", async () => {
+  const { broker } = setup({ maxPending: 2 });
+  const abort = new AbortController();
+  const first = settled(broker.requestCodexApproval(codex({ signal: abort.signal })));
+  const second = settled(broker.requestCodexApproval(codex()));
+  assert.deepEqual(await broker.requestCodexApproval(codex()), { choice: "none" });
+  abort.abort();
+  await tick();
+  assert.deepEqual(first.value, { choice: "none" });
+  broker.releaseAll();
+  await tick();
+  assert.deepEqual(second.value, { choice: "none" });
+  const aborted = new AbortController();
+  aborted.abort();
+  assert.deepEqual(await broker.requestCodexApproval(codex({ signal: aborted.signal })), { choice: "none" });
+});
+
+test("the Dot tool and Claude Code behaviors are unchanged next to Codex requests", async () => {
+  const { broker } = setup();
+  const dot = settled(broker.requestToolApproval(powershell()));
+  const code = settled(broker.requestCodexApproval(codex()));
+  assert.equal(broker.state().pending.kind, "dot-tool");
+  assert.equal(broker.state().queued, 1);
+  assert.deepEqual(broker.decide(broker.state().pending.id, "always"), { ok: true });
+  await tick();
+  assert.equal(dot.value, "always");
+  assert.equal(broker.state().pending.kind, "codex");
+  assert.equal(broker.decide(broker.state().pending.id, "allow", { q: "a" }).ok, false);
+  broker.decide(broker.state().pending.id, "deny");
+  await tick();
+  assert.deepEqual(code.value, { choice: "deny" });
+});

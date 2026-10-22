@@ -145,13 +145,15 @@ body:has(.mascot-root) { height: 100vh; min-height: 0; overflow: hidden; line-he
 .mascot-root :focus-visible { outline: 2px solid var(--dot-working); outline-offset: 2px; }
 
 .island { display: flex; width: 100%; height: 100%; flex-direction: column; gap: 10px; overflow: hidden; padding: 10px 14px 14px; background: #000000; border-radius: 0 0 32px 32px; }
-.island[data-mode="collapsed"] { padding: 0; border-radius: 0 0 8px 8px; }
+/* Collapsed is only an invisible hot strip on the top edge: nothing is drawn, so there is no visible bar. The almost-zero alpha is
+   not visible, but it keeps the strip a real target for the pointer. Hovering it unfolds the pill. */
+.island[data-mode="collapsed"] { padding: 0; border-radius: 0; background: rgba(0, 0, 0, 0.012); }
 .island[data-mode="compact"] { padding: 0 14px 0 6px; border-radius: 0 0 22px 22px; }
 
 .island-head { display: flex; min-width: 0; flex: none; align-items: center; gap: 10px; }
 .island[data-mode="collapsed"] .island-head, .island[data-mode="compact"] .island-head { height: 100%; width: 100%; }
 .island-toggle { display: flex; min-width: 0; align-items: center; gap: 8px; border-radius: 18px; color: inherit; cursor: pointer; }
-.island[data-mode="collapsed"] .island-toggle { width: 100%; height: 100%; border-radius: 0 0 8px 8px; }
+.island[data-mode="collapsed"] .island-toggle { width: 100%; height: 100%; border-radius: 0; }
 .island[data-mode="compact"] .island-toggle { height: 100%; flex: 1; border-radius: 0 0 22px 22px; }
 .island[data-mode="menu"] .island-toggle, .island[data-mode="chat"] .island-toggle, .island[data-mode="approval"] .island-toggle { width: 36px; height: 36px; flex: none; justify-content: center; background: #1C1D22; color: var(--dot-text); }
 .island[data-mode="menu"] .island-toggle:hover, .island[data-mode="chat"] .island-toggle:hover, .island[data-mode="approval"] .island-toggle:hover { background: #26272D; }
@@ -285,29 +287,82 @@ button.agent-option > span, button.agent-option > small { grid-column: 1; }
 .compact-chat .screen-failed { color: var(--dot-removed); }
 .compact-chat .screen-failed .action-button { min-height: 32px; }
 
-/* Lente: the character. Breathing, blinking and the orbit stop under prefers-reduced-motion; the states stay readable without them. */
-.lente { display: block; flex: none; overflow: visible; }
+/* The chat card's history: conversations newest first, open to continue, delete after a confirmation. */
+.compact-link[aria-pressed="true"] { background: var(--dot-row); color: var(--dot-text); }
+.history-view { display: flex; min-height: 0; flex: 1; flex-direction: column; padding: 8px; overflow: hidden auto; background: var(--dot-card); border: 1px solid var(--dot-border); border-radius: 24px; }
+.history-rows { display: grid; margin: 0; padding: 0; gap: 4px; list-style: none; }
+.history-row { display: flex; min-width: 0; align-items: center; gap: 4px; border-radius: 16px; }
+.history-row.is-active { background: #1B2236; }
+.history-open { display: flex; min-width: 0; flex: 1; align-items: baseline; gap: 12px; padding: 10px 14px; border: 0; border-radius: 14px; background: transparent; color: var(--dot-text); font-size: 14px; text-align: left; cursor: pointer; }
+.history-open:hover { background: var(--dot-row); }
+.history-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-when { flex: none; color: var(--dot-muted); font-size: 12px; }
+.history-delete { width: 32px; height: 32px; flex: none; border: 0; border-radius: 16px; background: transparent; color: var(--dot-muted); font-size: 18px; line-height: 1; cursor: pointer; }
+.history-delete:hover { background: rgba(255, 138, 122, 0.14); color: var(--dot-removed); }
+.history-confirm { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; padding: 6px 8px 6px 14px; border-radius: 14px; background: var(--dot-row); }
+.history-confirm-text { min-width: 0; flex: 1; font-size: 14px; }
+.history-danger, .history-keep { height: 30px; flex: none; padding: 0 14px; border: 0; border-radius: 15px; font-size: 13px; cursor: pointer; }
+.history-danger { background: var(--dot-removed); color: #1D0A06; font-weight: 600; }
+.history-keep { background: #26272D; color: var(--dot-text); }
+.history-keep:hover { background: #30313A; }
+.history-empty { margin: auto; padding: 20px; color: var(--dot-muted); font-size: 14px; line-height: 1.45; text-align: center; }
+
+/* Codex as the engine: the engine chip, the sign-in and tools note, the history search, attachment chips and the computer-use pill. */
+.compact-engine { min-width: 0; flex: 1; height: 30px; padding: 0 12px; border-radius: 15px; background: var(--dot-row); color: var(--dot-text); font-size: 13px; line-height: 30px; }
+.engine-note { display: grid; flex: none; gap: 6px; }
+.engine-note .bubble-note { padding: 0 6px; font-size: 12px; }
+.engine-login { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.engine-login .menu-button { width: auto; min-height: 34px; padding: 0 16px; }
+.engine-tools { padding: 0 6px; color: var(--dot-muted); font-size: 12px; }
+.engine-tools summary { cursor: pointer; }
+.engine-tools ul { display: grid; margin: 6px 0 0; padding: 0; gap: 4px; list-style: none; }
+.engine-tools li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.engine-tools li[data-state="missing"], .engine-tools li[data-state="unsupported"] { color: var(--dot-needs); }
+.engine-tools a { color: var(--dot-working); text-decoration: none; }
+.engine-tools a:hover { text-decoration: underline; }
+.history-search { flex: none; height: 32px; margin: 0 0 8px; padding: 0 14px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; background: var(--dot-row); color: var(--dot-text); font-size: 13px; }
+.history-search::placeholder { color: #6B6B74; }
+.history-search:focus-visible { outline: 2px solid var(--dot-working); outline-offset: 1px; }
+.attachment-chips { display: flex; flex-basis: 100%; flex-wrap: wrap; order: -1; margin: 0; padding: 4px 8px 0 0; gap: 6px; list-style: none; }
+.attachment-chip { display: inline-flex; max-width: 100%; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 14px; background: var(--dot-row); color: var(--dot-text); font-size: 12px; }
+.attachment-chip span { min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-chip button { width: 20px; height: 20px; border: 0; border-radius: 10px; background: transparent; color: var(--dot-muted); font-size: 14px; line-height: 1; cursor: pointer; }
+.attachment-chip button:hover:not(:disabled) { background: rgba(255, 138, 122, 0.14); color: var(--dot-removed); }
+.island-computer { border-color: rgba(255, 179, 64, 0.65); }
+.island-computer .island-capture-dot { background: var(--dot-needs); }
+.agent-card[data-source="codex"] .agent-card-detail { max-height: 8rem; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+
+/* Lente: the character. Its motion (following the cursor, blinking, breathing, the spring between states) is driven by
+   `lente-motion.ts` from one requestAnimationFrame loop and written as transforms and opacity; reduced motion makes it
+   gentler there, never static. CSS only fixes where each part turns from, and keeps the capture ring's pulse. */
+.lente { display: block; flex: none; overflow: visible; transform-origin: 50% 88%; will-change: transform; }
 .lente-body { transform-origin: 50px 52px; }
-.lente-iris { transform-origin: 50px 53px; }
-.lente.is-half .lente-iris { transform: scaleY(0.5); }
-.lente-orbit { transform-origin: 50px 53px; }
+.lente-eye, .lente-iris, .lente-pupil, .lente-orbit { transform-origin: 50px 53px; }
 .lente-badge { transform-origin: 79px 25px; }
 .lente-ring { stroke: #FF5F52; }
 [data-ring="paused"] .lente-ring { stroke: #FFB340; }
 @media (prefers-reduced-motion: no-preference) {
-  .lente-body { animation: lente-breathe 3.8s ease-in-out infinite; }
-  .lente:not(.is-half) .lente-iris { animation: lente-blink 4.8s infinite; }
-  .lente-orbit { animation: lente-orbit 3s linear infinite; }
-  .lente-badge { animation: lente-nudge 1.2s ease-in-out infinite; }
   .lente-ring { animation: lente-pulse 1.6s ease-in-out infinite; }
-  .island-body { animation: island-in 160ms ease-out; }
 }
-@keyframes lente-breathe { 50% { transform: scale(1.03); } }
-@keyframes lente-blink { 0%, 93%, 100% { transform: scaleY(1); } 96.5% { transform: scaleY(0.12); } }
-@keyframes lente-orbit { to { transform: rotate(360deg); } }
-@keyframes lente-nudge { 50% { transform: scale(1.12); } }
 @keyframes lente-pulse { 50% { stroke-opacity: 0.45; } }
-@keyframes island-in { from { opacity: 0; transform: translateY(-4px); } }
+
+/* Opening, closing and resizing: the window resizes at once, so the page unfolds the island's shape from its old size
+   (clip-path, set by --morph-x and --morph-y) and fades the new content in from a slightly smaller scale. Before the window
+   shrinks the content fades out (data-leaving). Strong ease-out, under 250 ms. Reduced motion only fades. */
+.island-body, .island-title, .island-side, .island[data-mode="compact"] .island-toggle > * { animation: island-fade 140ms ease-out backwards; }
+.mascot-root[data-leaving="true"] .island-body, .mascot-root[data-leaving="true"] .island-title, .mascot-root[data-leaving="true"] .island-side, .mascot-root[data-leaving="true"] .island-toggle > * { opacity: 0; transition: opacity 110ms ease-out; }
+@media (prefers-reduced-motion: no-preference) {
+  .island[data-grows="true"][data-morph="a"] { animation: island-grow-a 240ms cubic-bezier(0.23, 1, 0.32, 1); }
+  .island[data-grows="true"][data-morph="b"] { animation: island-grow-b 240ms cubic-bezier(0.23, 1, 0.32, 1); }
+  .island-body, .island-title, .island-side { animation: island-in 220ms cubic-bezier(0.23, 1, 0.32, 1) 40ms backwards; }
+  .island[data-mode="compact"] .island-toggle > * { animation: island-in-left 200ms cubic-bezier(0.23, 1, 0.32, 1) 30ms backwards; }
+  .mascot-root[data-leaving="true"] .island-body, .mascot-root[data-leaving="true"] .island-title, .mascot-root[data-leaving="true"] .island-side, .mascot-root[data-leaving="true"] .island-toggle > * { transform: scale(0.97); transition: opacity 110ms ease-out, transform 110ms ease-out; }
+}
+@keyframes island-fade { from { opacity: 0; } }
+@keyframes island-in { from { opacity: 0; transform: translateY(-6px) scale(0.97); } }
+@keyframes island-in-left { from { opacity: 0; transform: scale(0.94); } }
+@keyframes island-grow-a { from { clip-path: inset(0 var(--morph-x, 0%) var(--morph-y, 0%) var(--morph-x, 0%) round 0 0 22px 22px); } to { clip-path: inset(0 0% 0% 0% round 0 0 32px 32px); } }
+@keyframes island-grow-b { from { clip-path: inset(0 var(--morph-x, 0%) var(--morph-y, 0%) var(--morph-x, 0%) round 0 0 22px 22px); } to { clip-path: inset(0 0% 0% 0% round 0 0 32px 32px); } }
 
 /* Dot's tool calls in the chat: one line per call with a status chip and a collapsed output tail. */
 .tool-activity { display: grid; justify-self: start; width: min(92%, 48rem); margin: 0; padding: 0; gap: 0.4rem; list-style: none; }

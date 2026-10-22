@@ -35,9 +35,15 @@ const MAX_SUGGESTION_BYTES = 8_192;
 export type { AgentQuestion, AgentState, PendingView } from "./agent-state.ts";
 export type AgentDecision = { behavior: "allow" | "deny"; updatedPermissions?: unknown[]; answers?: Record<string, string> };
 /** `choice` answers a Dot tool request, which has no Claude Code decision to send back. */
-export type AgentOutcome = { kind: "none" } | { kind: "decision"; decision: AgentDecision } | { kind: "choice"; choice: "allow" | "deny" | "always" };
+export type AgentOutcome =
+  | { kind: "none" }
+  | { kind: "decision"; decision: AgentDecision }
+  /** `answers` is only present when a Codex request asked questions and the user answered them. */
+  | { kind: "choice"; choice: "allow" | "deny" | "always"; answers?: Record<string, string> };
 /** What a Dot tool learns from its approval card. Anything but a choice (timeout, no acknowledgement, quit, abort) is "none". */
 export type ToolApproval = "allow" | "deny" | "always" | "none";
+/** What the Codex engine learns from its card. `answers` (keyed by question text) comes with an allow on a request that asked questions. */
+export type CodexApproval = { choice: "allow" | "deny" | "always" | "none"; answers?: Record<string, string> };
 export type DecisionChoice = "allow" | "deny" | "always" | "terminal";
 export const DECISION_CHOICES: readonly DecisionChoice[] = ["allow", "deny", "always", "terminal"];
 
@@ -119,7 +125,7 @@ function firstSuggestion(payload: Record<string, unknown>) {
   }
 }
 
-/** A request is a Claude Code hook (it has a session) or a Dot tool asking before it acts. */
+/** A request is a Claude Code hook (it has a session), a Dot tool asking before it acts, or the Codex engine asking. */
 type Held = {
   id: string;
   kind: PendingKind;
@@ -285,6 +291,36 @@ export function createAgentBroker(options: AgentBrokerOptions = {}) {
       });
     },
 
+    /**
+     * Holds a request from the Codex engine (a command, a file change, extra permissions, an MCP confirmation or questions),
+     * with the same queue, acknowledgement and decision timers. With `questions` the card collects answers, and an allow
+     * has to carry them. Resolves with the user's choice, or "none" for every way the wait can end without one.
+     */
+    requestCodexApproval(input: { tool: string; summary: string; detail: string; alwaysOffered: boolean; questions?: AgentQuestion[]; signal?: AbortSignal }): Promise<CodexApproval> {
+      const { signal } = input;
+      const questions = input.questions && input.questions.length > 0 ? input.questions : null;
+      if (signal?.aborted || queue.length >= maxPending) return Promise.resolve({ choice: "none" });
+      return new Promise<CodexApproval>((resolve) => {
+        const request: Held = {
+          id: randomUUID(),
+          kind: "codex",
+          sessionId: null,
+          alwaysOffered: !questions && input.alwaysOffered,
+          tool: input.tool,
+          summary: input.summary,
+          detail: input.detail,
+          project: "Codex",
+          suggestion: undefined,
+          questions,
+          resolve: (outcome) =>
+            resolve(outcome.kind === "choice" ? { choice: outcome.choice, ...(outcome.answers ? { answers: outcome.answers } : {}) } : { choice: "none" }),
+          shown: false,
+          acked: false,
+        };
+        hold(request, signal);
+      });
+    },
+
     state(): AgentState {
       return { sessions: store.list(), pending: queue[0] ? view(queue[0]) : null, queued: Math.max(0, queue.length - 1) };
     },
@@ -304,9 +340,22 @@ export function createAgentBroker(options: AgentBrokerOptions = {}) {
       if (!request) return { ok: false, status: 404, error: "There is no such pending request." };
       const refuse = (error: string): DecideResult => ({ ok: false, status: 400, error });
       if (!DECISION_CHOICES.some((known) => known === choice)) return refuse("Unknown choice.");
-      if (request.kind === "dot-tool") {
-        if (choice === "terminal") return refuse("A Dot request cannot be handed to the terminal.");
-        if (answers !== undefined) return refuse("A Dot request carries no answers.");
+      if (request.kind === "codex" && request.questions) {
+        if (choice === "terminal") return refuse("A Codex request cannot be handed to the terminal.");
+        if (choice === "always") return refuse("Siempre is not offered for this request.");
+        if (choice === "deny") {
+          if (answers !== undefined) return refuse("A denial carries no answers.");
+          finish(request, { kind: "choice", choice: "deny" }, "answered");
+          return { ok: true };
+        }
+        const checked = validateAnswers(request.questions, answers);
+        if (!checked) return refuse("The answers do not match the questions.");
+        finish(request, { kind: "choice", choice: "allow", answers: checked }, "answered");
+        return { ok: true };
+      }
+      if (request.kind === "dot-tool" || request.kind === "codex") {
+        if (choice === "terminal") return refuse(request.kind === "codex" ? "A Codex request cannot be handed to the terminal." : "A Dot request cannot be handed to the terminal.");
+        if (answers !== undefined) return refuse(request.kind === "codex" ? "This request asks no questions." : "A Dot request carries no answers.");
         if (choice === "always" && !request.alwaysOffered) return refuse("Siempre is not offered for this request.");
         finish(request, { kind: "choice", choice: choice as "allow" | "deny" | "always" }, "answered");
         return { ok: true };
@@ -351,7 +400,7 @@ export type AgentBroker = ReturnType<typeof createAgentBroker>;
 export function getAgentBroker(): AgentBroker {
   const target = globalThis as Record<symbol, unknown>;
   const existing = target[AGENT_BROKER_KEY];
-  if (isRecord(existing) && ["record", "enqueue", "requestToolApproval", "state", "ack", "decide", "releaseAll"].every((name) => typeof existing[name] === "function")) {
+  if (isRecord(existing) && ["record", "enqueue", "requestToolApproval", "requestCodexApproval", "state", "ack", "decide", "releaseAll"].every((name) => typeof existing[name] === "function")) {
     return existing as unknown as AgentBroker;
   }
   const created = createAgentBroker({ onPending: () => getWindowController()?.showInactive?.() });
