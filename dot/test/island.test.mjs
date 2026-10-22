@@ -95,6 +95,18 @@ test("closing a card lands on the resting state, never flashes the thin bar whil
   for (const mode of ["menu", "chat", "approval", "compact"]) assert.equal(island.settleMode(mode, "collapsed"), mode);
 });
 
+test("the resting size waits only until a new request's card is up, so a card put away never hides the pill", () => {
+  // No request: the bar or pill follows what is going on.
+  assert.equal(island.restingTarget({ mode: "collapsed", resting: "compact", pendingId: null, raisedFor: null }), "compact");
+  assert.equal(island.restingTarget({ mode: "compact", resting: "compact", pendingId: null, raisedFor: null }), null);
+  // A new request whose card is not up yet: leave the window to the card.
+  assert.equal(island.restingTarget({ mode: "collapsed", resting: "compact", pendingId: "r1", raisedFor: null }), null);
+  // The card was put away by hand while the screen is shared: the pill (with its capture ring) comes back.
+  assert.equal(island.restingTarget({ mode: "collapsed", resting: "compact", pendingId: "r1", raisedFor: "r1" }), "compact");
+  // Open cards and panels are never resized by the resting rule.
+  for (const mode of ["approval", "menu", "chat"]) assert.equal(island.restingTarget({ mode, resting: "compact", pendingId: null, raisedFor: null }), null);
+});
+
 test("an edit line splits into its words and the +N and −M counts", () => {
   assert.deepEqual(island.splitAction("Editando agent-card.tsx +12 −3"), { text: "Editando agent-card.tsx", added: 12, removed: 3 });
   assert.deepEqual(island.splitAction("Escribiendo notes.md +40"), { text: "Escribiendo notes.md", added: 40, removed: null });

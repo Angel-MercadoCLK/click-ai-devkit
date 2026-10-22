@@ -10,7 +10,7 @@ import { CompactChat, type ChatSeed } from "../chat/compact-chat";
 import { approvalKeyChoice } from "./agent-choices.ts";
 import { AgentCard } from "./agent-card";
 import { Icon } from "./icons";
-import { approvalTitle, compactLine, inProgressLabel, isActive, lenteStateFor, newlyFinished, restingMode, sessionCountLabel, sessionDots, sessionStates, settleMode, splitAction } from "./island-state.ts";
+import { approvalTitle, compactLine, inProgressLabel, isActive, lenteStateFor, newlyFinished, restingMode, restingTarget, sessionCountLabel, sessionDots, sessionStates, settleMode, splitAction } from "./island-state.ts";
 import { Lente } from "./lente";
 import { useAgent } from "./use-agent";
 import { useCaptureView } from "./use-capture";
@@ -77,9 +77,11 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
 
   // A new request brings the card up; the shell has already shown the island without taking focus. Putting the card
   // away by hand (the island, Escape) is respected until the next request arrives.
+  const cardRaisedFor = useRef<string | null>(null);
   useEffect(() => {
     if (!pendingId || mode === "approval") return;
     modeBeforeCard.current = mode;
+    cardRaisedFor.current = pendingId;
     void setMode("approval");
     // Only a new request forces the card; the user's own mode changes in between are theirs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -104,10 +106,10 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   }, [cardShown, pendingId]);
 
   // The bar and the pill follow what is going on: the pill while it lasts or while the pointer is on the bar, the thin bar otherwise.
-  // A request waiting for the card is handled above, so the two never fight over the window size.
+  // A request waiting for its card is handled above, so the two never fight over the window size.
   useEffect(() => {
-    if (pendingId) return;
-    if ((mode === "collapsed" || mode === "compact") && mode !== resting) void setMode(resting);
+    const target = restingTarget({ mode, resting, pendingId, raisedFor: cardRaisedFor.current });
+    if (target) void setMode(target);
   }, [mode, resting, setMode, pendingId]);
 
   // A session that just finished is news: the pill stays a few seconds.

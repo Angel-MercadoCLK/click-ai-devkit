@@ -25,6 +25,21 @@ export function restingMode({ active, hovered }: { active: boolean; hovered: boo
   return active || hovered ? "compact" : "collapsed";
 }
 
+/**
+ * The bar or pill size the island should move to, or null to leave it. A new request owns the window until its card is
+ * up; once raised, a card put away by hand falls back to the resting size like anything else, so sharing keeps the pill.
+ */
+export function restingTarget({ mode, resting, pendingId, raisedFor }: {
+  mode: WindowMode;
+  resting: "collapsed" | "compact";
+  pendingId: string | null;
+  raisedFor: string | null;
+}): "collapsed" | "compact" | null {
+  if (pendingId && raisedFor !== pendingId) return null;
+  if (mode !== "collapsed" && mode !== "compact") return null;
+  return mode === resting ? null : resting;
+}
+
 /** Closing a card lands on the resting state, so the thin bar never flashes while something is going on. */
 export function settleMode(next: WindowMode, resting: "collapsed" | "compact"): WindowMode {
   return next === "collapsed" ? resting : next;
