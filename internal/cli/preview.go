@@ -149,6 +149,13 @@ func renderWritePlan(out io.Writer, r *ui.Renderer, cfg installer.Config, plan i
 		fmt.Fprintln(out, r.Info("Se usará el binario gentle-ai gestionado por Click en ~/.click/bin, no otro binario del PATH."))
 		fmt.Fprintln(out, r.Info("Comando previsto: GENTLE_AI_NO_SELF_UPDATE=1 gentle-ai "+strings.Join(args, " ")))
 	}
+	dotStep, dotNotice := dotPreview()
+	if dotNotice != "" {
+		fmt.Fprintln(out, r.Info(dotNotice))
+	}
+	if dotStep != "" {
+		steps = append(append([]string(nil), steps...), dotStep)
+	}
 	fmt.Fprintln(out, r.Info("Se aplicarán los siguientes cambios, en este orden:"))
 	for i, step := range steps {
 		fmt.Fprintf(out, "  %d. %s\n", i+1, step)

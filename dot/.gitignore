@@ -1,0 +1,20 @@
+# Dependencies and framework output
+node_modules/
+.next/
+.output/
+dist/
+coverage/
+release/
+
+# Local secrets and runtime state
+.env
+.env.*
+!.env.example
+.eve/
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.tsbuildinfo

@@ -289,6 +289,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	syncDotStep(cmd, out, r, dotUpdateVerb)
+
 	fmt.Fprintln(out, r.Info("Update completo."))
 	return nil
 }

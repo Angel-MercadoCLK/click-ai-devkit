@@ -796,6 +796,7 @@ func TestMain(m *testing.M) {
 	}
 	for key, value := range map[string]string{
 		"HOME": home, "USERPROFILE": home, "XDG_CONFIG_HOME": filepath.Join(home, ".config"),
+		"LOCALAPPDATA": filepath.Join(home, "Local"), "APPDATA": filepath.Join(home, "Roaming"),
 		"CLICK_CLAUDE_HOME": "", "CODEX_HOME": "", "CLICK_OPENCLAW_HOME": "", "CLICK_STATE_HOME": "",
 	} {
 		if err := os.Setenv(key, value); err != nil {

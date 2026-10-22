@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "rewriteRelativeImportExtensions": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "outDir": "desktop/dist",
+    "rootDir": "desktop"
+  },
+  "include": ["desktop/**/*.mts"],
+  "exclude": ["desktop/dist"]
+}

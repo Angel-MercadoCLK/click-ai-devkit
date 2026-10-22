@@ -88,6 +88,7 @@ func runRollback(cmd *cobra.Command) error {
 	}
 	if !restorable {
 		fmt.Fprintln(out, r.Info("No hay ningún respaldo de instalación/actualización para restaurar."))
+		dotRollbackNotice(out, r)
 		return nil
 	}
 
@@ -138,6 +139,7 @@ func runRollback(cmd *cobra.Command) error {
 		return err
 	}
 	fmt.Fprintln(out, r.Success("Archivos gestionados por click restaurados desde el último respaldo."))
+	dotRollbackNotice(out, r)
 
 	return nil
 }

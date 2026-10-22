@@ -147,7 +147,7 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 
 	// 11 base checks after adding the managed Gentle AI pin diagnostic and retiring the Click SDD plugin and its dependent visibility check,
 	// standalone PATH-based detection check (openclaw-target-support PR-A).
-	const wantChecks = 11 + EngramChecksCount + Context7ChecksCount
+	wantChecks := 11 + EngramChecksCount + Context7ChecksCount + dotChecksCount()
 	if len(report.Checks) != wantChecks {
 		t.Fatalf("Run() returned %d checks, want %d without retired model checks", len(report.Checks), wantChecks)
 	}
@@ -155,7 +155,7 @@ func TestRun_ChecksHavePluginAndClaudeMD(t *testing.T) {
 
 func TestRun_CheckCountIncludesEngramCloudSessionSync(t *testing.T) {
 	report := Run(installer.Config{ClaudeHome: t.TempDir(), ClickStateHome: t.TempDir()})
-	const wantChecks = 11 + EngramChecksCount + Context7ChecksCount
+	wantChecks := 11 + EngramChecksCount + Context7ChecksCount + dotChecksCount()
 	if got := len(report.Checks); got != wantChecks {
 		t.Fatalf("Run() check count = %d, want %d including engram cloud session sync", got, wantChecks)
 	}
@@ -1652,4 +1652,12 @@ func TestCheckMemoryGuardHook_SurfacesUnreadableSettings(t *testing.T) {
 	if !strings.Contains(result.Detail, "parse settings") {
 		t.Fatalf("Detail = %q, want the underlying parse error", result.Detail)
 	}
+}
+
+// dotChecksCount is the Click Dot line doctor adds only where Dot can be installed (Windows x64).
+func dotChecksCount() int {
+	if installer.DotSupported() {
+		return 1
+	}
+	return 0
 }

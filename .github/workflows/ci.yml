@@ -52,3 +52,74 @@ jobs:
           # the packaged binary runs end-to-end and prints a version line, not version equality with
           # the published Scoop metadata.
           ./scripts/windows-package-smoke.ps1 -DistDir dist -ExpectedVersion 'click version' -DisposableRunner
+
+  # Click Dot (dot/): Electron/Next.js desktop agent shipped in the same release as `click`.
+  dot:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dot
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: dot/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  # Proves the Windows package builds and that the release zip has the layout the installer expects.
+  # It does not launch the app (the disposable-runner smoke owns that).
+  dot-windows-package:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: dot/package-lock.json
+
+      - name: Install dependencies
+        working-directory: dot
+        run: npm ci
+
+      - name: Build Click Dot Windows package
+        shell: pwsh
+        run: node scripts/package-dot.mjs --version 0.0.0-ci
+
+      - name: Verify Click Dot zip layout
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zipPath = Join-Path $PWD 'dot/release/click-dot_0.0.0-ci_windows_amd64.zip'
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+          try {
+            if (-not ($zip.Entries.FullName -contains 'Click Dot.exe')) { throw 'Click Dot.exe is not at the zip root' }
+          } finally { $zip.Dispose() }
+
+      # Launches the real packaged exe on this disposable runner. GitHub-hosted Windows runners do not
+      # enforce Smart App Control, so this proves runtime behavior (DPAPI storage, asar + fuses, Next
+      # serving), not what end users with Smart App Control enabled will see (unsigned Dot, accepted A7).
+      - name: Smoke packaged Click Dot
+        shell: pwsh
+        run: |
+          $zipPath = 'dot/release/click-dot_0.0.0-ci_windows_amd64.zip'
+          ./scripts/dot-package-smoke.ps1 -ZipPath $zipPath -DisposableRunner

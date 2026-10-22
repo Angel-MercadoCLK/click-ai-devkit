@@ -22,6 +22,7 @@ import (
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/installer"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/manifest"
 	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/modelconfig"
+	"github.com/Angel-MercadoCLK/click-ai-devkit/internal/version"
 )
 
 const engramCloudImportOutcomeStaleAfter = 7 * 24 * time.Hour
@@ -44,6 +45,9 @@ type CheckResult struct {
 	Name    string
 	Healthy bool
 	Detail  string
+	// Warning marks a healthy-but-degraded result (for example an optional component that is missing
+	// or out of date). It never fails the report; the CLI renders it as a warning instead of a success.
+	Warning bool
 }
 
 // Report is the full set of check results from one Run.
@@ -77,6 +81,9 @@ func Run(cfg installer.Config) Report {
 	}
 	if selection.Claude {
 		checks = append(checks, checkEngramCloud(cfg), checkEngramCloudSessionSync(cfg))
+	}
+	if installer.DotSupported() {
+		checks = append(checks, CheckDot(installer.InspectDot(), version.Version))
 	}
 	return Report{Checks: checks}
 }

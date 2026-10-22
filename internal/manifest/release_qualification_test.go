@@ -488,3 +488,38 @@ func readText(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+func TestDotPackageSmokeRunsDisposableRunnerGuardFirst(t *testing.T) {
+	read := func(name string) string {
+		path := filepath.Join("..", "..", "scripts", name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", path, err)
+		}
+		return string(data)
+	}
+	guard := read("windows-runner-guard.ps1")
+	for _, expected := range []string{
+		"if (-not $DisposableRunner)",
+		"$env:GITHUB_ACTIONS -ne 'true'",
+		"$env:RUNNER_ENVIRONMENT -ne 'github-hosted'",
+		"$env:RUNNER_OS -ne 'Windows'",
+		"[System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT",
+	} {
+		if !strings.Contains(guard, expected) {
+			t.Errorf("disposable-runner guard missing check %q", expected)
+		}
+	}
+	smoke := read("dot-package-smoke.ps1")
+	guardIndex := strings.Index(smoke, "Assert-DisposableWindowsRunner")
+	resolveIndex := strings.Index(smoke, "Resolve-Path -LiteralPath $ZipPath")
+	extractIndex := strings.Index(smoke, "Expand-Archive")
+	if guardIndex < 0 || resolveIndex < 0 || extractIndex < 0 || guardIndex > resolveIndex || guardIndex > extractIndex {
+		t.Fatal("Click Dot package smoke must run the disposable-runner guard before touching the package or the filesystem")
+	}
+	for _, expected := range []string{"--no-login-item", "CLICK_DOT_DISABLE_LOGIN_ITEM", "} finally {"} {
+		if !strings.Contains(smoke, expected) {
+			t.Errorf("Click Dot package smoke missing %q", expected)
+		}
+	}
+}

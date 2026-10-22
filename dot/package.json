@@ -1,0 +1,39 @@
+{
+  "name": "click-dot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Click Dot desktop agent",
+  "author": "Click",
+  "main": "desktop/dist/main.mjs",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node scripts/next.mjs dev",
+    "build": "node scripts/next.mjs build",
+    "start": "node scripts/next.mjs start",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test",
+    "desktop:compile": "tsc -p tsconfig.desktop.json",
+    "desktop:build": "npm run build && npm run desktop:compile",
+    "desktop:start": "electron .",
+    "desktop:pack:win": "npm run desktop:build && electron-builder --win dir --x64 --publish never"
+  },
+  "dependencies": {
+    "ai": "7.0.137",
+    "eve": "0.77.0",
+    "jose": "6.2.12",
+    "next": "16.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "electron": "44.9.3",
+    "electron-builder": "26.15.3",
+    "typescript": "7.0.2"
+  }
+}

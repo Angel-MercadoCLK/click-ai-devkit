@@ -14,7 +14,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	for key, value := range map[string]string{"HOME": home, "USERPROFILE": home, "XDG_CONFIG_HOME": filepath.Join(home, ".config")} {
+	for key, value := range map[string]string{"HOME": home, "USERPROFILE": home, "XDG_CONFIG_HOME": filepath.Join(home, ".config"), "LOCALAPPDATA": filepath.Join(home, "Local"), "APPDATA": filepath.Join(home, "Roaming")} {
 		if err := os.Setenv(key, value); err != nil {
 			panic(err)
 		}
