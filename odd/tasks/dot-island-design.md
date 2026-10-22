@@ -32,7 +32,7 @@ Branch: `feat/dot-agent-tools` (accumulates with the agent tools feature; one PR
 
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
-| D1 | S1–S5 | after the agent tools writers finish (they edit `dot/app`), one writer for the island UI and window behavior | done | (next commit) |
+| D1 | S1–S5 | after the agent tools writers finish (they edit `dot/app`), one writer for the island UI and window behavior | done | 306070c |
 
 ## Log
 
@@ -51,3 +51,4 @@ Branch: `feat/dot-agent-tools` (accumulates with the agent tools feature; one PR
   - Checks: `npm test` 560/560; typecheck, `desktop:compile` and `next build` clean.
   - Not verified: a real Windows window (7px bar, topmost over other apps, no focus steal).
   - Not ported: prototype nav icons, the countdown, drop shadows (clipped by the island-sized window).
+- L5 (2026-10-22) — Native reviews: the island approved (`review-cffd54be9f88ccad`). Its follow-up fixes were reviewed with a bounded correction (`review-fd7fa6fc6c5f69af`): `d587998` keeps the capture pill when a card is put away; `5d05791` counts a card as raised only once it is on screen. Still not verified: the real Windows window.

@@ -57,7 +57,7 @@ Branch: `feat/dot-agent-tools` (from `origin/main` 373842a). Delivery strategy: 
 |----|-------|-------|--------|--------|
 | T1 | S3, S4, S7 | delegated writer, tool runtime unit (parallel with T2) | done | aa12625 |
 | T2 | S1, S2, S5, S6, S7, S8 | delegated writer, agent loop + UI unit (parallel with T1) | done | b851add |
-| T3 | all | inline: seam check, independent verifier, native review, delivery | in progress | |
+| T3 | all | inline: seam check, independent verifier, native review, delivery | done (delivery pending) | aecd00d, 779199d, 2a57ebf, a5641cf |
 
 - T1 — Tool runtime in `dot/desktop/`: PowerShell runner, fail-closed read-only classifier (parser helper), Claude Code runner (stream-json parsing, stdin task), and the bridge installer.
 - T2 — Agent loop and UI:
@@ -108,3 +108,23 @@ Route evidence: T1 (`dot/desktop/tool-*`, its tests) and T2 (`dot/lib`, `dot/app
     - `dot/README.md` still says the chat route doesn't use the token; fix after the island writer finishes, since README is in its surface.
     - The browser home page opened after sign-in now always gets a 403 from the chat route; it should say "usa la ventana de Dot".
     - The process-tree `taskkill` was not verified on real Windows.
+- L8 (2026-10-22) — Native reviews (all granted by the user):
+  - `373842a..aa12625` (tool runtime): `review-7d4d1c4fd093736f`, approved, burned. Its network-path advisory was real and is fixed in `2a57ebf` (provider-qualified `FileSystem::\\server` paths now ask). Other advisories are follow-ups: an untested helper end to end, Claude timeout after a result, CLIXML mixed stderr, native exit code with stderr.
+  - `aa12625..779199d` (agent loop and fixes): `review-f5f7e67a703c3cc6`, approved, burned. Its R1-001 was real and is fixed in `a5641cf`: Siempre is remembered per folder, not just by command text.
+  - Follow-up advisories:
+    - a dead `isNewToolCall` helper;
+    - the history cap is not explained;
+    - the browser chat is now 403;
+    - `maxDuration=120` is not applicable to the in-process server;
+    - side effects of an aborted turn are not recorded.
+  - Island and final fixes (`779199d..a5641cf`): review running.
+- L9 (2026-10-22) — Native review closure:
+  - `779199d..a5641cf` exceeded the lens context budget, so no authority was created. It was split as below.
+  - `779199d..306070c` (island + empty-chat fix): `review-cffd54be9f88ccad`, approved. Its capture-hidden advisory was real and is fixed in `d587998`.
+  - `306070c..d587998` (provider paths, per-folder Siempre, capture pill):
+    - The reviewer raised CRITICAL `R3-card-raise-race`: the card-raised mark was set before the mode switch, so the resting rule could replace a new card with the pill.
+    - Bounded correction `5d05791` (21 lines, plan 30) passed the targeted validator.
+    - `review-fd7fa6fc6c5f69af` approved and burned.
+    - Advisories: `::` in any argument asks (a conservative false positive); one test assertion was weakened to a size check.
+  - Every commit on the branch is now reviewed. Checks: `npm test` 564/564, typecheck and build clean.
+  - Next: the user's delivery decision.
