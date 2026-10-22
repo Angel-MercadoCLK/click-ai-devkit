@@ -299,6 +299,24 @@ test("a server request is answered with its handler's result by the same id, or 
   assert.equal(replies.find((r) => r.id === 43).error.code, -32603);
 });
 
+test("an answer to a request from a process that has since crashed is dropped, never sent to the new process", async () => {
+  const { server, fake, timers } = setup();
+  await server.start();
+  let release;
+  server.setRequestHandler(() => new Promise((resolve) => { release = resolve; }));
+  fake.last().send({ id: 0, method: "item/commandExecution/requestApproval", params: { command: "harmless" } });
+  await settle();
+  fake.last().exit(1);
+  await settle();
+  timers.fire(1_000);
+  await settle(5);
+  const fresh = fake.last();
+  assert.equal(fake.servers.length, 2);
+  release({ decision: "accept" });
+  await settle();
+  assert.equal(fresh.lines().some((message) => message.id === 0 && "result" in message), false, "the stale answer is dropped");
+});
+
 // Crash and shutdown ----------------------------------------------------------------------------------------------
 
 test("a crash rejects what was waiting, restarts with growing backoff, handshakes again and tells the restart listeners", async () => {

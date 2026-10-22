@@ -357,6 +357,16 @@ test("a timed out, dismissed or unanswered card answers decline, and the card is
   await result;
 });
 
+test("a Codex crash withdraws every open card, so a stale card can never answer the restarted process", async () => {
+  const env = setup();
+  await startTurn(env);
+  env.fake.ask("item/commandExecution/requestApproval", commandRequest(), 0);
+  await settle();
+  const { signal } = env.broker.requests[0];
+  env.fake.setState("restarting");
+  assert.equal(signal.aborted, true);
+});
+
 test("a request the server resolves itself withdraws its card", async () => {
   const env = setup();
   await startTurn(env);

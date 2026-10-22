@@ -235,6 +235,8 @@ export function createCodexEngine(transport: CodexTransport, deps: CodexEngineDe
   transport.onRestart(() => loaded.clear());
   transport.onStatus((status) => {
     if (status.state === "ready") return;
+    // The process that asked is gone: its cards must not stay up to be answered.
+    for (const controller of [...openRequests.values()]) controller.abort();
     for (const run of [...runs.values()]) run.finish({ text: finalText(run), status: "failed", error: CRASHED });
   });
 

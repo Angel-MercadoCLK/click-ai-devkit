@@ -285,10 +285,14 @@ export function createCodexAppServer(options: CodexAppServerOptions = {}): Codex
       write({ id: request.id, error: { code: -32601, message: `Method not found: ${request.method}` } });
       return;
     }
+    // A restarted Codex numbers its requests from scratch: an answer reaches only the process that asked.
+    const askedBy = child;
+    const askedIn = generation;
+    const reply = (value: unknown) => { if (child === askedBy && generation === askedIn) write(value); };
     try {
-      write({ id: request.id, result: (await handler(request)) ?? {} });
+      reply({ id: request.id, result: (await handler(request)) ?? {} });
     } catch (error) {
-      write({ id: request.id, error: { code: -32603, message: error instanceof Error ? error.message : "Internal error" } });
+      reply({ id: request.id, error: { code: -32603, message: error instanceof Error ? error.message : "Internal error" } });
     }
   }
 
