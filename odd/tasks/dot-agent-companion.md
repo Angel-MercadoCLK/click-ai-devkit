@@ -40,7 +40,7 @@ Branch: `feat/dot-agent-companion` (from `origin/main` 432c7a0). Delivery strate
 | T2 | S2, S3, S4 | delegated writer, same Dot unit as T1 | done | 322d27a |
 | T3 | S3, S4, S5, S7 | delegated writer (Go unit, parallel with T1) | done | 71b296d |
 | T4 | S6 | delegated writer, same Go unit as T3 | done | 71b296d |
-| T5 | S8, all | inline: docs, seam check, independent verifier, native review | in progress | |
+| T5 | S8, all | inline: docs, seam check, independent verifier, native review | done (delivery pending) | a9b82df | |
 
 - T1 — Dot backend: discovery file, `/api/agent/hook` endpoint, session store, pending-approval queue with the UI ack, cookie-guarded `/api/agent/state` and `/api/agent/decision`, show the mascot on a pending request.
 - T2 — Dot mascot UI: session list in the menu, working and needs-you indicator, approval card, question card.
@@ -81,3 +81,10 @@ Route evidence: T1+T2 (Dot, `dot/**`) and T3+T4 (Go, `internal/**`) are two inde
   - A5: Siempre silently failed open for suggestions longer than 2,000 characters.
   - The parent fixed A5 inline: the relay never truncates `permission_suggestions` (RED `TestDotHookNormalizationNeverTruncatesPermissionSuggestions`, then GREEN; the wire contract was updated).
   - A2, A3 and A4 stay as follow-ups.
+- L9 (2026-10-22) — Native reviews (the user granted both):
+  - `432c7a0..71b296d` (Go, escalated item 2, lenses risk/resilience/reliability): lineage `review-b6dd21e015127af4`, approved with 12 non-blocking advisories, acknowledged and burned. The strict restore-scope warning at `internal/installer/restore_ownership.go:290-295` was raised by three lenses. Other advisories: no stale-pid check in the relay and no relay diagnostics.
+  - `71b296d..322d27a` (Dot, escalated item 2): lineage `review-695dfb2a8a55f284`, approved with 12 non-blocking advisories, acknowledged and burned. These include: the approval card does not show which rule Siempre will remember (`agent-card.tsx:81`); decision-failure handling and polling in `use-agent.ts`; broker singleton validation (`agent-broker.ts:307`); quit cleanup ordering (`main.mts:374`).
+  - `a9b82df` was assessed medium/under_budget and stays pending in the slice.
+  - Reviewed boundary: `322d27a`.
+  - Not verified: the Electron GUI on real Windows (showInactive, card sizing) and a real 110 s hold.
+  - Next step: the user's decisions on next@16.4.2 (L7) and on delivery (push, PR, merge, release).
