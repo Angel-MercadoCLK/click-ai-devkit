@@ -16,7 +16,7 @@ export type ToolChild = {
   stderr: { on(event: "data", listener: (chunk: Buffer) => void): unknown };
   on(event: "error", listener: (error: Error) => void): unknown;
   on(event: "close", listener: (code: number | null) => void): unknown;
-  kill(): unknown;
+  kill(signal?: NodeJS.Signals): unknown;
 };
 
 export type ToolSpawnOptions = {
@@ -101,6 +101,12 @@ export type ProcessRequest = {
   onStdout?: (chunk: Buffer) => void;
   /** False when `onStdout` consumes the stream and nothing should be buffered. */
   collectStdout?: boolean;
+  /**
+   * A softer stop than `signal`. Graceful: SIGINT first, the process tree is killed only if it is still running after
+   * `graceMs`. Not graceful (Windows, where Node turns any signal into an abrupt kill of the direct child only): the tree
+   * is killed at once, like `signal`. Either way the outcome is `aborted`.
+   */
+  interrupt?: { signal: AbortSignal; graceMs: number; graceful: boolean };
 };
 
 export type ProcessOutcome = {
@@ -178,6 +184,8 @@ export function runProcess(request: ProcessRequest): Promise<ProcessOutcome> {
     let child: ToolChild | undefined;
     let settled = false;
     let timer: unknown;
+    let graceTimer: unknown;
+    let interrupted = false;
 
     const outcome = (partial: Partial<ProcessOutcome>): ProcessOutcome => ({
       exitCode: null,
@@ -194,7 +202,9 @@ export function runProcess(request: ProcessRequest): Promise<ProcessOutcome> {
       if (settled) return;
       settled = true;
       if (timer !== undefined) timers.clearTimeout(timer);
+      if (graceTimer !== undefined) timers.clearTimeout(graceTimer);
       signal?.removeEventListener("abort", onAbort);
+      request.interrupt?.signal.removeEventListener("abort", onInterrupt);
       resolve(result);
     };
 
@@ -212,7 +222,24 @@ export function runProcess(request: ProcessRequest): Promise<ProcessOutcome> {
       finish(outcome({ aborted: true }));
     }
 
-    if (signal?.aborted) {
+    function onInterrupt() {
+      if (settled || interrupted) return;
+      const interrupt = request.interrupt;
+      if (!interrupt?.graceful) {
+        terminate();
+        finish(outcome({ aborted: true }));
+        return;
+      }
+      interrupted = true;
+      try { child?.kill("SIGINT"); } catch { /* The process is already gone. */ }
+      graceTimer = timers.setTimeout(() => {
+        if (settled) return;
+        terminate();
+        finish(outcome({ aborted: true }));
+      }, interrupt.graceMs);
+    }
+
+    if (signal?.aborted || request.interrupt?.signal.aborted) {
       resolve(outcome({ aborted: true }));
       return;
     }
@@ -231,6 +258,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessOutcome> {
       finish(outcome({ timedOut: true }));
     }, request.timeoutMs);
     signal?.addEventListener("abort", onAbort, { once: true });
+    request.interrupt?.signal.addEventListener("abort", onInterrupt, { once: true });
 
     process.stdout.on("data", (chunk) => {
       if (settled) return;
@@ -246,7 +274,7 @@ export function runProcess(request: ProcessRequest): Promise<ProcessOutcome> {
       terminate();
       finish(outcome({ startFailed: true }));
     });
-    process.on("close", (code) => finish(outcome({ exitCode: typeof code === "number" ? code : null })));
+    process.on("close", (code) => finish(outcome({ exitCode: typeof code === "number" ? code : null, aborted: interrupted })));
 
     try {
       if (request.stdin !== undefined) process.stdin.write(request.stdin);
