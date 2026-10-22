@@ -183,9 +183,19 @@ const NATIVE = new Set(["whoami", "hostname", "where.exe"]);
 const GIT_SUBCOMMANDS = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "remote"]);
 
 /** Long git options that write files, run programs or change configuration. */
-const GIT_FORBIDDEN_LONG = ["--output", "--ext-diff", "--config", "--exec", "--upload-pack", "--receive-pack"];
+const GIT_FORBIDDEN_LONG = ["--output", "--ext-diff", "--textconv", "--config", "--exec", "--upload-pack", "--receive-pack"];
 const GIT_BRANCH_FLAGS = new Set(["-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "--list", "-l", "--show-current", "--no-color"]);
 const NETWORK_PATH = /^(-[A-Za-z]+:)?(\\\\|\/\/)/;
+
+/**
+ * True for a parameter that sends the cmdlet to another computer: -ComputerName, any abbreviation PowerShell would
+ * accept for it (down to -c) and its -cn alias, also in the -Name:value form.
+ */
+function targetsAnotherComputer(arg: string): boolean {
+  if (!arg.startsWith("-")) return false;
+  const name = arg.split(":")[0]!.toLowerCase();
+  return name === "-cn" || (name.length >= 2 && "-computername".startsWith(name));
+}
 
 const needsApproval = (reason: string): Classification => ({ readOnly: false, reason });
 const readOnly = (reason: string): Classification => ({ readOnly: true, reason });
@@ -236,6 +246,8 @@ export function decideReadOnly(statements: PsStatement[]): Classification {
         continue;
       }
       if (!CMDLETS.has(canonical) && !NATIVE.has(name)) return needsApproval(`${command} is not on the read-only list.`);
+      if (name === "hostname" && args.length > 0) return needsApproval("hostname with arguments needs approval.");
+      if (CMDLETS.has(canonical) && args.some(targetsAnotherComputer)) return needsApproval(`${command} pointed at another computer needs approval.`);
     }
   }
   return readOnly("Only read-only commands.");

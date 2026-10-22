@@ -55,6 +55,20 @@ test("whoami, hostname and where.exe are read-only", () => {
   allowed(stmt(["WHERE.EXE", "node"]));
 });
 
+test("hostname with arguments needs approval", () => {
+  rejected(/hostname/, stmt(["hostname", "newname"]));
+  rejected(/hostname/, stmt(["HOSTNAME", "-s"]));
+});
+
+test("a cmdlet pointed at another computer needs approval, including abbreviations and the cn alias", () => {
+  rejected(/another computer/, stmt(["Get-Process", "-ComputerName", "srv"]));
+  rejected(/another computer/, stmt(["gps", "-comp", "srv"]));
+  rejected(/another computer/, stmt(["Get-Process", "-c", "srv"]));
+  rejected(/another computer/, stmt(["Get-Process", "-Cn", "srv"]));
+  rejected(/another computer/, stmt(["Get-Process", "-ComputerName:srv"]));
+  allowed(stmt(["Get-Process", "-Name", "node"]));
+});
+
 test("pipelines of allowlisted commands and several pipeline statements are read-only", () => {
   allowed(stmt(["Get-Process"], ["Sort-Object", "CPU", "-Descending"], ["Select-Object", "-First", "5"]));
   allowed(stmt(["ls"]), stmt(["pwd"]));
@@ -94,6 +108,11 @@ test("git global options before the subcommand are rejected, including -c and -C
   rejected(/git/i, stmt(["git", "-C", "..", "status"]));
   rejected(/git/i, stmt(["git", "--exec-path=x", "status"]));
   rejected(/git/i, stmt(["git", "--no-pager", "log"]));
+});
+
+test("git rejects --textconv, which runs filters from the repository's configuration", () => {
+  rejected(/textconv/, stmt(["git", "show", "--textconv", "HEAD:a.txt"]));
+  rejected(/textconv/, stmt(["git", "log", "-p", "--textconv"]));
 });
 
 test("git rejects -c and -C anywhere in its arguments", () => {
