@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { agentAttention } from "../../lib/agent-state.ts";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { agentAttention, claudeTaskSessions, COMPUTER_USE_TEXT, mergeSessions } from "../../lib/agent-state.ts";
+import { chatGate } from "../../lib/engine-client.ts";
 import type { SessionState } from "../../lib/agent-sessions.ts";
 import { mascotIndicator } from "../../lib/capture-state.ts";
 import { nextMascotMode, type WindowMode } from "../../lib/window-mode.ts";
 import { useAuthConnection } from "../auth-panel";
 import { CompactChat, type ChatSeed } from "../chat/compact-chat";
+import { EngineNote } from "../chat/engine-note";
+import { useEngine } from "../chat/use-engine";
 import { approvalKeyChoice } from "./agent-choices.ts";
 import { AgentCard } from "./agent-card";
 import { Icon } from "./icons";
@@ -43,6 +46,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   const win = useMascotWindow();
   const capture = useCaptureView();
   const agent = useAgent();
+  const engine = useEngine();
   const [seed, setSeed] = useState<ChatSeed | null>(null);
   const [chatOpened, setChatOpened] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -57,18 +61,24 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
     },
   });
 
-  const { pending, sessions } = agent.state;
+  const { pending } = agent.state;
+  // The background Claude Code tasks Codex started show next to the Claude Code sessions.
+  const hookSessions = agent.state.sessions;
+  const tasks = agent.activity.tasks;
+  const sessions = useMemo(() => mergeSessions(hookSessions, claudeTaskSessions(tasks, Date.now())), [hookSessions, tasks]);
+  // While Dot controls Chrome or the mouse it says so, and the island is never at rest or hidden from it.
+  const computerUse = agent.activity.computerUse.active;
   const pendingId = pending?.id ?? null;
   const { indicator } = capture;
   // Capture keeps the ring, the visible text and the pause control; listening has its own cancel and the character's working look.
-  const attention = agentAttention(agent.state);
+  const attention = agentAttention({ ...agent.state, sessions });
   const view = mascotIndicator(indicator, voice.listening, attention);
   const { sharing } = view;
-  const active = isActive({ attention, sharing, listening: voice.listening, finishedRecently });
+  const active = isActive({ attention, sharing, listening: voice.listening, finishedRecently, computerUse });
   // Something going on (an agent working, the screen shared, Voz listening) keeps the island as the pill, never as the resting strip.
   // Hidden by the user (tray: "Ocultar Dot"), the island is nothing at rest; only a shared screen still shows the pill.
-  const resting = restingMode({ active, hovered, hidden, sharing });
-  const restingQuiet = restingMode({ active, hovered: false, hidden, sharing });
+  const resting = restingMode({ active, hovered, hidden, sharing: sharing || computerUse });
+  const restingQuiet = restingMode({ active, hovered: false, hidden, sharing: sharing || computerUse });
   const lenteState = lenteStateFor({ attention, listening: voice.listening, sessions });
 
   // The mode the card interrupted, so the menu or the chat comes back once the request is over.
@@ -205,7 +215,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   const pauseCapture = () => view.pause && void capture.act(view.pause.action);
   const dots = sessionDots(sessions);
   const countLabel = sessionCountLabel(sessions.length);
-  const line = compactLine({ sessions, pending, listening: voice.listening, finishedRecently });
+  const line = compactLine({ sessions, pending, listening: voice.listening, finishedRecently, computerUse });
   const sharingNow = view.sharing && view.pause;
 
   return (
@@ -267,6 +277,13 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
                   <span className="island-capture-dot" aria-hidden="true" />
                   <span>{view.sharingText}</span>
                   <button type="button" disabled={capture.busy} onClick={pauseCapture}>{view.pause?.name}</button>
+                </div>
+              )}
+              {computerUse && (
+                <div className="island-capture island-computer is-live" role="status" aria-label={COMPUTER_USE_TEXT}>
+                  <span className="island-capture-dot" aria-hidden="true" />
+                  <span>{COMPUTER_USE_TEXT}</span>
+                  <button type="button" disabled={agent.stopping} onClick={() => void agent.stopComputer()}>Detener</button>
                 </div>
               )}
               {mode !== "menu" && view.cancel && (
@@ -346,20 +363,32 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
 
         {chatOpened && (
           <section className="island-body island-chat" hidden={mode !== "chat"} aria-label="Chat con Dot">
-            {auth.status === null ? (
-              <p className="bubble-note" role="status">Comprobando la conexión…</p>
-            ) : auth.status.connected ? (
-              <CompactChat seed={seed} onAuthorizationExpired={() => auth.setStatus({ connected: false, reauthorizationRequired: true })} />
-            ) : (
-              <div className="bubble-connect">
-                <p>{auth.status.reauthorizationRequired ? "Tu sesión de ChatGPT expiró. Conéctate de nuevo para chatear con Dot." : "Para chatear con Dot, conéctalo con tu cuenta de ChatGPT."}</p>
-                <button className="menu-button primary" type="button" onClick={() => void auth.connect()} disabled={auth.busy}>
-                  {auth.busy ? "Abriendo ChatGPT…" : "Conectar con ChatGPT"}
-                </button>
-                <p className="bubble-note">El inicio de sesión se completa en tu navegador. Tus credenciales se quedan en este equipo.</p>
-                {auth.message && <p className="bubble-note" role="status">{auth.message}</p>}
-              </div>
-            )}
+            {(() => {
+              const gate = chatGate({ authConnected: auth.status === null ? null : auth.status.connected, engine: engine.status });
+              if (gate.kind === "checking") return <p className="bubble-note" role="status">Comprobando la conexión…</p>;
+              if (gate.kind === "chat") {
+                return (
+                  <CompactChat
+                    key={gate.engine}
+                    engine={gate.engine}
+                    engineState={engine}
+                    seed={seed}
+                    onAuthorizationExpired={() => auth.setStatus({ connected: false, reauthorizationRequired: true })}
+                  />
+                );
+              }
+              return (
+                <div className="bubble-connect">
+                  <EngineNote engine={engine} signInShown />
+                  <p>{auth.status?.reauthorizationRequired ? "Tu sesión de ChatGPT expiró. Conéctate de nuevo para chatear con Dot." : "Para chatear con Dot, conéctalo con tu cuenta de ChatGPT."}</p>
+                  <button className="menu-button primary" type="button" onClick={() => void auth.connect()} disabled={auth.busy}>
+                    {auth.busy ? "Abriendo ChatGPT…" : "Conectar con ChatGPT"}
+                  </button>
+                  <p className="bubble-note">El inicio de sesión se completa en tu navegador. Tus credenciales se quedan en este equipo.</p>
+                  {auth.message && <p className="bubble-note" role="status">{auth.message}</p>}
+                </div>
+              );
+            })()}
           </section>
         )}
       </div>

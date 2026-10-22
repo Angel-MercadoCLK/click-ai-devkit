@@ -307,6 +307,31 @@ button.agent-option > span, button.agent-option > small { grid-column: 1; }
 .history-keep:hover { background: #30313A; }
 .history-empty { margin: auto; padding: 20px; color: var(--dot-muted); font-size: 14px; line-height: 1.45; text-align: center; }
 
+/* Codex as the engine: the engine chip, the sign-in and tools note, the history search, attachment chips and the computer-use pill. */
+.compact-engine { min-width: 0; flex: 1; height: 30px; padding: 0 12px; border-radius: 15px; background: var(--dot-row); color: var(--dot-text); font-size: 13px; line-height: 30px; }
+.engine-note { display: grid; flex: none; gap: 6px; }
+.engine-note .bubble-note { padding: 0 6px; font-size: 12px; }
+.engine-login { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.engine-login .menu-button { width: auto; min-height: 34px; padding: 0 16px; }
+.engine-tools { padding: 0 6px; color: var(--dot-muted); font-size: 12px; }
+.engine-tools summary { cursor: pointer; }
+.engine-tools ul { display: grid; margin: 6px 0 0; padding: 0; gap: 4px; list-style: none; }
+.engine-tools li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.engine-tools li[data-state="missing"], .engine-tools li[data-state="unsupported"] { color: var(--dot-needs); }
+.engine-tools a { color: var(--dot-working); text-decoration: none; }
+.engine-tools a:hover { text-decoration: underline; }
+.history-search { flex: none; height: 32px; margin: 0 0 8px; padding: 0 14px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; background: var(--dot-row); color: var(--dot-text); font-size: 13px; }
+.history-search::placeholder { color: #6B6B74; }
+.history-search:focus-visible { outline: 2px solid var(--dot-working); outline-offset: 1px; }
+.attachment-chips { display: flex; flex-basis: 100%; flex-wrap: wrap; order: -1; margin: 0; padding: 4px 8px 0 0; gap: 6px; list-style: none; }
+.attachment-chip { display: inline-flex; max-width: 100%; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 14px; background: var(--dot-row); color: var(--dot-text); font-size: 12px; }
+.attachment-chip span { min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-chip button { width: 20px; height: 20px; border: 0; border-radius: 10px; background: transparent; color: var(--dot-muted); font-size: 14px; line-height: 1; cursor: pointer; }
+.attachment-chip button:hover:not(:disabled) { background: rgba(255, 138, 122, 0.14); color: var(--dot-removed); }
+.island-computer { border-color: rgba(255, 179, 64, 0.65); }
+.island-computer .island-capture-dot { background: var(--dot-needs); }
+.agent-card[data-source="codex"] .agent-card-detail { max-height: 8rem; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+
 /* Lente: the character. Its motion (following the cursor, blinking, breathing, the spring between states) is driven by
    `lente-motion.ts` from one requestAnimationFrame loop and written as transforms and opacity; reduced motion makes it
    gentler there, never static. CSS only fixes where each part turns from, and keeps the capture ring's pulse. */

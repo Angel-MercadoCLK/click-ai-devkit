@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Composer, FULL_LABELS, MessageList } from "./chat/parts";
 import { applyCapturePoll, INITIAL_CAPTURE_POLL, readCapturePoll, type CapturePollResult } from "../lib/capture-state.ts";
 import { applyToolEvent, readToolEvent, type ToolEvent } from "../lib/tool-events.ts";
+import { appendTurn, attachmentsExplain, MAX_ATTACHMENTS, mergeThreads, readThreadList, readThreadResponse, readUpload, roomForAttachments, type AttachmentChip } from "../lib/engine-client.ts";
 
 export type Model = { slug: string; displayName: string };
 export type Message = { role: "user" | "assistant"; content: string; createdAt: number };
@@ -30,8 +31,16 @@ function newId() {
   return globalThis.crypto.randomUUID();
 }
 
-/** All of the chat behavior (models, history, streaming, screen attachment). The panels only decide how it looks. */
-export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: () => void }) {
+/** The one "model" of a chat on Codex: Codex picks the real one from its own configuration. */
+const CODEX_MODEL: Model = { slug: "codex", displayName: "Codex" };
+
+/**
+ * All of the chat behavior (models, history, streaming, screen attachment). The panels only decide how it looks. With
+ * `engine: "codex"` the history is Codex's threads, a chat is a Codex thread and files can be attached; the default is the
+ * built-in assistant and the local store, exactly as before.
+ */
+export function useChat({ onAuthorizationExpired, engine = "builtin" }: { onAuthorizationExpired: () => void; engine?: "codex" | "builtin" }) {
+  const codex = engine === "codex";
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [loadingModels, setLoadingModels] = useState(false);
@@ -50,8 +59,24 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
   const [includeScreen, setIncludeScreen] = useState(true);
   const [screen, setScreen] = useState<ScreenState>({ kind: "none" });
   const previewRequest = useRef<AbortController | null>(null);
+  const [attachments, setAttachments] = useState<AttachmentChip[]>([]);
+  const [historyQuery, setHistoryQuery] = useState("");
+  /** The Codex thread the chat in progress got from the server, until the turn is saved into the history. */
+  const codexThread = useRef<{ chatId: string; threadId: string } | null>(null);
+  // The latest values for code that runs after an await.
+  const live = useRef({ history, activeId, historyQuery });
+  live.current = { history, activeId, historyQuery };
 
-  async function refreshHistory(signal?: AbortSignal) {
+  async function refreshHistory(signal?: AbortSignal, query?: string) {
+    if (codex) {
+      const text = query ?? live.current.historyQuery;
+      const response = await fetch(`/api/codex/threads${text ? `?q=${encodeURIComponent(text)}` : ""}`, { cache: "no-store", signal });
+      const list = response.ok ? readThreadList(await response.json()) : undefined;
+      if (!list) throw new Error("Dot no pudo leer tus chats de Codex.");
+      const value: History = { revision: 0, conversations: mergeThreads(live.current.history.conversations, list.threads, live.current.activeId) };
+      setHistory(value);
+      return value;
+    }
     const response = await fetch("/api/chat/history", { cache: "no-store", signal });
     if (!response.ok) {
       if (response.status === 401) onAuthorizationExpired();
@@ -121,7 +146,8 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
 
   // Prepare the redacted preview once the user starts a message; drop it when capture stops or the toggle goes off.
   const hasDraft = draft.trim().length > 0;
-  const wantsScreen = captureActive && includeScreen;
+  // Codex looks at the screen itself (look_at_screen) when asked, so the "include my screen" attachment is the built-in assistant's.
+  const wantsScreen = captureActive && includeScreen && !codex;
   useEffect(() => {
     if (!wantsScreen) {
       previewRequest.current?.abort();
@@ -135,6 +161,11 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
   useEffect(() => () => previewRequest.current?.abort(), []);
 
   async function loadModels() {
+    if (codex) {
+      setModels([CODEX_MODEL]);
+      setSelectedModel(CODEX_MODEL.slug);
+      return;
+    }
     setLoadingModels(true);
     setNotice("");
     try {
@@ -164,13 +195,15 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
     setTools([]);
     setNotice("");
     setStatus("idle");
+    setAttachments([]);
+    codexThread.current = null;
   }
 
   function cancelResponse() {
     controller.current?.abort();
     controller.current = null;
     setStatus("error");
-    setNotice("Response stopped. Partial output was not saved, and anything a tool already did is not undone.");
+    setNotice(codex ? "Detenido. Lo que Codex ya hizo no se deshace." : "Response stopped. Partial output was not saved, and anything a tool already did is not undone.");
   }
 
   async function clearHistory() {
@@ -190,6 +223,17 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
   }
 
   async function removeConversation(id: string) {
+    if (codex) {
+      // Codex keeps archived chats on disk; they only stop being listed.
+      const response = await fetch(`/api/codex/threads/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => undefined);
+      if (!response?.ok) {
+        setNotice("No se pudo archivar este chat.");
+        return;
+      }
+      setHistory((current) => ({ revision: 0, conversations: current.conversations.filter((item) => item.id !== id) }));
+      if (live.current.activeId === id) beginNewConversation();
+      return;
+    }
     const response = await fetch(`/api/chat/history/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (!response.ok) {
       setNotice("This conversation could not be removed.");
@@ -210,6 +254,63 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
     setSubmittedPrompt("");
     setNotice("");
     setStatus("complete");
+    setAttachments([]);
+    codexThread.current = null;
+    if (codex && conversation.messages.length === 0) void openThread(conversation.id);
+  }
+
+  /** The messages of a Codex chat, read when it is opened (the list has none). */
+  async function openThread(id: string) {
+    setNotice("Abriendo el chat…");
+    try {
+      const response = await fetch(`/api/codex/threads/${encodeURIComponent(id)}`, { cache: "no-store" });
+      const opened = response.ok ? readThreadResponse(await response.json()) : undefined;
+      if (!opened) throw new Error();
+      setHistory((current) => ({ revision: 0, conversations: current.conversations.map((item) => (item.id === id ? { ...item, messages: opened.messages } : item)) }));
+      setNotice("");
+    } catch {
+      setNotice("Dot no pudo abrir ese chat de Codex.");
+    }
+  }
+
+  /** Dropped or pasted files, sent to the guarded route that keeps a private copy. Only Codex can read them. */
+  async function attachFiles(files: File[]) {
+    if (!codex) {
+      setNotice(attachmentsExplain("builtin"));
+      return;
+    }
+    const room = roomForAttachments(attachments.length, files.length);
+    if (room < files.length) setNotice(`Solo puedes adjuntar ${MAX_ATTACHMENTS} archivos por mensaje.`);
+    for (const file of files.slice(0, room)) {
+      try {
+        const response = await fetch("/api/attachments", {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream", "x-file-name": encodeURIComponent(file.name || "pegado") },
+          body: file,
+        });
+        const payload = await response.json().catch(() => ({})) as { error?: string };
+        const chip = response.ok ? readUpload(payload) : undefined;
+        if (!chip) throw new Error(payload.error ?? "Dot no pudo adjuntar el archivo.");
+        setAttachments((current) => (current.length >= MAX_ATTACHMENTS ? current : [...current, chip]));
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Dot no pudo adjuntar el archivo.");
+      }
+    }
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((current) => current.filter((item) => item.id !== id));
+    void fetch(`/api/attachments/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+  }
+
+  async function searchHistory(query: string) {
+    setHistoryQuery(query);
+    live.current.historyQuery = query;
+    try {
+      await refreshHistory(undefined, query);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Dot no pudo leer tus chats de Codex.");
+    }
   }
 
   async function sendMessage(event: React.FormEvent<HTMLFormElement>) {
@@ -242,11 +343,20 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
     controller.current = activeController;
     let sawCompleted = false;
     const seenTools = new Set<string>();
+    // The thread this chat already has on Codex: one the server told us about, or the chat is an opened thread.
+    const knownThread = codexThread.current?.chatId === activeId ? codexThread.current.threadId : history.conversations.some((item) => item.id === activeId) ? activeId : undefined;
+    const sentAttachments = attachments.map((item) => item.id);
+    let answer = "";
+    if (codex) setAttachments([]);
     try {
       const response = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ conversationId: activeId, revision: history.revision, model: selectedModel, prompt, ...(screenPreviewId ? { screenPreviewId } : {}) }),
+        body: JSON.stringify(
+          codex
+            ? { model: CODEX_MODEL.slug, prompt, ...(knownThread ? { threadId: knownThread } : {}), ...(sentAttachments.length > 0 ? { attachments: sentAttachments } : {}) }
+            : { conversationId: activeId, revision: history.revision, model: selectedModel, prompt, ...(screenPreviewId ? { screenPreviewId } : {}) },
+        ),
         signal: activeController.signal,
       });
       if (!response.ok || !response.body) {
@@ -268,16 +378,19 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
           const type = lines.find((line) => line.startsWith("event:"))?.slice(6).trim();
           const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
           if (data) {
-            const payload = JSON.parse(data) as { text?: string; message?: string };
+            const payload = JSON.parse(data) as { text?: string; message?: string; threadId?: string };
             const tool = type === "tool" ? readToolEvent(payload) : undefined;
             if (tool) {
               setStatus("streaming");
               // Text streamed before a tool call was only the model thinking aloud; the saved answer is the last round's.
-              if (!seenTools.has(tool.id)) { seenTools.add(tool.id); setLiveText(""); }
+              if (!seenTools.has(tool.id)) { seenTools.add(tool.id); setLiveText(""); answer = ""; }
               setTools((current) => applyToolEvent(current, tool));
             } else if (type === "delta" && typeof payload.text === "string") {
               setStatus("streaming");
+              answer += payload.text;
               setLiveText((current) => current + payload.text);
+            } else if (type === "thread" && typeof payload.threadId === "string") {
+              codexThread.current = { chatId: activeId, threadId: payload.threadId };
             } else if (type === "completed") {
               sawCompleted = true;
             } else if (type === "error") {
@@ -288,7 +401,21 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
         }
         if (done) break;
       }
-      if (!sawCompleted) throw new Error("The local stream ended before ChatGPT confirmed completion. Partial output was not saved.");
+      if (!sawCompleted) throw new Error(codex ? "La conexión con Codex se cortó antes de terminar la respuesta." : "The local stream ended before ChatGPT confirmed completion. Partial output was not saved.");
+      if (codex) {
+        // Codex saved the chat itself; show the new turn now and let the list catch up in the background.
+        const threadId = codexThread.current?.threadId;
+        codexThread.current = null;
+        if (threadId) {
+          setHistory((current) => ({ revision: 0, conversations: appendTurn(current.conversations, { id: threadId, prompt, answer, now: Date.now() }) }));
+          live.current.activeId = threadId;
+          setActiveId(threadId);
+        }
+        setStatus("complete");
+        setSubmittedPrompt("");
+        void refreshHistory(activeController.signal).catch(() => {});
+        return;
+      }
       setStatus("complete");
       setSubmittedPrompt("");
       const next = await refreshHistory(activeController.signal);
@@ -300,7 +427,7 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
         setNotice("The response completed and was saved. Local history could not refresh; reload to see the updated conversation.");
       } else {
         setStatus("error");
-        setNotice(error instanceof Error ? error.message : "ChatGPT could not complete this response.");
+        setNotice(error instanceof Error ? error.message : codex ? "Codex no pudo completar la respuesta." : "ChatGPT could not complete this response.");
       }
     } finally {
       if (controller.current === activeController) controller.current = null;
@@ -316,6 +443,7 @@ export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: ()
     history, historyLoading, activeId, draft, setDraft, status, liveText, submittedPrompt, notice,
     captureActive, includeScreen, setIncludeScreen, screen, prepareScreen, wantsScreen,
     activeConversation, messages, busy, tools,
+    engine, attachments, attachFiles, removeAttachment, historyQuery, searchHistory,
     sendMessage, submit, cancelResponse, beginNewConversation, clearHistory, removeConversation, openConversation,
   };
 }

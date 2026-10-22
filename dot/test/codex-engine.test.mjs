@@ -289,8 +289,8 @@ test("an MCP tool call is a tool row, and Engram's tools read as Consultando mem
   env.fake.notify("turn/completed", completed());
   await result;
   const rows = toolEvents(events);
-  assert.deepEqual(rows[0], { id: "t1", name: engineModule.CODEX_TOOL_NAME, summary: "Consultando memoria…", status: "running" });
-  assert.deepEqual(rows[1], { id: "t1", name: engineModule.CODEX_TOOL_NAME, summary: "Consultando memoria…", status: "done" });
+  assert.deepEqual(rows[0], { id: "t1", name: "memory", summary: "Consultando memoria…", status: "running" });
+  assert.deepEqual(rows[1], { id: "t1", name: "memory", summary: "Consultando memoria…", status: "done" });
   assert.deepEqual([rows[2].summary, rows[3].summary, rows[3].detail], ["playwright: browser_navigate", "playwright: browser_navigate", "Page loaded"]);
   assert.deepEqual([rows[4].status, rows[4].detail], ["error", "no claude"]);
   assert.equal(rows[5].summary, "Consultando memoria…", "the mem_* tools of any server are memory");

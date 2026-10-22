@@ -3,10 +3,15 @@ import type { Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { agentHookFile, createAgentHookToken, installAgentHook, releaseAgentRequests, removeAgentHookFile, writeAgentHookFile } from "./agent-hook.mts";
+import { createAttachmentStore, installAttachments, type AttachmentStore } from "./attachments.mts";
 import { createCaptureController, createCaptureService, describeCapture, installCaptureController, type CaptureController, type CaptureService } from "./capture.mts";
+import { createClaudeTaskRegistry, installClaudeTasks, type ClaudeTaskRegistry } from "./claude-tasks.mts";
+import { createCodexAppServer, installCodexEngine, installSystemBrowser, type CodexAppServer } from "./codex-app-server.mts";
 import { configureEnvironment, DOT_PORT, dotOrigin, mascotUrl, TOGGLE_SHORTCUT } from "./config.mts";
 import { controlCookieDetails, createControlToken, installControlToken } from "./control-token.mts";
 import { createCursorFeed, type CursorFeed } from "./cursor.mts";
+import { captureControllerScreenSource, codexConfigOverrides, codexMcpEnv, startDotMcpServer, type DotMcpServer } from "./dot-mcp.mts";
+import { detectExternalMcp, installExternalMcp } from "./external-mcp.mts";
 import { PortInUseError } from "./listen.mts";
 import { createMascotController, installWindowController, mascotWindowOptions, type MascotController, type Point, type Rect } from "./mascot.mts";
 import { isAllowedNavigation, isSignInUrl, systemBrowserTarget } from "./navigation.mts";
@@ -39,6 +44,11 @@ let captureService: CaptureService | undefined;
 let captureController: CaptureController | undefined;
 /** The Claude Code hook discovery file and the token it holds; both exist only while the server listens. */
 let hookDiscovery: { file: string; token: string } | undefined;
+/** The Codex engine and what it needs: Dot's MCP server, the background Claude Code tasks, the files the user drops on the chat. */
+let codexServer: CodexAppServer | undefined;
+let dotMcp: DotMcpServer | undefined;
+let claudeTasks: ClaudeTaskRegistry | undefined;
+let attachments: AttachmentStore | undefined;
 
 function showWindow() {
   if (!window || window.isDestroyed()) createMascot();
@@ -264,6 +274,36 @@ function createTray() {
   refreshTray();
 }
 
+/**
+ * Codex as Dot's engine (S1, S5, S6). Dot's MCP server, the optional Chrome and computer-use servers and the app-server are
+ * wired here with `-c` overrides (nothing in the user's config files is edited), and the engine is published on globalThis
+ * for the chat route. Nothing here is fatal: when Codex is missing or unsupported the status says so in Spanish and Dot keeps
+ * answering with its built-in assistant. The app-server itself starts in the background; the page polls its status.
+ */
+async function startCodexEngine() {
+  try {
+    claudeTasks = createClaudeTaskRegistry();
+    installClaudeTasks(globalThis, claudeTasks);
+    dotMcp = await startDotMcpServer({ tasks: claudeTasks, screen: captureControllerScreenSource(globalThis) });
+    const external = await detectExternalMcp();
+    installExternalMcp(globalThis, external.info);
+    // Every override is a TOML literal string with no spaces or shell characters, so it passes a Windows `.cmd` shim intact.
+    const overrides = [...codexConfigOverrides(dotMcp, { readApprovalMode: "approve" }), ...external.overrides];
+    codexServer = createCodexAppServer({
+      env: { ...process.env, ...codexMcpEnv(dotMcp), ...external.env, ANONYMIZED_TELEMETRY: "false" },
+      configOverrides: overrides,
+    });
+    installCodexEngine(globalThis, codexServer);
+    // The sign-in page of Codex must open exactly as Codex built it (its callback is the Codex process on this computer).
+    installSystemBrowser(globalThis, (url) => void shell.openExternal(url));
+    void codexServer.start().then((result) => {
+      if (!result.ok) console.error(`Codex is not available (${result.reason}); Dot uses its built-in assistant.`);
+    });
+  } catch (error) {
+    console.error("Could not set up the Codex engine; Dot uses its built-in assistant.", error);
+  }
+}
+
 async function start() {
   Menu.setApplicationMenu(null);
   const userData = app.getPath("userData");
@@ -354,6 +394,11 @@ async function start() {
     return;
   }
 
+  // Files dropped on the chat live in a private temp folder until Dot quits.
+  attachments = createAttachmentStore();
+  installAttachments(globalThis, attachments);
+  await startCodexEngine();
+
   // The relay finds the port and token here. Without the file the companion stays quiet and Claude Code asks in its terminal.
   const discoveryFile = agentHookFile(userData, process.env);
   try {
@@ -409,14 +454,29 @@ if (!app.requestSingleInstanceLock()) {
     quitting = true;
     flushPosition();
   });
-  app.on("will-quit", () => {
-    // Nobody may be left waiting for a window that is gone, and the token must not outlive this launch.
-    releaseAgentRequests(globalThis);
-    if (hookDiscovery) removeAgentHookFile(hookDiscovery.file, hookDiscovery.token);
-    globalShortcut.unregisterAll();
-    cursorFeed?.stop();
-    captureService?.dispose();
-    server?.close();
+  let cleaned = false;
+  let shuttingDown = false;
+  app.on("will-quit", (event) => {
+    if (!cleaned) {
+      cleaned = true;
+      // Nobody may be left waiting for a window that is gone, and the token must not outlive this launch.
+      releaseAgentRequests(globalThis);
+      if (hookDiscovery) removeAgentHookFile(hookDiscovery.file, hookDiscovery.token);
+      globalShortcut.unregisterAll();
+      cursorFeed?.stop();
+      captureService?.dispose();
+      claudeTasks?.dispose();
+      attachments?.dispose();
+      server?.close();
+    }
+    // Codex and Dot's MCP server get a moment to stop (its process tree is killed after a short grace), then the app quits for real.
+    if (!shuttingDown && (codexServer || dotMcp)) {
+      shuttingDown = true;
+      event.preventDefault();
+      const stopped = Promise.allSettled([codexServer?.stop(), dotMcp?.close()]);
+      const grace = new Promise<void>((resolve) => setTimeout(resolve, 5_000));
+      void Promise.race([stopped, grace]).finally(() => app.quit());
+    }
   });
   app.whenReady().then(start).catch(failStart);
 }

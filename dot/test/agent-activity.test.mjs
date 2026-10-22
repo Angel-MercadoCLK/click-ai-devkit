@@ -54,10 +54,12 @@ test("the state reader accepts a Dot tool request and keeps its kind", () => {
 });
 
 test("the card shows a Dot request with Permitir, Denegar and Siempre only when offered, and hands nothing to the terminal", async () => {
+  // The wording and the choices per kind live in agent-card-view.ts (and are exercised in engine-client.test.mjs).
   const source = await read("app/mascot/agent-card.tsx");
-  assert.match(source, /pending\.kind === "dot-tool"/);
-  assert.match(source, /!own &&[^\n]*Responder en la terminal/);
-  assert.match(source, /Dot quiere usar/);
+  const view = await read("app/mascot/agent-card-view.ts");
+  assert.match(view, /pending\.kind === "dot-tool"/);
+  assert.match(source, /view\.showTerminal &&[^\n]*choiceLabel\("terminal"/);
+  assert.match(source + view, /Dot quiere usar/);
   assert.match(source, /alwaysOffered\s*&&/);
 });
 

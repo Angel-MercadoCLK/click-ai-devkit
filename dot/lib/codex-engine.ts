@@ -36,7 +36,12 @@ export const CODEX_SANDBOX_MODE = "workspace-write" as const;
  * The activity UI knows three tool names. Codex rows reuse one of them until `tool-events.ts` gets a "codex" name: change
  * this single constant then (the summaries already say what each row is).
  */
-export const CODEX_TOOL_NAME: ToolName = "powershell";
+export const CODEX_TOOL_NAME: ToolName = "codex";
+/** The MCP servers Dot registers for the user's Chrome and for mouse and keyboard (see desktop/external-mcp.mts). */
+export const CHROME_SERVER = "chrome";
+export const COMPUTER_SERVER = "computer";
+/** Dot's own MCP server and the tools whose rows get their own name. */
+const DOT_SERVER = "dot";
 /** How long a turn waits for Codex to confirm an interrupt before it ends anyway. */
 export const INTERRUPT_GRACE_MS = 10_000;
 
@@ -107,15 +112,24 @@ function fileNames(paths: string[]) {
 
 const isMemoryCall = (server: string, tool: string) => /engram/i.test(server) || /^mem_/.test(tool);
 
+/** The activity name of an MCP call, and the row's summary: the tool alone when the name already says where it runs. */
+function mcpRow(server: string, tool: string): { name: ToolName; summary: string } {
+  if (isMemoryCall(server, tool)) return { name: "memory", summary: MEMORY_SUMMARY };
+  if (server === CHROME_SERVER) return { name: "chrome", summary: tool };
+  if (server === COMPUTER_SERVER) return { name: "computer", summary: tool };
+  if (server === DOT_SERVER) return { name: tool === "look_at_screen" ? "screen" : "claude_code", summary: tool };
+  return { name: CODEX_TOOL_NAME, summary: `${server}: ${tool}` };
+}
+
 type Known = { name: ToolName; summary: string; /** The files of a file change. */ paths?: string[] };
 
 /** The tool row for a thread item, or undefined for items that are not activity (messages, reasoning, and the rest). */
 function toolRowFor(thing: ThreadItem): { event: ToolEvent; known: Known } | undefined {
-  const row = (summary: string, status: ToolEvent["status"], detail?: string, paths?: string[]) => {
+  const row = (summary: string, status: ToolEvent["status"], detail?: string, paths?: string[], name: ToolName = CODEX_TOOL_NAME) => {
     const detailText = detail === undefined || detail === "" ? undefined : clipDetail(detail, DETAIL_TAIL);
     return {
-      event: { id: thing.id, name: CODEX_TOOL_NAME, summary, status, ...(detailText === undefined ? {} : { detail: detailText }) },
-      known: { name: CODEX_TOOL_NAME, summary, ...(paths ? { paths } : {}) },
+      event: { id: thing.id, name, summary, status, ...(detailText === undefined ? {} : { detail: detailText }) },
+      known: { name, summary, ...(paths ? { paths } : {}) },
     };
   };
   if (thing.type === "commandExecution") {
@@ -136,12 +150,12 @@ function toolRowFor(thing: ThreadItem): { event: ToolEvent; known: Known } | und
   }
   if (thing.type === "mcpToolCall") {
     const memory = isMemoryCall(thing.server, thing.tool);
-    const summary = memory ? MEMORY_SUMMARY : `${thing.server}: ${thing.tool}`;
-    if (thing.status === "inProgress") return row(summary, "running");
-    if (thing.status === "failed") return row(summary, "error", thing.error?.message ?? "");
+    const { name, summary } = mcpRow(thing.server, thing.tool);
+    if (thing.status === "inProgress") return row(summary, "running", undefined, undefined, name);
+    if (thing.status === "failed") return row(summary, "error", thing.error?.message ?? "", undefined, name);
     // What Engram returned is the model's to read; the row only says it was consulted.
     const resultText = memory ? "" : list(thing.result?.content).map((part) => (isRecord(part) && part.type === "text" ? text(part.text) : null)).filter(Boolean).join("\n");
-    return { ...row(summary, "done"), event: { id: thing.id, name: CODEX_TOOL_NAME, summary, status: "done", ...(resultText ? { detail: clipDetail(resultText, MCP_RESULT_TAIL) } : {}) } };
+    return { ...row(summary, "done", undefined, undefined, name), event: { id: thing.id, name, summary, status: "done", ...(resultText ? { detail: clipDetail(resultText, MCP_RESULT_TAIL) } : {}) } };
   }
   return undefined;
 }
@@ -189,6 +203,8 @@ type Run = {
   emittedAny: boolean;
   lastError: string | null;
   stopRequested: boolean;
+  /** Interrupts the turn from outside the request (the island's Detener while Dot uses the computer). */
+  stop: () => void;
   finish: (result: CodexTurnResult) => void;
 };
 
@@ -203,6 +219,8 @@ export function createCodexEngine(transport: CodexTransport, deps: CodexEngineDe
   const runs = new Map<string, Run>();
   const loaded = new Set<string>();
   const openRequests = new Map<string, AbortController>();
+  /** MCP calls in progress on the Chrome and computer servers: while one runs, Dot is using the user's machine. */
+  const computerCalls = new Map<string, { threadId: string; server: string }>();
 
   const notReady = () => {
     const status = transport.status();
@@ -274,6 +292,10 @@ export function createCodexEngine(transport: CodexTransport, deps: CodexEngineDe
         if (!run.streamed.has(thing.id)) delta(run, thing.id, body);
         run.completedMessages.push({ id: thing.id, text: body, phase: text(thing.phase) });
         return;
+      }
+      if (thing.type === "mcpToolCall" && (thing.server === CHROME_SERVER || thing.server === COMPUTER_SERVER)) {
+        if (thing.status === "inProgress") computerCalls.set(thing.id, { threadId: run.threadId, server: thing.server });
+        else computerCalls.delete(thing.id);
       }
       const mapped = toolRowFor(thing);
       if (!mapped) return;
@@ -420,6 +442,32 @@ export function createCodexEngine(transport: CodexTransport, deps: CodexEngineDe
   return {
     status: () => transport.status(),
 
+    /** What Dot is doing to the user's machine right now: the servers with a call in progress and the chats they run in. */
+    activity(): { computerUse: { active: boolean; servers: string[]; threadIds: string[] } } {
+      const calls = [...computerCalls.values()];
+      return { computerUse: { active: calls.length > 0, servers: [...new Set(calls.map((call) => call.server))], threadIds: [...new Set(calls.map((call) => call.threadId))] } };
+    },
+
+    /** Detener from the island: interrupts every turn that has a Chrome or computer call in progress. Returns how many were asked to stop. */
+    stopComputerUse(): number {
+      const threadIds = new Set([...computerCalls.values()].map((call) => call.threadId));
+      let stopped = 0;
+      for (const threadId of threadIds) {
+        const run = runs.get(threadId);
+        if (!run) continue;
+        run.stop();
+        stopped += 1;
+      }
+      return stopped;
+    },
+
+    /** Removes a chat from the history (Codex keeps archived chats on disk; they only stop being listed). */
+    async archiveThread(threadId: string): Promise<void> {
+      requireReady();
+      await transport.request("thread/archive", { threadId });
+      loaded.delete(threadId);
+    },
+
     async accountStatus(): Promise<CodexAccountStatus> {
       const problem = notReady();
       if (problem) return { state: "unavailable", message: problem };
@@ -517,9 +565,11 @@ export function createCodexEngine(transport: CodexTransport, deps: CodexEngineDe
         emittedAny: false,
         lastError: null,
         stopRequested: false,
+        stop: () => {},
         finish: (result) => {
           if (graceTimer !== undefined) clearTimer(graceTimer);
           runs.delete(threadId);
+          for (const [itemId, call] of computerCalls) if (call.threadId === threadId) computerCalls.delete(itemId);
           finishRun(result);
         },
       };
@@ -535,6 +585,7 @@ export function createCodexEngine(transport: CodexTransport, deps: CodexEngineDe
         run.stopRequested = true;
         interrupt();
       };
+      run.stop = onAbort;
       signal.addEventListener("abort", onAbort, { once: true });
       try {
         let started: unknown;

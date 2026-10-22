@@ -421,30 +421,42 @@ test("the capture-controller source maps preparation failures to fixed wording a
 
 // Codex configuration -------------------------------------------------------------------------------------------
 
-test("codexConfigOverrides returns the exact -c values: url, token env var, tool list and per-tool approval", async () => {
+test("codexConfigOverrides returns the exact -c values as TOML literal strings: url, token env var, tool list and per-tool approval", async () => {
   const server = { url: "http://127.0.0.1:5123/mcp", token: "super-secret-token" };
   const overrides = mcp.codexConfigOverrides(server);
   assert.deepEqual(overrides, [
-    'mcp_servers.dot.url="http://127.0.0.1:5123/mcp"',
-    'mcp_servers.dot.bearer_token_env_var="DOT_MCP_TOKEN"',
-    'mcp_servers.dot.enabled_tools=["delegate_to_claude","claude_task_status","claude_task_result","claude_task_cancel","look_at_screen"]',
-    'mcp_servers.dot.tools.delegate_to_claude.approval_mode="prompt"',
-    'mcp_servers.dot.tools.claude_task_status.approval_mode="auto"',
-    'mcp_servers.dot.tools.claude_task_result.approval_mode="auto"',
-    'mcp_servers.dot.tools.claude_task_cancel.approval_mode="prompt"',
-    'mcp_servers.dot.tools.look_at_screen.approval_mode="auto"',
+    "mcp_servers.dot.url='http://127.0.0.1:5123/mcp'",
+    "mcp_servers.dot.bearer_token_env_var='DOT_MCP_TOKEN'",
+    "mcp_servers.dot.enabled_tools=['delegate_to_claude','claude_task_status','claude_task_result','claude_task_cancel','look_at_screen']",
+    "mcp_servers.dot.tools.delegate_to_claude.approval_mode='prompt'",
+    "mcp_servers.dot.tools.claude_task_status.approval_mode='auto'",
+    "mcp_servers.dot.tools.claude_task_result.approval_mode='auto'",
+    "mcp_servers.dot.tools.claude_task_cancel.approval_mode='prompt'",
+    "mcp_servers.dot.tools.look_at_screen.approval_mode='auto'",
   ]);
   assert.ok(!overrides.join("\n").includes(server.token), "the token travels only in the environment");
   assert.deepEqual(mcp.codexMcpEnv(server), { DOT_MCP_TOKEN: "super-secret-token" });
   assert.deepEqual(mcp.codexConfigArgs(server).filter((_, index) => index % 2 === 0), Array(overrides.length).fill("-c"));
 });
 
+test("every override is safe for a Windows .cmd shim: no double quotes, spaces or %&|<>^!, and the pre-approved read mode is still literal", async () => {
+  const { SHIM_SAFE_ARG } = await import("../desktop/codex-app-server.mts");
+  const overrides = mcp.codexConfigOverrides({ url: "http://127.0.0.1:5123/mcp" }, { readApprovalMode: "approve" });
+  for (const override of overrides) {
+    assert.ok(SHIM_SAFE_ARG.test(override), `${override} must pass the shim-safe check`);
+    assert.ok(!/["\s%&|<>^!]/.test(override), `${override} must hold no shell metacharacter`);
+  }
+  assert.ok(overrides.includes("mcp_servers.dot.tools.look_at_screen.approval_mode='approve'"));
+  assert.ok(overrides.includes("mcp_servers.dot.tools.delegate_to_claude.approval_mode='prompt'"), "starting a task always asks");
+  assert.throws(() => mcp.codexConfigOverrides({ url: "http://127.0.0.1:1/mcp?a=b&c=d" }), "a URL cmd.exe could reinterpret is refused");
+});
+
 test("codexConfigOverrides honors a custom env var name, server name and read mode, and refuses unsafe names", () => {
   const server = { url: "http://127.0.0.1:1/mcp", token: "t" };
   const overrides = mcp.codexConfigOverrides(server, { envVarName: "OTHER_TOKEN", serverName: "dot-2", readApprovalMode: "approve" });
-  assert.ok(overrides.includes('mcp_servers.dot-2.bearer_token_env_var="OTHER_TOKEN"'));
-  assert.ok(overrides.includes('mcp_servers.dot-2.tools.look_at_screen.approval_mode="approve"'));
-  assert.ok(overrides.includes('mcp_servers.dot-2.tools.delegate_to_claude.approval_mode="prompt"'));
+  assert.ok(overrides.includes("mcp_servers.dot-2.bearer_token_env_var='OTHER_TOKEN'"));
+  assert.ok(overrides.includes("mcp_servers.dot-2.tools.look_at_screen.approval_mode='approve'"));
+  assert.ok(overrides.includes("mcp_servers.dot-2.tools.delegate_to_claude.approval_mode='prompt'"));
   assert.deepEqual(mcp.codexMcpEnv(server, { envVarName: "OTHER_TOKEN" }), { OTHER_TOKEN: "t" });
   assert.throws(() => mcp.codexConfigOverrides(server, { serverName: 'dot"]\n[evil' }));
   assert.throws(() => mcp.codexConfigOverrides(server, { envVarName: "BAD NAME" }));

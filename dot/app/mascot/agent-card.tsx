@@ -6,6 +6,7 @@ import { answersOnClick, buildAnswers, canSubmit, emptySelection, singleClickAns
 import type { AgentChoice } from "./use-agent";
 import { Lente } from "./lente";
 import type { Answers } from "./agent-choices.ts";
+import { cardView, choiceLabel, codexCardBody } from "./agent-card-view.ts";
 
 type CardProps = {
   pending: PendingView;
@@ -23,10 +24,13 @@ function CardContent({ pending, busy, failed, onDecide }: CardProps) {
   const { questions } = pending;
   const [selection, setSelection] = useState(() => emptySelection(questions ?? []));
   const asking = questions !== null;
-  // A request from one of Dot's own tools (PowerShell, Claude Code): there is no terminal to hand it back to.
-  const own = pending.kind === "dot-tool";
+  // A request from one of Dot's own tools (PowerShell, Claude Code) or from Codex: there is no terminal to hand it back to.
+  const view = cardView(pending);
+  const own = view.source === "dot-tool";
+  const codex = view.source === "codex";
+  const codexBody = codex ? codexCardBody(pending) : null;
   return (
-    <section className="agent-card" role="group" aria-label={own ? `Dot quiere usar ${pending.tool}` : `Claude Code te necesita en ${pending.project}`}>
+    <section className="agent-card" role="group" aria-label={view.ariaLabel} data-source={view.source}>
       <div className="agent-card-glow" aria-hidden="true" />
       <div className="agent-card-lente">
         <Lente state="approval" size={96} />
@@ -35,7 +39,7 @@ function CardContent({ pending, busy, failed, onDecide }: CardProps) {
         <header className="agent-card-header">
           <span className="agent-dot" aria-hidden="true" />
           <span className="agent-card-project">{pending.project}</span>
-          <span className="agent-card-source">{own ? "Dot" : "Claude Code"}</span>
+          <span className="agent-card-source">{view.sourceLabel}</span>
         </header>
         <div className="agent-card-body">
           {asking ? (
@@ -67,6 +71,12 @@ function CardContent({ pending, busy, failed, onDecide }: CardProps) {
                 </fieldset>
               ))}
             </>
+          ) : codexBody ? (
+            <>
+              <p className="agent-card-summary">{codexBody.heading}</p>
+              {codexBody.summary && <p className="agent-card-note">{codexBody.summary}</p>}
+              <pre className="agent-card-detail">{codexBody.detail}</pre>
+            </>
           ) : own ? (
             <>
               <p className="agent-card-summary">Dot quiere usar <b>{pending.tool}</b></p>
@@ -79,7 +89,7 @@ function CardContent({ pending, busy, failed, onDecide }: CardProps) {
               {pending.detail && <pre className="agent-card-detail">{pending.detail}</pre>}
             </>
           )}
-          {failed && <p className="agent-card-error" role="status">{own ? "No se pudo enviar tu respuesta. Inténtalo de nuevo." : "No se pudo enviar tu respuesta. Responde en la terminal."}</p>}
+          {failed && <p className="agent-card-error" role="status">{view.failedText}</p>}
         </div>
         <footer className="agent-card-actions">
           {asking ? (
@@ -92,12 +102,12 @@ function CardContent({ pending, busy, failed, onDecide }: CardProps) {
             <>
               <button className="agent-action" type="button" disabled={busy} onClick={() => onDecide("deny")}>Denegar <kbd>N</kbd></button>
               {pending.alwaysOffered && (
-                <button className="agent-action" type="button" disabled={busy} title={own ? "Permitir este comando exacto hasta que cierres Dot" : "Permitir y recordar esta regla"} onClick={() => onDecide("always")}>Siempre</button>
+                <button className="agent-action" type="button" disabled={busy} title={view.alwaysTitle} onClick={() => onDecide("always")}>{choiceLabel("always", pending.kind)}</button>
               )}
               <button className="agent-action primary" type="button" disabled={busy} onClick={() => onDecide("allow")}>Permitir <kbd>Y</kbd></button>
             </>
           )}
-          {!own && <button className="agent-link" type="button" disabled={busy} onClick={() => onDecide("terminal")}>Responder en la terminal</button>}
+          {view.showTerminal && <button className="agent-link" type="button" disabled={busy} onClick={() => onDecide("terminal")}>{choiceLabel("terminal", pending.kind)}</button>}
         </footer>
       </div>
     </section>

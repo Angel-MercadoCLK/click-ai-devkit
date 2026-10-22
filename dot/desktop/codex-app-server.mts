@@ -161,7 +161,7 @@ function chooseLauncher(found: string | string[] | null | undefined, platform: N
 }
 
 /** What cmd.exe cannot reinterpret: no quotes, spaces, `%`, `&`, `|`, `<`, `>`, `^`, `!` or control characters. */
-const SHIM_SAFE_ARG = /^[A-Za-z0-9_.\-:/'[\],@=+{}]+$/;
+export const SHIM_SAFE_ARG = /^[A-Za-z0-9_.\-:/'[\],@=+{}]+$/;
 
 function createWhereCodex(spawn: ToolSpawn, env: NodeJS.ProcessEnv, timers: ToolTimers, killTree: KillTree): WhichCodex {
   const where = win32.join(env.SystemRoot ?? env.windir ?? "C:\\Windows", "System32", "where.exe");
@@ -562,4 +562,35 @@ export const isCodexTransport = (value: unknown): value is CodexTransport =>
 export function installCodexEngine(target: object, transport: unknown) {
   if (!isCodexTransport(transport)) throw new Error("The Codex engine is malformed.");
   Reflect.set(target, Symbol.for(CODEX_ENGINE_KEY), transport);
+}
+
+// System browser ------------------------------------------------------------------------------------------------
+
+export const SYSTEM_BROWSER_KEY = "click-dot.system-browser";
+const SIGN_IN_HOSTS: readonly string[] = ["auth.openai.com"];
+
+/**
+ * Codex's ChatGPT sign-in page, or undefined for anything else. It is its own function (and not `systemBrowserTarget`)
+ * because that one swaps every auth.openai.com address for Dot's own page, which is right for Dot's sign-in and wrong here:
+ * Codex's page must open exactly as Codex built it, since its callback goes to the Codex process on this computer.
+ */
+export function codexSignInUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || !SIGN_IN_HOSTS.includes(url.hostname)) return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Publishes the function the sign-in route uses to open Codex's page in the user's browser; it refuses any other address. */
+export function installSystemBrowser(target: object, open: (url: string) => void) {
+  Reflect.set(target, Symbol.for(SYSTEM_BROWSER_KEY), (value: unknown): boolean => {
+    const url = codexSignInUrl(value);
+    if (!url) return false;
+    open(url);
+    return true;
+  });
 }

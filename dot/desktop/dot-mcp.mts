@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { CAPTURE_CONTROLLER_KEY } from "./capture.mts";
 import { TASK_ID_PATTERN, MAX_TASK_CHARS, type ClaudeTaskRegistry } from "./claude-tasks.mts";
+import { tomlLiteral, tomlLiteralArray } from "./external-mcp-toml.mts";
 
 // Dot's MCP server for Codex (S5): MCP streamable HTTP on 127.0.0.1, one bearer token per launch. Codex reaches it
 // through `-c mcp_servers.dot.*` overrides, so no user config file is edited. Every response is a single
@@ -446,7 +447,8 @@ export type CodexConfigOptions = {
 const TOML_KEY = /^[A-Za-z0-9_-]+$/;
 
 /**
- * The values for Codex's `-c key=value` flag that register this server. The value part is TOML. Codex 0.163 keys:
+ * The values for Codex's `-c key=value` flag that register this server. The value part is a TOML literal string
+ * ('like this', see external-mcp-toml.mts) so it passes through a Windows `.cmd` shim unchanged. Codex 0.163 keys:
  * `mcp_servers.<name>.url`, `.bearer_token_env_var`, `.enabled_tools`, and `.tools.<tool>.approval_mode`, whose values are
  * `auto | prompt | writes | approve`. Starting a task and cancelling one are `prompt`: Codex always asks the user.
  */
@@ -457,12 +459,11 @@ export function codexConfigOverrides(server: { url: string }, options: CodexConf
   if (!TOML_KEY.test(name)) throw new Error("The MCP server name is not a valid config key.");
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(envVarName)) throw new Error("The token environment variable name is not valid.");
   const prefix = `mcp_servers.${name}`;
-  const toml = (value: string) => JSON.stringify(value);
   return [
-    `${prefix}.url=${toml(server.url)}`,
-    `${prefix}.bearer_token_env_var=${toml(envVarName)}`,
-    `${prefix}.enabled_tools=[${TOOLS.map((tool) => toml(tool.name)).join(",")}]`,
-    ...TOOLS.map((tool) => `${prefix}.tools.${tool.name}.approval_mode=${toml(tool.approval === "prompt" ? "prompt" : readMode)}`),
+    `${prefix}.url=${tomlLiteral(server.url)}`,
+    `${prefix}.bearer_token_env_var=${tomlLiteral(envVarName)}`,
+    `${prefix}.enabled_tools=${tomlLiteralArray(TOOLS.map((tool) => tool.name))}`,
+    ...TOOLS.map((tool) => `${prefix}.tools.${tool.name}.approval_mode=${tomlLiteral(tool.approval === "prompt" ? "prompt" : readMode)}`),
   ];
 }
 

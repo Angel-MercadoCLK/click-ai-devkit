@@ -1,7 +1,7 @@
 // What the island shows and when, as plain functions so it can be tested without a browser: which state the character
 // is in, when the island rests as the invisible strip or becomes the pill, and the short Spanish lines the pill and the head use.
 
-import type { AgentAttention, PendingView } from "../../lib/agent-state.ts";
+import { COMPUTER_USE_TEXT, type AgentAttention, type PendingView } from "../../lib/agent-state.ts";
 import type { AgentSessionView, SessionState } from "../../lib/agent-sessions.ts";
 import type { WindowMode } from "../../lib/window-mode.ts";
 import type { LenteState } from "./lente-look.ts";
@@ -16,8 +16,8 @@ export function lenteStateFor({ attention, listening, sessions }: { attention: A
 }
 
 /** Something is going on: an agent works or needs the user, the screen is shared, Voz listens, or a session just finished. */
-export function isActive({ attention, sharing, listening, finishedRecently }: { attention: AgentAttention; sharing: boolean; listening: boolean; finishedRecently: boolean }) {
-  return attention !== "idle" || sharing || listening || finishedRecently;
+export function isActive({ attention, sharing, listening, finishedRecently, computerUse = false }: { attention: AgentAttention; sharing: boolean; listening: boolean; finishedRecently: boolean; computerUse?: boolean }) {
+  return attention !== "idle" || sharing || listening || finishedRecently || computerUse;
 }
 
 /**
@@ -73,10 +73,12 @@ const latest = (sessions: readonly AgentSessionView[], state: SessionState) =>
   sessions.filter((session) => session.state === state).reduce<AgentSessionView | undefined>((best, session) => (!best || session.updatedAt >= best.updatedAt ? session : best), undefined);
 
 /** The one line of the pill: what is waiting for the user, what the agent is doing, or that it finished. */
-export function compactLine({ sessions, pending, listening, finishedRecently }: { sessions: readonly AgentSessionView[]; pending: PendingView | null; listening: boolean; finishedRecently: boolean }) {
+export function compactLine({ sessions, pending, listening, finishedRecently, computerUse = false }: { sessions: readonly AgentSessionView[]; pending: PendingView | null; listening: boolean; finishedRecently: boolean; computerUse?: boolean }) {
   if (pending) return approvalTitle(pending);
   const needs = latest(sessions, "te necesita");
   if (needs) return `Claude Code te necesita en ${needs.project}`;
+  // Dot controlling the mouse or Chrome is never hidden behind a quieter line.
+  if (computerUse) return COMPUTER_USE_TEXT;
   const working = latest(sessions, "trabajando");
   if (working) return working.action || `Trabajando en ${working.project}`;
   if (listening) return "Escuchando…";

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AGENT_POLL_MS, applyAgentPoll, INITIAL_AGENT_POLL, readAgentState, type AgentPollResult } from "../../lib/agent-state.ts";
+import { AGENT_POLL_MS, applyActivityPoll, applyAgentPoll, INITIAL_ACTIVITY_POLL, INITIAL_AGENT_POLL, readAgentActivity, readAgentState, type ActivityPollResult, type AgentPollResult } from "../../lib/agent-state.ts";
 import type { Answers } from "./agent-choices.ts";
 
 export type AgentChoice = "allow" | "deny" | "always" | "terminal";
@@ -9,9 +9,12 @@ export type AgentChoice = "allow" | "deny" | "always" | "terminal";
 /**
  * Claude Code sessions and the request waiting for the user, polled from the local server. The desktop shell also
  * announces a new request with the `click-dot:agent` event so the page looks at once instead of on its next poll.
+ * Alongside, the background Claude Code tasks and whether Dot is using the computer are polled the same way.
  */
 export function useAgent() {
   const [poll, setPoll] = useState(INITIAL_AGENT_POLL);
+  const [activityPoll, setActivityPoll] = useState(INITIAL_ACTIVITY_POLL);
+  const [stopping, setStopping] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const alive = useRef(true);
@@ -31,6 +34,15 @@ export function useAgent() {
       reading.current = false;
     }
     if (alive.current) setPoll((current) => applyAgentPoll(current, result));
+    let activity: ActivityPollResult = { ok: false };
+    try {
+      const response = await fetch("/api/agent/activity", { cache: "no-store" });
+      const read = response.ok ? readAgentActivity(await response.json()) : undefined;
+      if (read) activity = { ok: true, activity: read };
+    } catch {
+      // A failed read keeps what was known for a moment; see applyActivityPoll.
+    }
+    if (alive.current) setActivityPoll((current) => applyActivityPoll(current, activity));
   }, []);
 
   useEffect(() => {
@@ -83,5 +95,18 @@ export function useAgent() {
     [post, refresh],
   );
 
-  return { state: poll.state, busy, failed, ack, decide };
+  /** Detener on "Dot está usando tu equipo": Codex is told to stop the turn that is using Chrome or the mouse. */
+  const stopComputer = useCallback(async () => {
+    setStopping(true);
+    try {
+      await post("/api/codex/stop", {});
+    } catch {
+      // The indicator stays until the server says the call ended, so the user can press Detener again.
+    } finally {
+      await refresh();
+      if (alive.current) setStopping(false);
+    }
+  }, [post, refresh]);
+
+  return { state: poll.state, activity: activityPoll.activity, busy, failed, ack, decide, stopComputer, stopping };
 }

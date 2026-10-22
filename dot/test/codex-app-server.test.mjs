@@ -383,3 +383,20 @@ test("the bridge publishes the server under click-dot.codex-engine and refuses a
   assert.throws(() => mod.installCodexEngine({}, { request() {} }), /malformed/);
   assert.throws(() => mod.installCodexEngine({}, null), /malformed/);
 });
+
+// System browser for the Codex sign-in ----------------------------------------------------------------------------
+
+test("the system browser opens only an https page on auth.openai.com, without credentials, and says whether it did", async () => {
+  const opened = [];
+  const target = {};
+  mod.installSystemBrowser(target, (url) => opened.push(url));
+  const open = Reflect.get(target, Symbol.for(mod.SYSTEM_BROWSER_KEY));
+  const good = "https://auth.openai.com/oauth/authorize?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fauth%2Fcallback";
+  assert.equal(open(good), true);
+  assert.deepEqual(opened, [good], "the URL is opened as Codex gave it, not replaced by Dot's own page");
+  for (const bad of ["http://auth.openai.com/x", "https://evil.example/x", "https://auth.openai.com.evil.example/x", "https://user:pw@auth.openai.com/x", "file:///etc/passwd", "javascript:alert(1)", "not a url", ""]) {
+    assert.equal(open(bad), false, bad);
+  }
+  assert.equal(opened.length, 1);
+  assert.equal(open(42), false);
+});

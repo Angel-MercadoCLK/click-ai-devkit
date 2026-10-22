@@ -1,12 +1,12 @@
 // What the chat page knows about tool calls: the `tool` events the stream route sends and how the page folds them into
 // activity lines. No Node imports: the page uses this file too.
 
-export type ToolName = "powershell" | "claude_code" | "screen";
+export type ToolName = "powershell" | "claude_code" | "screen" | "codex" | "memory" | "chrome" | "computer";
 export type ToolStatus = "running" | "waiting_approval" | "done" | "denied" | "error";
 /** Repeated events with the same id update that call's state. */
 export type ToolEvent = { id: string; name: ToolName; summary: string; status: ToolStatus; detail?: string };
 
-export const TOOL_NAMES: readonly ToolName[] = ["powershell", "claude_code", "screen"];
+export const TOOL_NAMES: readonly ToolName[] = ["powershell", "claude_code", "screen", "codex", "memory", "chrome", "computer"];
 export const TOOL_STATUSES: readonly ToolStatus[] = ["running", "waiting_approval", "done", "denied", "error"];
 export const MAX_TOOL_DETAIL = 2_000;
 const MAX_TOOL_SUMMARY = 200;
@@ -20,7 +20,16 @@ export const TOOL_STATUS_LABELS: Record<ToolStatus, string> = {
   error: "Error",
 };
 
-export const TOOL_NAME_LABELS: Record<ToolName, string> = { powershell: "PowerShell", claude_code: "Claude Code", screen: "Pantalla" };
+/** `codex`: commands and file changes on the Codex engine; `memory`: Engram; `chrome`: the user's Chrome; `computer`: mouse and keyboard. */
+export const TOOL_NAME_LABELS: Record<ToolName, string> = {
+  powershell: "PowerShell",
+  claude_code: "Claude Code",
+  screen: "Pantalla",
+  codex: "Codex",
+  memory: "Memoria",
+  chrome: "Chrome",
+  computer: "Equipo",
+};
 
 /** The end of a long output: what a finished command ended with matters most. */
 export function clipDetail(text: string, limit = MAX_TOOL_DETAIL) {
