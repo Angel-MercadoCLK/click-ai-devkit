@@ -18,17 +18,17 @@ Branch: `feat/dot-alive` (accumulates with the alive feature; one PR). Test runn
 - S3 — History. User words: "quiero tener historial de chats".
   - When Codex is the engine, the history view lists `thread/list` (newest first, searchable) and continues one with `thread/resume`.
   - The fallback loop keeps the local store.
-- S4 — Approvals. Earlier autonomy choice: "Lectura libre, escritura pregunta". Threads start with `approvalPolicy: "unlessTrusted"` and sandbox `workspaceWrite`.
-  - Every `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval`, `tool/requestUserInput` and `mcpServer/elicitation/request` becomes an island card through the existing agent broker.
+- S4 — Approvals. Earlier autonomy choice: "Lectura libre, escritura pregunta". Threads start with `approvalPolicy: "untrusted"` and sandbox `"workspace-write"`, the spellings codex 0.163 accepts.
+  - Every `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval`, `item/tool/requestUserInput` and `mcpServer/elicitation/request` becomes an island card through the existing agent broker.
   - The card offers Permitir (`accept`), Siempre en esta sesión (`acceptForSession`, only when offered in `availableDecisions`) and Denegar (`decline`).
   - The JSON-RPC request stays open until the user answers. A 105 s timeout or a dismissed card answers `decline`. Y and N keys keep working.
 - S5 — Dot MCP server for Codex.
   - Dot runs a local MCP server (streamable HTTP on 127.0.0.1, bearer token per launch) and passes it to app-server with `-c` config overrides, so no user config file is edited.
   - Tools:
     - `delegate_to_claude {task, project_dir}` returns a task id immediately and starts `claude -p --output-format stream-json --verbose --permission-mode acceptEdits` in the background, with the task on stdin. Never `--bare`.
-    - `claude_task_status {id}` returns the state and the latest progress lines.
-    - `claude_task_result {id}` returns the final result, the session id and the cost.
-    - `claude_task_cancel {id}` ends the task with SIGINT, then a tree kill.
+    - `claude_task_status {task_id}` returns the state and the latest progress lines.
+    - `claude_task_result {task_id}` returns the final result, the session id and the cost.
+    - `claude_task_cancel {task_id}` ends the task with SIGINT, then a tree kill.
     - `look_at_screen {}` returns the latest locally redacted frame, only while screen sharing is on.
   - Background Claude tasks appear as sessions in the island. Claude's own permission prompts reach the island via the existing Claude Code hooks.
   - User words: "si yo le decia 'sabes que, esta tarea la ejecutas en claude mientras tu haces x' lo haga".
@@ -44,8 +44,8 @@ Branch: `feat/dot-alive` (accumulates with the alive feature; one PR). Test runn
 
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
-| E1 | S1, S2, S3, S4, S7 | delegated writer: Codex app-server client + broker mapping (parallel with E2) | pending | |
-| E2 | S5 | delegated writer: Dot MCP server + background Claude tasks (parallel with E1) | pending | |
+| E1 | S1, S2, S3, S4, S7 | delegated writer: Codex app-server client + broker mapping (parallel with E2) | done | (next commit) |
+| E2 | S5 | delegated writer: Dot MCP server + background Claude tasks (parallel with E1) | done | 94df7e9 |
 | E3 | S6 | after E1/E2: Chrome + Windows-MCP wiring, detection and the control indicator | pending | |
 | E4 | S2, S3 | after the alive writer: chat/history UI on Codex threads, file drop | pending | |
 | E5 | S8, all | inline: docs, seam check, verifier, native review, delivery | pending | |
@@ -60,3 +60,22 @@ Branch: `feat/dot-alive` (accumulates with the alive feature; one PR). Test runn
   - Since Chrome 136, `--remote-debugging-port` is ignored on the default profile, which leaves Playwright MCP `--extension` or chrome-devtools-mcp `--autoConnect`.
   - Windows-MCP has full system access; use `strict` with input and screen tools only.
 - L3 (2026-10-22) — Engine question answer: "Codex como motor (Recomendado)".
+- L4 (2026-10-22) — E2 was done by the writer and committed as `94df7e9`.
+  - Checks: 113 related tests pass, as re-run by the parent. The writer reported `npm test` 704/704 at the time.
+  - Verified end to end against real codex-cli 0.163.0 with a scratch `CODEX_HOME`: `mcpServerStatus/list` showed the 5 tools, and `mcpServer/tool/call` worked.
+  - Override keys: `mcp_servers.dot.url`, `.bearer_token_env_var`, `.enabled_tools`, `.tools.<tool>.approval_mode` (values `auto|prompt|writes|approve`; `prompt` always asks).
+  - Deviations:
+    - Tool arguments are named `task_id` (S5 updated).
+    - On Windows, cancel tree-kills at once, because Node's SIGINT there is an abrupt kill of the direct child only.
+    - The result cap keeps the head of the text with a truncated flag.
+- L5 (2026-10-22) — E1 was done by the writer.
+  - Checks: real `codex app-server` with a scratch HOME (handshake, `account/read`, `thread/start`, `thread/list`, `thread/read`); no model turn, so streaming and approvals are tested with fakes only. The writer reported `npm test` 741/741.
+  - Protocol facts for 0.163.0:
+    - There is no `jsonrpc` field.
+    - `approvalPolicy` takes `untrusted|on-request|granular|never`; sandbox takes kebab-case `workspace-write`.
+    - The user-input method is `item/tool/requestUserInput`.
+    - `availableDecisions` needs `capabilities.experimentalApi:true`.
+    - A thread without turns cannot be resumed.
+    - On Windows, `.cmd` shim overrides need TOML literal strings with no spaces or `%&|<>^!`.
+  - S4 spellings were updated.
+  - Integration still open (next task): wiring in `main.mts`; the chat route switches to Codex; history from `thread/list`; `codex` cards in `agent-card.tsx`; a `codex` tool name in `tool-events.ts`; Codex sign-in; file drop.

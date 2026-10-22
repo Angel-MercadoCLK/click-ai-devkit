@@ -4,9 +4,9 @@
 import type { AgentSessionView, SessionState } from "./agent-sessions.ts";
 
 export type AgentQuestion = { question: string; header: string; multiSelect: boolean; options: { label: string; description: string }[] };
-/** Where a request comes from: a Claude Code hook, or one of Dot's own tools asking before it acts. */
-export type PendingKind = "claude-code" | "dot-tool";
-export const PENDING_KINDS: readonly PendingKind[] = ["claude-code", "dot-tool"];
+/** Where a request comes from: a Claude Code hook, one of Dot's own tools asking before it acts, or the Codex engine. */
+export type PendingKind = "claude-code" | "dot-tool" | "codex";
+export const PENDING_KINDS: readonly PendingKind[] = ["claude-code", "dot-tool", "codex"];
 /** What the card needs and nothing more: no working directory, no raw payload. */
 export type PendingView = { id: string; kind: PendingKind; tool: string; summary: string; detail: string; project: string; alwaysOffered: boolean; questions: AgentQuestion[] | null };
 export type AgentState = { sessions: AgentSessionView[]; pending: PendingView | null; queued: number };
