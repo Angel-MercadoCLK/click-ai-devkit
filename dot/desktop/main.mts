@@ -27,6 +27,7 @@ let server: Server | undefined;
 let quitting = false;
 let reloadOnFocus = false;
 let started = false;
+let showWhenStarted = false;
 let preferences: ReturnType<typeof createPreferenceStore> | undefined;
 let captureService: CaptureService | undefined;
 let captureController: CaptureController | undefined;
@@ -306,8 +307,8 @@ async function start() {
   screen.on("display-removed", reposition);
   screen.on("display-metrics-changed", reposition);
   started = true;
-  // The mascot is the whole app, so it appears on every start; a start with Windows does not take focus.
-  window?.once("ready-to-show", () => (mascotStartup(process.argv) === "inactive" ? mascot?.showInactive() : mascot?.show()));
+  // A start with Windows waits in the tray; a manual start (or a second launch meanwhile) shows the mascot.
+  if (mascotStartup(process.argv) === "shown" || showWhenStarted) window?.once("ready-to-show", () => mascot?.showInactive());
   if (!encryptionAvailable) {
     void dialog.showMessageBox({
       type: "warning",
@@ -329,8 +330,9 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    // Before the local server listens, a window would only show a connection error; the mascot appears on start anyway.
+    // Before the local server listens, a window would only show a connection error.
     if (started) showWindow();
+    else showWhenStarted = true;
   });
   // The tray keeps the app alive when every window is closed.
   app.on("window-all-closed", () => {});

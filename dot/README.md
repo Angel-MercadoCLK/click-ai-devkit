@@ -51,7 +51,7 @@ npm run desktop:pack:win   # unpacked Windows x64 app in release/win-unpacked
 - **Voz** listens through Windows' built-in speech recognition (`POST /api/voice/listen`), shows that it is listening with a way to cancel (`POST /api/voice/cancel`), then opens the bubble with the transcript in the message box for you to review. Nothing is sent until you press Enviar. If voice is unavailable the menu says so briefly.
 - `Ctrl+Shift+Space` opens or closes the chat bubble, bringing the mascot back first if it was hidden. Closing the window never leaves an invisible window: the tray item **Mostrar a Dot** shows it again.
 - The window is moved and resized by the desktop app. The page asks through `POST /api/window` (`{"mode":"collapsed"|"menu"|"chat"}` or `{"move":{"x":0,"y":0}}`, exact local Origin, 256-byte strict body); there is no preload script and the sandbox stays on. The mascot is dragged by hand (pointer events) because Electron drag regions swallow clicks.
-- The mascot page is `/mascot`; the home page `/` stays for the system browser, where sign-in finishes. The mascot appears on every start; when Dot starts with Windows it appears without taking focus from what you opened first.
+- The mascot page is `/mascot`; the home page `/` stays for the system browser, where sign-in finishes. When Dot starts with Windows it waits in the tray; use the tray item **Mostrar a Dot** or `Ctrl+Shift+Space` to bring the mascot up. Opening Dot yourself shows the mascot.
 
 ### Screen capture
 
