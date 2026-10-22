@@ -114,3 +114,12 @@ jobs:
           try {
             if (-not ($zip.Entries.FullName -contains 'Click Dot.exe')) { throw 'Click Dot.exe is not at the zip root' }
           } finally { $zip.Dispose() }
+
+      # Launches the real packaged exe on this disposable runner. GitHub-hosted Windows runners do not
+      # enforce Smart App Control, so this proves runtime behavior (DPAPI storage, asar + fuses, Next
+      # serving), not what end users with Smart App Control enabled will see (unsigned Dot, accepted A7).
+      - name: Smoke packaged Click Dot
+        shell: pwsh
+        run: |
+          $zipPath = 'dot/release/click-dot_0.0.0-ci_windows_amd64.zip'
+          ./scripts/dot-package-smoke.ps1 -ZipPath $zipPath -DisposableRunner
