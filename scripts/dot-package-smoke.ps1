@@ -147,16 +147,26 @@ function Wait-PageText {
     [string]$Description
   )
   $lastText = '<no text evaluated>'
+  $lastError = $null
   $deadline = [DateTime]::UtcNow.AddSeconds($cdpTimeoutSeconds)
   while ([DateTime]::UtcNow -lt $deadline) {
-    $value = Invoke-CdpEvaluate -Socket $Socket -Expression $Expression
+    # A single failed evaluation (page still loading, script error, slow reply) is retried until the deadline;
+    # only a closed DevTools socket is fatal.
+    try {
+      $value = Invoke-CdpEvaluate -Socket $Socket -Expression $Expression
+    } catch {
+      if ($Socket.State -ne [System.Net.WebSockets.WebSocketState]::Open) { throw }
+      $lastError = $_.Exception.Message
+      Start-Sleep -Seconds 1
+      continue
+    }
     if ($null -ne $value -and $null -ne $value.text) { $lastText = [string]$value.text }
     $missing = @($Required | Where-Object { -not $lastText.Contains($_) })
     if ($missing.Count -eq 0) { return $lastText }
     Start-Sleep -Seconds 1
   }
   throw ("$Description did not happen within $cdpTimeoutSeconds s; the page's JavaScript did not produce: " +
-    (($Required | ForEach-Object { "'$_'" }) -join ', ') + ". Evaluated page text:`n$lastText")
+    (($Required | ForEach-Object { "'$_'" }) -join ', ') + ". Last evaluation error: $lastError. Evaluated page text:`n$lastText")
 }
 
 function Show-ProcessOutput {
