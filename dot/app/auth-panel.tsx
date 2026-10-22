@@ -3,12 +3,26 @@
 import { useEffect, useState } from "react";
 import { ChatPanel } from "./chat-panel";
 
-type Status = { connected: boolean; email?: string | null; reauthorizationRequired?: boolean; error?: string };
+export type AuthStatus = { connected: boolean; email?: string | null; reauthorizationRequired?: boolean; error?: string };
 
-export function AuthPanel({ canonicalOrigin }: { canonicalOrigin: string }) {
-  const [status, setStatus] = useState<Status | null>(null);
+/**
+ * Connection state and the sign-in / disconnect actions, shared by the home page and the mascot. Sign-in still
+ * navigates this page to the ChatGPT URL; the desktop shell turns that into the system-browser hand-off.
+ */
+export function useAuthConnection(canonicalOrigin: string) {
+  const [status, setStatus] = useState<AuthStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+
+  async function refresh() {
+    try {
+      const response = await fetch("/api/auth/status", { cache: "no-store" });
+      if (!response.ok) throw new Error();
+      setStatus(await response.json() as AuthStatus);
+    } catch {
+      setStatus({ connected: false, error: "Connection status is unavailable." });
+    }
+  }
 
   useEffect(() => {
     if (window.location.origin !== canonicalOrigin) {
@@ -19,12 +33,7 @@ export function AuthPanel({ canonicalOrigin }: { canonicalOrigin: string }) {
     if (result === "connected") setMessage("ChatGPT plan access is authorized for this device. Load the account’s current model list to start chatting.");
     if (result === "authorization-error") setMessage("Connection was not completed. No ChatGPT access was enabled.");
     window.history.replaceState(null, "", window.location.pathname);
-    fetch("/api/auth/status", { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error();
-        setStatus(await response.json() as Status);
-      })
-      .catch(() => setStatus({ connected: false, error: "Connection status is unavailable." }));
+    void refresh();
   }, [canonicalOrigin]);
 
   async function connect() {
@@ -55,6 +64,12 @@ export function AuthPanel({ canonicalOrigin }: { canonicalOrigin: string }) {
       setBusy(false);
     }
   }
+
+  return { status, setStatus, busy, message, connect, disconnect, refresh };
+}
+
+export function AuthPanel({ canonicalOrigin }: { canonicalOrigin: string }) {
+  const { status, setStatus, busy, message, connect, disconnect } = useAuthConnection(canonicalOrigin);
 
   return (
     <section className="connection-panel" aria-labelledby="connection-title">

@@ -2,6 +2,10 @@ import { AuthPanel } from "./auth-panel";
 import { CapturePanel } from "./capture-panel";
 import { callbackUri } from "../lib/siwc.ts";
 
+// Rendered per request: the canonical origin must come from the running PORT (47321 in the desktop app), not
+// from the build environment.
+export const dynamic = "force-dynamic";
+
 export default function HomePage() {
   const canonicalOrigin = new URL(callbackUri()).origin;
   return (

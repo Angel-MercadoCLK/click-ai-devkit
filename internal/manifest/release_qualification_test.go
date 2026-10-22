@@ -517,7 +517,14 @@ func TestDotPackageSmokeRunsDisposableRunnerGuardFirst(t *testing.T) {
 	if guardIndex < 0 || resolveIndex < 0 || extractIndex < 0 || guardIndex > resolveIndex || guardIndex > extractIndex {
 		t.Fatal("Click Dot package smoke must run the disposable-runner guard before touching the package or the filesystem")
 	}
-	for _, expected := range []string{"--no-login-item", "CLICK_DOT_DISABLE_LOGIN_ITEM", "} finally {"} {
+	// The smoke must execute the page's JavaScript in the packaged app (v0.9.0 shipped a page that never
+	// hydrated while every HTML and API check passed): remote debugging, a CDP evaluation, and the mascot
+	// menu labels the hydrated page renders.
+	for _, expected := range []string{
+		"--no-login-item", "CLICK_DOT_DISABLE_LOGIN_ITEM", "} finally {", "canonicalOrigin",
+		"--remote-debugging-port", "Runtime.evaluate",
+		"Compartir mi pantalla", "Voz", "Mensaje", "Conectar con ChatGPT",
+	} {
 		if !strings.Contains(smoke, expected) {
 			t.Errorf("Click Dot package smoke missing %q", expected)
 		}

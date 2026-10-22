@@ -27,7 +27,7 @@ npm run build
 
 ## Desktop app (Windows)
 
-Click Dot can run as a Windows tray app built with Electron. It serves the production Next.js build from the same process on `http://127.0.0.1:47321` (fixed, because the Sign in with ChatGPT callback uses this port), keeps running in the tray when the window is closed, and opens with `Ctrl+Shift+Space`.
+Click Dot can run as a Windows tray app built with Electron. It serves the production Next.js build from the same process on `http://127.0.0.1:47321` (fixed, because the Sign in with ChatGPT callback uses this port) and keeps running in the tray. There is no app window: Dot lives on your desktop as a small mascot (see "The mascot").
 
 ```sh
 npm run desktop:build      # next build + compile the Electron main process
@@ -38,16 +38,39 @@ npm run desktop:pack:win   # unpacked Windows x64 app in release/win-unpacked
 - Data lives in the per-user app data folder (`auth.json`, `conversations.json`). Credentials and history are encrypted with Electron `safeStorage` (Windows DPAPI). If OS encryption is unavailable, storage stays closed.
 - If port 47321 is busy, the app shows an error and quits instead of choosing another port.
 - Start with Windows is on by default for packaged builds and can be turned off from the tray menu. Pass `--no-login-item` (or set `CLICK_DOT_DISABLE_LOGIN_ITEM=1`) to never register it, for example in smoke tests.
-- Choosing **Continue with ChatGPT** in the desktop window opens Click Dot in the system browser; choose **Continue with ChatGPT** there to finish signing in, because the callback must reach the same browser that started it. The desktop window refreshes when you come back to it.
+- Choosing **Conectar con ChatGPT** in the mascot's chat bubble opens Click Dot's home page in the system browser; choose **Continue with ChatGPT** there to finish signing in, because the callback must reach the same browser that started it. The bubble refreshes when you come back to the mascot.
 - Every web permission request (camera, microphone, screen, notifications) is denied in this version.
 - The packaged app ships as a validated `app.asar` (embedded integrity check on Windows) and the exe has these Electron fuses set: `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and `--inspect` are disabled, cookie encryption is on, and only the asar is loaded. Next.js keeps its response cache in memory and never writes inside the install directory, which is replaced on update. Packaging edits the exe resources (icon, ProductName, version) with resedit, so it works from Linux or WSL without wine; it needs network access to fetch electron-builder's icon tools.
 - Code signing is not set up yet, so Windows Smart App Control may block a freshly built unsigned `Click Dot.exe`.
 
+### The mascot
+
+- Dot is a small spark character, frameless and transparent, always on top and off the taskbar. It starts in the bottom-right corner of the primary display's work area, you can drag it anywhere (the position is remembered and kept on a visible display, also when monitors change), and the window cannot be resized by hand.
+- Click the mascot to open a compact menu with three buttons: **Compartir mi pantalla**, **Voz** and **Mensaje**. Click it again, or press `Esc`, to close it. The menu opens toward the side of the screen with more room.
+- **Mensaje** opens a compact chat bubble (about 360 x 520) beside the mascot, kept inside the screen. It is the same chat as the home page (model picker, messages, composer, redacted screen preview). When Dot is not connected, the bubble shows **Conectar con ChatGPT**, which starts the sign-in in the system browser.
+- **Voz** listens through Windows' built-in speech recognition (`POST /api/voice/listen`), shows that it is listening with a way to cancel (`POST /api/voice/cancel`), then opens the bubble with the transcript in the message box for you to review. Nothing is sent until you press Enviar. If voice is unavailable the menu says so briefly. **Voz** is disabled, with the hint "Conecta ChatGPT para usar la voz.", until ChatGPT is connected, because the transcript would otherwise be discarded after using the microphone.
+- `Ctrl+Shift+Space` opens or closes the chat bubble, bringing the mascot back first if it was hidden. Closing the window never leaves an invisible window: the tray item **Mostrar a Dot** shows it again.
+- The window is moved and resized by the desktop app. The page asks through `POST /api/window` (`{"mode":"collapsed"|"menu"|"chat"}` or `{"move":{"x":0,"y":0}}`, exact local Origin, 256-byte strict body); there is no preload script and the sandbox stays on. The mascot is dragged by hand (pointer events) because Electron drag regions swallow clicks.
+- The mascot page is `/mascot`; the home page `/` stays for the system browser, where sign-in finishes. When Dot starts with Windows it waits in the tray; use the tray item **Mostrar a Dot** or `Ctrl+Shift+Space` to bring the mascot up. Opening Dot yourself shows the mascot.
+
+### Voice
+
+- "Voz" listens on your default microphone through the speech recognition built into Windows (a Windows PowerShell 5.1 helper started on demand, stopped by silence, a second click or 20 seconds). It returns text only, which lands in the message box for you to review; Dot never stores or forwards audio.
+- If Windows has a classic speech recognizer for your language, recognition happens on the device. Otherwise Dot uses Windows' online dictation, which requires Settings > Privacy and security > Speech > Online speech recognition, and **Windows sends the audio to Microsoft** for recognition. Many Windows 11 installations only have the online path.
+- If there is no recognizer, microphone or permission, Dot says so in Spanish.
+
+### Control token
+
+- Origin and Host checks cannot tell the mascot page from another local process: both can be forged, and the loopback interface is shared with other users of the computer. So at every launch the desktop app generates a random 256-bit token (`crypto.randomBytes(32)`), publishes it to the in-process server on `globalThis[Symbol.for("click-dot.control-token")]` and sets it as an httpOnly, SameSite=Strict, session-only cookie for `http://127.0.0.1:47321` in the app's own session, before the server and the mascot window start (if the cookie cannot be set, Dot does not start).
+- `POST /api/capture`, `POST /api/capture/preview`, `POST /api/voice/listen`, `POST /api/voice/cancel` and `POST /api/window` require that cookie (compared in constant time) on top of the exact local Origin and Host; otherwise they answer `403 {"error":"Request rejected."}` before touching anything. `GET /api/capture/status` answers `available: false` to a client without the cookie. Sign-in, auth status, models, history and chat routes do not use the token, so the system browser still completes sign-in.
+- The token is never rendered into a page or returned by any route. Without a published token (plain `npm run dev` or a browser against a server that has no desktop app) nothing is enforced and these routes answer as before (`503` unavailable). A published value that is not a well-formed token refuses everything.
+- Consequence: the home page `/` opened in the system browser has no cookie, so its capture panel reports "Screen capture is available in the desktop app." Use the mascot (or the tray) to control capture.
+
 ### Screen capture
 
-- Off by default. Turn it on from the Click Dot window ("Let Dot see your screen") or from the tray ("Let Dot see my screen"). Your choice is remembered across restarts.
-- While it is on, the window shows "Dot can see your screen" and the tray icon shows a red dot with the tooltip "Click Dot — seeing your screen".
-- Pause at any time from the window or the tray. Pausing is for the current session only, so a restart resumes capture if it was on.
+- Off by default. Turn it on from the mascot menu ("Compartir mi pantalla") or from the tray ("Let Dot see my screen"). Your choice is remembered across restarts.
+- While it is on, the sharing indicator is visible in every mascot mode and is never replaced by voice: a red ring (amber when paused), the visible text "Viendo tu pantalla" ("Pantalla en pausa" when paused) under the mascot when it is collapsed, as a chip with **Pausar**/**Reanudar** in the menu, and as a chip in the header of the chat bubble, plus a pause badge on the collapsed mascot. While **Voz** listens, that listening state has its own dashed teal inner ring and a separate cancel badge; it does not hide or replace any of the capture controls. The tray icon shows a red dot with the tooltip "Click Dot — seeing your screen".
+- Pause at any time from the mascot or the tray. Pausing is for the current session only, so a restart resumes capture if it was on.
 - Dot captures your main display every 10 seconds and keeps only the last 6 frames (about one minute) in memory. Frames are never written to disk and are dropped when you pause, turn capture off, or quit.
 - Capture runs inside the desktop app, and web pages still get no screen, camera or microphone permission. In a plain browser or `npm run dev`, capture is unavailable. Frames leave the computer only as described in "Screen in chat".
 

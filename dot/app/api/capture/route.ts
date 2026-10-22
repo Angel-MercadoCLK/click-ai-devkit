@@ -1,10 +1,11 @@
 import { isLocalRequest, noStore } from "../../../lib/auth-http.ts";
+import { hasControlAccess } from "../../../lib/control-token.ts";
 import { CaptureRequestError, getCaptureController, readCaptureAction, sanitizeCaptureStatus, UNAVAILABLE_STATUS } from "../../../lib/capture-controller.ts";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  if (!isLocalRequest(request, true)) return Response.json({ error: "Request rejected." }, { status: 403, headers: noStore });
+  if (!isLocalRequest(request, true) || !hasControlAccess(request)) return Response.json({ error: "Request rejected." }, { status: 403, headers: noStore });
   let action;
   try {
     action = await readCaptureAction(request);

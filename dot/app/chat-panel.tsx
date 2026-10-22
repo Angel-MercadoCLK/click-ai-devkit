@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Composer, FULL_LABELS, MessageList } from "./chat/parts";
 import { applyCapturePoll, INITIAL_CAPTURE_POLL, readCapturePoll, type CapturePollResult } from "../lib/capture-state.ts";
 
-type Model = { slug: string; displayName: string };
-type Message = { role: "user" | "assistant"; content: string; createdAt: number };
-type Conversation = { id: string; title: string; updatedAt: number; messages: Message[] };
-type History = { revision: number; conversations: Conversation[] };
-type ChatStatus = "idle" | "submitted" | "streaming" | "complete" | "error";
-type ScreenPreview = { previewId: string; image: string; hiddenRegions: number; preparedAt: number };
-type ScreenState = { kind: "none" } | { kind: "preparing" } | { kind: "ready"; preview: ScreenPreview } | { kind: "failed"; message: string };
+export type Model = { slug: string; displayName: string };
+export type Message = { role: "user" | "assistant"; content: string; createdAt: number };
+export type Conversation = { id: string; title: string; updatedAt: number; messages: Message[] };
+export type History = { revision: number; conversations: Conversation[] };
+export type ChatStatus = "idle" | "submitted" | "streaming" | "complete" | "error";
+export type ScreenPreview = { previewId: string; image: string; hiddenRegions: number; preparedAt: number };
+export type ScreenState = { kind: "none" } | { kind: "preparing" } | { kind: "ready"; preview: ScreenPreview } | { kind: "failed"; message: string };
 
 const CAPTURE_POLL_MS = 4000;
 /** A preview older than this is refreshed (and shown again) before it can be sent. The server drops it after two minutes. */
@@ -28,7 +29,8 @@ function newId() {
   return globalThis.crypto.randomUUID();
 }
 
-export function ChatPanel({ onAuthorizationExpired }: { onAuthorizationExpired: () => void }) {
+/** All of the chat behavior (models, history, streaming, screen attachment). The panels only decide how it looks. */
+export function useChat({ onAuthorizationExpired }: { onAuthorizationExpired: () => void }) {
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [loadingModels, setLoadingModels] = useState(false);
@@ -296,6 +298,23 @@ export function ChatPanel({ onAuthorizationExpired }: { onAuthorizationExpired: 
   const messages = activeConversation?.messages ?? [];
   const busy = status === "submitted" || status === "streaming";
 
+  return {
+    models, selectedModel, setSelectedModel, loadingModels, loadModels,
+    history, historyLoading, activeId, draft, setDraft, status, liveText, submittedPrompt, notice,
+    captureActive, includeScreen, setIncludeScreen, screen, prepareScreen, wantsScreen,
+    activeConversation, messages, busy,
+    sendMessage, submit, cancelResponse, beginNewConversation, clearHistory, removeConversation, openConversation,
+  };
+}
+
+export type Chat = ReturnType<typeof useChat>;
+
+
+export function ChatPanel({ onAuthorizationExpired }: { onAuthorizationExpired: () => void }) {
+  const chat = useChat({ onAuthorizationExpired });
+  const { models, selectedModel, setSelectedModel, loadingModels, loadModels, history, historyLoading, activeId, status, notice, busy } = chat;
+  const { beginNewConversation, clearHistory, removeConversation, openConversation } = chat;
+
   return (
     <section className="chat-panel" aria-label="Local ChatGPT chat">
       <div className="chat-toolbar">
@@ -334,58 +353,9 @@ export function ChatPanel({ onAuthorizationExpired }: { onAuthorizationExpired: 
         </aside>
 
         <div className="chat-main">
-          <div className="message-list" aria-label="Messages">
-            {messages.map((message, index) => (
-              <article className={`message ${message.role}`} key={`${message.createdAt}-${index}`}>
-                <p className="message-role">{message.role === "user" ? "You" : "ChatGPT"}</p>
-                <p className="message-content">{message.content}</p>
-              </article>
-            ))}
-            {busy && submittedPrompt && <article className="message user pending"><p className="message-role">You · submitted</p><p className="message-content">{submittedPrompt}</p></article>}
-            {busy && <article className="message assistant pending"><p className="message-role">ChatGPT · {status === "submitted" ? "Submitted" : "Streaming"}</p><p className="message-content">{liveText || "Waiting for the first response token…"}</p></article>}
-            {status === "error" && submittedPrompt && <article className="message user partial"><p className="message-role">You · not saved</p><p className="message-content">{submittedPrompt}</p></article>}
-            {status === "error" && liveText && <article className="message assistant partial"><p className="message-role">Partial output · not saved</p><p className="message-content">{liveText}</p></article>}
-            {status === "complete" && liveText && !messages.length && <article className="message assistant"><p className="message-role">ChatGPT · completed</p><p className="message-content">{liveText}</p></article>}
-            {!messages.length && !liveText && <p className="empty-chat">Your next message starts a local conversation.</p>}
-          </div>
+          <MessageList chat={chat} labels={FULL_LABELS} />
 
-          <form className="chat-composer" onSubmit={sendMessage}>
-            <label htmlFor="message-input">Message</label>
-            <textarea id="message-input" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={8000} rows={3} placeholder="Ask a question…" disabled={busy || historyLoading} />
-            {captureActive && (
-              <div className="screen-attach">
-                <label className="screen-toggle">
-                  <input type="checkbox" checked={includeScreen} onChange={(event) => setIncludeScreen(event.target.checked)} disabled={busy} />
-                  <span>Include my screen in this message</span>
-                </label>
-                {includeScreen && screen.kind === "none" && <p className="panel-note">Start typing and Dot will prepare your screen with personal data hidden.</p>}
-                {includeScreen && screen.kind === "preparing" && <p className="panel-note" role="status">Hiding personal data on your screen…</p>}
-                {includeScreen && screen.kind === "ready" && (
-                  <figure className="screen-preview">
-                    <img src={screen.preview.image} alt="Preview of the screen image that will be sent, with personal data hidden" />
-                    <figcaption>
-                      {screen.preview.hiddenRegions === 1 ? "1 region hidden" : `${screen.preview.hiddenRegions} regions hidden`}. Text recognition can miss things, and faces and photos are not hidden. This image is sent to ChatGPT and is not saved here.
-                    </figcaption>
-                  </figure>
-                )}
-                {includeScreen && screen.kind === "failed" && (
-                  <div className="screen-failed" role="alert">
-                    <p>{screen.message}</p>
-                    <div className="screen-failed-actions">
-                      <button className="action-button secondary" type="button" onClick={() => void prepareScreen()} disabled={busy}>Try again</button>
-                      <button className="action-button secondary" type="button" onClick={() => void submit(draft.trim())} disabled={busy || !draft.trim() || !selectedModel || historyLoading}>Send without the screen</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            <div className="composer-footer">
-              <span className="panel-note">Only completed responses are saved on this device.</span>
-              {busy
-                ? <button className="action-button secondary" type="button" onClick={cancelResponse}>Cancel response</button>
-                : <button className="action-button" type="submit" disabled={!selectedModel || !draft.trim() || historyLoading || (wantsScreen && screen.kind !== "ready")}>Send message</button>}
-            </div>
-          </form>
+          <Composer chat={chat} labels={FULL_LABELS} />
         </div>
       </div>
       <p className="chat-live" role="status" aria-live="polite">

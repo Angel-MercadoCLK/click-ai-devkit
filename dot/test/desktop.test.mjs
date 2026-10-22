@@ -130,6 +130,12 @@ test("login launches start hidden in the tray while manual launches show the win
   assert.deepEqual(preferences.LOGIN_ITEM_ARGS, ["--hidden"]);
 });
 
+test("a start with Windows keeps the mascot hidden in the tray; a manual start shows it", () => {
+  // User decision: start with Windows (--hidden) waits in the tray until the shortcut or the tray shows the mascot.
+  assert.equal(preferences.mascotStartup(["app.exe", "--hidden"]), "hidden");
+  assert.equal(preferences.mascotStartup(["app.exe"]), "shown");
+});
+
 test("the storage protector wraps Electron safeStorage and rejects bad input", () => {
   const calls = [];
   const fake = {
@@ -290,4 +296,56 @@ test("every production dependency is either needed at runtime or explicitly excl
 test("Next.js never writes its response cache next to the read-only app", async () => {
   const { default: nextConfigObject } = await import("../next.config.ts");
   assert.equal(nextConfigObject.experimental?.isrFlushToDisk, false);
+});
+
+test("the home page is rendered per request so its canonical origin uses the running port", async () => {
+  // A page prerendered at build time froze PORT's default (3000); the desktop app on 47321 then redirected to a
+  // blocked origin and never left "Checking this device…".
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /^export const dynamic = "force-dynamic";$/m);
+});
+
+// Mascot position (S7/A7). Optional like captureEnabled was: files from earlier versions stay valid and unchanged.
+test("preferences from before the mascot have no position and still load exactly as before", async () => {
+  const file = join(scratch, "legacy-mascot.json");
+  await writeFile(file, JSON.stringify({ startAtLogin: false, captureEnabled: true }));
+  assert.deepEqual(await preferences.loadPreferences(file), { startAtLogin: false, captureEnabled: true });
+  await writeFile(file, JSON.stringify({ startAtLogin: true }));
+  assert.deepEqual(await preferences.loadPreferences(file), { startAtLogin: true, captureEnabled: false });
+});
+
+test("the mascot position is saved with the other choices and read back", async () => {
+  const file = join(scratch, "mascot-position.json");
+  const saved = await preferences.savePreferences(file, { startAtLogin: true, captureEnabled: false, mascotPosition: { x: -1200, y: 340 } });
+  assert.deepEqual(saved, { startAtLogin: true, captureEnabled: false, mascotPosition: { x: -1200, y: 340 } });
+  assert.deepEqual(await preferences.loadPreferences(file), saved);
+  // A later save of another setting keeps the position.
+  const store = preferences.createPreferenceStore(file, saved);
+  assert.deepEqual(await store.update({ captureEnabled: true }), { startAtLogin: true, captureEnabled: true, mascotPosition: { x: -1200, y: 340 } });
+  assert.deepEqual(await store.update({ mascotPosition: { x: 10, y: 20 } }), { startAtLogin: true, captureEnabled: true, mascotPosition: { x: 10, y: 20 } });
+});
+
+test("saving a preference without a position never writes one", async () => {
+  const file = join(scratch, "no-mascot-position.json");
+  const saved = await preferences.savePreferences(file, { startAtLogin: true, captureEnabled: false });
+  assert.deepEqual(saved, { startAtLogin: true, captureEnabled: false });
+  assert.equal("mascotPosition" in JSON.parse(await readFile(file, "utf8")), false);
+});
+
+test("an invalid position is not saved", async () => {
+  const file = join(scratch, "bad-mascot-save.json");
+  for (const bad of [{ x: Number.NaN, y: 0 }, { x: 1.5, y: 0 }, { x: 0, y: Infinity }, { x: "1", y: 2 }, { x: 1 }, null, [], 5, { x: 1e9, y: 0 }]) {
+    const saved = await preferences.savePreferences(file, { startAtLogin: true, captureEnabled: false, mascotPosition: bad });
+    assert.equal("mascotPosition" in saved, false, JSON.stringify(bad));
+  }
+});
+
+test("a saved position of the wrong shape makes the file unknown, like any other corrupt choice", async () => {
+  for (const [index, position] of [{ x: "1", y: 2 }, { x: 1 }, [1, 2], "corner", { x: 1.5, y: 2 }, { x: 1e9, y: 0 }, null].entries()) {
+    const file = join(scratch, `bad-mascot-${index}.json`);
+    const content = JSON.stringify({ startAtLogin: true, captureEnabled: false, mascotPosition: position });
+    await writeFile(file, content);
+    assert.equal(await preferences.loadPreferences(file), undefined, content);
+    assert.equal(await readFile(file, "utf8"), content, "the file is left untouched");
+  }
 });

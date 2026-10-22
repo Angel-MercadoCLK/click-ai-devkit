@@ -11,6 +11,8 @@ export const CHAT_FILE_NAME = "conversations.json";
 
 export const dotOrigin = () => `http://${DOT_HOST}:${DOT_PORT}`;
 export const dotUrl = () => `${dotOrigin()}/`;
+/** The mascot window's page. The home page (`dotUrl`) stays for the system browser, where sign-in finishes. */
+export const mascotUrl = () => `${dotOrigin()}/mascot`;
 
 /**
  * Prepares the environment Next.js and the storage layer read at load time.
