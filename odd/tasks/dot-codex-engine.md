@@ -46,9 +46,9 @@ Branch: `feat/dot-alive` (accumulates with the alive feature; one PR). Test runn
 |----|-------|-------|--------|--------|
 | E1 | S1, S2, S3, S4, S7 | delegated writer: Codex app-server client + broker mapping (parallel with E2) | done | 11ccdbf |
 | E2 | S5 | delegated writer: Dot MCP server + background Claude tasks (parallel with E1) | done | 94df7e9 |
-| E3 | S6 | after E1/E2: Chrome + Windows-MCP wiring, detection and the control indicator | pending | |
-| E4 | S2, S3 | after the alive writer: chat/history UI on Codex threads, file drop | pending | |
-| E5 | S8, all | inline: docs, seam check, verifier, native review, delivery | pending | |
+| E3 | S6 | after E1/E2: Chrome + Windows-MCP wiring, detection and the control indicator | done | 3ee63ab, 85af84c |
+| E4 | S2, S3 | after the alive writer: chat/history UI on Codex threads, file drop | done | 3ee63ab |
+| E5 | S8, all | inline: docs, seam check, verifier, native review, delivery | done (delivery pending) | edf4a49, 85af84c |
 
 ## Log
 
@@ -85,3 +85,9 @@ Branch: `feat/dot-alive` (accumulates with the alive feature; one PR). Test runn
   - B2: S6 asked for extension detection. Fixed: Dot reads Chrome's profile folders for the Playwright extension id (`Default`, `Profile N`); S6 is reworded to "installed".
   - Advisory fixed: the READMEs now say that Chrome and computer screenshots are not redacted and run without asking.
   - Other advisories are follow-ups: Escape on a card declines only at 105 s; children left after a graceful POSIX cancel; resuming a thread started at a filesystem root widens the sandbox; background throttling of a hidden window; Permitir shown when `accept` is not offered.
+- L7 (2026-10-22) — Native reviews (all granted by the user):
+  - `944bce5..94df7e9` (Dot MCP server): `review-3c1d437f064460c0`, approved, burned.
+  - `94df7e9..47a26ae` (alive): `review-3aa3a17952990d32`, approved, burned.
+  - `47a26ae..11ccdbf` (Codex client, 202 files including 193 generated protocol files) and `d2e6ae1..3ee63ab` (integration, 48 files, 3037 lines) both stopped with `lens_context_budget_exceeded`, so no authority was created. Each is a single commit, and splitting would need a history rewrite. These two ranges have no native review; the independent verifier's probes cover them.
+  - `3ee63ab..85af84c` (blocker fixes): `review-161685604e3c7b69`, approved, burned. Advisories: the Chrome server is added even when the extension is missing; detection covers only stable Chrome profiles.
+  - Checks: `npm test` 805/805. Next: the user's delivery decision.
