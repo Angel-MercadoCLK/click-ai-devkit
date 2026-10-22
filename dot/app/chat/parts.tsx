@@ -2,6 +2,7 @@
 
 import type { Chat } from "../chat-panel";
 import { ToolActivityList } from "./tool-activity";
+import { isChatEmpty } from "../../lib/chat-view.ts";
 
 /** Every string the shared parts show, so the full page and the compact bubble can speak their own wording. */
 export type ChatLabels = {
@@ -74,7 +75,7 @@ export function MessageList({ chat, labels }: { chat: Chat; labels: ChatLabels }
       {status === "error" && submittedPrompt && <article className="message user partial"><p className="message-role">{labels.youNotSaved}</p><p className="message-content">{submittedPrompt}</p></article>}
       {status === "error" && liveText && <article className="message assistant partial"><p className="message-role">{labels.partialNotSaved}</p><p className="message-content">{liveText}</p></article>}
       {status === "complete" && liveText && !messages.length && <article className="message assistant"><p className="message-role">{labels.assistantCompleted}</p><p className="message-content">{liveText}</p></article>}
-      {!messages.length && !liveText && <p className="empty-chat">{labels.empty}</p>}
+      {isChatEmpty(chat) && <p className="empty-chat">{labels.empty}</p>}
     </div>
   );
 }
