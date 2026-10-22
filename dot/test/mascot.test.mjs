@@ -628,3 +628,93 @@ test("the shared chat parts keep the home page wording and the bubble gets its o
   assert.match(compact, /useChat/);
   assert.match(await read("app/chat-panel.tsx"), /api\/chat\/stream/);
 });
+
+// --- the sharing indicator is never hidden: capture state has priority over listening --------------------------
+
+test("capture keeps the ring and the visible label while Voz is listening, in every capture state", () => {
+  for (const listening of [false, true]) {
+    assert.equal(captureState.mascotIndicator("live", listening).ring, "live");
+    assert.equal(captureState.mascotIndicator("paused", listening).ring, "paused");
+    assert.equal(captureState.mascotIndicator("off", listening).ring, "off");
+    assert.equal(captureState.mascotIndicator("unavailable", listening).ring, "unavailable");
+  }
+});
+
+test("while sharing there is always visible text and a pause or resume control, listening or not", () => {
+  for (const listening of [false, true]) {
+    const live = captureState.mascotIndicator("live", listening);
+    assert.equal(live.sharing, true);
+    assert.equal(live.sharingText, "Viendo tu pantalla");
+    assert.deepEqual(live.pause, { action: "pause", name: "Pausar", glyph: "pause" });
+    const paused = captureState.mascotIndicator("paused", listening);
+    assert.equal(paused.sharing, true);
+    assert.equal(paused.sharingText, "Pantalla en pausa");
+    assert.deepEqual(paused.pause, { action: "resume", name: "Reanudar", glyph: "play" });
+  }
+});
+
+test("when nothing is shared there is no sharing text or pause control", () => {
+  for (const indicator of ["off", "unavailable"]) {
+    for (const listening of [false, true]) {
+      const view = captureState.mascotIndicator(indicator, listening);
+      assert.equal(view.sharing, false);
+      assert.equal(view.sharingText, null);
+      assert.equal(view.pause, null);
+    }
+  }
+});
+
+test("listening has its own visual and cancel control without replacing the capture ones", () => {
+  const both = captureState.mascotIndicator("live", true);
+  assert.equal(both.listening, true);
+  assert.equal(both.cancel, true);
+  assert.notEqual(both.pause, null);
+  assert.match(both.label, /Viendo tu pantalla/);
+  assert.match(both.label, /Escuchando/);
+  const only = captureState.mascotIndicator("off", true);
+  assert.equal(only.listening, true);
+  assert.equal(only.cancel, true);
+  assert.match(only.label, /Escuchando/);
+  const quiet = captureState.mascotIndicator("off", false);
+  assert.equal(quiet.listening, false);
+  assert.equal(quiet.cancel, false);
+  assert.equal(quiet.label, "Dot");
+});
+
+test("the accessible label names capture first so a screen reader never misses it", () => {
+  assert.equal(captureState.mascotIndicator("live", false).label, "Viendo tu pantalla");
+  assert.equal(captureState.mascotIndicator("paused", false).label, "Pantalla en pausa");
+  assert.ok(captureState.mascotIndicator("live", true).label.startsWith("Viendo tu pantalla"));
+});
+
+test("the mascot page shows the sharing text and the pause control in the collapsed, menu and chat modes", async () => {
+  const source = await readFile(new URL("../app/mascot/mascot.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /voice\.listening \? "listening"/, "listening no longer replaces the capture ring");
+  assert.match(source, /mascotIndicator\(/);
+  // Collapsed: visible label next to the mascot. Menu: the chip. Chat: a chip in the bubble header.
+  assert.match(source, /className="mascot-label"/);
+  assert.match(source, /className=\{`menu-chip/);
+  assert.match(source, /className=\{`bubble-chip/);
+  assert.match(source, /data-listening=/);
+});
+
+// --- "Voz" needs a ChatGPT connection -------------------------------------------------------------------------
+
+test("Voz is disabled with a short Spanish hint until ChatGPT is connected", () => {
+  for (const connected of [null, false]) {
+    const decision = voiceResult.voiceAvailability({ connected, listening: false });
+    assert.equal(decision.disabled, true, String(connected));
+    assert.match(decision.hint, /ChatGPT/);
+    assert.ok(decision.hint.length <= 60, "short");
+  }
+  assert.deepEqual(voiceResult.voiceAvailability({ connected: true, listening: false }), { disabled: false, hint: null });
+});
+
+test("a running listen can always be cancelled, even if the connection state changes under it", () => {
+  for (const connected of [null, false, true]) assert.equal(voiceResult.voiceAvailability({ connected, listening: true }).disabled, false);
+});
+
+test("the Voz button uses the decision and shows the hint", async () => {
+  const source = await readFile(new URL("../app/mascot/mascot.tsx", import.meta.url), "utf8");
+  assert.match(source, /voiceAvailability\(/);
+});

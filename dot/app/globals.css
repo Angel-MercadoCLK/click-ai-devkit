@@ -147,13 +147,14 @@ body:has(.mascot-root) { height: 100vh; min-height: 0; overflow: hidden; line-he
 .spark-dust { fill: #8a6a4a; }
 [data-ring="live"] .spark-ring { stroke: #e5372b; }
 [data-ring="paused"] .spark-ring { stroke: #e0a030; }
-[data-ring="listening"] .spark-ring { stroke: #36c2b4; }
+.spark-listen { stroke: transparent; stroke-width: 3; stroke-dasharray: 6 5; stroke-linecap: round; }
+[data-listening="true"] .spark-listen { stroke: #36c2b4; }
 
 @media (prefers-reduced-motion: no-preference) {
   .spark-body { animation: spark-float 4s ease-in-out infinite; }
   .spark-eyes ellipse { animation: spark-blink 5s infinite; }
   .spark-rays { animation: spark-twinkle 3s ease-in-out infinite; }
-  [data-ring="live"] .spark-ring, [data-ring="listening"] .spark-ring { animation: spark-pulse 1.6s ease-in-out infinite; }
+  [data-ring="live"] .spark-ring, [data-listening="true"] .spark-listen { animation: spark-pulse 1.6s ease-in-out infinite; }
 }
 @keyframes spark-float { 50% { transform: translateY(-1.5px); } }
 @keyframes spark-blink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(0.1); } }
@@ -162,6 +163,11 @@ body:has(.mascot-root) { height: 100vh; min-height: 0; overflow: hidden; line-he
 
 .mascot-badge { position: absolute; top: 0; left: 0; display: grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 2px solid #231a13; border-radius: 50%; background: #ffffff; color: #231a13; font-size: 11px; line-height: 1; cursor: pointer; }
 .mascot-badge:hover { background: #fff3e6; }
+.mascot-badge.is-cancel { right: 0; left: auto; border-color: #36c2b4; }
+.mascot-badge:disabled { cursor: default; opacity: 0.6; }
+/* The words that say the screen is being shared: inside the mascot's own 96 px square, so the window does not grow. */
+.mascot-label { position: absolute; bottom: 4px; left: 50%; max-width: 94px; padding: 1px 3px; border-radius: 9px; background: #b3261e; color: #ffffff; font-size: 8px; font-weight: 700; line-height: 14px; white-space: nowrap; text-align: center; pointer-events: none; transform: translateX(-50%); box-shadow: 0 0 0 1.5px #231a13; }
+[data-ring="paused"] .mascot-label { background: #e0a030; color: #231a13; }
 
 .mascot-menu { display: grid; width: 100%; gap: 6px; }
 .menu-button { display: flex; flex: none; min-height: 36px; align-items: center; gap: 8px; padding: 4px 12px; border: 1px solid #d9ded6; border-radius: 12px; background: #ffffff; color: #172320; font: inherit; font-size: 13px; font-weight: 650; text-align: left; white-space: nowrap; cursor: pointer; box-shadow: 0 1px 3px rgb(23 35 32 / 0.18); }
@@ -170,6 +176,8 @@ body:has(.mascot-root) { height: 100vh; min-height: 0; overflow: hidden; line-he
 .menu-button.is-live { border-color: #e5372b; }
 .menu-button.is-live::before { width: 8px; height: 8px; flex: none; border-radius: 50%; background: #e5372b; content: ""; }
 .menu-button.is-listening { border-color: #36c2b4; }
+.menu-button-text { display: grid; gap: 1px; }
+.menu-button-text small { color: #5f6e67; font-size: 10px; font-weight: 500; }
 .menu-button.primary { flex: none; background: #244d3e; border-color: #244d3e; color: #ffffff; }
 .menu-button.primary:hover:not(:disabled) { background: #1d4033; }
 .menu-chip { position: absolute; bottom: 10px; display: grid; width: 82px; gap: 4px; padding: 6px; border: 1px solid #d9ded6; border-radius: 10px; background: #ffffff; font-size: 11px; font-weight: 650; text-align: center; box-shadow: 0 1px 3px rgb(23 35 32 / 0.18); }
@@ -184,6 +192,11 @@ body:has(.mascot-root) { height: 100vh; min-height: 0; overflow: hidden; line-he
 
 .mascot-bubble { display: flex; min-width: 0; min-height: 0; flex: 1 1 auto; flex-direction: column; overflow: hidden; border: 1px solid #d9ded6; border-radius: 16px; background: #ffffff; user-select: text; }
 .bubble-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 6px 14px; border-bottom: 1px solid #e2e7e0; font-weight: 700; }
+.bubble-chip { display: flex; min-width: 0; align-items: center; gap: 6px; margin-left: auto; padding: 2px 3px 2px 8px; border: 1px solid #d9ded6; border-radius: 999px; font-size: 11px; font-weight: 650; white-space: nowrap; }
+.bubble-chip.is-live { border-color: #e5372b; color: #b3261e; }
+.bubble-chip button { padding: 2px 8px; border: 1px solid #d9ded6; border-radius: 999px; background: #f5f5ef; color: #172320; font: inherit; font-size: 11px; cursor: pointer; }
+.bubble-chip button:focus-visible { outline: 2px solid #315e4c; outline-offset: 1px; }
+.bubble-chip button:disabled { cursor: default; opacity: 0.6; }
 .bubble-close { width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: #244d3e; font-size: 20px; line-height: 1; cursor: pointer; }
 .bubble-close:hover { background: #eaf0eb; }
 .bubble-note { margin: 0; padding: 0 14px; color: #5f6e67; font-size: 12px; }

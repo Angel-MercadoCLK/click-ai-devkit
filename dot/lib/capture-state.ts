@@ -51,3 +51,31 @@ export function applyCaptureViewPoll(state: CaptureViewPollState, result: Captur
   const failures = Math.min(state.failures + 1, CAPTURE_FAILURE_LIMIT);
   return { view: failures >= CAPTURE_FAILURE_LIMIT ? null : state.view, failures };
 }
+
+// What the mascot shows when capture and "Voz" are both going on. Capture is what the user must always be able to see,
+// so it keeps the ring, the visible text and the pause control; listening gets its own visual and its own cancel.
+
+export type MascotIndicatorView = {
+  /** Always the capture state; listening never replaces it. */
+  ring: CaptureIndicator;
+  sharing: boolean;
+  /** Visible words while capture is on, or null when nothing is shared. */
+  sharingText: string | null;
+  pause: { action: "pause" | "resume"; name: "Pausar" | "Reanudar"; glyph: "pause" | "play" } | null;
+  listening: boolean;
+  cancel: boolean;
+  /** Accessible name of the mascot: capture first, then listening. */
+  label: string;
+};
+
+export function mascotIndicator(indicator: CaptureIndicator, listening: boolean): MascotIndicatorView {
+  const sharing = indicator === "live" || indicator === "paused";
+  const sharingText = indicator === "live" ? "Viendo tu pantalla" : indicator === "paused" ? "Pantalla en pausa" : null;
+  const pause = indicator === "live"
+    ? ({ action: "pause", name: "Pausar", glyph: "pause" } as const)
+    : indicator === "paused"
+      ? ({ action: "resume", name: "Reanudar", glyph: "play" } as const)
+      : null;
+  const label = [sharingText, listening ? "Escuchando…" : null].filter(Boolean).join(". ") || "Dot";
+  return { ring: indicator, sharing, sharingText, pause, listening, cancel: listening, label };
+}

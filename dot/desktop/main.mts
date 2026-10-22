@@ -3,7 +3,8 @@ import type { Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCaptureController, createCaptureService, describeCapture, installCaptureController, type CaptureController, type CaptureService } from "./capture.mts";
-import { configureEnvironment, mascotUrl, TOGGLE_SHORTCUT } from "./config.mts";
+import { configureEnvironment, dotOrigin, mascotUrl, TOGGLE_SHORTCUT } from "./config.mts";
+import { controlCookieDetails, createControlToken, installControlToken } from "./control-token.mts";
 import { PortInUseError } from "./listen.mts";
 import { createMascotController, installWindowController, mascotWindowOptions, type MascotController, type Point, type Rect } from "./mascot.mts";
 import { isAllowedNavigation, isSignInUrl, systemBrowserTarget } from "./navigation.mts";
@@ -228,6 +229,13 @@ async function start() {
   // Deny every web permission request; features that need one will opt in explicitly.
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
+
+  // Per-launch control token: the routes that act on this computer (capture, voice, the mascot window) only answer a
+  // client holding this cookie, which only this window's session has. Published and set before the server or the window
+  // exist; if the cookie cannot be set, the start fails instead of leaving those routes open.
+  const controlToken = createControlToken();
+  installControlToken(globalThis, controlToken);
+  await session.defaultSession.cookies.set(controlCookieDetails(dotOrigin(), controlToken));
 
   const preferencesFile = join(userData, "desktop-preferences.json");
   const loaded = await loadPreferences(preferencesFile);

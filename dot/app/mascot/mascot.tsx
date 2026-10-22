@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { mascotIndicator } from "../../lib/capture-state.ts";
 import { dragTarget, exceedsDragThreshold, nextMascotMode } from "../../lib/window-mode.ts";
 import { useAuthConnection } from "../auth-panel";
 import { CompactChat, type ChatSeed } from "../chat/compact-chat";
@@ -8,6 +9,7 @@ import { Spark } from "./spark";
 import { useCaptureView } from "./use-capture";
 import { useMascotWindow } from "./use-window";
 import { useVoice } from "./use-voice";
+import { voiceAvailability } from "./voice-result.ts";
 
 /** Small drawn icons: font glyphs for pause and play are missing on some systems and would show as boxes. */
 function Glyph({ kind }: { kind: "pause" | "play" | "cancel" }) {
@@ -106,15 +108,11 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   }
 
   const { indicator } = capture;
-  const sharing = indicator === "live" || indicator === "paused";
-  const ring = voice.listening ? "listening" : indicator;
-  const label = voice.listening ? "Escuchando…" : indicator === "live" ? "Viendo tu pantalla" : indicator === "paused" ? "Pantalla en pausa" : "Dot";
-
-  const badge = voice.listening
-    ? { glyph: "cancel" as const, name: "Cancelar", run: voice.cancel }
-    : sharing
-      ? { glyph: indicator === "paused" ? ("play" as const) : ("pause" as const), name: indicator === "paused" ? "Reanudar" : "Pausar", run: () => void capture.act(indicator === "paused" ? "resume" : "pause") }
-      : undefined;
+  // Capture keeps the ring, the visible text and the pause control; listening has its own ring, cancel and label part.
+  const view = mascotIndicator(indicator, voice.listening);
+  const { sharing } = view;
+  const voiceChoice = voiceAvailability({ connected: auth.status === null ? null : auth.status.connected, listening: voice.listening });
+  const pauseCapture = () => view.pause && void capture.act(view.pause.action);
 
   return (
     <main className="mascot-root" data-mode={mode} data-h={anchor.horizontal} data-v={anchor.vertical}>
@@ -130,8 +128,18 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
           >
             <span>Compartir mi pantalla</span>
           </button>
-          <button className={`menu-button${voice.listening ? " is-listening" : ""}`} type="button" onClick={() => (voice.listening ? voice.cancel() : void voice.start())}>
-            <span>{voice.listening ? "Escuchando… (cancelar)" : "Voz"}</span>
+          <button
+            className={`menu-button${voice.listening ? " is-listening" : ""}`}
+            type="button"
+            disabled={voiceChoice.disabled}
+            aria-describedby={voiceChoice.hint ? "voice-hint" : undefined}
+            title={voiceChoice.hint ?? undefined}
+            onClick={() => (voice.listening ? voice.cancel() : void voice.start())}
+          >
+            <span className="menu-button-text">
+              <span>{voice.listening ? "Escuchando… (cancelar)" : "Voz"}</span>
+              {voiceChoice.hint && <small id="voice-hint">{voiceChoice.hint}</small>}
+            </span>
           </button>
           <button className="menu-button" type="button" onClick={() => void setMode("chat")}>
             <span>Mensaje</span>
@@ -153,6 +161,12 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
         <section className="mascot-bubble" hidden={mode !== "chat"} aria-label="Chat con Dot">
           <header className="bubble-header">
             <span>Dot</span>
+            {view.sharing && view.pause && (
+              <div className={`bubble-chip${indicator === "live" ? " is-live" : ""}`} role="status">
+                <span>{view.sharingText}</span>
+                <button type="button" disabled={capture.busy} onClick={pauseCapture}>{view.pause.name}</button>
+              </div>
+            )}
             <button className="bubble-close" type="button" aria-label="Cerrar" onClick={() => void setMode("collapsed")}>×</button>
           </header>
           {auth.status === null ? (
@@ -172,14 +186,14 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
         </section>
       )}
 
-      <div className="mascot-spot" data-ring={ring}>
+      <div className="mascot-spot" data-ring={view.ring} data-listening={view.listening}>
         <div
           className="mascot-body"
           role="button"
           tabIndex={0}
-          aria-label={label}
+          aria-label={view.label}
           aria-expanded={mode !== "collapsed"}
-          title={label}
+          title={view.label}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -193,8 +207,12 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
         >
           <Spark />
         </div>
-        {badge && mode === "collapsed" && (
-          <button className="mascot-badge" type="button" aria-label={badge.name} title={badge.name} onClick={badge.run}><Glyph kind={badge.glyph} /></button>
+        {mode === "collapsed" && view.sharingText && <span className="mascot-label" role="status">{view.sharingText}</span>}
+        {mode === "collapsed" && view.pause && (
+          <button className="mascot-badge" type="button" aria-label={view.pause.name} title={view.pause.name} disabled={capture.busy} onClick={pauseCapture}><Glyph kind={view.pause.glyph} /></button>
+        )}
+        {mode !== "menu" && view.cancel && (
+          <button className="mascot-badge is-cancel" type="button" aria-label="Cancelar" title="Escuchando… Cancelar" onClick={voice.cancel}><Glyph kind="cancel" /></button>
         )}
       </div>
     </main>

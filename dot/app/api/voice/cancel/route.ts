@@ -1,11 +1,12 @@
 import { isLocalRequest, noStore } from "../../../../lib/auth-http.ts";
+import { hasControlAccess } from "../../../../lib/control-token.ts";
 import { cancelListening, getVoiceController, readEmptyBody, VOICE_MESSAGES, VOICE_STATUS, VoiceRequestError } from "../../../../lib/voice-controller.ts";
 
 export const runtime = "nodejs";
 
 /** Stops a running listen (the second click on "Voz"). Nothing running is not an error. */
 export async function POST(request: Request) {
-  if (!isLocalRequest(request, true)) return Response.json({ error: "Request rejected." }, { status: 403, headers: noStore });
+  if (!isLocalRequest(request, true) || !hasControlAccess(request)) return Response.json({ error: "Request rejected." }, { status: 403, headers: noStore });
   try {
     await readEmptyBody(request);
   } catch (error) {

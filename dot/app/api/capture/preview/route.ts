@@ -1,5 +1,6 @@
 import { isLocalRequest, noStore } from "../../../../lib/auth-http.ts";
 import { getCaptureController, prepareScreen, ScreenPrepareError } from "../../../../lib/capture-controller.ts";
+import { hasControlAccess } from "../../../../lib/control-token.ts";
 import { screenPreviews, toDataUrl } from "../../../../lib/screen-previews.ts";
 
 export const runtime = "nodejs";
@@ -11,7 +12,7 @@ export const maxDuration = 30;
  * and the id to name it later. No request body is read, and the browser never supplies image bytes.
  */
 export async function POST(request: Request) {
-  if (!isLocalRequest(request, true)) return Response.json({ error: "Request rejected." }, { status: 403, headers: noStore });
+  if (!isLocalRequest(request, true) || !hasControlAccess(request)) return Response.json({ error: "Request rejected." }, { status: 403, headers: noStore });
   const controller = getCaptureController();
   if (!controller) return Response.json({ code: "unavailable", error: "Screen capture is available in the desktop app." }, { status: 503, headers: noStore });
   try {

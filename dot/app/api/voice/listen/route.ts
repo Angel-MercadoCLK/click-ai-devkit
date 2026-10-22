@@ -1,4 +1,5 @@
 import { isLocalRequest, noStore } from "../../../../lib/auth-http.ts";
+import { hasControlAccess } from "../../../../lib/control-token.ts";
 import { cancelListening, getVoiceController, listenOnce, readEmptyBody, VOICE_MESSAGES, VOICE_STATUS, VoiceError, VoiceRequestError } from "../../../../lib/voice-controller.ts";
 
 export const runtime = "nodejs";
@@ -9,7 +10,7 @@ export const maxDuration = 30;
  * request takes no input and never carries audio. If the browser abandons the request, the helper is stopped.
  */
 export async function POST(request: Request) {
-  if (!isLocalRequest(request, true)) return Response.json({ error: "Request rejected." }, { status: 403, headers: noStore });
+  if (!isLocalRequest(request, true) || !hasControlAccess(request)) return Response.json({ error: "Request rejected." }, { status: 403, headers: noStore });
   try {
     await readEmptyBody(request);
   } catch (error) {

@@ -28,3 +28,14 @@ export function readVoiceOutcome(status: number, body: unknown): VoiceOutcome {
   const text = typeof fields.text === "string" ? fields.text.trim().slice(0, MAX_TRANSCRIPT) : "";
   return text ? { kind: "text", text } : { kind: "empty" };
 }
+
+export const VOICE_CONNECT_HINT = "Conecta ChatGPT para usar la voz.";
+
+/**
+ * "Voz" only makes sense once ChatGPT is connected: the transcript goes into the chat, and without a connection it
+ * would be discarded after using the microphone. A listen that is already running can always be cancelled.
+ */
+export function voiceAvailability({ connected, listening }: { connected: boolean | null; listening: boolean }): { disabled: boolean; hint: string | null } {
+  if (listening || connected === true) return { disabled: false, hint: null };
+  return { disabled: true, hint: VOICE_CONNECT_HINT };
+}
