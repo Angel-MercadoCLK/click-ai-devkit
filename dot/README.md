@@ -53,6 +53,12 @@ npm run desktop:pack:win   # unpacked Windows x64 app in release/win-unpacked
 - The window is moved and resized by the desktop app. The page asks through `POST /api/window` (`{"mode":"collapsed"|"menu"|"chat"}` or `{"move":{"x":0,"y":0}}`, exact local Origin, 256-byte strict body); there is no preload script and the sandbox stays on. The mascot is dragged by hand (pointer events) because Electron drag regions swallow clicks.
 - The mascot page is `/mascot`; the home page `/` stays for the system browser, where sign-in finishes. When Dot starts with Windows it waits in the tray; use the tray item **Mostrar a Dot** or `Ctrl+Shift+Space` to bring the mascot up. Opening Dot yourself shows the mascot.
 
+### Voice
+
+- "Voz" listens on your default microphone through the speech recognition built into Windows (a Windows PowerShell 5.1 helper started on demand, stopped by silence, a second click or 20 seconds). It returns text only, which lands in the message box for you to review; Dot never stores or forwards audio.
+- If Windows has a classic speech recognizer for your language, recognition happens on the device. Otherwise Dot uses Windows' online dictation, which requires Settings > Privacy and security > Speech > Online speech recognition, and **Windows sends the audio to Microsoft** for recognition. Many Windows 11 installations only have the online path.
+- If there is no recognizer, microphone or permission, Dot says so in Spanish.
+
 ### Screen capture
 
 - Off by default. Turn it on from the mascot menu ("Compartir mi pantalla") or from the tray ("Let Dot see my screen"). Your choice is remembered across restarts.
