@@ -6,7 +6,8 @@ const toml = await import("../desktop/external-mcp-toml.mts");
 const { SHIM_SAFE_ARG } = await import("../desktop/codex-app-server.mts");
 
 const present = (...names) => async (path) => names.some((name) => path.toLowerCase().endsWith(name));
-const WIN = { platform: "win32", env: { PATH: "C:\\tools;C:\\node", PATHEXT: ".COM;.EXE;.BAT;.CMD" } };
+const WIN = { platform: "win32", env: { PATH: "C:\\tools;C:\\node", PATHEXT: ".COM;.EXE;.BAT;.CMD", LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local" }, listDir: async () => [] };
+const EXT = "extensions\\mmlmfjhmonkocbjadbfplnigmagldckm";
 const NIX = { platform: "linux", env: { PATH: "/usr/bin:/opt/bin" } };
 
 test("literal values hold only shim-safe characters and refuse everything else", () => {
@@ -26,7 +27,7 @@ test("findOnPath looks through PATH with the Windows extensions, and returns nul
 });
 
 test("with npx and uvx on Windows both servers are added, pinned, safe for a .cmd shim and approval 'writes'", async () => {
-  const found = await external.detectExternalMcp({ ...WIN, exists: present("npx.cmd", "uvx.exe") });
+  const found = await external.detectExternalMcp({ ...WIN, listDir: async () => ["Default"], exists: present("npx.cmd", "uvx.exe", `default\\${EXT}`) });
   assert.equal(found.info.chrome.state, "ready");
   assert.equal(found.info.computer.state, "ready");
   const lines = found.overrides;
@@ -46,7 +47,7 @@ test("with npx and uvx on Windows both servers are added, pinned, safe for a .cm
 
 test("without uv the computer server is not added and the card says what is missing; Chrome still is", async () => {
   const found = await external.detectExternalMcp({ ...WIN, exists: present("npx.cmd") });
-  assert.equal(found.info.chrome.state, "ready");
+  assert.equal(found.info.chrome.state, "missing", "the Playwright extension is not installed in any profile");
   assert.equal(found.info.computer.state, "missing");
   assert.match(found.info.computer.hint, /uv/);
   assert.ok(found.overrides.every((line) => !line.startsWith("mcp_servers.computer.")));
@@ -76,4 +77,17 @@ test("the availability is published for the status route, and a malformed public
   external.installExternalMcp(target, info);
   assert.deepEqual(Reflect.get(target, Symbol.for(external.EXTERNAL_MCP_KEY)), info);
   assert.throws(() => external.installExternalMcp({}, { chrome: 1 }));
+});
+
+test("Chrome is ready only when the Playwright extension is installed in a Chrome profile; otherwise the card links to it", async () => {
+  const inProfile = await external.detectExternalMcp({ ...WIN, listDir: async () => ["System Profile", "Profile 2", "Default"], exists: present("npx.cmd", `profile 2\\${EXT}`) });
+  assert.equal(inProfile.info.chrome.state, "ready");
+  assert.match(inProfile.info.chrome.hint, /listo/i);
+  const notInstalled = await external.detectExternalMcp({ ...WIN, listDir: async () => ["Default"], exists: present("npx.cmd") });
+  assert.equal(notInstalled.info.chrome.state, "missing");
+  assert.match(notInstalled.info.chrome.hint, /instala la extensión/);
+  assert.equal(notInstalled.info.chrome.link, external.CHROME_EXTENSION_URL);
+  assert.ok(notInstalled.overrides.some((line) => line.startsWith("mcp_servers.chrome.")), "the server is still added, so installing the extension needs no restart of the config");
+  const noChromeData = await external.detectExternalMcp({ ...WIN, listDir: async () => { throw new Error("ENOENT"); }, exists: present("npx.cmd") });
+  assert.equal(noChromeData.info.chrome.state, "missing");
 });

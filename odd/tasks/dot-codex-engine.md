@@ -33,7 +33,7 @@ Branch: `feat/dot-alive` (accumulates with the alive feature; one PR). Test runn
   - Background Claude tasks appear as sessions in the island. Claude's own permission prompts reach the island via the existing Claude Code hooks.
   - User words: "si yo le decia 'sabes que, esta tarea la ejecutas en claude mientras tu haces x' lo haga".
 - S6 — The user's Chrome and computer use. User words: "quiero que pueda usar mi computadora, mi chrome, todo".
-  - Chrome: Playwright MCP in extension mode (`@playwright/mcp --extension`), added to app-server through `-c` overrides when available. Dot detects whether the "Playwright Extension" is connected and guides the user to install it once.
+  - Chrome: Playwright MCP in extension mode (`@playwright/mcp --extension`), added to app-server through `-c` overrides when available. Dot detects whether the "Playwright Extension" is installed in a Chrome profile, read from Chrome's own folders, and guides the user to install it once. Whether it is connected at a given moment is only known when a Chrome tool runs.
   - Mouse, keyboard and screen: Windows-MCP (`uvx windows-mcp serve`) with `--control-policy strict`, only input and screen tools enabled (`enabled_tools`), and telemetry off (`ANONYMIZED_TELEMETRY=false`), added the same way when `uv` is present.
   - Every Chrome or computer action follows S4 approvals (`default_tools_approval_mode = "writes"`; reads like screenshots and snapshots are free).
   - While Dot controls the mouse, the island shows a visible "Dot está usando tu equipo" indicator with Detener.
@@ -79,3 +79,9 @@ Branch: `feat/dot-alive` (accumulates with the alive feature; one PR). Test runn
     - On Windows, `.cmd` shim overrides need TOML literal strings with no spaces or `%&|<>^!`.
   - S4 spellings were updated.
   - Integration still open (next task): wiring in `main.mts`; the chat route switches to Codex; history from `thread/list`; `codex` cards in `agent-card.tsx`; a `codex` tool name in `tool-events.ts`; Codex sign-in; file drop.
+- L6 (2026-10-22) — Integration (E3+E4) was done by the writer and committed as `3ee63ab` (802/802 tests).
+- Independent verifier (Opus): 2 blockers. The core held: no auto-accept, every new route guarded, attachments confined, every override shim-safe and parsed by real codex 0.163.
+  - B1: after a Codex restart, a stale card's answer could reach the new process under a reused request id. Fixed in `edf4a49`: replies go only to the asking process (child and generation), and a non-ready status withdraws every open card. RED then GREEN tests.
+  - B2: S6 asked for extension detection. Fixed: Dot reads Chrome's profile folders for the Playwright extension id (`Default`, `Profile N`); S6 is reworded to "installed".
+  - Advisory fixed: the READMEs now say that Chrome and computer screenshots are not redacted and run without asking.
+  - Other advisories are follow-ups: Escape on a card declines only at 105 s; children left after a graceful POSIX cancel; resuming a thread started at a filesystem root widens the sandbox; background throttling of a hidden window; Permitir shown when `accept` is not offered.

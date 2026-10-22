@@ -1,4 +1,4 @@
-import { access, constants } from "node:fs/promises";
+import { access, constants, readdir } from "node:fs/promises";
 import { posix, win32 } from "node:path";
 import { tomlLiteral, tomlLiteralArray } from "./external-mcp-toml.mts";
 
@@ -61,6 +61,8 @@ type PathOptions = {
   platform?: NodeJS.Platform;
   /** Replaces the file check (tests). */
   exists?: (path: string) => Promise<boolean>;
+  /** Replaces the folder listing (tests). */
+  listDir?: (path: string) => Promise<string[]>;
 };
 
 const defaultExists = (platform: NodeJS.Platform) => async (path: string) => {
@@ -101,11 +103,36 @@ export type ExternalMcpDetection = {
   info: ExternalMcpInfo;
 };
 
-const CHROME_READY = "Chrome: instala la extensión Playwright una vez para que Dot use tu Chrome.";
+export const CHROME_EXTENSION_ID = "mmlmfjhmonkocbjadbfplnigmagldckm";
+
+const CHROME_READY = "Chrome: listo. Dot usa tu Chrome con la extensión Playwright.";
+const CHROME_INSTALL = "Chrome: instala la extensión Playwright una vez para que Dot use tu Chrome.";
 const CHROME_MISSING = "Chrome: requiere Node.js (npx) en este equipo.";
 const COMPUTER_READY = "Mouse y teclado: listo. Dot te pregunta antes de cada acción.";
 const COMPUTER_MISSING = "Mouse y teclado: requiere uv (instala uv y reinicia Dot).";
 const COMPUTER_UNSUPPORTED = "Mouse y teclado: solo disponible en Windows.";
+
+/**
+ * Whether the Playwright extension is installed in any of the user's Chrome profiles (`Default`, `Profile N`), read
+ * from Chrome's own folders. It tells installed from missing; whether the extension is connected right now is only known
+ * when a Chrome tool runs. Null when it cannot be told here (off Windows, no LOCALAPPDATA).
+ */
+export async function chromeExtensionInstalled(options: PathOptions = {}): Promise<boolean | null> {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const local = env.LOCALAPPDATA;
+  if (platform !== "win32" || !local) return null;
+  const exists = options.exists ?? defaultExists(platform);
+  const listDir = options.listDir ?? ((path: string) => readdir(path));
+  const userData = win32.join(local, "Google", "Chrome", "User Data");
+  let profiles: string[];
+  try { profiles = await listDir(userData); } catch { return false; }
+  for (const profile of profiles) {
+    if (profile !== "Default" && !/^Profile \d+$/.test(profile)) continue;
+    if (await exists(win32.join(userData, profile, "Extensions", CHROME_EXTENSION_ID))) return true;
+  }
+  return false;
+}
 
 /** Looks for `npx` and `uv`/`uvx` and returns the overrides, the environment and what to tell the user. */
 export async function detectExternalMcp(options: PathOptions = {}): Promise<ExternalMcpDetection> {
@@ -114,9 +141,15 @@ export async function detectExternalMcp(options: PathOptions = {}): Promise<Exte
   const env: Record<string, string> = {};
 
   const npx = await findOnPath(["npx"], options);
-  const chrome: Availability = npx
-    ? { state: "ready", hint: CHROME_READY, link: CHROME_EXTENSION_URL }
-    : { state: "missing", hint: CHROME_MISSING };
+  const installed = npx ? await chromeExtensionInstalled(options) : false;
+  const chrome: Availability = !npx
+    ? { state: "missing", hint: CHROME_MISSING }
+    : installed === true
+      ? { state: "ready", hint: CHROME_READY }
+      : installed === null
+        // Cannot be told here: the server is there, the card still points at the extension.
+        ? { state: "ready", hint: CHROME_INSTALL, link: CHROME_EXTENSION_URL }
+        : { state: "missing", hint: CHROME_INSTALL, link: CHROME_EXTENSION_URL };
   if (npx) {
     const prefix = `mcp_servers.${CHROME_SERVER_NAME}`;
     overrides.push(
