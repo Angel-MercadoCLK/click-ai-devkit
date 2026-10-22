@@ -40,6 +40,11 @@ export function restingTarget({ mode, resting, pendingId, raisedFor }: {
   return mode === resting ? null : resting;
 }
 
+/** The request whose card has been on screen: it counts only once the window is in the approval mode. */
+export function raisedCardFor(previous: string | null, mode: WindowMode, pendingId: string | null): string | null {
+  return mode === "approval" && pendingId ? pendingId : previous;
+}
+
 /** Closing a card lands on the resting state, so the thin bar never flashes while something is going on. */
 export function settleMode(next: WindowMode, resting: "collapsed" | "compact"): WindowMode {
   return next === "collapsed" ? resting : next;

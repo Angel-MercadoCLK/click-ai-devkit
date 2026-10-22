@@ -10,7 +10,7 @@ import { CompactChat, type ChatSeed } from "../chat/compact-chat";
 import { approvalKeyChoice } from "./agent-choices.ts";
 import { AgentCard } from "./agent-card";
 import { Icon } from "./icons";
-import { approvalTitle, compactLine, inProgressLabel, isActive, lenteStateFor, newlyFinished, restingMode, restingTarget, sessionCountLabel, sessionDots, sessionStates, settleMode, splitAction } from "./island-state.ts";
+import { approvalTitle, compactLine, inProgressLabel, isActive, lenteStateFor, newlyFinished, raisedCardFor, restingMode, restingTarget, sessionCountLabel, sessionDots, sessionStates, settleMode, splitAction } from "./island-state.ts";
 import { Lente } from "./lente";
 import { useAgent } from "./use-agent";
 import { useCaptureView } from "./use-capture";
@@ -81,7 +81,6 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   useEffect(() => {
     if (!pendingId || mode === "approval") return;
     modeBeforeCard.current = mode;
-    cardRaisedFor.current = pendingId;
     void setMode("approval");
     // Only a new request forces the card; the user's own mode changes in between are theirs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -106,6 +105,8 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   }, [cardShown, pendingId]);
 
   // The bar and the pill follow what is going on: the pill while it lasts or while the pointer is on the bar, the thin bar otherwise.
+  // The card counts as up only once the window is in the approval mode; until then the resting rule leaves it alone.
+  cardRaisedFor.current = raisedCardFor(cardRaisedFor.current, mode, pendingId);
   // A request waiting for its card is handled above, so the two never fight over the window size.
   useEffect(() => {
     const target = restingTarget({ mode, resting, pendingId, raisedFor: cardRaisedFor.current });

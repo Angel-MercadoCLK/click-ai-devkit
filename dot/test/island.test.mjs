@@ -107,6 +107,17 @@ test("the resting size waits only until a new request's card is up, so a card pu
   for (const mode of ["approval", "menu", "chat"]) assert.equal(island.restingTarget({ mode, resting: "compact", pendingId: null, raisedFor: null }), null);
 });
 
+test("a card counts as raised only once the window is in the approval mode, so its arrival never races the pill", () => {
+  // The commit where the request arrives: still collapsed, not raised, so the resting rule leaves the window alone.
+  const arriving = island.raisedCardFor(null, "collapsed", "r1");
+  assert.equal(arriving, null);
+  assert.equal(island.restingTarget({ mode: "collapsed", resting: "compact", pendingId: "r1", raisedFor: arriving }), null);
+  // The card is up; put away later, the pill comes back.
+  const raised = island.raisedCardFor(arriving, "approval", "r1");
+  assert.equal(raised, "r1");
+  assert.equal(island.raisedCardFor(raised, "collapsed", "r1"), "r1");
+});
+
 test("an edit line splits into its words and the +N and −M counts", () => {
   assert.deepEqual(island.splitAction("Editando agent-card.tsx +12 −3"), { text: "Editando agent-card.tsx", added: 12, removed: 3 });
   assert.deepEqual(island.splitAction("Escribiendo notes.md +40"), { text: "Escribiendo notes.md", added: 40, removed: null });
