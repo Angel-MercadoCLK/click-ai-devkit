@@ -55,9 +55,9 @@ Branch: `feat/dot-agent-tools` (from `origin/main` 373842a). Delivery strategy: 
 
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
-| T1 | S3, S4, S7 | delegated writer, tool runtime unit (parallel with T2) | in progress | |
-| T2 | S1, S2, S5, S6, S7, S8 | delegated writer, agent loop + UI unit (parallel with T1) | in progress | |
-| T3 | all | inline: seam check, independent verifier, native review, delivery | pending | |
+| T1 | S3, S4, S7 | delegated writer, tool runtime unit (parallel with T2) | done | aa12625 |
+| T2 | S1, S2, S5, S6, S7, S8 | delegated writer, agent loop + UI unit (parallel with T1) | done | b851add |
+| T3 | all | inline: seam check, independent verifier, native review, delivery | in progress | |
 
 - T1 — Tool runtime in `dot/desktop/`: PowerShell runner, fail-closed read-only classifier (parser helper), Claude Code runner (stream-json parsing, stdin task), and the bridge installer.
 - T2 — Agent loop and UI:
@@ -94,3 +94,17 @@ Route evidence: T1 (`dot/desktop/tool-*`, its tests) and T2 (`dot/lib`, `dot/app
   - S3 was amended with the writer's tightening: branch and remote only in list forms, abbreviations of forbidden options rejected, network paths need approval, `-ExecutionPolicy Bypass`, CLIXML decoding.
   - Advisory: like Codex, `git status` and `git diff` honor repository config (`core.fsmonitor`, `diff.external`), so a malicious repository could run code. Running those commands by hand has the same effect.
   - Seam check by the parent: `npm test` 542/542, typecheck, `desktop:compile` and `next build` clean.
+- L7 (2026-10-22) — Independent verifier (Opus):
+  - Passed S1, S2 and S4–S8, with no blockers. It confirmed a byte-identical plain-mode request, the 403 guard, the 10-round cap and an unchanged history format.
+  - It could not run the classifier bypass hunt: its response was stopped by a safety classifier.
+- The parent ran the hunt itself, parse-only (nothing executed): 99 hostile commands against the real PowerShell 5.1 parser.
+  - Nine were classified read-only. Three were real gaps, fixed in `aecd00d` with RED and then GREEN tests: `-ComputerName`/abbreviations/`-cn` reach another computer; git `--textconv` runs repository-configured filters; `hostname` with arguments.
+  - The remaining six are benign: `Join-Path -Resolve`, `git diff --no-index`, `where.exe /R`, two literal-backtick parses, `-OutVariable`.
+- Verifier advisories:
+  - Fixed in `779199d`:
+    - Output caps now keep the last 64 KiB, so final errors reach the model.
+    - The approval card shows `Motivo: <classifier reason>`.
+  - Pending:
+    - `dot/README.md` still says the chat route doesn't use the token; fix after the island writer finishes, since README is in its surface.
+    - The browser home page opened after sign-in now always gets a 403 from the chat route; it should say "usa la ventana de Dot".
+    - The process-tree `taskkill` was not verified on real Windows.

@@ -1,119 +1,64 @@
-// The mascot window: where it sits, how big it is in each mode, and how the page and the shortcut drive it.
+// The island window: where it sits, how big it is in each mode, and how the page and the shortcut drive it.
 // Everything here is plain data and functions so it can be tested without Electron; main.mts wires the real window.
+//
+// Dot hangs from the top edge of the primary display like an island: centered, flush with the top of the work area, and
+// sized to exactly what the page shows in each mode, so there is no transparent area around it that could block clicks.
 
 export type Rect = { x: number; y: number; width: number; height: number };
 export type Point = { x: number; y: number };
-export type MascotMode = "collapsed" | "menu" | "chat" | "approval";
-/** Which corner of the window holds the mascot: the menu or chat opens toward the side with more room. */
+export type MascotMode = "collapsed" | "compact" | "menu" | "chat" | "approval";
+/** Kept for the state the page reads back; the island is always at the top, so this never changes. */
 export type Anchor = { horizontal: "left" | "right"; vertical: "top" | "bottom" };
 
-export const MASCOT_MODES: readonly MascotMode[] = ["collapsed", "menu", "chat", "approval"];
+export const MASCOT_MODES: readonly MascotMode[] = ["collapsed", "compact", "menu", "chat", "approval"];
+/** The character's size in the expanded cards (px). */
 export const MASCOT_SIZE = 96;
-export const MASCOT_MARGIN = 16;
+
+/** The window never moves; the island hangs from the top edge, so the anchor the page reads back is constant. */
+const ISLAND_ANCHOR: Anchor = { horizontal: "left", vertical: "top" };
 
 /**
- * Window size per mode. The menu is the mascot plus three buttons and the list of Claude Code sessions; the chat is the
- * ~360 x 520 bubble with the mascot column beside it (360 + 12 gap + 96); the approval card is ~332 wide beside the mascot.
+ * Window size per mode (px). collapsed is the thin bar that only hovering turns into the pill; compact is the one-line pill
+ * (character, latest action, session count); the others are the expanded island: sessions and quick actions, the chat, and the
+ * permission or question card.
  */
 export const MODE_SIZES: Record<MascotMode, { width: number; height: number }> = {
-  collapsed: { width: MASCOT_SIZE, height: MASCOT_SIZE },
-  menu: { width: 240, height: 316 },
-  chat: { width: 468, height: 520 },
-  approval: { width: 440, height: 360 },
+  collapsed: { width: 180, height: 7 },
+  compact: { width: 500, height: 44 },
+  menu: { width: 640, height: 300 },
+  chat: { width: 600, height: 560 },
+  approval: { width: 640, height: 340 },
 };
 
 const isMode = (value: unknown): value is MascotMode => MASCOT_MODES.some((mode) => mode === value);
 
-/** Bottom-right corner of the primary display's work area (the part not covered by the taskbar). */
-export function defaultMascotPosition(workArea: Rect): Point {
-  return { x: workArea.x + workArea.width - MASCOT_SIZE - MASCOT_MARGIN, y: workArea.y + workArea.height - MASCOT_SIZE - MASCOT_MARGIN };
-}
-
-const distanceToRect = (point: Point, area: Rect) => {
-  const dx = Math.max(area.x - point.x, 0, point.x - (area.x + area.width));
-  const dy = Math.max(area.y - point.y, 0, point.y - (area.y + area.height));
-  return dx * dx + dy * dy;
-};
-
-/** The work area holding the point, or the closest one when it is in a gap or on a display that is gone. */
-export function nearestWorkArea(point: Point, areas: readonly Rect[]): Rect {
-  let best = areas[0];
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const area of areas) {
-    const distance = distanceToRect(point, area);
-    if (distance < bestDistance) {
-      best = area;
-      bestDistance = distance;
-    }
-  }
-  return best;
-}
-
-const centerOf = (position: Point): Point => ({ x: position.x + MASCOT_SIZE / 2, y: position.y + MASCOT_SIZE / 2 });
-const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(value, high));
-
-/** Keeps the whole mascot inside the work area it is closest to. */
-export function clampMascotPosition(position: Point, areas: readonly Rect[]): Point {
-  const area = nearestWorkArea(centerOf(position), areas);
-  return {
-    x: clamp(position.x, area.x, area.x + area.width - MASCOT_SIZE),
-    y: clamp(position.y, area.y, area.y + area.height - MASCOT_SIZE),
-  };
-}
-
-export function anchorFor(position: Point, area: Rect): Anchor {
-  const center = centerOf(position);
-  return {
-    horizontal: center.x > area.x + area.width / 2 ? "right" : "left",
-    vertical: center.y > area.y + area.height / 2 ? "bottom" : "top",
-  };
-}
-
-/** The window size for a mode, reduced when the work area is smaller than the design size. */
-export function windowSize(mode: MascotMode, area: Rect) {
+/** The window rectangle for a mode: top center of the work area, reduced only when the work area is smaller than the design size. */
+export function islandBounds(mode: MascotMode, workArea: Rect): Rect {
   const size = MODE_SIZES[mode];
-  return { width: Math.min(size.width, area.width), height: Math.min(size.height, area.height) };
+  const width = Math.min(size.width, workArea.width);
+  const height = Math.min(size.height, workArea.height);
+  return { x: workArea.x + Math.round((workArea.width - width) / 2), y: workArea.y, width, height };
 }
 
-/** Where the mascot sits inside a window of this size: in the anchored corner. */
-export function mascotOffset(anchor: Anchor, size: { width: number; height: number }): Point {
-  return {
-    x: anchor.horizontal === "right" ? size.width - MASCOT_SIZE : 0,
-    y: anchor.vertical === "bottom" ? size.height - MASCOT_SIZE : 0,
-  };
-}
-
-/** The window rectangle for a mode with the mascot on its saved spot, shifted only as far as needed to stay on screen. */
-export function placeWindow({ mascot, mode, anchor, areas }: { mascot: Point; mode: MascotMode; anchor: Anchor; areas: readonly Rect[] }): Rect {
-  const area = nearestWorkArea(centerOf(mascot), areas);
-  const size = windowSize(mode, area);
-  const offset = mascotOffset(anchor, size);
-  return {
-    x: clamp(mascot.x - offset.x, area.x, area.x + area.width - size.width),
-    y: clamp(mascot.y - offset.y, area.y, area.y + area.height - size.height),
-    ...size,
-  };
-}
-
-/** Clicking the mascot opens the menu, or closes whatever is open. */
+/** Clicking the island opens the menu from the bar or the pill, or closes whatever is open. */
 export function nextModeOnMascotClick(mode: MascotMode): MascotMode {
-  return mode === "collapsed" ? "menu" : "collapsed";
+  return mode === "collapsed" || mode === "compact" ? "menu" : "collapsed";
 }
 
-/** The shortcut opens the chat bubble, or closes it when it is the open one. A hidden mascot comes back with the chat. */
+/** The shortcut opens the chat card, or closes it when it is the open one. A hidden island comes back with the chat. */
 export function nextModeOnShortcut(mode: MascotMode, visible: boolean): MascotMode {
   return visible && mode === "chat" ? "collapsed" : "chat";
 }
 
 /**
- * Frameless and transparent so only the mascot shows; always on top and off the taskbar so it behaves like a companion,
- * not an app. Resizing is done by the app from the main process, never by the user. There is no preload: the page asks
- * for mode changes through a validated loopback route.
+ * Frameless and transparent so only the island shows; always on top and off the taskbar so it behaves like a companion,
+ * not an app. It stays focusable: the composer and the buttons need it once the user clicks. Resizing is done by the app from
+ * the main process, never by the user. There is no preload: the page asks for mode changes through a validated loopback route.
  */
 export function mascotWindowOptions({ devTools = false }: { devTools?: boolean } = {}) {
   return {
-    width: MASCOT_SIZE,
-    height: MASCOT_SIZE,
+    width: MODE_SIZES.collapsed.width,
+    height: MODE_SIZES.collapsed.height,
     show: false,
     frame: false,
     transparent: true,
@@ -131,7 +76,10 @@ export function mascotWindowOptions({ devTools = false }: { devTools?: boolean }
   };
 }
 
-/** The slice of an Electron BrowserWindow the controller uses. */
+/**
+ * The slice of an Electron BrowserWindow the controller uses. The three stacking methods are optional so a shell (or a test
+ * window) without them still works; when present they keep the island above every other window.
+ */
 export type MascotWindow = {
   setBounds(bounds: Rect): void;
   show(): void;
@@ -139,20 +87,23 @@ export type MascotWindow = {
   hide(): void;
   focus(): void;
   isVisible(): boolean;
+  setAlwaysOnTop?(flag: boolean, level?: "screen-saver"): void;
+  setVisibleOnAllWorkspaces?(visible: boolean, options?: { visibleOnFullScreen?: boolean }): void;
+  moveTop?(): void;
 };
 
 export type MascotControllerOptions = {
   window: MascotWindow;
-  /** Work areas of every connected display, primary first. */
-  workAreas: () => readonly Rect[];
+  /** Work areas of every connected display, primary first. Not used any more: the island always lives on the primary one. */
+  workAreas?: () => readonly Rect[];
   primaryWorkArea: () => Rect;
-  /** The saved position, if any. It is clamped to a visible display; the clamp itself is never saved. */
+  /** The position saved by the old draggable mascot. Ignored: the island is fixed at the top center. */
   position?: Point;
-  /** Called with the position the mascot ends up at after a drag. */
-  savePosition: (position: Point) => void;
+  /** Never called any more; kept so the shell that still passes it keeps compiling. */
+  savePosition?: (position: Point) => void;
   /** Called when the app (not the page) changed the mode, so the page can follow. */
   onNativeMode?: (mode: MascotMode) => void;
-  /** Called when the app brought the mascot up because Claude Code needs the user, so the page looks at once instead of on its next poll. */
+  /** Called when the app brought the island up because Claude Code needs the user, so the page looks at once instead of on its next poll. */
   onAttention?: () => void;
 };
 
@@ -160,61 +111,61 @@ export type MascotController = ReturnType<typeof createMascotController>;
 
 export function createMascotController(options: MascotControllerOptions) {
   const { window: win } = options;
-  const areas = () => options.workAreas();
-  const anchorAt = (spot: Point) => anchorFor(spot, nearestWorkArea(centerOf(spot), areas()));
 
-  let position = clampMascotPosition(options.position ?? defaultMascotPosition(options.primaryWorkArea()), areas());
   let mode: MascotMode = "collapsed";
-  let anchor = anchorAt(position);
+  let bounds: Rect = islandBounds(mode, options.primaryWorkArea());
 
-  const layout = () => win.setBounds(placeWindow({ mascot: position, mode, anchor, areas: areas() }));
+  /** Windows can drop the topmost state of a window that was shown inactive or resized, so every show and resize asserts it again. */
+  function stayOnTop() {
+    win.setAlwaysOnTop?.(true, "screen-saver");
+    win.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true });
+    win.moveTop?.();
+  }
+
+  const layout = () => {
+    bounds = islandBounds(mode, options.primaryWorkArea());
+    win.setBounds(bounds);
+    stayOnTop();
+  };
   layout();
 
   function setMode(next: MascotMode, source: "page" | "native") {
     if (!isMode(next)) throw new TypeError("Unknown mascot mode.");
     mode = next;
-    // The side is chosen when the layout changes, not while dragging, so the controls never flip under the pointer.
-    anchor = anchorAt(position);
     layout();
     if (source === "native") options.onNativeMode?.(mode);
   }
 
-  /** `x` and `y` are the window's top-left target while dragging; the mascot is what must stay on screen. */
-  function moveTo(x: number, y: number) {
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    const area = nearestWorkArea(centerOf(position), areas());
-    const offset = mascotOffset(anchor, windowSize(mode, area));
-    position = clampMascotPosition({ x: Math.round(x) + offset.x, y: Math.round(y) + offset.y }, areas());
-    layout();
-    options.savePosition({ ...position });
-  }
+  /** The island is fixed at the top center. A move request from an older page is accepted and changes nothing. */
+  function moveTo(_x: number, _y: number) {}
 
-  /** After a display change: bring the mascot back onto a visible display. The saved choice stays as it was. */
+  /** After a display change: the island follows the primary work area. */
   function reposition() {
-    position = clampMascotPosition(position, areas());
-    anchor = anchorAt(position);
     layout();
   }
 
   return {
-    position: (): Point => ({ ...position }),
-    state: () => ({ mode, anchor: { ...anchor } }),
+    position: (): Point => ({ x: bounds.x, y: bounds.y }),
+    state: () => ({ mode, anchor: { ...ISLAND_ANCHOR } }),
     setMode,
     moveTo,
     reposition,
     show() {
       reposition();
       win.show();
+      stayOnTop();
       win.focus();
     },
     showInactive() {
       reposition();
       win.showInactive();
+      stayOnTop();
     },
-    /** Claude Code needs the user: the mascot comes up (also from the tray) without taking focus from what they are doing. */
+    /** Claude Code needs the user: the island comes up (also from the tray) without taking focus from what they are doing. */
     attention() {
       reposition();
       win.showInactive();
+      stayOnTop();
       options.onAttention?.();
     },
     toggleChat() {
@@ -223,6 +174,7 @@ export function createMascotController(options: MascotControllerOptions) {
       setMode(next, "native");
       if (!visible) {
         win.show();
+        stayOnTop();
         win.focus();
       } else if (next === "chat") win.focus();
     },

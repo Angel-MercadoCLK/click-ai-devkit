@@ -185,8 +185,8 @@ test("a window controller without showInactive is still a controller, and a malf
   Reflect.deleteProperty(globalThis, windowMode.WINDOW_CONTROLLER_KEY);
 });
 
-test("the approval card is a fourth window mode, sized beside the mascot and kept on screen", () => {
-  assert.deepEqual(mascot.MASCOT_MODES, ["collapsed", "menu", "chat", "approval"]);
+test("the approval card is a window mode of the island, sized to hold the card with its buttons and kept on screen", () => {
+  assert.deepEqual(mascot.MASCOT_MODES, ["collapsed", "compact", "menu", "chat", "approval"]);
   assert.deepEqual([...windowMode.WINDOW_MODES], [...mascot.MASCOT_MODES]);
   assert.ok(mascot.MODE_SIZES.approval.width >= mascot.MASCOT_SIZE + 12 + 300, "room for a card next to the mascot");
   assert.ok(mascot.MODE_SIZES.approval.height >= 300);

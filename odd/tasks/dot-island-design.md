@@ -32,10 +32,22 @@ Branch: `feat/dot-agent-tools` (accumulates with the agent tools feature; one PR
 
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
-| D1 | S1–S5 | after the agent tools writers finish (they edit `dot/app`), one writer for the island UI and window behavior | pending | |
+| D1 | S1–S5 | after the agent tools writers finish (they edit `dot/app`), one writer for the island UI and window behavior | done | (next commit) |
 
 ## Log
 
 - L1 (2026-10-22) — User request: "bro revisa cou cou, que hermoso diseño, no la basura de diseño que hiciste donde tiene un sol, quiero algo bonito que si fucnione pero a nivel visual se vea tan estetico, de verdad,la idea es hacer como esto https://github.com/louis-cfm/coucou en diseño y todo"
 - L2 (2026-10-22) — The parent studied Coucou's captures and published the canvas with three original characters (Orbe, Lente, Gota) in four states and the island boards. Coucou's Mochi, name and sounds are all rights reserved, so Dot keeps its own character.
 - L3 (2026-10-22) — User choice: "me gusta lente".
+- L4 (2026-10-22) — D1 was done by the writer.
+  - What it built:
+    - The Lente SVG character, with CSS motion gated on reduced motion; `spark.tsx` was removed.
+    - A top-center island with five modes: collapsed 180×7, compact 500×44, menu 640×300, chat 600×560, approval 640×340.
+    - Fixed position (drag removed). Topmost re-asserted with `setAlwaysOnTop(true,"screen-saver")`, `setVisibleOnAllWorkspaces` and `moveTop` on create, show and resize.
+    - Y/N keys only on a focused permission card.
+    - Smoke selectors pinned by a test.
+  - The parent forwarded the three window methods in `dot/desktop/main.mts`, without which topmost stayed inert.
+  - QA: the writer rendered `/mascot` in headless Chromium with stubs and fixed three bugs (approval overridden by the resting effect, tool-row overflow, clipped menu). The parent reviewed the screenshots and fixed the empty-chat hint showing during the first message (separate commit).
+  - Checks: `npm test` 560/560; typecheck, `desktop:compile` and `next build` clean.
+  - Not verified: a real Windows window (7px bar, topmost over other apps, no focus steal).
+  - Not ported: prototype nav icons, the countdown, drop shadows (clipped by the island-sized window).

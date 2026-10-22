@@ -17,7 +17,7 @@ function readReported(value: unknown): Reported | undefined {
 }
 
 /**
- * The mascot window's mode, owned by the desktop shell. The page asks for changes through `/api/window` and follows the
+ * The island window's mode, owned by the desktop shell. The page asks for changes through `/api/window` and follows the
  * shell when the shortcut or tray changes it. Outside the desktop app the mode is only local, so the page still works in a browser.
  */
 export function useMascotWindow() {
@@ -54,8 +54,6 @@ export function useMascotWindow() {
     [post],
   );
 
-  const moveTo = useCallback((x: number, y: number) => post({ move: { x: Math.round(x), y: Math.round(y) } }), [post]);
-
   useEffect(() => {
     alive.current = true;
     void load();
@@ -69,5 +67,5 @@ export function useMascotWindow() {
     };
   }, [load]);
 
-  return { mode: state.mode, anchor: state.anchor, setMode, moveTo };
+  return { mode: state.mode, anchor: state.anchor, setMode };
 }

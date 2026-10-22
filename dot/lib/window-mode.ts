@@ -3,7 +3,11 @@
 // and the `/api/window` route validates everything before it reaches it. The page never gets more than a mode name and a
 // pair of integers; there is no preload and no generic IPC.
 
-export type WindowMode = "collapsed" | "menu" | "chat" | "approval";
+/**
+ * The island's window modes. collapsed: the thin bar (nothing is happening); compact: the pill (an agent works or something
+ * is new, or the pointer is on the bar); menu: sessions and quick actions; chat: the conversation; approval: the card Dot needs answered.
+ */
+export type WindowMode = "collapsed" | "compact" | "menu" | "chat" | "approval";
 export type WindowAnchor = { horizontal: "left" | "right"; vertical: "top" | "bottom" };
 export type WindowState = { mode: WindowMode; anchor: WindowAnchor };
 export type WindowController = {
@@ -14,13 +18,14 @@ export type WindowController = {
   showInactive?(): void;
 };
 
-export const WINDOW_MODES: readonly WindowMode[] = ["collapsed", "menu", "chat", "approval"];
+export const WINDOW_MODES: readonly WindowMode[] = ["collapsed", "compact", "menu", "chat", "approval"];
 export const WINDOW_CONTROLLER_KEY = Symbol.for("click-dot.window-controller");
 export const WINDOW_MAX_BODY_BYTES = 256;
 /** Far beyond any real desktop; a larger number is not a window position. */
 export const WINDOW_COORDINATE_LIMIT = 100_000;
 export const UNAVAILABLE_WINDOW_STATE: WindowState = { mode: "collapsed", anchor: { horizontal: "right", vertical: "bottom" } };
 
+/** `move` is still accepted so an older page does not break, but the island is fixed at the top center and ignores it. */
 export type WindowRequest = { kind: "mode"; mode: WindowMode } | { kind: "move"; x: number; y: number };
 
 const isCoordinate = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && Math.abs(value) <= WINDOW_COORDINATE_LIMIT;
@@ -124,22 +129,10 @@ export async function readWindowRequest(request: Request): Promise<WindowRequest
 }
 
 /**
- * Clicking the mascot opens the menu, or closes whatever is open. Mirrors the shell's own transition. When Claude Code is
- * waiting for the user and the card was put away, clicking the mascot brings the card back instead of the menu.
+ * Clicking the island opens the menu from the thin bar or the pill, or closes whatever is open. When Claude Code is waiting
+ * for the user and the card was put away, clicking the island brings the card back instead of the menu.
  */
 export function nextMascotMode(mode: WindowMode, requestWaiting = false): WindowMode {
-  if (mode !== "collapsed") return "collapsed";
+  if (mode !== "collapsed" && mode !== "compact") return "collapsed";
   return requestWaiting ? "approval" : "menu";
-}
-
-/** Pointer travel before a press on the mascot counts as a drag instead of a click. */
-export const DRAG_THRESHOLD_PX = 5;
-
-export function exceedsDragThreshold(dx: number, dy: number) {
-  return Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX;
-}
-
-/** Where the window should be so it follows the pointer from where it was when the press began. */
-export function dragTarget(windowStart: { x: number; y: number }, pointerStart: { x: number; y: number }, pointerNow: { x: number; y: number }) {
-  return { x: windowStart.x + (pointerNow.x - pointerStart.x), y: windowStart.y + (pointerNow.y - pointerStart.y) };
 }
