@@ -1,12 +1,12 @@
 {
-    "version": "0.9.0",
+    "version": "0.9.1",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/Angel-MercadoCLK/click-ai-devkit/releases/download/v0.9.0/click_0.9.0_windows_amd64.zip",
+            "url": "https://github.com/Angel-MercadoCLK/click-ai-devkit/releases/download/v0.9.1/click_0.9.1_windows_amd64.zip",
             "bin": [
                 "click.exe"
             ],
-            "hash": "f2fb950ce9672aa50a50b10db48031548f9f623a035fc7c619eaa2609c5861ff"
+            "hash": "587600ea19c969a78ccb2bddaa689057a393cf312ef823ee8cdad6c156114e02"
         }
     },
     "homepage": "https://github.com/Angel-MercadoCLK/click-ai-devkit",
