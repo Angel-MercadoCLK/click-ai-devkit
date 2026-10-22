@@ -16,6 +16,7 @@ import { loadGuardPatterns, type CompiledGuardRule } from "./redaction.mts";
 import { createScreenCapture } from "./screen-capture.mts";
 import { createNativeRedactor, createScreenPreparer } from "./screen-prep.mts";
 import { startDotServer } from "./server.mts";
+import { createToolRunner, installToolRunner } from "./tool-runner.mts";
 import { installVoiceController } from "./speech.mts";
 
 const assets = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
@@ -302,6 +303,10 @@ async function start() {
   // Per-launch token for the Claude Code hook relay (`click dot-hook`). The endpoint refuses everything until it is published.
   const agentHookToken = createAgentHookToken();
   installAgentHook(globalThis, agentHookToken);
+
+  // Agent tools (PowerShell, Claude Code): a Windows-only runtime the chat route reaches through globalThis. Elsewhere nothing
+  // is published and the chat behaves as a plain chat.
+  if (process.platform === "win32") installToolRunner(globalThis, createToolRunner());
 
   try {
     server = await startDotServer(app.getAppPath(), { workingDirectory: userData });
