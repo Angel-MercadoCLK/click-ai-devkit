@@ -7,7 +7,7 @@ import { configureEnvironment, mascotUrl, TOGGLE_SHORTCUT } from "./config.mts";
 import { PortInUseError } from "./listen.mts";
 import { createMascotController, installWindowController, mascotWindowOptions, type MascotController, type Point, type Rect } from "./mascot.mts";
 import { isAllowedNavigation, isSignInUrl, systemBrowserTarget } from "./navigation.mts";
-import { createPreferenceStore, DEFAULT_PREFERENCES, initialPreferences, LOGIN_ITEM_ARGS, loadPreferences, shouldManageLoginItem } from "./preferences.mts";
+import { createPreferenceStore, DEFAULT_PREFERENCES, initialPreferences, LOGIN_ITEM_ARGS, loadPreferences, mascotStartup, shouldManageLoginItem } from "./preferences.mts";
 import { installStorageProtector } from "./protector.mts";
 import { createWindowsOcr } from "./ocr.mts";
 import { loadGuardPatterns, type CompiledGuardRule } from "./redaction.mts";
@@ -306,8 +306,8 @@ async function start() {
   screen.on("display-removed", reposition);
   screen.on("display-metrics-changed", reposition);
   started = true;
-  // The mascot is the whole app, so it appears on every start (including start with Windows) without taking focus.
-  window?.once("ready-to-show", () => mascot?.showInactive());
+  // The mascot is the whole app, so it appears on every start; a start with Windows does not take focus.
+  window?.once("ready-to-show", () => (mascotStartup(process.argv) === "inactive" ? mascot?.showInactive() : mascot?.show()));
   if (!encryptionAvailable) {
     void dialog.showMessageBox({
       type: "warning",

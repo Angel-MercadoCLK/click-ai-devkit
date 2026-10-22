@@ -130,6 +130,12 @@ test("login launches start hidden in the tray while manual launches show the win
   assert.deepEqual(preferences.LOGIN_ITEM_ARGS, ["--hidden"]);
 });
 
+test("the mascot appears on every start; a start with Windows shows it without taking focus", () => {
+  // The mascot is the whole app, so --hidden (start with Windows) no longer means "tray only".
+  assert.equal(preferences.mascotStartup(["app.exe", "--hidden"]), "inactive");
+  assert.equal(preferences.mascotStartup(["app.exe"]), "focused");
+});
+
 test("the storage protector wraps Electron safeStorage and rejects bad input", () => {
   const calls = [];
   const fake = {

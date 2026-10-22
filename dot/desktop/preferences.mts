@@ -101,3 +101,9 @@ export function shouldManageLoginItem({ isPackaged, argv, env }: { isPackaged: b
 }
 
 export const startsHidden = (argv: readonly string[]) => argv.includes(LOGIN_ITEM_ARGS[0]);
+
+/**
+ * How the mascot appears on start. It always appears, because the mascot is the whole app; a start with Windows
+ * (`--hidden`) shows it without taking focus from whatever the user opened first.
+ */
+export const mascotStartup = (argv: readonly string[]): "inactive" | "focused" => (startsHidden(argv) ? "inactive" : "focused");
