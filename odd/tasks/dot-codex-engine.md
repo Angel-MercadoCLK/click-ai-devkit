@@ -44,7 +44,7 @@ Branch: `feat/dot-alive` (accumulates with the alive feature; one PR). Test runn
 
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
-| E1 | S1, S2, S3, S4, S7 | delegated writer: Codex app-server client + broker mapping (parallel with E2) | done | (next commit) |
+| E1 | S1, S2, S3, S4, S7 | delegated writer: Codex app-server client + broker mapping (parallel with E2) | done | 11ccdbf |
 | E2 | S5 | delegated writer: Dot MCP server + background Claude tasks (parallel with E1) | done | 94df7e9 |
 | E3 | S6 | after E1/E2: Chrome + Windows-MCP wiring, detection and the control indicator | pending | |
 | E4 | S2, S3 | after the alive writer: chat/history UI on Codex threads, file drop | pending | |

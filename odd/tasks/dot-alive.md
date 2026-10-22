@@ -28,7 +28,7 @@ Branch: `feat/dot-alive` (from `origin/main` 944bce5). Delivery strategy: ask-on
 
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
-| A1 | S1, S2, S3, S4 | delegated writer (one UI unit; the engine research runs in parallel, read-only) | done | (next commit) |
+| A1 | S1, S2, S3, S4 | delegated writer (one UI unit; the engine research runs in parallel, read-only) | done | 47a26ae |
 | A2 | all | inline: seam check, native review, delivery | pending | |
 
 ## Log
