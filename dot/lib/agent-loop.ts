@@ -209,7 +209,9 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentTurn
     }
     let outcome: ToolOutcome = "auto";
     if (!readOnly) {
-      if (remembered.has(command)) outcome = "always";
+      // Siempre is remembered per folder: the same command elsewhere may touch other files.
+      const rememberKey = `${cwd ?? ""}\0${command}`;
+      if (remembered.has(rememberKey)) outcome = "always";
       else {
         report(id, "powershell", summary, "waiting_approval");
         const answer = await ask({
@@ -224,7 +226,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentTurn
           return DENIED_OUTPUT;
         }
         outcome = answer === "always" ? "always" : "approved";
-        if (answer === "always" && remembered.size < MAX_REMEMBERED) remembered.add(command);
+        if (answer === "always" && remembered.size < MAX_REMEMBERED) remembered.add(rememberKey);
       }
     }
     report(id, "powershell", summary, "running");

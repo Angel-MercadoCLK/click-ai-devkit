@@ -321,7 +321,7 @@ test("Siempre runs the command and remembers its exact text, so the same command
   first.broker.decide((await pendingOf(first.broker)).id, "always");
   const one = await first.done;
   assert.deepEqual(one.tools, [{ label: "npm test", outcome: "always" }]);
-  assert.deepEqual([...alwaysAllowed], ["npm test"]);
+  assert.equal(alwaysAllowed.size, 1);
   const second = turn({ fake, options: { fetcher, alwaysAllowed } });
   const two = await second.done;
   assert.equal(second.broker.state().pending, null, "the remembered command asks nothing");
@@ -333,6 +333,26 @@ test("Siempre runs the command and remembers its exact text, so the same command
   third.broker.decide(pending.id, "deny");
   await third.done;
   assert.equal(fake.calls.powershell.length, 2);
+});
+
+test("Siempre remembers the command for its folder only, so the same command elsewhere asks again", async () => {
+  const fake = fakeRunner();
+  const alwaysAllowed = new Set();
+  const { fetcher } = scripted([
+    itemsRound([call("run_powershell", { command: "Remove-Item build", cwd: "C:\\work\\a" })]),
+    textRound("uno"),
+    itemsRound([call("run_powershell", { command: "Remove-Item build", cwd: "C:\\work\\b" }, 2)]),
+    textRound("dos"),
+  ]);
+  const first = turn({ fake, options: { fetcher, alwaysAllowed } });
+  first.broker.decide((await pendingOf(first.broker)).id, "always");
+  await first.done;
+  const second = turn({ fake, options: { fetcher, alwaysAllowed } });
+  const pending = await pendingOf(second.broker);
+  assert.match(pending.detail, /C:\\work\\b/);
+  second.broker.decide(pending.id, "deny");
+  await second.done;
+  assert.equal(fake.calls.powershell.length, 1, "the command did not run in the other folder");
 });
 
 test("a classifier that fails means the command needs approval, and an over-long command is denied without asking", async () => {
