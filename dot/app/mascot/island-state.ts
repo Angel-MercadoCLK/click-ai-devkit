@@ -1,5 +1,5 @@
 // What the island shows and when, as plain functions so it can be tested without a browser: which state the character
-// is in, when the island rests as the thin bar or becomes the pill, and the short Spanish lines the pill and the head use.
+// is in, when the island rests as the invisible strip or becomes the pill, and the short Spanish lines the pill and the head use.
 
 import type { AgentAttention, PendingView } from "../../lib/agent-state.ts";
 import type { AgentSessionView, SessionState } from "../../lib/agent-sessions.ts";
@@ -20,8 +20,12 @@ export function isActive({ attention, sharing, listening, finishedRecently }: { 
   return attention !== "idle" || sharing || listening || finishedRecently;
 }
 
-/** The thin bar when nothing is going on, the pill when something is or the pointer is on the bar. */
-export function restingMode({ active, hovered }: { active: boolean; hovered: boolean }): "collapsed" | "compact" {
+/**
+ * The resting strip (nothing drawn) when nothing is going on, the pill when something is or the pointer is on the strip.
+ * Hidden by the user, only a shared screen brings the pill: the capture indicator is never hidden from you.
+ */
+export function restingMode({ active, hovered, hidden = false, sharing = false }: { active: boolean; hovered: boolean; hidden?: boolean; sharing?: boolean }): "collapsed" | "compact" {
+  if (hidden) return sharing ? "compact" : "collapsed";
   return active || hovered ? "compact" : "collapsed";
 }
 
@@ -45,7 +49,7 @@ export function raisedCardFor(previous: string | null, mode: WindowMode, pending
   return mode === "approval" && pendingId ? pendingId : previous;
 }
 
-/** Closing a card lands on the resting state, so the thin bar never flashes while something is going on. */
+/** Closing a card lands on the resting state, so the strip never hides the pill while something is going on. */
 export function settleMode(next: WindowMode, resting: "collapsed" | "compact"): WindowMode {
   return next === "collapsed" ? resting : next;
 }

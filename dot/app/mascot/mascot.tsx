@@ -20,7 +20,7 @@ import { voiceAvailability } from "./voice-result.ts";
 
 /** How long the pill stays after a session finishes, so the user notices that something is new. */
 const FINISHED_MS = 8000;
-/** How long the pill stays after the pointer leaves the thin bar it peeked out of. */
+/** How long the pill stays after the pointer leaves the strip it unfolded from. */
 const PEEK_MS = 700;
 
 const SESSION_LOOK: Record<SessionState, "needs" | "working" | "done"> = { "te necesita": "needs", trabajando: "working", listo: "done" };
@@ -37,7 +37,7 @@ function ActionText({ action }: { action: string | null }) {
   );
 }
 
-/** Dot as an island at the top of the screen: a thin bar, a pill while something happens, and cards for sessions, permission and chat. */
+/** Dot as an island at the top of the screen: invisible at rest (hover the top edge to unfold it), a pill while something happens, and cards for sessions, permission and chat. */
 export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   const auth = useAuthConnection(canonicalOrigin);
   const win = useMascotWindow();
@@ -47,7 +47,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   const [chatOpened, setChatOpened] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [finishedRecently, setFinishedRecently] = useState(false);
-  const { mode, setMode } = win;
+  const { mode, setMode, hidden, morph, leaving } = win;
   const expanded = mode !== "collapsed" && mode !== "compact";
 
   const voice = useVoice({
@@ -65,9 +65,10 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   const view = mascotIndicator(indicator, voice.listening, attention);
   const { sharing } = view;
   const active = isActive({ attention, sharing, listening: voice.listening, finishedRecently });
-  // Something going on (an agent working, the screen shared, Voz listening) keeps the island as the pill, never as the thin bar.
-  const resting = restingMode({ active, hovered });
-  const restingQuiet = restingMode({ active, hovered: false });
+  // Something going on (an agent working, the screen shared, Voz listening) keeps the island as the pill, never as the resting strip.
+  // Hidden by the user (tray: "Ocultar Dot"), the island is nothing at rest; only a shared screen still shows the pill.
+  const resting = restingMode({ active, hovered, hidden, sharing });
+  const restingQuiet = restingMode({ active, hovered: false, hidden, sharing });
   const lenteState = lenteStateFor({ attention, listening: voice.listening, sessions });
 
   // The mode the card interrupted, so the menu or the chat comes back once the request is over.
@@ -85,6 +86,15 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
     // Only a new request forces the card; the user's own mode changes in between are theirs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingId]);
+
+  // Hiding Dot while a request waits must never hide the request: the card comes back up (without focus) at once.
+  useEffect(() => {
+    if (!hidden || !pendingId || mode === "approval") return;
+    modeBeforeCard.current = mode;
+    void setMode("approval");
+    // Only the moment the user hides Dot matters; the effect above raises a new request's card.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hidden]);
 
   // The card is gone (answered, handed back or timed out): leave its window size.
   useEffect(() => {
@@ -104,7 +114,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cardShown, pendingId]);
 
-  // The bar and the pill follow what is going on: the pill while it lasts or while the pointer is on the bar, the thin bar otherwise.
+  // The strip and the pill follow what is going on: the pill while it lasts or while the pointer is on the strip, the strip otherwise.
   // The card counts as up only once the window is in the approval mode; until then the resting rule leaves it alone.
   cardRaisedFor.current = raisedCardFor(cardRaisedFor.current, mode, pendingId);
   // A request waiting for its card is handled above, so the two never fight over the window size.
@@ -181,7 +191,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
     else void setMode(next);
   }
 
-  // Hovering the thin bar peeks the pill out; leaving it puts the bar back after a moment.
+  // Hovering the strip unfolds the pill; leaving it puts the strip back after a moment.
   const onPointerEnter = () => {
     window.clearTimeout(peekTimer.current);
     setHovered(true);
@@ -206,10 +216,12 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
       data-listening={view.listening}
       data-agent={view.agent}
       data-sharing={sharing}
+      data-hidden={hidden}
+      data-leaving={leaving}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
     >
-      <div className="island" data-mode={mode}>
+      <div className="island" data-mode={mode} data-morph={morph.flip} data-grows={morph.grows} style={{ "--morph-x": `${morph.x}%`, "--morph-y": `${morph.y}%` } as React.CSSProperties}>
         <header className="island-head">
           <div
             className="island-toggle"
@@ -228,7 +240,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
           >
             {mode === "compact" && (
               <>
-                <Lente state={lenteState} size={34} ring={view.ring} />
+                <Lente state={lenteState} size={34} ring={view.ring} listening={voice.listening} />
                 <span className="island-line" title={line}>
                   <ActionText action={line} />
                 </span>
@@ -244,7 +256,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
           </div>
           {expanded && (
             <span className="island-title" data-needs={mode === "approval"}>
-              {mode === "chat" && <Lente state={lenteState} size={28} ring={view.ring} />}
+              {mode === "chat" && <Lente state={lenteState} size={28} ring={view.ring} listening={voice.listening} />}
               {mode === "approval" && pending ? approvalTitle(pending) : "Dot"}
             </span>
           )}
@@ -271,7 +283,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
         {mode === "menu" && (
           <div className="island-body island-menu">
             <section className="island-card island-sessions" aria-label="Estado de Dot">
-              <Lente state={lenteState} size={76} ring={view.ring} />
+              <Lente state={lenteState} size={76} ring={view.ring} listening={voice.listening} />
               <div className="island-sessions-main">
                 {sessions.length > 0 ? (
                   <ul className="menu-sessions" aria-label="Sesiones de Claude Code">

@@ -6,6 +6,7 @@ import { agentHookFile, createAgentHookToken, installAgentHook, releaseAgentRequ
 import { createCaptureController, createCaptureService, describeCapture, installCaptureController, type CaptureController, type CaptureService } from "./capture.mts";
 import { configureEnvironment, DOT_PORT, dotOrigin, mascotUrl, TOGGLE_SHORTCUT } from "./config.mts";
 import { controlCookieDetails, createControlToken, installControlToken } from "./control-token.mts";
+import { createCursorFeed, type CursorFeed } from "./cursor.mts";
 import { PortInUseError } from "./listen.mts";
 import { createMascotController, installWindowController, mascotWindowOptions, type MascotController, type Point, type Rect } from "./mascot.mts";
 import { isAllowedNavigation, isSignInUrl, systemBrowserTarget } from "./navigation.mts";
@@ -23,6 +24,8 @@ const assets = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
 
 let window: BrowserWindow | undefined;
 let mascot: MascotController | undefined;
+/** Pushes the cursor to the island page for the character's eye; it polls only while the island shows something to look at. */
+let cursorFeed: CursorFeed | undefined;
 let pendingPosition: Point | undefined;
 let positionTimer: NodeJS.Timeout | undefined;
 let tray: Tray | undefined;
@@ -42,7 +45,13 @@ function showWindow() {
   mascot?.show();
 }
 
-/** Ctrl+Shift+Space: the chat bubble opens beside the mascot, or closes when it is the open one. */
+/** The tray item "Ocultar Dot" / "Mostrar Dot": the user hides the island until they show it again. The choice is saved. */
+function toggleIslandHidden() {
+  if (!window || window.isDestroyed()) createMascot();
+  if (mascot) mascot.setHidden(!mascot.state().hidden);
+}
+
+/** Ctrl+Shift+Space: the chat card opens on the island, or closes when it is the open one; a hidden island comes back with it. */
 function toggleWindow() {
   if (!window || window.isDestroyed()) createMascot();
   mascot?.toggleChat();
@@ -117,8 +126,29 @@ function createMascot() {
     savePosition: schedulePositionSave,
     onNativeMode: () => announceMode(created),
     onAttention: () => announceAttention(created),
+    hidden: preferences?.get().islandHidden === true,
+    onHiddenChange: (hidden) => {
+      preferences
+        ?.update({ islandHidden: hidden })
+        .catch((error: unknown) => {
+          console.error("Could not save whether Dot is hidden.", error);
+          dialog.showErrorBox("Click Dot", hidden ? "Dot is hidden now, but Click Dot could not save that choice, so it may be back next time." : "Dot is shown now, but Click Dot could not save that choice, so it may be hidden next time.");
+        })
+        .finally(refreshTray);
+    },
+    onChange: () => cursorFeed?.sync(),
   });
   installWindowController(globalThis, mascot);
+  // The eye follows the cursor anywhere on the screen. Only this process can read it; the page gets two bounded integers.
+  cursorFeed?.stop();
+  cursorFeed = createCursorFeed({
+    getCursor: () => screen.getCursorScreenPoint(),
+    getBounds: () => created.getBounds(),
+    isActive: () => !created.isDestroyed() && created.isVisible() && mascot?.state().mode !== "collapsed",
+    send: (script) => {
+      if (!created.isDestroyed()) created.webContents.executeJavaScript(script).catch(() => {});
+    },
+  });
   const contents = created.webContents;
   const guard = (event: { preventDefault(): void }, url: string) => {
     if (isAllowedNavigation(url)) return;
@@ -172,7 +202,7 @@ function refreshTray() {
   tray.setToolTip(capture.tooltip);
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "Mostrar a Dot", click: showWindow },
+      { label: (mascot?.state().hidden ?? preferences?.get().islandHidden === true) ? "Mostrar Dot" : "Ocultar Dot", click: toggleIslandHidden },
       {
         label: "Let Dot see my screen",
         type: "checkbox",
@@ -384,6 +414,7 @@ if (!app.requestSingleInstanceLock()) {
     releaseAgentRequests(globalThis);
     if (hookDiscovery) removeAgentHookFile(hookDiscovery.file, hookDiscovery.token);
     globalShortcut.unregisterAll();
+    cursorFeed?.stop();
     captureService?.dispose();
     server?.close();
   });

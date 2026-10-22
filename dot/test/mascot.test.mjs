@@ -18,9 +18,9 @@ const centered = (bounds, workArea) => bounds.x * 2 + bounds.width === workArea.
 
 // --- island geometry ------------------------------------------------------------------------------------------
 
-test("the island has five window modes: a thin bar, the compact pill and three expanded cards", () => {
+test("the island has five window modes: an invisible hot strip, the compact pill and three expanded cards", () => {
   assert.deepEqual(mascot.MASCOT_MODES, ["collapsed", "compact", "menu", "chat", "approval"]);
-  assert.deepEqual(mascot.MODE_SIZES.collapsed, { width: 180, height: 7 });
+  assert.deepEqual(mascot.MODE_SIZES.collapsed, { width: 180, height: 4 });
   assert.ok(mascot.MODE_SIZES.compact.height <= 48 && mascot.MODE_SIZES.compact.width >= 400, "the pill is one line tall");
   for (const mode of ["menu", "chat", "approval"]) {
     assert.ok(mascot.MODE_SIZES[mode].width > mascot.MODE_SIZES.compact.width, `${mode} is wider than the pill`);
@@ -504,10 +504,12 @@ test("the island is fixed at the top center: no drag region and no hand-made dra
   assert.match(source, /onClick=\{toggle\}/, "clicking the island still opens and closes it");
 });
 
-test("the shell keeps the sandbox without a preload and the tray gets Mostrar a Dot beside the unchanged items", async () => {
+test("the shell keeps the sandbox without a preload and the tray gets Ocultar Dot / Mostrar Dot beside the unchanged items", async () => {
   const main = await read("desktop/main.mts");
   assert.doesNotMatch(main, /preload/);
-  assert.match(main, /label: "Mostrar a Dot"/);
+  assert.match(main, /"Ocultar Dot"/);
+  assert.match(main, /"Mostrar Dot"/);
+  assert.doesNotMatch(main, /label: "Mostrar a Dot"/);
   assert.doesNotMatch(main, /Open Dot/);
   for (const kept of ['"Let Dot see my screen"', '"Start with Windows"', 'label: "Quit"']) assert.ok(main.includes(kept), kept);
   assert.match(main, /setPermissionRequestHandler\(\(_contents, _permission, callback\) => callback\(false\)\)/);
