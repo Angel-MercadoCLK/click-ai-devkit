@@ -40,7 +40,7 @@ Branch: `feat/dot-agent-companion` (from `origin/main` 432c7a0). Delivery strate
 | T2 | S2, S3, S4 | delegated writer, same Dot unit as T1 | done | 322d27a |
 | T3 | S3, S4, S5, S7 | delegated writer (Go unit, parallel with T1) | done | 71b296d |
 | T4 | S6 | delegated writer, same Go unit as T3 | done | 71b296d |
-| T5 | S8, all | inline: docs, seam check, independent verifier, native review | done (delivery pending) | a9b82df | |
+| T5 | S8, all | inline: docs, seam check, independent verifier, native review | done (delivery pending) | a9b82df, 2752a42 |
 
 - T1 — Dot backend: discovery file, `/api/agent/hook` endpoint, session store, pending-approval queue with the UI ack, cookie-guarded `/api/agent/state` and `/api/agent/decision`, show the mascot on a pending request.
 - T2 — Dot mascot UI: session list in the menu, working and needs-you indicator, approval card, question card.
@@ -88,3 +88,13 @@ Route evidence: T1+T2 (Dot, `dot/**`) and T3+T4 (Go, `internal/**`) are two inde
   - Reviewed boundary: `322d27a`.
   - Not verified: the Electron GUI on real Windows (showInactive, card sizing) and a real 110 s hold.
   - Next step: the user's decisions on next@16.4.2 (L7) and on delivery (push, PR, merge, release).
+- L10 (2026-10-22) — The parent asked whether to upgrade to next@16.4.2 on this branch before publishing. User: "si".
+  - Commit `2752a42`: `npm install --save-exact next@16.4.2`. Only the next and @next/* entries and sharp 0.35.5 changed in the lockfile.
+  - Checks: `npm audit --omit=dev` found 0 vulnerabilities; `npm test` 402/402; typecheck, `next build` and `desktop:compile` clean.
+  - Native review of `322d27a..2752a42` (a9b82df + docs + upgrade; the user granted it; lenses risk/reliability): lineage `review-86e551f92018cdb1`, approved, acknowledged and burned.
+  - Advisories:
+    - This document was stale (fixed here).
+    - Sharp range drift: checked; the lockfile pins sharp 0.35.5, which satisfies next's `^0.35.5`, so no action is needed.
+    - Untruncated suggestions can push a body past 512 KiB, which gives a 413 and fails open (accepted).
+  - Reviewed boundary: `2752a42`. Every commit on the branch is reviewed.
+  - Next step: the user's delivery decision.
