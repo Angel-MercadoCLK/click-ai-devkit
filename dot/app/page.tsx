@@ -33,12 +33,12 @@ export default function HomePage() {
         <CapturePanel />
 
         <AuthPanel canonicalOrigin={canonicalOrigin} />
-        <p className="next-step">Chat uses your account’s available models. Conversations stay in private local storage; agent and operating-system tools are not enabled.</p>
+        <p className="next-step">Chat uses your account’s available models. Conversations stay in private local storage. In the Dot desktop app on Windows, Dot can also run PowerShell, hand tasks to Claude Code and look at your shared screen, and it asks first before anything that could change your computer.</p>
       </section>
 
       <footer className="page-footer">
         <span>Runs on this machine</span>
-        <span>Credentials stay local · No external tools</span>
+        <span>Credentials stay local · Tools ask before they change anything</span>
       </footer>
     </main>
   );

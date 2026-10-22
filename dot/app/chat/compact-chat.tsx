@@ -30,7 +30,7 @@ const COMPACT_LABELS: ChatLabels = {
   tryAgain: "Reintentar",
   sendWithoutScreen: "Enviar sin la pantalla",
   footerNote: "",
-  cancel: "Cancelar",
+  cancel: "Detener",
   send: "Enviar",
 };
 

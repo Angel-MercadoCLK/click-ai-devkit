@@ -2,7 +2,7 @@
 //
 // A selection holds, per question, the labels picked so far. A single-select question holds at most one label.
 
-import type { AgentQuestion } from "../../lib/agent-state.ts";
+import type { AgentQuestion, PendingView } from "../../lib/agent-state.ts";
 
 export type Selection = string[][];
 /** What the decision route takes: a label for a single-select question, a list of labels for a multi-select one. */
@@ -38,4 +38,25 @@ export function buildAnswers(questions: AgentQuestion[], selection: Selection): 
       : (picked[0] ?? "");
   });
   return answers;
+}
+
+// Keyboard: while a permission card is on screen and the island has focus, Y allows and N denies.
+
+export type ApprovalKey = "allow" | "deny";
+export type KeyLike = { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; repeat?: boolean; target?: EventTarget | null };
+export type ApprovalKeyContext = { pending: PendingView | null; cardShown: boolean; busy: boolean; focused: boolean };
+
+const TEXT_FIELDS = ["INPUT", "TEXTAREA", "SELECT"];
+
+/**
+ * What a key press does to the permission card, or null when it does nothing. Questions are answered by choosing an option;
+ * typing in a field, a modifier or a held key never answers a request.
+ */
+export function approvalKeyChoice(event: KeyLike, { pending, cardShown, busy, focused }: ApprovalKeyContext): ApprovalKey | null {
+  if (!pending || pending.questions !== null || !cardShown || busy || !focused) return null;
+  if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return null;
+  const target = event.target as { tagName?: string; isContentEditable?: boolean } | null | undefined;
+  if (target && (TEXT_FIELDS.includes(target.tagName ?? "") || target.isContentEditable)) return null;
+  const key = event.key.toLowerCase();
+  return key === "y" ? "allow" : key === "n" ? "deny" : null;
 }

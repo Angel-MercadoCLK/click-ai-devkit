@@ -12,7 +12,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createSessionStore, describeToolAction, projectName, type SessionStore } from "./agent-sessions.ts";
-import type { AgentQuestion, AgentState, PendingView } from "./agent-state.ts";
+import type { AgentQuestion, AgentState, PendingKind, PendingView } from "./agent-state.ts";
 import { getWindowController } from "./window-mode.ts";
 
 export const AGENT_BROKER_KEY = Symbol.for("click-dot.agent-broker");
@@ -34,7 +34,10 @@ const MAX_SUGGESTION_BYTES = 8_192;
 
 export type { AgentQuestion, AgentState, PendingView } from "./agent-state.ts";
 export type AgentDecision = { behavior: "allow" | "deny"; updatedPermissions?: unknown[]; answers?: Record<string, string> };
-export type AgentOutcome = { kind: "none" } | { kind: "decision"; decision: AgentDecision };
+/** `choice` answers a Dot tool request, which has no Claude Code decision to send back. */
+export type AgentOutcome = { kind: "none" } | { kind: "decision"; decision: AgentDecision } | { kind: "choice"; choice: "allow" | "deny" | "always" };
+/** What a Dot tool learns from its approval card. Anything but a choice (timeout, no acknowledgement, quit, abort) is "none". */
+export type ToolApproval = "allow" | "deny" | "always" | "none";
 export type DecisionChoice = "allow" | "deny" | "always" | "terminal";
 export const DECISION_CHOICES: readonly DecisionChoice[] = ["allow", "deny", "always", "terminal"];
 
@@ -116,9 +119,13 @@ function firstSuggestion(payload: Record<string, unknown>) {
   }
 }
 
+/** A request is a Claude Code hook (it has a session) or a Dot tool asking before it acts. */
 type Held = {
   id: string;
-  sessionId: string;
+  kind: PendingKind;
+  /** Null for a Dot tool request: it belongs to no Claude Code session. */
+  sessionId: string | null;
+  alwaysOffered: boolean;
   tool: string;
   summary: string;
   detail: string;
@@ -169,7 +176,7 @@ export function createAgentBroker(options: AgentBrokerOptions = {}) {
     clearTimer(request.ackTimer);
     clearTimer(request.decisionTimer);
     request.detach?.();
-    store.settle(request.sessionId, settle);
+    if (request.sessionId !== null) store.settle(request.sessionId, settle);
     request.resolve(outcome);
     showHead();
     return true;
@@ -188,15 +195,29 @@ export function createAgentBroker(options: AgentBrokerOptions = {}) {
     }
   }
 
-  const view = ({ id, tool, summary, detail, project, suggestion, questions }: Held): PendingView => ({
+  const view = ({ id, kind, tool, summary, detail, project, alwaysOffered, questions }: Held): PendingView => ({
     id,
+    kind,
     tool,
     summary,
     detail,
     project,
-    alwaysOffered: !questions && suggestion !== undefined,
+    alwaysOffered,
     questions,
   });
+
+  /** Puts a request in the queue behind the others; the card shows the oldest. */
+  function hold(request: Held, signal: AbortSignal | undefined) {
+    queue.push(request);
+    request.decisionTimer = setTimer(() => finish(request, NONE, "terminal"), decisionMs);
+    if (signal) {
+      // The caller went away (Claude Code answered in the terminal, the chat was stopped): nobody is waiting any more.
+      const onAbort = () => void finish(request, NONE, "answered");
+      signal.addEventListener("abort", onAbort, { once: true });
+      request.detach = () => signal.removeEventListener("abort", onAbort);
+    }
+    showHead();
+  }
 
   return {
     /** Records a plain hook event in the session list. */
@@ -216,29 +237,51 @@ export function createAgentBroker(options: AgentBrokerOptions = {}) {
       const summary = asking ? "Te hace una pregunta" : describeToolAction(tool, payload.tool_input);
       const project = projectName(payload.cwd);
       return new Promise<AgentOutcome>((resolve) => {
+        const suggestion = firstSuggestion(payload);
         const request: Held = {
           id: randomUUID(),
+          kind: "claude-code",
           sessionId,
+          alwaysOffered: !questions && suggestion !== undefined,
           tool,
           summary,
           detail: asking ? "" : detailOf(tool, payload.tool_input),
           project,
-          suggestion: firstSuggestion(payload),
+          suggestion,
           questions,
           resolve,
           shown: false,
           acked: false,
         };
-        queue.push(request);
         store.needsYou(sessionId, { cwd: payload.cwd, action: asking ? summary : `Pide permiso: ${summary}` });
-        request.decisionTimer = setTimer(() => finish(request, NONE, "terminal"), decisionMs);
-        if (signal) {
-          // The relay went away (Claude Code answered in the terminal or was interrupted): nobody is waiting any more.
-          const onAbort = () => void finish(request, NONE, "answered");
-          signal.addEventListener("abort", onAbort, { once: true });
-          request.detach = () => signal.removeEventListener("abort", onAbort);
-        }
-        showHead();
+        hold(request, signal);
+      });
+    },
+
+    /**
+     * Holds a request from one of Dot's own tools, with the same queue, acknowledgement and decision timers as a Claude
+     * Code request. Resolves with the user's choice, or "none" for every way the wait can end without one.
+     */
+    requestToolApproval(input: { tool: string; summary: string; detail: string; alwaysOffered: boolean; signal?: AbortSignal }): Promise<ToolApproval> {
+      const { signal } = input;
+      if (signal?.aborted || queue.length >= maxPending) return Promise.resolve("none");
+      return new Promise<ToolApproval>((resolve) => {
+        const request: Held = {
+          id: randomUUID(),
+          kind: "dot-tool",
+          sessionId: null,
+          alwaysOffered: input.alwaysOffered,
+          tool: input.tool,
+          summary: input.summary,
+          detail: input.detail,
+          project: "Dot",
+          suggestion: undefined,
+          questions: null,
+          resolve: (outcome) => resolve(outcome.kind === "choice" ? outcome.choice : "none"),
+          shown: false,
+          acked: false,
+        };
+        hold(request, signal);
       });
     },
 
@@ -261,6 +304,13 @@ export function createAgentBroker(options: AgentBrokerOptions = {}) {
       if (!request) return { ok: false, status: 404, error: "There is no such pending request." };
       const refuse = (error: string): DecideResult => ({ ok: false, status: 400, error });
       if (!DECISION_CHOICES.some((known) => known === choice)) return refuse("Unknown choice.");
+      if (request.kind === "dot-tool") {
+        if (choice === "terminal") return refuse("A Dot request cannot be handed to the terminal.");
+        if (answers !== undefined) return refuse("A Dot request carries no answers.");
+        if (choice === "always" && !request.alwaysOffered) return refuse("Siempre is not offered for this request.");
+        finish(request, { kind: "choice", choice: choice as "allow" | "deny" | "always" }, "answered");
+        return { ok: true };
+      }
       if (choice === "terminal") {
         if (answers !== undefined) return refuse("A hand-back to the terminal carries no answers.");
         finish(request, NONE, "terminal");
@@ -301,7 +351,7 @@ export type AgentBroker = ReturnType<typeof createAgentBroker>;
 export function getAgentBroker(): AgentBroker {
   const target = globalThis as Record<symbol, unknown>;
   const existing = target[AGENT_BROKER_KEY];
-  if (isRecord(existing) && ["record", "enqueue", "state", "ack", "decide", "releaseAll"].every((name) => typeof existing[name] === "function")) {
+  if (isRecord(existing) && ["record", "enqueue", "requestToolApproval", "state", "ack", "decide", "releaseAll"].every((name) => typeof existing[name] === "function")) {
     return existing as unknown as AgentBroker;
   }
   const created = createAgentBroker({ onPending: () => getWindowController()?.showInactive?.() });

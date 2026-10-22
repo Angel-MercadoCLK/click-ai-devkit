@@ -10,164 +10,88 @@ const captureState = await import("../lib/capture-state.ts");
 const voiceResult = await import("../app/mascot/voice-result.ts");
 const windowRoute = await import("../app/api/window/route.ts");
 
-const SIZE = mascot.MASCOT_SIZE;
-const MARGIN = mascot.MASCOT_MARGIN;
 const area = (x, y, width, height) => ({ x, y, width, height });
 const FULL_HD = area(0, 0, 1920, 1040); // work area: the taskbar takes the bottom 40 px
 const within = (inner, outer) =>
   inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.width <= outer.x + outer.width && inner.y + inner.height <= outer.y + outer.height;
-const mascotRect = (position) => ({ ...position, width: SIZE, height: SIZE });
+const centered = (bounds, workArea) => bounds.x * 2 + bounds.width === workArea.x * 2 + workArea.width;
 
-// --- geometry -------------------------------------------------------------------------------------------------
+// --- island geometry ------------------------------------------------------------------------------------------
 
-test("the mascot starts in the bottom-right corner of the primary work area with a margin", () => {
-  assert.equal(SIZE, 96);
-  assert.deepEqual(mascot.defaultMascotPosition(FULL_HD), { x: 1920 - SIZE - MARGIN, y: 1040 - SIZE - MARGIN });
-  // A work area that does not start at the origin (taskbar on the left or a second primary offset).
-  assert.deepEqual(mascot.defaultMascotPosition(area(48, 0, 1872, 1080)), { x: 48 + 1872 - SIZE - MARGIN, y: 1080 - SIZE - MARGIN });
-});
-
-test("a saved position inside a display is kept as is", () => {
-  assert.deepEqual(mascot.clampMascotPosition({ x: 300, y: 200 }, [FULL_HD]), { x: 300, y: 200 });
-});
-
-test("a position past any edge is pulled back so the whole mascot stays visible", () => {
-  assert.deepEqual(mascot.clampMascotPosition({ x: 5000, y: 5000 }, [FULL_HD]), { x: 1920 - SIZE, y: 1040 - SIZE });
-  assert.deepEqual(mascot.clampMascotPosition({ x: -50, y: -50 }, [FULL_HD]), { x: 0, y: 0 });
-  assert.deepEqual(mascot.clampMascotPosition({ x: 1900, y: 1030 }, [FULL_HD]), { x: 1920 - SIZE, y: 1040 - SIZE });
-});
-
-test("negative coordinates on a display left of or above the primary are valid positions", () => {
-  const left = area(-1920, 0, 1920, 1040);
-  const above = area(0, -1080, 1920, 1080);
-  assert.deepEqual(mascot.clampMascotPosition({ x: -1000, y: 400 }, [left, FULL_HD]), { x: -1000, y: 400 });
-  assert.deepEqual(mascot.clampMascotPosition({ x: 200, y: -600 }, [above, FULL_HD]), { x: 200, y: -600 });
-  // Past the left edge of the left display, not onto the primary one.
-  assert.deepEqual(mascot.clampMascotPosition({ x: -2500, y: 400 }, [left, FULL_HD]), { x: -1920, y: 400 });
-});
-
-test("a position on a display that is no longer connected moves to the nearest remaining one", () => {
-  // The saved spot was on a second monitor to the right that is gone now.
-  assert.deepEqual(mascot.clampMascotPosition({ x: 2500, y: 300 }, [FULL_HD]), { x: 1920 - SIZE, y: 300 });
-  // Two displays: a position in the gap between them goes to the closest one.
-  const right = area(2000, 0, 1920, 1040);
-  assert.deepEqual(mascot.clampMascotPosition({ x: 1900, y: 100 }, [FULL_HD, right]), { x: 1920 - SIZE, y: 100 });
-  assert.equal(within(mascotRect(mascot.clampMascotPosition({ x: 1990, y: 100 }, [FULL_HD, right])), right), true);
-});
-
-test("the nearest work area is the one holding the point, else the closest", () => {
-  const right = area(2000, 0, 1920, 1040);
-  assert.deepEqual(mascot.nearestWorkArea({ x: 2100, y: 10 }, [FULL_HD, right]), right);
-  assert.deepEqual(mascot.nearestWorkArea({ x: 100, y: 10 }, [FULL_HD, right]), FULL_HD);
-  assert.deepEqual(mascot.nearestWorkArea({ x: 5000, y: 10 }, [FULL_HD, right]), right);
-});
-
-test("the window modes have fixed sizes: mascot only, compact menu, chat bubble and approval card beside the mascot", () => {
-  assert.deepEqual(mascot.MASCOT_MODES, ["collapsed", "menu", "chat", "approval"]);
-  assert.deepEqual(mascot.MODE_SIZES.collapsed, { width: SIZE, height: SIZE });
-  assert.ok(mascot.MODE_SIZES.menu.width < 260 && mascot.MODE_SIZES.menu.height < 320, "the menu stays compact");
-  // The chat bubble is about 360 x 520 and sits next to the mascot, so the window adds the mascot column.
-  assert.equal(mascot.MODE_SIZES.chat.height, 520);
-  assert.ok(mascot.MODE_SIZES.chat.width >= 360 + SIZE && mascot.MODE_SIZES.chat.width <= 360 + SIZE + 40);
-});
-
-test("the collapsed window is exactly the mascot", () => {
-  const position = { x: 700, y: 400 };
-  const anchor = mascot.anchorFor(position, FULL_HD);
-  assert.deepEqual(mascot.placeWindow({ mascot: position, mode: "collapsed", anchor, areas: [FULL_HD] }), mascotRect(position));
-});
-
-test("near the bottom-right corner the menu and chat grow up and to the left, and the mascot does not move", () => {
-  const position = mascot.defaultMascotPosition(FULL_HD);
-  const anchor = mascot.anchorFor(position, FULL_HD);
-  assert.deepEqual(anchor, { horizontal: "right", vertical: "bottom" });
-  for (const mode of ["menu", "chat"]) {
-    const bounds = mascot.placeWindow({ mascot: position, mode, anchor, areas: [FULL_HD] });
-    assert.equal(within(bounds, FULL_HD), true, mode);
-    const offset = mascot.mascotOffset(anchor, bounds);
-    assert.deepEqual({ x: bounds.x + offset.x, y: bounds.y + offset.y }, position, `${mode}: mascot stays where it was`);
-    assert.equal(bounds.y + bounds.height, position.y + SIZE, `${mode}: bottom edge shared with the mascot`);
+test("the island has five window modes: a thin bar, the compact pill and three expanded cards", () => {
+  assert.deepEqual(mascot.MASCOT_MODES, ["collapsed", "compact", "menu", "chat", "approval"]);
+  assert.deepEqual(mascot.MODE_SIZES.collapsed, { width: 180, height: 7 });
+  assert.ok(mascot.MODE_SIZES.compact.height <= 48 && mascot.MODE_SIZES.compact.width >= 400, "the pill is one line tall");
+  for (const mode of ["menu", "chat", "approval"]) {
+    assert.ok(mascot.MODE_SIZES[mode].width > mascot.MODE_SIZES.compact.width, `${mode} is wider than the pill`);
+    assert.ok(mascot.MODE_SIZES[mode].height > mascot.MODE_SIZES.compact.height, `${mode} is taller than the pill`);
   }
-  const chat = mascot.placeWindow({ mascot: position, mode: "chat", anchor, areas: [FULL_HD] });
-  assert.equal(chat.x + chat.width, position.x + SIZE, "the bubble is to the left of a mascot at the right edge");
+  assert.ok(mascot.MODE_SIZES.chat.height >= 480, "room for the conversation");
 });
 
-test("near the top-left corner the menu and chat grow down and to the right", () => {
-  const position = { x: MARGIN, y: MARGIN };
-  const anchor = mascot.anchorFor(position, FULL_HD);
-  assert.deepEqual(anchor, { horizontal: "left", vertical: "top" });
-  const chat = mascot.placeWindow({ mascot: position, mode: "chat", anchor, areas: [FULL_HD] });
-  assert.deepEqual({ x: chat.x, y: chat.y }, position);
-  assert.equal(within(chat, FULL_HD), true);
-  const menu = mascot.placeWindow({ mascot: position, mode: "menu", anchor, areas: [FULL_HD] });
-  assert.equal(menu.y, position.y, "the menu hangs below a mascot at the top");
-  assert.equal(within(menu, FULL_HD), true);
-});
-
-test("the anchor follows the half of the work area the mascot is in", () => {
-  assert.deepEqual(mascot.anchorFor({ x: 100, y: 100 }, FULL_HD), { horizontal: "left", vertical: "top" });
-  assert.deepEqual(mascot.anchorFor({ x: 1700, y: 100 }, FULL_HD), { horizontal: "right", vertical: "top" });
-  assert.deepEqual(mascot.anchorFor({ x: 100, y: 900 }, FULL_HD), { horizontal: "left", vertical: "bottom" });
-});
-
-test("every mode stays inside the work area wherever the mascot is, including multi-display and negative coordinates", () => {
-  const left = area(-1366, 100, 1366, 728);
-  const areas = [left, area(0, 0, 1920, 1040)];
-  const positions = [
-    { x: -1366, y: 100 },
-    { x: -96, y: 828 - 96 },
-    { x: -700, y: 400 },
-    { x: 0, y: 0 },
-    { x: 960, y: 520 },
-    { x: 1920 - SIZE, y: 1040 - SIZE },
-  ];
-  for (const raw of positions) {
-    const position = mascot.clampMascotPosition(raw, areas);
-    const workArea = mascot.nearestWorkArea({ x: position.x + SIZE / 2, y: position.y + SIZE / 2 }, areas);
-    const anchor = mascot.anchorFor(position, workArea);
-    for (const mode of mascot.MASCOT_MODES) {
-      const bounds = mascot.placeWindow({ mascot: position, mode, anchor, areas });
-      assert.equal(within(bounds, workArea), true, `${mode} at ${JSON.stringify(position)}`);
-    }
+test("every mode hangs from the top edge, centered on the primary work area", () => {
+  for (const mode of mascot.MASCOT_MODES) {
+    const bounds = mascot.islandBounds(mode, FULL_HD);
+    assert.equal(bounds.y, FULL_HD.y, `${mode}: flush with the top edge`);
+    assert.equal(centered(bounds, FULL_HD), true, mode);
+    assert.deepEqual({ width: bounds.width, height: bounds.height }, mascot.MODE_SIZES[mode], mode);
   }
 });
 
-test("on a small work area the chat window is reduced to fit instead of leaving the screen", () => {
-  const small = area(0, 0, 800, 440);
-  const position = mascot.defaultMascotPosition(small);
-  const anchor = mascot.anchorFor(position, small);
-  const bounds = mascot.placeWindow({ mascot: position, mode: "chat", anchor, areas: [small] });
-  assert.equal(within(bounds, small), true);
-  assert.ok(bounds.height <= 440);
+test("a work area that does not start at the origin (taskbar on top or left, second primary offset) keeps the island under its own top edge", () => {
+  const offset = area(48, 40, 1872, 1040);
+  for (const mode of mascot.MASCOT_MODES) {
+    const bounds = mascot.islandBounds(mode, offset);
+    assert.equal(bounds.y, 40, mode);
+    assert.equal(centered(bounds, offset), true, mode);
+    assert.equal(within(bounds, offset), true, mode);
+  }
+  const negative = area(-1920, -200, 1920, 1080);
+  assert.equal(centered(mascot.islandBounds("menu", negative), negative), true);
+  assert.equal(mascot.islandBounds("menu", negative).y, -200);
+});
+
+test("on a small work area the expanded island is reduced to fit instead of leaving the screen", () => {
+  const small = area(0, 0, 500, 300);
+  for (const mode of mascot.MASCOT_MODES) {
+    const bounds = mascot.islandBounds(mode, small);
+    assert.equal(within(bounds, small), true, mode);
+    assert.equal(centered(bounds, small), true, mode);
+  }
 });
 
 // --- mode transitions -----------------------------------------------------------------------------------------
 
-test("clicking the mascot opens and closes the three-button menu; from the chat it closes everything", () => {
+test("clicking the island opens the menu from the thin bar or the pill and closes any open card", () => {
   assert.equal(mascot.nextModeOnMascotClick("collapsed"), "menu");
+  assert.equal(mascot.nextModeOnMascotClick("compact"), "menu");
   assert.equal(mascot.nextModeOnMascotClick("menu"), "collapsed");
   assert.equal(mascot.nextModeOnMascotClick("chat"), "collapsed");
+  assert.equal(mascot.nextModeOnMascotClick("approval"), "collapsed");
   assert.equal(windowMode.nextMascotMode("collapsed"), "menu");
+  assert.equal(windowMode.nextMascotMode("compact"), "menu");
   assert.equal(windowMode.nextMascotMode("menu"), "collapsed");
   assert.equal(windowMode.nextMascotMode("chat"), "collapsed");
 });
 
-test("Ctrl+Shift+Space opens the chat bubble, or closes it when it is the open bubble", () => {
+test("Ctrl+Shift+Space opens the chat card, or closes it when it is the open card", () => {
   assert.equal(mascot.nextModeOnShortcut("collapsed", true), "chat");
+  assert.equal(mascot.nextModeOnShortcut("compact", true), "chat");
   assert.equal(mascot.nextModeOnShortcut("menu", true), "chat");
   assert.equal(mascot.nextModeOnShortcut("chat", true), "collapsed");
-  // A hidden mascot is shown with the chat open, whatever mode it was left in.
+  // A hidden island is shown with the chat open, whatever mode it was left in.
   assert.equal(mascot.nextModeOnShortcut("chat", false), "chat");
   assert.equal(mascot.nextModeOnShortcut("collapsed", false), "chat");
 });
 
 test("the page and the desktop shell agree on the mode names", () => {
   assert.deepEqual([...windowMode.WINDOW_MODES], [...mascot.MASCOT_MODES]);
+  assert.deepEqual(windowMode.parseWindowRequest({ mode: "compact" }), { kind: "mode", mode: "compact" });
 });
 
 // --- window options -------------------------------------------------------------------------------------------
 
-test("the mascot window is frameless, transparent, always on top, off the taskbar and not user-resizable", () => {
+test("the island window is frameless, transparent, always on top, off the taskbar and not user-resizable", () => {
   const options = mascot.mascotWindowOptions();
   assert.equal(options.frame, false);
   assert.equal(options.transparent, true);
@@ -181,11 +105,13 @@ test("the mascot window is frameless, transparent, always on top, off the taskba
   assert.equal(options.fullscreenable, false);
   assert.equal(options.show, false);
   assert.equal(options.backgroundColor, "#00000000");
-  assert.deepEqual({ width: options.width, height: options.height }, { width: SIZE, height: SIZE });
+  assert.deepEqual({ width: options.width, height: options.height }, mascot.MODE_SIZES.collapsed);
 });
 
-test("the mascot window keeps the sandbox, context isolation and no preload", () => {
-  const { webPreferences } = mascot.mascotWindowOptions();
+test("the island window can take focus (the composer and the buttons need it) and keeps the sandbox, context isolation and no preload", () => {
+  const options = mascot.mascotWindowOptions();
+  assert.notEqual(options.focusable, false, "a non-focusable window could not type into the composer");
+  const { webPreferences } = options;
   assert.equal(webPreferences.contextIsolation, true);
   assert.equal(webPreferences.nodeIntegration, false);
   assert.equal(webPreferences.sandbox, true);
@@ -194,7 +120,7 @@ test("the mascot window keeps the sandbox, context isolation and no preload", ()
 
 // --- controller -----------------------------------------------------------------------------------------------
 
-function fakeWindow() {
+function fakeWindow({ withTopmost = true } = {}) {
   const calls = [];
   const state = { visible: false, bounds: area(0, 0, 0, 0) };
   return {
@@ -218,11 +144,18 @@ function fakeWindow() {
     },
     focus: () => calls.push(["focus"]),
     isVisible: () => state.visible,
+    ...(withTopmost
+      ? {
+          setAlwaysOnTop: (flag, level) => calls.push(["setAlwaysOnTop", flag, level]),
+          setVisibleOnAllWorkspaces: (visible, options) => calls.push(["setVisibleOnAllWorkspaces", visible, options]),
+          moveTop: () => calls.push(["moveTop"]),
+        }
+      : {}),
   };
 }
 
-function controllerFor({ saved, areas = [FULL_HD] } = {}) {
-  const win = fakeWindow();
+function controllerFor({ saved, areas = [FULL_HD], withTopmost = true } = {}) {
+  const win = fakeWindow({ withTopmost });
   const saves = [];
   const notified = [];
   const live = { areas };
@@ -237,36 +170,32 @@ function controllerFor({ saved, areas = [FULL_HD] } = {}) {
   return { controller, win, saves, notified, live };
 }
 
-test("a fresh controller starts collapsed in the default corner and does not save anything", () => {
+test("a fresh controller starts as the thin bar at the top center of the primary work area and saves nothing", () => {
   const { controller, win, saves } = controllerFor();
-  const position = mascot.defaultMascotPosition(FULL_HD);
-  assert.deepEqual(controller.position(), position);
-  assert.deepEqual(controller.state().mode, "collapsed");
-  assert.deepEqual(win.state.bounds, mascotRect(position));
+  assert.equal(controller.state().mode, "collapsed");
+  assert.deepEqual(win.state.bounds, mascot.islandBounds("collapsed", FULL_HD));
   assert.deepEqual(saves, []);
 });
 
-test("a saved position is used when it is on a display and clamped when it is not", () => {
-  assert.deepEqual(controllerFor({ saved: { x: 400, y: 300 } }).controller.position(), { x: 400, y: 300 });
-  assert.deepEqual(controllerFor({ saved: { x: 9000, y: 9000 } }).controller.position(), { x: 1920 - SIZE, y: 1040 - SIZE });
-  const { saves } = controllerFor({ saved: { x: 9000, y: 9000 } });
-  assert.deepEqual(saves, [], "a startup clamp does not overwrite the saved choice");
+test("changing the mode resizes the island under the same top edge, centered, and never focuses the window", () => {
+  const { controller, win } = controllerFor();
+  for (const mode of ["compact", "menu", "chat", "approval", "collapsed"]) {
+    controller.setMode(mode, "page");
+    assert.equal(controller.state().mode, mode);
+    assert.deepEqual(win.state.bounds, mascot.islandBounds(mode, FULL_HD), mode);
+  }
+  assert.equal(win.calls.some(([name]) => name === "focus" || name === "show"), false, "resizing never takes focus");
 });
 
-test("changing the mode resizes the window around the fixed mascot", () => {
-  const { controller, win } = controllerFor();
-  const position = controller.position();
+test("a saved position from the old draggable mascot is harmless: the island stays at the top center and nothing is saved", () => {
+  const { controller, win, saves } = controllerFor({ saved: { x: 400, y: 300 } });
+  assert.deepEqual(win.state.bounds, mascot.islandBounds("collapsed", FULL_HD));
   controller.setMode("menu", "page");
-  assert.deepEqual(controller.state().mode, "menu");
-  const menu = win.state.bounds;
-  assert.deepEqual({ width: menu.width, height: menu.height }, mascot.MODE_SIZES.menu);
-  controller.setMode("chat", "page");
-  const chat = win.state.bounds;
-  assert.deepEqual({ width: chat.width, height: chat.height }, mascot.MODE_SIZES.chat);
-  assert.equal(within(chat, FULL_HD), true);
-  controller.setMode("collapsed", "page");
-  assert.deepEqual(win.state.bounds, mascotRect(position));
-  assert.deepEqual(controller.position(), position);
+  assert.deepEqual(win.state.bounds, mascot.islandBounds("menu", FULL_HD));
+  controller.moveTo(600, 300);
+  controller.moveTo(Number.NaN, 5);
+  assert.deepEqual(win.state.bounds, mascot.islandBounds("menu", FULL_HD), "the island is fixed; a move request changes nothing");
+  assert.deepEqual(saves, []);
 });
 
 test("the page learns about mode changes it did not make itself", () => {
@@ -285,66 +214,46 @@ test("an unknown mode is rejected and changes nothing", () => {
   assert.equal(controller.state().mode, "collapsed");
 });
 
-test("the anchor is chosen when the mode changes, not while dragging, so the layout does not flip mid-drag", () => {
-  const { controller } = controllerFor({ saved: { x: 1700, y: 900 } });
-  controller.setMode("chat", "page");
-  const opened = controller.state().anchor;
-  assert.deepEqual(opened, { horizontal: "right", vertical: "bottom" });
-  const target = { x: 100, y: 50 };
-  controller.moveTo(target.x, target.y);
-  assert.deepEqual(controller.state().anchor, opened);
-});
-
-test("dragging moves the mascot, keeps it on screen and saves the position it ends at", () => {
-  const { controller, win, saves } = controllerFor();
-  controller.moveTo(600, 300);
-  assert.deepEqual(controller.position(), { x: 600, y: 300 });
-  assert.deepEqual(win.state.bounds, mascotRect({ x: 600, y: 300 }));
-  assert.deepEqual(saves.at(-1), { x: 600, y: 300 });
-  controller.moveTo(99999, -99999);
-  assert.deepEqual(controller.position(), { x: 1920 - SIZE, y: 0 });
-  assert.deepEqual(saves.at(-1), { x: 1920 - SIZE, y: 0 });
-});
-
-test("dragging while the menu is open moves the whole window with the mascot inside it", () => {
-  const { controller, win } = controllerFor({ saved: { x: 800, y: 800 } });
+test("when the primary display changes the island follows its work area", () => {
+  const { controller, win, live } = controllerFor();
   controller.setMode("menu", "page");
-  const before = { ...win.state.bounds };
-  controller.moveTo(before.x + 100, before.y - 120);
-  assert.deepEqual({ x: win.state.bounds.x, y: win.state.bounds.y }, { x: before.x + 100, y: before.y - 120 });
-  assert.deepEqual(controller.position(), { x: 900, y: 680 });
-});
-
-test("a non-finite drag target is ignored", () => {
-  const { controller, saves } = controllerFor();
-  const before = controller.position();
-  controller.moveTo(Number.NaN, 5);
-  controller.moveTo(5, Number.POSITIVE_INFINITY);
-  assert.deepEqual(controller.position(), before);
-  assert.deepEqual(saves, []);
-});
-
-test("when a display goes away the mascot moves onto a visible one without overwriting the saved position", () => {
-  const right = area(1920, 0, 1920, 1040);
-  const { controller, win, saves, live } = controllerFor({ saved: { x: 2500, y: 200 }, areas: [FULL_HD, right] });
-  assert.deepEqual(controller.position(), { x: 2500, y: 200 });
-  live.areas = [FULL_HD];
+  live.areas = [area(1920, 0, 1366, 728)];
   controller.reposition();
-  assert.deepEqual(controller.position(), { x: 1920 - SIZE, y: 200 });
-  assert.equal(within(win.state.bounds, FULL_HD), true);
-  assert.deepEqual(saves, []);
+  assert.deepEqual(win.state.bounds, mascot.islandBounds("menu", live.areas[0]));
 });
 
-test("showing the mascot puts it on screen and focuses it; a startup show does not steal focus", () => {
+test("the island stays above every other window: the always-on-top level is set at creation and again each time it is shown or resized", () => {
+  const { controller, win } = controllerFor();
+  const tops = () => win.calls.filter(([name]) => name === "setAlwaysOnTop");
+  assert.deepEqual(tops().at(0), ["setAlwaysOnTop", true, "screen-saver"], "set when the controller is created");
+  assert.deepEqual(win.calls.find(([name]) => name === "setVisibleOnAllWorkspaces"), ["setVisibleOnAllWorkspaces", true, { visibleOnFullScreen: true }]);
+  win.calls.length = 0;
+  controller.showInactive();
+  controller.attention();
+  controller.show();
+  controller.setMode("menu", "page");
+  assert.ok(tops().length >= 4, "re-asserted on every show and resize, because Windows can drop the topmost state");
+  for (const call of tops()) assert.deepEqual(call, ["setAlwaysOnTop", true, "screen-saver"]);
+  assert.ok(win.calls.some(([name]) => name === "moveTop"));
+});
+
+test("a window without the topmost methods still works (the same controller drives the tests and older shells)", () => {
+  const { controller, win } = controllerFor({ withTopmost: false });
+  controller.showInactive();
+  controller.setMode("chat", "page");
+  assert.deepEqual(win.state.bounds, mascot.islandBounds("chat", FULL_HD));
+});
+
+test("showing the island puts it on screen and focuses it; a startup show or attention does not steal focus", () => {
   const { controller, win } = controllerFor();
   controller.showInactive();
-  assert.deepEqual(win.calls.at(-1), ["showInactive"]);
+  assert.deepEqual(win.calls.filter(([name]) => name === "showInactive" || name === "show" || name === "focus").map(([name]) => name), ["showInactive"]);
   win.calls.length = 0;
   controller.show();
-  assert.deepEqual(win.calls.map(([name]) => name), ["setBounds", "show", "focus"]);
+  assert.deepEqual(win.calls.filter(([name]) => ["show", "focus", "showInactive"].includes(name)).map(([name]) => name), ["show", "focus"]);
 });
 
-test("the shortcut shows a hidden mascot with the chat open and toggles the bubble otherwise", () => {
+test("the shortcut shows a hidden island with the chat open and toggles the chat card otherwise", () => {
   const { controller, win, notified } = controllerFor();
   controller.toggleChat();
   assert.equal(win.state.visible, true);
@@ -352,7 +261,7 @@ test("the shortcut shows a hidden mascot with the chat open and toggles the bubb
   assert.deepEqual(notified, ["chat"]);
   controller.toggleChat();
   assert.equal(controller.state().mode, "collapsed");
-  assert.equal(win.state.visible, true, "closing the bubble leaves the mascot, never an invisible window");
+  assert.equal(win.state.visible, true, "closing the chat leaves the island, never an invisible window");
   assert.deepEqual(notified, ["chat", "collapsed"]);
 });
 
@@ -368,7 +277,6 @@ test("the controller is published for the page the same way the capture controll
   assert.equal(controller.state().mode, "menu");
 });
 
-// --- window route ---------------------------------------------------------------------------------------------
 
 const KEY = Symbol.for("click-dot.window-controller");
 const HOST = "127.0.0.1:3006";
@@ -500,20 +408,6 @@ test("POST answers 503 without leaking the error when the controller throws", as
   Reflect.deleteProperty(globalThis, KEY);
 });
 
-// --- drag helpers ---------------------------------------------------------------------------------------------
-
-test("a press only becomes a drag after the pointer moves a few pixels", () => {
-  assert.equal(windowMode.exceedsDragThreshold(0, 0), false);
-  assert.equal(windowMode.exceedsDragThreshold(2, 2), false);
-  assert.equal(windowMode.exceedsDragThreshold(windowMode.DRAG_THRESHOLD_PX, 0), true);
-  assert.equal(windowMode.exceedsDragThreshold(-3, -4), true);
-});
-
-test("the drag target follows the pointer from where the window was when the press began", () => {
-  assert.deepEqual(windowMode.dragTarget({ x: 1000, y: 500 }, { x: 1020, y: 530 }, { x: 1050, y: 510 }), { x: 1030, y: 480 });
-});
-
-// --- capture indicator ----------------------------------------------------------------------------------------
 
 test("the mascot ring shows what capture really does", () => {
   assert.equal(captureState.captureIndicator(null), "unavailable");
@@ -596,18 +490,18 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("the menu carries the user's three labels exactly and the chat bubble offers the ChatGPT connection", async () => {
   const source = await read("app/mascot/mascot.tsx");
-  for (const label of ["Compartir mi pantalla", ">Voz<", ">Mensaje<", "Conectar con ChatGPT", "Viendo tu pantalla"]) {
+  for (const label of ["Compartir mi pantalla", ">Voz<", ">Mensaje<", "Conectar con ChatGPT"]) {
     assert.ok(source.includes(label) || source.includes(label.replace(/[<>]/g, "")), label);
   }
   assert.match(source, /useAuthConnection\(canonicalOrigin\)/);
   assert.match(source, /connect\(\)/, "the prompt starts the existing sign-in flow");
 });
 
-test("the mascot is dragged by hand because a drag region would swallow its clicks", async () => {
+test("the island is fixed at the top center: no drag region and no hand-made dragging", async () => {
   assert.doesNotMatch(await read("app/globals.css"), /app-region/);
   const source = await read("app/mascot/mascot.tsx");
-  assert.match(source, /onPointerDown/);
-  assert.match(source, /exceedsDragThreshold/);
+  assert.doesNotMatch(source, /onPointerDown|setPointerCapture|exceedsDragThreshold|dragTarget/);
+  assert.match(source, /onClick=\{toggle\}/, "clicking the island still opens and closes it");
 });
 
 test("the shell keeps the sandbox without a preload and the tray gets Mostrar a Dot beside the unchanged items", async () => {
@@ -687,15 +581,16 @@ test("the accessible label names capture first so a screen reader never misses i
   assert.ok(captureState.mascotIndicator("live", true).label.startsWith("Viendo tu pantalla"));
 });
 
-test("the mascot page shows the sharing text and the pause control in the collapsed, menu and chat modes", async () => {
+test("the island shows the sharing text and the pause control in the pill, the menu, the chat and the permission card", async () => {
   const source = await readFile(new URL("../app/mascot/mascot.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(source, /voice\.listening \? "listening"/, "listening no longer replaces the capture ring");
   assert.match(source, /mascotIndicator\(/);
-  // Collapsed: visible label next to the mascot. Menu: the chip. Chat: a chip in the bubble header.
-  assert.match(source, /className="mascot-label"/);
-  assert.match(source, /className=\{`menu-chip/);
-  assert.match(source, /className=\{`bubble-chip/);
+  // One capture chip lives in the head, which every mode except the thin bar renders; the thin bar is never the resting state while sharing.
+  assert.match(source, /mode !== "collapsed" && \(/);
+  assert.match(source, /className=\{`island-capture/);
+  assert.match(source, /view\.sharingText/);
   assert.match(source, /data-listening=/);
+  assert.match(source, /ring=\{view\.ring\}/, "the character carries the capture ring");
 });
 
 // --- "Voz" needs a ChatGPT connection -------------------------------------------------------------------------

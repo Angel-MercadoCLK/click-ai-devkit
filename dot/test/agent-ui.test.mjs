@@ -12,7 +12,7 @@ const card = await import("../app/mascot/agent-choices.ts");
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 const session = (overrides = {}) => ({ id: "s1", project: "alpha", state: "trabajando", action: "Ejecutando npm test", updatedAt: 1, ...overrides });
-const pending = (overrides = {}) => ({ id: "p1", tool: "Bash", summary: "Ejecutando npm test", detail: "npm test", project: "alpha", alwaysOffered: true, questions: null, ...overrides });
+const pending = (overrides = {}) => ({ id: "p1", kind: "claude-code", tool: "Bash", summary: "Ejecutando npm test", detail: "npm test", project: "alpha", alwaysOffered: true, questions: null, ...overrides });
 const body = (overrides = {}) => ({ sessions: [session()], pending: null, queued: 0, ...overrides });
 
 // --- reading the state -----------------------------------------------------------------------------------------
@@ -37,6 +37,8 @@ test("anything malformed is not a state", () => {
     body({ sessions: [session({ id: 5 })] }),
     body({ sessions: ["x"] }),
     body({ pending: pending({ alwaysOffered: "yes" }) }),
+    body({ pending: pending({ kind: "other" }) }),
+    body({ pending: { ...pending(), kind: undefined } }),
     body({ pending: pending({ questions: "x" }) }),
     body({ pending: pending({ questions: [{ question: "Q?", header: "H", multiSelect: "no", options: [] }] }) }),
     body({ pending: pending({ questions: [{ question: "Q?", header: "H", multiSelect: false, options: [{ label: 1, description: "" }] }] }) }),
@@ -107,7 +109,9 @@ test("the label names what Claude Code is doing, and the mascot alone still says
 
 // --- window modes ----------------------------------------------------------------------------------------------
 
-test("with a request waiting, clicking the collapsed mascot brings the card back; otherwise the menu works as before", () => {
+test("with a request waiting, clicking the collapsed or compact island brings the card back; otherwise the menu works as before", () => {
+  assert.equal(windowMode.nextMascotMode("compact", true), "approval");
+  assert.equal(windowMode.nextMascotMode("compact"), "menu");
   assert.equal(windowMode.nextMascotMode("collapsed"), "menu");
   assert.equal(windowMode.nextMascotMode("collapsed", false), "menu");
   assert.equal(windowMode.nextMascotMode("menu", true), "collapsed");
@@ -162,7 +166,7 @@ test("a label that is not one of the question's options changes nothing", () => 
 test("the existing labels the packaged smoke test asserts are still there, and the menu still has them as buttons", async () => {
   const mascot = await read("app/mascot/mascot.tsx");
   for (const label of ["Compartir mi pantalla", "Voz", "Mensaje", "Conectar con ChatGPT"]) assert.ok(mascot.includes(label), label);
-  assert.match(mascot, /className="mascot-menu"/);
+  assert.match(mascot, /className="mascot-menu/);
   const toggles = mascot.match(/role="button"/g) ?? [];
   assert.equal(toggles.length, 1, "the mascot body stays the only role=button (the smoke test clicks the first one)");
 });
@@ -201,5 +205,5 @@ test("the page polls the state, acknowledges the card right after it renders, an
 
 test("the styles define the new pieces", async () => {
   const css = await read("app/globals.css");
-  for (const selector of [".agent-card", ".menu-sessions", ".mascot-agent", '[data-mode="approval"]']) assert.ok(css.includes(selector), selector);
+  for (const selector of [".agent-card", ".menu-sessions", ".island-capture", ".diff-add", '[data-mode="approval"]']) assert.ok(css.includes(selector), selector);
 });

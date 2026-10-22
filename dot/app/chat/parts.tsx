@@ -1,6 +1,8 @@
 "use client";
 
 import type { Chat } from "../chat-panel";
+import { ToolActivityList } from "./tool-activity";
+import { isChatEmpty } from "../../lib/chat-view.ts";
 
 /** Every string the shared parts show, so the full page and the compact bubble can speak their own wording. */
 export type ChatLabels = {
@@ -58,7 +60,7 @@ export const FULL_LABELS: ChatLabels = {
 };
 
 export function MessageList({ chat, labels }: { chat: Chat; labels: ChatLabels }) {
-  const { messages, busy, status, submittedPrompt, liveText } = chat;
+  const { messages, busy, status, submittedPrompt, liveText, tools } = chat;
   return (
     <div className="message-list" aria-label="Messages">
       {messages.map((message, index) => (
@@ -68,11 +70,12 @@ export function MessageList({ chat, labels }: { chat: Chat; labels: ChatLabels }
         </article>
       ))}
       {busy && submittedPrompt && <article className="message user pending"><p className="message-role">{labels.youSubmitted}</p><p className="message-content">{submittedPrompt}</p></article>}
+      {tools.length > 0 && <ToolActivityList tools={tools} />}
       {busy && <article className="message assistant pending"><p className="message-role">{status === "submitted" ? labels.assistantSubmitted : labels.assistantStreaming}</p><p className="message-content">{liveText || labels.waitingForToken}</p></article>}
       {status === "error" && submittedPrompt && <article className="message user partial"><p className="message-role">{labels.youNotSaved}</p><p className="message-content">{submittedPrompt}</p></article>}
       {status === "error" && liveText && <article className="message assistant partial"><p className="message-role">{labels.partialNotSaved}</p><p className="message-content">{liveText}</p></article>}
       {status === "complete" && liveText && !messages.length && <article className="message assistant"><p className="message-role">{labels.assistantCompleted}</p><p className="message-content">{liveText}</p></article>}
-      {!messages.length && !liveText && <p className="empty-chat">{labels.empty}</p>}
+      {isChatEmpty(chat) && <p className="empty-chat">{labels.empty}</p>}
     </div>
   );
 }

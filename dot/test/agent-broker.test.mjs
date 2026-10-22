@@ -78,6 +78,7 @@ test("a permission request becomes the pending card and asks the shell to show t
   const { pending, queued } = broker.state();
   assert.equal(shown.length, 1);
   assert.equal(queued, 0);
+  assert.equal(pending.kind, "claude-code");
   assert.equal(pending.tool, "Bash");
   assert.equal(pending.project, "alpha");
   assert.equal(pending.summary, "Ejecutando npm test");
@@ -356,4 +357,106 @@ test("the pending card never exposes the working directory or the raw payload", 
   broker.enqueue({ sessionId: "s1", payload: bash({ transcript_path: "C:\\secret\\t.jsonl" }) });
   const serialized = JSON.stringify(broker.state());
   assert.doesNotMatch(serialized, /secret|C:\\\\work/);
+});
+
+// --- Dot tool requests (kind "dot-tool") ----------------------------------------------------------------------
+
+const powershell = (extra = {}) => ({
+  tool: "PowerShell",
+  summary: "Remove-Item old.txt",
+  detail: "Carpeta: C:\\work\\alpha\nPuede modificar tu equipo",
+  alwaysOffered: true,
+  ...extra,
+});
+
+test("a Dot tool request becomes the pending card with its own kind, label, command and detail", () => {
+  const { broker, shown } = setup();
+  broker.requestToolApproval(powershell());
+  const { pending, queued, sessions } = broker.state();
+  assert.equal(shown.length, 1);
+  assert.equal(queued, 0);
+  assert.deepEqual({ ...pending, id: "x" }, {
+    id: "x",
+    kind: "dot-tool",
+    tool: "PowerShell",
+    summary: "Remove-Item old.txt",
+    detail: "Carpeta: C:\\work\\alpha\nPuede modificar tu equipo",
+    project: "Dot",
+    alwaysOffered: true,
+    questions: null,
+  });
+  assert.deepEqual(sessions, [], "a Dot request is not a Claude Code session");
+});
+
+test("Siempre is offered for a Dot request only when the request asks for it", () => {
+  const { broker } = setup();
+  broker.requestToolApproval(powershell({ tool: "Claude Code", alwaysOffered: false }));
+  assert.equal(broker.state().pending.alwaysOffered, false);
+  assert.deepEqual(broker.decide(broker.state().pending.id, "always"), { ok: false, status: 400, error: "Siempre is not offered for this request." });
+  assert.notEqual(broker.state().pending, null, "the refused choice leaves the card in place");
+});
+
+test("Permitir, Denegar and Siempre answer a Dot request with exactly that choice", async () => {
+  const { broker } = setup();
+  for (const choice of ["allow", "deny", "always"]) {
+    const answer = settled(broker.requestToolApproval(powershell()));
+    assert.deepEqual(broker.decide(broker.state().pending.id, choice), { ok: true });
+    await tick();
+    assert.equal(answer.value, choice);
+  }
+});
+
+test("a Dot request is never handed to a terminal and carries no answers", () => {
+  const { broker } = setup();
+  broker.requestToolApproval(powershell());
+  const { id } = broker.state().pending;
+  assert.equal(broker.decide(id, "terminal").ok, false);
+  assert.equal(broker.decide(id, "allow", { q: "a" }).ok, false);
+  assert.notEqual(broker.state().pending, null);
+});
+
+test("a Dot request keeps the ack and decision timers: no ack in 2 s or no decision in 105 s means none", async () => {
+  const { broker, timers } = setup();
+  const unacked = settled(broker.requestToolApproval(powershell()));
+  timers.advance(1_999);
+  await tick();
+  assert.equal(unacked.done, false);
+  timers.advance(1);
+  await tick();
+  assert.equal(unacked.value, "none");
+
+  const acked = settled(broker.requestToolApproval(powershell()));
+  assert.equal(broker.ack(broker.state().pending.id), true);
+  timers.advance(104_999);
+  await tick();
+  assert.equal(acked.done, false);
+  timers.advance(1);
+  await tick();
+  assert.equal(acked.value, "none");
+  assert.equal(timers.pending(), 0);
+});
+
+test("an aborted Dot request releases its card and Dot requests queue behind Claude Code requests in arrival order", async () => {
+  const { broker } = setup();
+  broker.enqueue({ sessionId: "s1", payload: bash() });
+  const abort = new AbortController();
+  const dot = settled(broker.requestToolApproval(powershell({ signal: abort.signal })));
+  assert.equal(broker.state().pending.kind, "claude-code");
+  assert.equal(broker.state().queued, 1);
+  abort.abort();
+  await tick();
+  assert.equal(dot.value, "none");
+  assert.equal(broker.state().queued, 0);
+  const aborted = new AbortController();
+  aborted.abort();
+  assert.equal(await broker.requestToolApproval(powershell({ signal: aborted.signal })), "none");
+});
+
+test("quitting releases a Dot request too, and a full queue refuses at once", async () => {
+  const { broker } = setup({ maxPending: 1 });
+  const first = settled(broker.requestToolApproval(powershell()));
+  assert.equal(await broker.requestToolApproval(powershell()), "none");
+  broker.releaseAll();
+  await tick();
+  assert.equal(first.value, "none");
 });
