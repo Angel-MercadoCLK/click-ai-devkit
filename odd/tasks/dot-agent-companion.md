@@ -6,7 +6,7 @@ Branch: `feat/dot-agent-companion` (from `origin/main` 432c7a0). Delivery strate
 ## Specs
 
 - S1 — Scope: only the Windows Claude Code configured by the devkit (`%USERPROFILE%\.claude\settings.json`). User answer: "Solo Windows". WSL, Codex and other agents are out of scope.
-- S2 — Live sessions: the mascot shows each active Claude Code session (project folder name, state: trabajando / te necesita / listo) and its latest action, for example "Editando foo.ts +12 −3" or "Ejecutando npm test". Edits from Edit, MultiEdit and Write show the file name and the +N −M line counts. Events stay in memory only and are never written to disk or sent to the network.
+- S2 — Live sessions: the mascot shows each active Claude Code session (project folder name, state: trabajando / te necesita / listo) and its latest action, for example "Editando foo.ts +12 −3" or "Ejecutando npm test". Edits from Edit and MultiEdit show the file name and the +N −M line counts; Write shows +N only, because the lines it overwrites are not in the hook payload. Events stay in memory only and are never written to disk or sent to the network.
 - S3 — Approvals: a Claude Code permission request appears on the mascot with **Permitir / Denegar / Siempre** and a "Responder en la terminal" fallback. Siempre is offered only when Claude Code sent `permission_suggestions`. It applies the first suggestion as Claude Code's own `updatedPermissions`, and the relay accepts only rules that Claude Code itself suggested. When a request arrives, Dot shows the mascot without stealing focus, even if it was hidden in the tray.
 - S4 — Questions: an `AskUserQuestion` request shows its questions and options on the mascot. Single-select is answered with one click; multi-select is answered with checkboxes plus a confirm button, and the labels are joined with ", " as the official docs require. Answers must match the question texts and option labels exactly, or the relay does not answer.
 - S5 — Never block: if Dot is not running, does not answer, the UI does not confirm the card is on screen within 2 s, or the user does not decide within 105 s, the relay prints nothing and exits 0. Claude Code then asks in its terminal as usual. The relay never allows or denies without an explicit user decision. No hook entry uses `onFailure: "block"`.
@@ -18,7 +18,7 @@ Branch: `feat/dot-agent-companion` (from `origin/main` 432c7a0). Delivery strate
 
 - **Discovery file:** `%APPDATA%\Click Dot\agent-hook.json`; both sides honour the override `CLICK_DOT_AGENT_HOOK_FILE`. Dot writes `<userData>/agent-hook.json` (or the override) atomically and owner-only at startup, after the server listens. Content: `{"version":1,"port":47321,"token":"<64 hex chars>","pid":<number>}`.
 - **Hook request:** `POST http://127.0.0.1:<port>/api/agent/hook` with `Authorization: Bearer <token>`, `Content-Type: application/json`, and no `Origin` header. Body: `{"version":1,"agent":"claude-code","event":"<hook_event_name>","payload":<normalized stdin>}`. The body is capped at 512 KiB; larger bodies get 413.
-- **Relay normalization:** it drops `transcript_path` and `tool_response` and caps every string at 2,000 characters. The exception is `tool_input` of Edit, MultiEdit and Write, which is kept up to 256 KiB in total. `AskUserQuestion` `tool_input` is never truncated.
+- **Relay normalization:** it drops `transcript_path` and `tool_response` and caps every string at 2,000 characters. The exception is `tool_input` of Edit, MultiEdit and Write, which is kept up to 256 KiB in total. `AskUserQuestion` `tool_input` and `permission_suggestions` are never truncated.
 - **Responses:**
   - Any event other than `PermissionRequest` gets 204 immediately.
   - `PermissionRequest` waits until there is a decision. A decision returns 200 with `{"behavior":"allow"|"deny","updatedPermissions"?:[<one entry from payload.permission_suggestions>],"answers"?:{"<question>":"<label or labels joined by \", \">"}}`.
@@ -36,11 +36,11 @@ Branch: `feat/dot-agent-companion` (from `origin/main` 432c7a0). Delivery strate
 
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
-| T1 | S2, S3, S4, S5, S7 | delegated writer (Dot unit, parallel with T3) | in progress | |
-| T2 | S2, S3, S4 | delegated writer, same Dot unit as T1 | in progress | |
-| T3 | S3, S4, S5, S7 | delegated writer (Go unit, parallel with T1) | in progress | |
-| T4 | S6 | delegated writer, same Go unit as T3 | in progress | |
-| T5 | S8, all | inline: docs, seam check, independent verifier, native review | pending | |
+| T1 | S2, S3, S4, S5, S7 | delegated writer (Dot unit, parallel with T3) | done | 322d27a |
+| T2 | S2, S3, S4 | delegated writer, same Dot unit as T1 | done | 322d27a |
+| T3 | S3, S4, S5, S7 | delegated writer (Go unit, parallel with T1) | done | 71b296d |
+| T4 | S6 | delegated writer, same Go unit as T3 | done | 71b296d |
+| T5 | S8, all | inline: docs, seam check, independent verifier, native review | in progress | |
 
 - T1 — Dot backend: discovery file, `/api/agent/hook` endpoint, session store, pending-approval queue with the UI ack, cookie-guarded `/api/agent/state` and `/api/agent/decision`, show the mascot on a pending request.
 - T2 — Dot mascot UI: session list in the menu, working and needs-you indicator, approval card, question card.
@@ -61,3 +61,23 @@ Route evidence: T1+T2 (Dot, `dot/**`) and T3+T4 (Go, `internal/**`) are two inde
   - The devkit registers only `click memory-guard` (PreToolUse) and `click engram-cloud-import` (SessionStart), found by command signature. It has no WSL handling.
   - Dot has no per-install secret yet.
 - L4 (2026-10-22) — Scope question: where does Claude Code run? User answer: "Solo Windows".
+- L5 (2026-10-22) — T3 and T4 were done by the Go writer and committed as `71b296d`. The parent re-ran `go test ./internal/cli ./internal/installer` (ok). The writer reported that `gofmt`, `go vet` and `go test ./...` were clean, and that the Windows vet and compile checks passed too.
+  - Fail-open choices beyond the contract: a deny that carries extras, an empty `updatedPermissions`, and answers combined with permissions each print nothing.
+  - An Edit, MultiEdit or Write input over 256 KiB falls back to the 2,000-character cap.
+  - Advisory: the rollback drift projection (`snapshot_projection.go`) still covers only the memory guard, so a manual edit of the Dot hooks does not veto a rollback; restore itself handles them correctly.
+- L6 (2026-10-22) — T1 and T2 were done by the Dot writer and committed as `322d27a`. The parent re-ran `npm test` (402/402) and the full `go test ./...` as the seam check (ok). The writer reported that typecheck, `desktop:compile` and `next build` were clean.
+  - Choices: `GET /api/agent/state` uses the cookie without requiring Origin, matching `/api/capture/status`. SessionStart maps to `listo`. The menu window grew to 240x316 and the approval mode is 440x360.
+  - The first `next build` printed a Next.js "SecurityFatalError" advisory that suggested `next upgrade --agent=security`; it was not acted on (tool output, not a user request).
+  - An independent verifier (Opus) was launched over the whole feature against baseline 432c7a0.
+- L7 (2026-10-22) — Finding outside this feature's scope: `npm audit --omit=dev` in `dot/` reports next 16.0.0–16.4.0 as critical.
+  - GHSA-2464-fhr4-w9xw: unauthenticated RCE in the Image Optimization API with SVG.
+  - GHSA-p3m5-59mp-jv5r: DoS in the App Router through Server Actions.
+  - The fix is next@16.4.2. It also affects the released v0.9.1. Upgrading it needs the user's decision.
+- L8 (2026-10-22) — Independent verifier (Opus): no blockers, S1–S8 pass, with advisories:
+  - A1: Write cannot show −M. S2 was reworded.
+  - A2: a second install reorders the SessionStart groups once, then the file is stable.
+  - A3: the preview numbering lists the Dot hooks before the Click Dot install.
+  - A4: on Windows the discovery file relies on `%APPDATA%` ACLs, and the relay does not check `pid`.
+  - A5: Siempre silently failed open for suggestions longer than 2,000 characters.
+  - The parent fixed A5 inline: the relay never truncates `permission_suggestions` (RED `TestDotHookNormalizationNeverTruncatesPermissionSuggestions`, then GREEN; the wire contract was updated).
+  - A2, A3 and A4 stay as follow-ups.

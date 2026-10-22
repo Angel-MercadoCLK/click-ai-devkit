@@ -272,6 +272,20 @@ func TestDotHookNormalizationNeverTruncatesAskUserQuestionInput(t *testing.T) {
 	}
 }
 
+func TestDotHookNormalizationNeverTruncatesPermissionSuggestions(t *testing.T) {
+	rig := newDotHookRig(t, respond(http.StatusNoContent, ""))
+	longRule := strings.Repeat("r", 3000)
+	stdin := `{"session_id":"s1","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"ls"},"permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"` + longRule + `"}],"behavior":"allow","destination":"localSettings"}]}`
+
+	stdout, stderr, err := execDotHook(t, stdin, "PermissionRequest")
+	assertFailOpen(t, stdout, stderr, err)
+
+	suggestion := decodeJSONMap(t, rig.request().body)["payload"].(map[string]any)["permission_suggestions"].([]any)[0].(map[string]any)
+	if len(suggestion["rules"].([]any)[0].(map[string]any)["ruleContent"].(string)) != 3000 {
+		t.Fatal("permission_suggestions must never be truncated, or Siempre could never match the original")
+	}
+}
+
 func TestDotHookTimeoutsMatchTheWireContract(t *testing.T) {
 	if dotHookTimeouts.connect != 300*time.Millisecond || dotHookTimeouts.event != 2*time.Second || dotHookTimeouts.permission != 110*time.Second {
 		t.Fatalf("default timeouts = %+v, want connect 300ms, event 2s, permission 110s", dotHookTimeouts)

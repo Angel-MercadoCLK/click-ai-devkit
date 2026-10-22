@@ -243,7 +243,9 @@ func decodeJSONObject(raw []byte) (map[string]any, bool) {
 // transcript_path and tool_response and caps every string at 2,000 characters. The exceptions are
 // the tool_input of Edit, MultiEdit and Write (kept whole while it serializes to at most 256 KiB, so
 // Dot can count added and removed lines) and of AskUserQuestion (never truncated: Dot must answer
-// against the exact question and option texts). The input map is never modified.
+// against the exact question and option texts). permission_suggestions are never truncated either:
+// Siempre echoes one back and the relay accepts it only when it equals the original exactly. The
+// input map is never modified.
 func normalizeDotHookPayload(payload map[string]any) map[string]any {
 	tool, _ := payload["tool_name"].(string)
 	out := make(map[string]any, len(payload))
@@ -251,6 +253,8 @@ func normalizeDotHookPayload(payload map[string]any) map[string]any {
 		switch key {
 		case "transcript_path", "tool_response":
 			continue
+		case "permission_suggestions":
+			out[key] = value
 		case "tool_input":
 			out[key] = normalizeDotHookToolInput(tool, value)
 		default:
