@@ -16,6 +16,7 @@ Assumptions (confirm or correct):
 - A4 — A failed Dot download or install warns in Spanish and does not fail `click install`/`update` (precedent D45 for supplementary integrations).
 - A5 — Single source of truth for personal-data patterns: `dot/lib/guard-patterns.json` is generated from `internal/guard/patterns.yaml`, and both Go and Dot tests run the shared corpus `dot/test/fixtures/guard-corpus.json`.
 - A6 — `click rollback` leaves the Dot installation as it is and says so; uninstall stops Dot, removes the install folder, the Start Menu shortcut and its start-at-login entry, and preserves Dot user data (`%APPDATA%\Click Dot`: credentials and history).
+- A7 — User decision: Dot ships unsigned for now (internal pilot). Users with Windows Smart App Control enabled may be unable to open Dot; the rest of the devkit installs normally. User answered "Publicar sin firmar por ahora" to "¿Cómo resolvemos que Windows bloquee Click Dot por no estar firmado?", whose option read: "Seguir sin firma y documentar que quien tenga Smart App Control activo no podrá abrir Dot. El resto del devkit se instala igual. Sirve para un piloto interno, no para repartirlo al equipo en general."
 
 ## Tasks
 
@@ -27,7 +28,7 @@ Assumptions (confirm or correct):
 | D4 | S1, A1–A4 | Go installer: install/update/uninstall/doctor/rollback/snapshot of Dot, Spanish messages, isolated tests with a fake release server | delegated (parallel with D3) | done (real Windows unexercised) | 737ba75, 425fa2d, dfdaa76 |
 | D4b | S1, A4, A6 | Installer hardening from native review: ownership check before stopping Dot or removing the shortcut on uninstall; restart the previous Dot when a swap fails; idle-based download timeout instead of a 15-minute total; clean orphaned staging folders; doctor advice on dev builds; uninstall Dot errors stay non-fatal | delegated (context backstop) | done | see L11 |
 | D5 | S1 | Dot release hardening: asar and Electron fuses, trim unused production deps, per-user writable install path | delegated (context backstop) | done (final-tree Windows smoke blocked by Smart App Control) | see L12 |
-| D6 | S1 | Disposable Windows qualification: package smoke installs Dot from the local artifact | pending | pending | |
+| D6 | S1 | Disposable Windows qualification: CI launches the packaged Dot on a disposable Windows runner and checks it serves locally | delegated | in progress | |
 
 ## Log
 

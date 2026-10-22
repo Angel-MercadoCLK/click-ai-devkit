@@ -104,7 +104,7 @@ mismo punto de entrada (`cmd/click/`) que usa el proceso de release oficial.
   el token Cloud actual; uninstall quita solo la inscripción local de Click y conserva el registro
   y la configuración compartidos upstream.
 
-- **Click Dot** (solo Windows x64): app de escritorio que vive en `dot/` y se publica en la misma release que `click` (`click-dot_<versión>_windows_amd64.zip`, listado en `checksums.txt`). Se instala por usuario en `%LOCALAPPDATA%\Programs\Click Dot`, con acceso directo en el menú Inicio. Se descarga de la release de GitHub que coincide con la versión de `click` y se verifica con SHA-256 antes de instalarse. Si falla, `click install` y `click update` avisan y continúan. Su documentación propia está en [`dot/README.md`](dot/README.md).
+- **Click Dot** (solo Windows x64): app de escritorio que vive en `dot/` y se publica en la misma release que `click` (`click-dot_<versión>_windows_amd64.zip`, listado en `checksums.txt`). Se instala por usuario en `%LOCALAPPDATA%\Programs\Click Dot`, con acceso directo en el menú Inicio. Se descarga de la release de GitHub que coincide con la versión de `click` y se verifica con SHA-256 antes de instalarse. Si falla, `click install` y `click update` avisan y continúan. Su documentación propia está en [`dot/README.md`](dot/README.md). Por ahora Click Dot se publica sin firma de código (piloto interno): en equipos con Smart App Control (Control inteligente de aplicaciones) activo, Windows puede impedir que se abra; el resto del devkit se instala igual.
 
 ## El menú interactivo
 
