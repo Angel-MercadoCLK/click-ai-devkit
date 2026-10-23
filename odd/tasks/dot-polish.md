@@ -27,7 +27,7 @@ Branch: `feat/dot-polish` (from `origin/main`). Delivery strategy: one PR (the u
 |----|-------|-------|--------|--------|
 | P1 | S1, S2, S4 | delegated writer (parallel with the design prototype) | done | 2974fd9 |
 | P2 | S3 | delegated writer after the choice (Orbi), parallel with P1 on disjoint files | done | e490a32 |
-| P3 | all | inline: seam check, review, delivery | pending | |
+| P3 | all | inline: seam check, review, delivery | done (delivery pending) | |
 
 ## Log
 
@@ -46,3 +46,7 @@ Branch: `feat/dot-polish` (from `origin/main`). Delivery strategy: one PR (the u
 - L5 (2026-10-22) — P2 was done by the writer. Orbi replaces Lente everywhere: a ring split into back and front halves, a moon passing behind and in front, a capture halo apart from the ring, and a simplified small-size look. It has seven states plus hover and click; sleep comes after 3 minutes of quiet, done lasts 8 s, error is wired to failed Claude tasks, and listening is its own state.
   - Checks: `npm test` 845/845; typecheck and compile clean. QA screenshots in headless Chromium, reviewed by the parent (menu done and needs, pill working).
   - Not verified: the real Windows cursor feed, display scaling, frame rate.
+- L6 (2026-10-22) — Native reviews (granted by the user):
+  - `main..2974fd9` (re-detect and copy): `review-e022f9a75f2c49ae`, approved, burned. Follow-up advisories: a newer Codex whose handshake fails may respawn with backoff; client and server disagree on whether `stopped` is recheckable; `CODEX_PROTOCOL_VERSION` is duplicated.
+  - `2974fd9..e490a32` (Orbi): `review-49bbc2d626377435`, approved, burned. Follow-up advisories: the sleep hook and failed wiring have no tests; the `ring` prop name means the capture halo; a duplicated glow part.
+  - Every commit is reviewed; `npm test` 845/845. Next: the user's delivery decision (v0.12.1).
