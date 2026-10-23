@@ -26,7 +26,7 @@ Branch: `feat/dot-polish` (from `origin/main`). Delivery strategy: one PR (the u
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
 | P1 | S1, S2, S4 | delegated writer (parallel with the design prototype) | done | 2974fd9 |
-| P2 | S3 | delegated writer after the choice (Orbi), parallel with P1 on disjoint files | done | (next commit) |
+| P2 | S3 | delegated writer after the choice (Orbi), parallel with P1 on disjoint files | done | e490a32 |
 | P3 | all | inline: seam check, review, delivery | pending | |
 
 ## Log
