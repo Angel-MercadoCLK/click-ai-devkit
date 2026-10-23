@@ -223,7 +223,7 @@ body:has(.mascot-root) { height: 100vh; min-height: 0; overflow: hidden; line-he
 /* The permission request or the question: Dot asks, with the keyboard hints on the buttons. */
 .agent-card { position: relative; display: flex; height: 100%; min-width: 0; align-items: center; gap: 20px; overflow: hidden; padding: 18px 24px; background: var(--dot-card); border: 1px solid var(--dot-border); border-radius: 24px; user-select: text; }
 .agent-card-glow { position: absolute; right: 0; bottom: -60px; left: 0; height: 120px; background: radial-gradient(60% 100% at 50% 100%, rgba(255, 170, 50, 0.16), rgba(255, 170, 50, 0)); pointer-events: none; }
-.agent-card-lente { position: relative; flex: none; }
+.agent-card-orbi { position: relative; flex: none; }
 .agent-card-main { position: relative; display: flex; min-width: 0; max-height: 100%; flex: 1; flex-direction: column; gap: 12px; }
 .agent-card-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 15px; }
 .agent-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dot-needs); }
@@ -337,19 +337,16 @@ button.agent-option > span, button.agent-option > small { grid-column: 1; }
 .island-computer .island-capture-dot { background: var(--dot-needs); }
 .agent-card[data-source="codex"] .agent-card-detail { max-height: 8rem; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 
-/* Lente: the character. Its motion (following the cursor, blinking, breathing, the spring between states) is driven by
-   `lente-motion.ts` from one requestAnimationFrame loop and written as transforms and opacity; reduced motion makes it
-   gentler there, never static. CSS only fixes where each part turns from, and keeps the capture ring's pulse. */
-.lente { display: block; flex: none; overflow: visible; transform-origin: 50% 88%; will-change: transform; }
-.lente-body { transform-origin: 50px 52px; }
-.lente-eye, .lente-iris, .lente-pupil, .lente-orbit { transform-origin: 50px 53px; }
-.lente-badge { transform-origin: 79px 25px; }
-.lente-ring { stroke: #FF5F52; }
-[data-ring="paused"] .lente-ring { stroke: #FFB340; }
+/* Orbi: the character. Its motion (following the cursor, blinking, floating, the moon, the ring, the boing, the emotes of each state) is
+   driven by `orbi-motion.ts` from one requestAnimationFrame loop and written as transforms and opacity; reduced motion makes it
+   gentler there, never static. CSS only places the drawing and colors the capture halo, whose pulse is the one CSS animation. */
+.orbi { display: block; flex: none; overflow: visible; transform-origin: 50% 80%; will-change: transform; }
+.orbi-halo { fill: rgba(255, 95, 82, 0.14); stroke: #FF5F52; }
+[data-ring="paused"] .orbi-halo { fill: rgba(255, 179, 64, 0.12); stroke: #FFB340; }
 @media (prefers-reduced-motion: no-preference) {
-  .lente-ring { animation: lente-pulse 1.6s ease-in-out infinite; }
+  .orbi-halo { animation: orbi-pulse 1.6s ease-in-out infinite; }
 }
-@keyframes lente-pulse { 50% { stroke-opacity: 0.45; } }
+@keyframes orbi-pulse { 50% { stroke-opacity: 0.45; } }
 
 /* Opening, closing and resizing: the window resizes at once, so the page unfolds the island's shape from its old size
    (clip-path, set by --morph-x and --morph-y) and fades the new content in from a slightly smaller scale. Before the window

@@ -4,7 +4,7 @@ import { test } from "node:test";
 
 process.env.PORT = "3011";
 
-const look = await import("../app/mascot/lente-look.ts");
+const look = await import("../app/mascot/orbi-look.ts");
 const island = await import("../app/mascot/island-state.ts");
 const choices = await import("../app/mascot/agent-choices.ts");
 const windowMode = await import("../lib/window-mode.ts");
@@ -13,77 +13,218 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 const session = (overrides = {}) => ({ id: "s1", project: "alpha", state: "trabajando", action: "Editando agent-card.tsx +12 −3", updatedAt: 10, ...overrides });
 const pending = (overrides = {}) => ({ id: "p1", kind: "claude-code", tool: "Bash", summary: "npm test", detail: "npm test", project: "alpha", alwaysOffered: true, questions: null, ...overrides });
 
-// --- the Lente character ---------------------------------------------------------------------------------------
+// --- the Orbi character ----------------------------------------------------------------------------------------
 
-test("Lente has four states with the canvas palettes: pearl, working blue, needs-you amber and done green", () => {
-  assert.deepEqual([...look.LENTE_STATES], ["idle", "working", "approval", "done"]);
-  assert.equal(look.LENTE_PALETTES.idle.mid, "#DCE5F3");
-  assert.equal(look.LENTE_PALETTES.working.mid, "#7FA6FF");
-  assert.equal(look.LENTE_PALETTES.approval.mid, "#FFC864");
-  assert.equal(look.LENTE_PALETTES.done.mid, "#7FE0A6");
-  for (const state of look.LENTE_STATES) {
-    for (const key of ["hi", "mid", "lo", "glow", "badge"]) assert.ok(look.LENTE_PALETTES[state][key], `${state}.${key}`);
-    assert.equal(look.LENTE_PALETTES[state].badge, "#FFB340");
+test("Orbi has seven states, each with a palette: the planet's own colors, muted when worried and dimmed when asleep", () => {
+  assert.deepEqual([...look.ORBI_STATES], ["idle", "working", "needs", "done", "error", "listening", "sleeping"]);
+  assert.equal(look.ORBI_PALETTES.idle.b0, "#B8FFF0");
+  assert.equal(look.ORBI_PALETTES.idle.b1, "#3FD2C7");
+  assert.equal(look.ORBI_PALETTES.idle.b2, "#4A6CFF");
+  assert.equal(look.ORBI_PALETTES.idle.b3, "#7B4DFF");
+  assert.deepEqual([look.ORBI_PALETTES.idle.r0, look.ORBI_PALETTES.idle.r1, look.ORBI_PALETTES.idle.r2], ["#FFB86B", "#FF6FB5", "#A78BFF"]);
+  for (const state of look.ORBI_STATES) {
+    for (const key of ["b0", "b1", "b2", "b3", "glow", "r0", "r1", "r2"]) assert.ok(look.ORBI_PALETTES[state][key], `${state}.${key}`);
   }
+  assert.notEqual(look.ORBI_PALETTES.error.b1, look.ORBI_PALETTES.idle.b1, "an error does not look like the others");
+  assert.equal(look.ORBI_PALETTES.working.b1, look.ORBI_PALETTES.idle.b1, "working keeps the planet's colors");
 });
 
-test("only working shows the dashed orbit ring, only approval the amber badge, and only done half-closes the lid", () => {
-  assert.deepEqual(look.lenteLook("idle"), { orbit: false, badge: false, lid: "open" });
-  assert.deepEqual(look.lenteLook("working"), { orbit: true, badge: false, lid: "open" });
-  assert.deepEqual(look.lenteLook("approval"), { orbit: false, badge: true, lid: "open" });
-  assert.deepEqual(look.lenteLook("done"), { orbit: false, badge: false, lid: "half" });
+test("each state shows only its own emotes: the badge, the hop, the sparks, the z, the rings, the sweat, the glowing ring", () => {
+  const flags = (state) => {
+    const { eyes, badge, hop, sparks, zzz, rings, sweat, worry, ringGlow, moon } = look.orbiLook(state, 76);
+    return { eyes, badge, hop, sparks, zzz, rings, sweat, worry, ringGlow, moon };
+  };
+  const calm = { eyes: "open", badge: false, hop: false, sparks: false, zzz: false, rings: false, sweat: false, worry: false, ringGlow: false };
+  assert.deepEqual(flags("idle"), { ...calm, moon: "normal" });
+  assert.deepEqual(flags("working"), { ...calm, ringGlow: true, moon: "fast" });
+  assert.deepEqual(flags("needs"), { ...calm, badge: true, hop: true, moon: "normal" });
+  assert.deepEqual(flags("done"), { ...calm, eyes: "happy", sparks: true, moon: "normal" });
+  assert.deepEqual(flags("error"), { ...calm, sweat: true, worry: true, moon: "slow" });
+  assert.deepEqual(flags("listening"), { ...calm, rings: true, moon: "normal" });
+  assert.deepEqual(flags("sleeping"), { ...calm, eyes: "closed", zzz: true, moon: "slow" });
 });
 
 test("an unknown state falls back to idle instead of breaking the character", () => {
-  assert.equal(look.readLenteState("sleepy"), "idle");
-  assert.equal(look.readLenteState(undefined), "idle");
-  for (const state of look.LENTE_STATES) assert.equal(look.readLenteState(state), state);
+  assert.equal(look.readOrbiState("sleepy"), "idle");
+  assert.equal(look.readOrbiState(undefined), "idle");
+  for (const state of look.ORBI_STATES) assert.equal(look.readOrbiState(state), state);
 });
 
-test("the character is drawn in code and alive: an SVG component driven by one animation-frame loop, with a gentler profile for reduced motion and no image assets", async () => {
-  const source = await read("app/mascot/lente.tsx");
+test("below 40 px the drawing is simplified to stay legible on the black island: no sparks or z, a thicker ring, a bigger moon and bigger eyes", () => {
+  assert.equal(look.SMALL_ORBI_SIZE, 40);
+  for (const size of [28, 34, 39]) {
+    assert.equal(look.orbiLook("done", size).sparks, false, `${size}: no sparks`);
+    assert.equal(look.orbiLook("sleeping", size).zzz, false, `${size}: no z`);
+    assert.equal(look.orbiLook("needs", size).badge, true, `${size}: the badge stays`);
+    assert.equal(look.orbiLook("listening", size).rings, true, `${size}: the rings stay`);
+    assert.equal(look.orbiLook("done", size).eyes, "happy");
+    assert.equal(look.orbiLook("idle", size).small, true);
+  }
+  for (const size of [40, 76, 96]) {
+    assert.equal(look.orbiLook("done", size).sparks, true, `${size}: sparks`);
+    assert.equal(look.orbiLook("sleeping", size).zzz, true, `${size}: z`);
+    assert.equal(look.orbiLook("idle", size).small, false);
+  }
+  const small = look.orbiGeometry(34);
+  const big = look.orbiGeometry(76);
+  assert.ok(small.ring.width > big.ring.width && small.moon.r > big.moon.r && small.eyes.rx > big.eyes.rx && small.planetR > big.planetR);
+  // In pixels at the pill's 34 px: a ring you can see, eyes you can read, a moon that is more than a speck.
+  const px = (units) => (units * 34) / 120;
+  assert.ok(px(small.ring.width) >= 2.2, "the ring is at least about 2 px thick");
+  assert.ok(px(small.eyes.ry * 2) >= 6, "the eyes are at least 6 px tall");
+  assert.ok(px(small.eyes.rx * 2) >= 4.5);
+  assert.ok(px(small.moon.r * 2) >= 3, "the moon is at least 3 px");
+  assert.ok(px(small.mouth.stroke) >= 0.9);
+  assert.ok(look.orbiLook("idle", 28).geometry.eyes.rx === small.eyes.rx, "28 and 34 share the small drawing");
+});
+
+test("everything Orbi draws stays inside the capture halo, and the halo fits the 120 x 120 box, at both sizes", () => {
+  // The farthest a tilted ellipse (plus its stroke or its moon) gets from the planet's center.
+  const farthest = ({ cx, cy, rx, ry, tilt }, extra, center) => {
+    const angle = (tilt * Math.PI) / 180;
+    let far = 0;
+    for (let t = 0; t < 360; t += 2) {
+      const x = rx * Math.cos((t * Math.PI) / 180);
+      const y = ry * Math.sin((t * Math.PI) / 180);
+      const px = cx + x * Math.cos(angle) - y * Math.sin(angle);
+      const py = cy + x * Math.sin(angle) + y * Math.cos(angle);
+      far = Math.max(far, Math.hypot(px - center.cx, py - center.cy));
+    }
+    return far + extra;
+  };
+  for (const size of [28, 34, 76, 96]) {
+    const g = look.orbiGeometry(size);
+    const inner = g.halo.r - g.halo.stroke / 2;
+    const ring = farthest(g.ring, g.ring.width / 2, g);
+    const moon = farthest(g.moon, g.moon.r * 1.1, g);
+    assert.ok(ring < inner, `${size}: the ring stays inside the halo (${ring.toFixed(1)} < ${inner})`);
+    assert.ok(moon < inner, `${size}: the moon stays inside the halo (${moon.toFixed(1)} < ${inner})`);
+    assert.ok(g.planetR < inner);
+    assert.ok(g.halo.r + g.halo.stroke / 2 <= 60 + 1e-9, `${size}: the halo fits the box`);
+    assert.ok(g.cy + g.halo.r + g.halo.stroke / 2 <= 120 && g.cy - g.halo.r - g.halo.stroke / 2 >= 0);
+  }
+  assert.ok((look.orbiGeometry(34).halo.stroke * 34) / 120 >= 1.8, "the halo is at least about 2 px thick at the pill's size");
+});
+
+test("Orbi falls asleep after about three minutes without anything going on and wakes with any activity", () => {
+  assert.equal(look.SLEEP_AFTER_MS, 3 * 60 * 1000);
+  const base = { quiet: true, lastActivityAt: 1000 };
+  assert.deepEqual(look.sleepStatus({ ...base, now: 1000 }), { asleep: false, checkInMs: look.SLEEP_AFTER_MS });
+  assert.deepEqual(look.sleepStatus({ ...base, now: 1000 + 100_000 }), { asleep: false, checkInMs: look.SLEEP_AFTER_MS - 100_000 });
+  assert.deepEqual(look.sleepStatus({ ...base, now: 1000 + look.SLEEP_AFTER_MS }), { asleep: true, checkInMs: null });
+  assert.equal(look.sleepStatus({ ...base, now: 1000 + 10 * look.SLEEP_AFTER_MS }).asleep, true);
+  // Activity (hover, click, anything going on) moves the start and wakes it.
+  assert.equal(look.sleepStatus({ quiet: true, lastActivityAt: 1000 + look.SLEEP_AFTER_MS, now: 1000 + look.SLEEP_AFTER_MS + 5 }).asleep, false);
+  // While something is going on it never sleeps, however long ago the last activity was.
+  assert.deepEqual(look.sleepStatus({ quiet: false, lastActivityAt: 0, now: 10 * look.SLEEP_AFTER_MS }), { asleep: false, checkInMs: null });
+});
+
+test("the character is drawn in code and alive: an SVG component driven by one animation-frame loop that stops when the island hides, with a gentler profile for reduced motion and no image assets", async () => {
+  const source = await read("app/mascot/orbi.tsx");
   assert.match(source, /<svg/);
-  assert.match(source, /export function Lente/);
+  assert.match(source, /export function Orbi/);
   assert.doesNotMatch(source, /<img|\.png|\.jpg|\.svg"|url\(\s*["']?http/i);
   assert.match(source, /requestAnimationFrame/);
   assert.match(source, /cancelAnimationFrame/, "the loop stops when the character goes away");
+  assert.match(source, /visibilitychange/, "and while the page is hidden");
   assert.match(source, /prefers-reduced-motion: reduce/, "the profile follows the Windows animation setting, live");
   assert.match(source, /subscribeCursor/);
+  assert.match(source, /createOrbiEngine/);
   const css = await read("app/globals.css");
-  for (const selector of [".lente-body", ".lente-eye", ".lente-iris", ".lente-orbit", ".lente-badge"]) assert.ok(css.includes(selector), selector);
-  // The old CSS loops were gated off by "Animation effects" in Windows, which left the character static. Nothing of that is left.
-  assert.doesNotMatch(css, /@keyframes lente-(breathe|blink|orbit|nudge)/);
-  assert.doesNotMatch(css, /animation:[^;]*lente-(breathe|blink|orbit|nudge)/);
-  // What stays in CSS is the capture ring's pulse, and it is the only lente animation, gated like before.
-  const animated = css.split("@media").filter((block) => /animation:[^;]*lente-/.test(block));
+  assert.match(css, /\.orbi\s*\{/);
+  assert.doesNotMatch(css, /@keyframes orbi-(float|boing|hop|moon|blink|spark|zzz|ring)/, "the motion lives in the engine, so the Windows animation setting cannot freeze it");
+  assert.doesNotMatch(css, /animation:[^;]*orbi-(float|boing|hop|moon|blink|spark|zzz|ring)/);
+  // What stays in CSS is the capture halo's pulse, and it is the only orbi animation, gated like before.
+  const animated = css.split("@media").filter((block) => /animation:[^;]*orbi-/.test(block));
   assert.equal(animated.length, 1);
   assert.match(animated[0], /^\s*\(prefers-reduced-motion: no-preference\)/);
-  assert.match(animated[0], /lente-pulse/);
-  assert.doesNotMatch(css, /\.lente[^{]*\{[^}]*transition:\s*all/);
+  assert.match(animated[0], /orbi-pulse/);
+  assert.doesNotMatch(css, /\.orbi[^{]*\{[^}]*transition:\s*all/);
 });
 
 test("the character moves with transforms and opacity only, so it never lays out again", async () => {
-  const source = await read("app/mascot/lente.tsx");
+  const source = await read("app/mascot/orbi.tsx");
   assert.doesNotMatch(source, /\.style\.(width|height|top|left|margin|padding)\b/);
   for (const property of ['"transform"', '"opacity"']) assert.ok(source.includes(property), property);
   assert.match(source, /will-change|translate3d/);
 });
 
-test("the old Spark is gone and nothing imports it", async () => {
-  await assert.rejects(read("app/mascot/spark.tsx"));
-  assert.doesNotMatch(await read("app/mascot/mascot.tsx"), /Spark|spark/);
-  assert.doesNotMatch(await read("app/globals.css"), /\.spark|spark-/);
+test("the capture halo is drawn only while the screen is shared or paused, red or amber, and never replaces the ring", async () => {
+  const source = await read("app/mascot/orbi.tsx");
+  assert.match(source, /ring === "live" \|\| ring === "paused"/);
+  assert.match(source, /orbi-halo/);
+  assert.match(source, /data-ring=\{ring\}/);
+  const css = await read("app/globals.css");
+  assert.match(css, /\.orbi-halo\s*\{[^}]*stroke:\s*#FF5F52/);
+  assert.match(css, /\[data-ring="paused"\] \.orbi-halo\s*\{[^}]*stroke:\s*#FFB340/);
+  // The halo is the capture signal; it is a separate element from Orbi's own gradient ring.
+  assert.doesNotMatch(source, /className="orbi-halo"[^>]*url\(#/);
+});
+
+test("the old Spark and the Lente are gone and nothing imports them", async () => {
+  for (const gone of ["app/mascot/spark.tsx", "app/mascot/lente.tsx", "app/mascot/lente-look.ts", "app/mascot/lente-motion.ts", "test/lente-motion.test.mjs"]) await assert.rejects(read(gone), gone);
+  for (const file of ["app/mascot/mascot.tsx", "app/mascot/agent-card.tsx", "app/mascot/island-state.ts", "app/mascot/cursor-store.ts", "app/globals.css"]) {
+    assert.doesNotMatch(await read(file), /lente|Lente|\.spark|spark-/, file);
+  }
+});
+
+test("the packaged smoke test keeps finding what it looks for: the toggle, the menu and its labels, and the connect button", async () => {
+  const source = await read("app/mascot/mascot.tsx");
+  for (const label of ["Compartir mi pantalla", "Voz", "Mensaje", "Conectar con ChatGPT"]) assert.ok(source.includes(`>${label}<`) || source.includes(`"${label}"`) || source.includes(`{${JSON.stringify(label)}}`) || source.includes(label), label);
+  assert.match(source, /<span>Compartir mi pantalla<\/span>/);
+  assert.match(source, /<span>\{voice\.listening \? "Escuchando… \(cancelar\)" : "Voz"\}<\/span>/);
+  assert.match(source, /<span>Mensaje<\/span>/);
+  assert.match(source, /Conectar con ChatGPT/);
+  assert.match(source, /className="mascot-root"/);
+  assert.match(source, /role="button"/);
+  assert.match(source, /aria-expanded=\{expanded\}/);
+  assert.match(source, /className="mascot-menu island-card"/);
+  assert.match(source, /className=\{`menu-button/);
+  // Orbi is decoration: it adds nothing the smoke script could mistake for a button or a label.
+  const orbi = await read("app/mascot/orbi.tsx");
+  assert.match(orbi, /aria-hidden="true"/);
+  assert.doesNotMatch(orbi, /role="button"|<button|aria-expanded|<text/);
+});
+
+test("the island shows Orbi at its three sizes and puts it to sleep and wakes it with the pointer", async () => {
+  const source = await read("app/mascot/mascot.tsx");
+  for (const size of [34, 28, 92]) assert.match(source, new RegExp(`<Orbi state=\\{orbiState\\} size=\\{${size}\\} ring=\\{view\\.ring\\} />`), `size ${size}`);
+  assert.match(source, /useSleep/);
+  assert.match(source, /wake\(\)/);
+  const hook = await read("app/mascot/use-sleep.ts");
+  assert.match(hook, /sleepStatus/);
+  assert.match(hook, /clearTimeout/, "the timer is cleaned up");
+  const card = await read("app/mascot/agent-card.tsx");
+  assert.match(card, /<Orbi state="needs" size=\{96\} \/>/);
 });
 
 // --- what the island shows -------------------------------------------------------------------------------------
 
-test("the character follows the agent: needing the user wins, then working, listening works like working, then done", () => {
-  assert.equal(island.lenteStateFor({ attention: "needs", listening: false, sessions: [] }), "approval");
-  assert.equal(island.lenteStateFor({ attention: "needs", listening: true, sessions: [] }), "approval");
-  assert.equal(island.lenteStateFor({ attention: "working", listening: false, sessions: [] }), "working");
-  assert.equal(island.lenteStateFor({ attention: "idle", listening: true, sessions: [] }), "working");
-  assert.equal(island.lenteStateFor({ attention: "idle", listening: false, sessions: [session({ state: "listo" })] }), "done");
-  assert.equal(island.lenteStateFor({ attention: "idle", listening: false, sessions: [] }), "idle");
+test("the character follows the agent: needing the user wins, then listening, working, a failure, a finish, sleeping, and idle otherwise", () => {
+  const state = (overrides) => island.orbiStateFor({ attention: "idle", listening: false, ...overrides });
+  assert.equal(state({ attention: "needs" }), "needs");
+  assert.equal(state({ attention: "needs", listening: true }), "needs");
+  assert.equal(state({ attention: "needs", failed: true, asleep: true }), "needs");
+  assert.equal(state({ listening: true }), "listening");
+  assert.equal(state({ attention: "working", listening: true }), "listening");
+  assert.equal(state({ attention: "working" }), "working");
+  assert.equal(state({ attention: "working", failed: true }), "working");
+  assert.equal(state({ failed: true, finished: true }), "error");
+  assert.equal(state({ finished: true }), "done");
+  assert.equal(state({ asleep: true }), "sleeping");
+  assert.equal(state({ asleep: true, finished: true }), "done", "news wakes it");
+  assert.equal(state({}), "idle");
+});
+
+test("a background task that just failed or timed out is a failure worth showing; one already failed when first seen is not", () => {
+  const task = (overrides = {}) => ({ id: "t1", project: "alpha", state: "running", latestLine: null, startedAt: 1, ...overrides });
+  assert.equal(island.newlyFailed({ t1: "running" }, [task({ state: "failed" })]), true);
+  assert.equal(island.newlyFailed({ t1: "running" }, [task({ state: "timed_out" })]), true);
+  assert.equal(island.newlyFailed({ t1: "running" }, [task({ state: "done" })]), false);
+  assert.equal(island.newlyFailed({ t1: "running" }, [task({ state: "cancelled" })]), false, "cancelled by the user is not an error");
+  assert.equal(island.newlyFailed({}, [task({ state: "failed" })]), false, "already failed when first seen");
+  assert.equal(island.newlyFailed({ t1: "failed" }, [task({ state: "failed" })]), false);
+  assert.deepEqual(island.taskStates([task(), task({ id: "t2", state: "failed" })]), { t1: "running", t2: "failed" });
 });
 
 test("the island rests as the thin bar, becomes the pill when something is going on or the pointer is on it", () => {

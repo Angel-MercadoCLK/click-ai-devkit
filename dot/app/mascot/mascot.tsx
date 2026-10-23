@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { activityList, agentAttention, COMPUTER_USE_TEXT } from "../../lib/agent-state.ts";
 import { chatGate } from "../../lib/engine-client.ts";
+import type { ClaudeTaskView } from "../../lib/agent-state.ts";
 import type { SessionState } from "../../lib/agent-sessions.ts";
 import { mascotIndicator } from "../../lib/capture-state.ts";
 import { nextMascotMode, type WindowMode } from "../../lib/window-mode.ts";
@@ -13,10 +14,11 @@ import { useEngine } from "../chat/use-engine";
 import { approvalKeyChoice } from "./agent-choices.ts";
 import { AgentCard } from "./agent-card";
 import { Icon } from "./icons";
-import { ACTIVITY_ASK, ACTIVITY_EMPTY, ACTIVITY_TITLE, activityCountLabel, activitySourceLabel, approvalTitle, compactLine, inProgressLabel, isActive, islandLabel, lenteStateFor, newlyFinished, raisedCardFor, restingMode, restingTarget, sessionDots, sessionStates, settleMode, splitAction } from "./island-state.ts";
-import { Lente } from "./lente";
+import { ACTIVITY_ASK, ACTIVITY_EMPTY, ACTIVITY_TITLE, activityCountLabel, activitySourceLabel, approvalTitle, compactLine, inProgressLabel, isActive, islandLabel, newlyFailed, newlyFinished, orbiStateFor, raisedCardFor, restingMode, restingTarget, sessionDots, sessionStates, settleMode, splitAction, taskStates } from "./island-state.ts";
+import { Orbi } from "./orbi";
 import { useAgent } from "./use-agent";
 import { useCaptureView } from "./use-capture";
+import { useSleep } from "./use-sleep";
 import { useMascotWindow } from "./use-window";
 import { useVoice } from "./use-voice";
 import { voiceAvailability } from "./voice-result.ts";
@@ -51,6 +53,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   const [chatOpened, setChatOpened] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [finishedRecently, setFinishedRecently] = useState(false);
+  const [failedRecently, setFailedRecently] = useState(false);
   const { mode, setMode, hidden, morph, leaving } = win;
   const expanded = mode !== "collapsed" && mode !== "compact";
 
@@ -74,13 +77,15 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   const attention = agentAttention({ ...agent.state, sessions });
   const view = mascotIndicator(indicator, voice.listening, attention);
   const { sharing } = view;
-  const active = isActive({ attention, sharing, listening: voice.listening, finishedRecently, computerUse });
+  const active = isActive({ attention, sharing, listening: voice.listening, finishedRecently: finishedRecently || failedRecently, computerUse });
+  // Orbi dozes off after about three minutes of nothing going on; the pointer on the island wakes it.
+  const { asleep, wake } = useSleep({ quiet: !active });
   // Something going on (an agent working, the screen shared, Voz listening) keeps the island as the pill, never as the resting strip.
   // Hidden by the user (tray: "Ocultar Dot"), the island is nothing at rest; only a shared screen still shows the pill.
   const resting = restingMode({ active, hovered, hidden, sharing: sharing || computerUse });
   const restingQuiet = restingMode({ active, hovered: false, hidden, sharing: sharing || computerUse });
   const label = islandLabel({ sharingText: view.sharingText, attention, listening: voice.listening, pending });
-  const lenteState = lenteStateFor({ attention, listening: voice.listening, sessions });
+  const orbiState = orbiStateFor({ attention, listening: voice.listening, finished: finishedRecently, failed: failedRecently, asleep });
 
   // The mode the card interrupted, so the menu or the chat comes back once the request is over.
   const modeBeforeCard = useRef<WindowMode | null>(null);
@@ -146,10 +151,23 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
     finishedTimer.current = window.setTimeout(() => setFinishedRecently(false), FINISHED_MS);
   }, [sessions]);
 
+  // A background task that just failed is news too: Orbi looks worried for the same few seconds.
+  const knownTasks = useRef<Record<string, ClaudeTaskView["state"]>>({});
+  const failedTimer = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    const failed = newlyFailed(knownTasks.current, tasks);
+    knownTasks.current = taskStates(tasks);
+    if (!failed) return;
+    setFailedRecently(true);
+    window.clearTimeout(failedTimer.current);
+    failedTimer.current = window.setTimeout(() => setFailedRecently(false), FINISHED_MS);
+  }, [tasks]);
+
   const peekTimer = useRef<number | undefined>(undefined);
   useEffect(
     () => () => {
       window.clearTimeout(finishedTimer.current);
+      window.clearTimeout(failedTimer.current);
       window.clearTimeout(peekTimer.current);
     },
     [],
@@ -204,6 +222,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
 
   // Hovering the strip unfolds the pill; leaving it puts the strip back after a moment.
   const onPointerEnter = () => {
+    wake();
     window.clearTimeout(peekTimer.current);
     setHovered(true);
   };
@@ -231,6 +250,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
       data-leaving={leaving}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
+      onPointerMove={wake}
     >
       <div className="island" data-mode={mode} data-morph={morph.flip} data-grows={morph.grows} style={{ "--morph-x": `${morph.x}%`, "--morph-y": `${morph.y}%` } as React.CSSProperties}>
         <header className="island-head">
@@ -251,7 +271,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
           >
             {mode === "compact" && (
               <>
-                <Lente state={lenteState} size={34} ring={view.ring} listening={voice.listening} />
+                <Orbi state={orbiState} size={34} ring={view.ring} />
                 <span className="island-line" title={line}>
                   <ActionText action={line} />
                 </span>
@@ -267,7 +287,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
           </div>
           {expanded && (
             <span className="island-title" data-needs={mode === "approval"}>
-              {mode === "chat" && <Lente state={lenteState} size={28} ring={view.ring} listening={voice.listening} />}
+              {mode === "chat" && <Orbi state={orbiState} size={28} ring={view.ring} />}
               {mode === "approval" && pending ? approvalTitle(pending) : "Dot"}
             </span>
           )}
@@ -301,7 +321,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
         {mode === "menu" && (
           <div className="island-body island-menu">
             <section className="island-card island-sessions" aria-label="Actividad de Dot">
-              <Lente state={lenteState} size={76} ring={view.ring} listening={voice.listening} />
+              <Orbi state={orbiState} size={92} ring={view.ring} />
               <div className="island-sessions-main">
                 <h2 className="island-section-title">{ACTIVITY_TITLE}</h2>
                 {sessions.length > 0 ? (

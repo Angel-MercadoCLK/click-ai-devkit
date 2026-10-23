@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { PendingView } from "../../lib/agent-state.ts";
 import { answersOnClick, buildAnswers, canSubmit, emptySelection, singleClickAnswers, toggleOption } from "./agent-choices.ts";
 import type { AgentChoice } from "./use-agent";
-import { Lente } from "./lente";
+import { Orbi } from "./orbi";
 import type { Answers } from "./agent-choices.ts";
 import { cardView, choiceLabel, codexCardBody } from "./agent-card-view.ts";
 
@@ -32,8 +32,8 @@ function CardContent({ pending, busy, failed, onDecide }: CardProps) {
   return (
     <section className="agent-card" role="group" aria-label={view.ariaLabel} data-source={view.source}>
       <div className="agent-card-glow" aria-hidden="true" />
-      <div className="agent-card-lente">
-        <Lente state="approval" size={96} />
+      <div className="agent-card-orbi">
+        <Orbi state="needs" size={96} />
       </div>
       <div className="agent-card-main">
         <header className="agent-card-header">

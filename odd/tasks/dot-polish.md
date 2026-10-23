@@ -25,8 +25,8 @@ Branch: `feat/dot-polish` (from `origin/main`). Delivery strategy: one PR (the u
 
 | ID | Specs | Route | Status | Commit |
 |----|-------|-------|--------|--------|
-| P1 | S1, S2, S4 | delegated writer (parallel with the design prototype) | done | (next commit) |
-| P2 | S3 | delegated writer after the choice (Orbi), parallel with P1 on disjoint files | in progress | |
+| P1 | S1, S2, S4 | delegated writer (parallel with the design prototype) | done | 2974fd9 |
+| P2 | S3 | delegated writer after the choice (Orbi), parallel with P1 on disjoint files | done | (next commit) |
 | P3 | all | inline: seam check, review, delivery | pending | |
 
 ## Log
@@ -43,3 +43,6 @@ Branch: `feat/dot-polish` (from `origin/main`). Delivery strategy: one PR (the u
   - The range is `>=0.163.0`, with a Spanish note when a newer version's handshake fails. A signed-in Codex is used at once.
   - The island shows "Actividad" (Codex turns, Claude tasks, Claude Code sessions) with "Todo tranquilo. Pídele algo a Dot." and a "Pedir algo a Dot" button. Smoke selectors are intact.
   - Open: the unused `AGENT_TEXT` strings in `lib/capture-state.ts` still say "Claude Code está trabajando".
+- L5 (2026-10-22) — P2 was done by the writer. Orbi replaces Lente everywhere: a ring split into back and front halves, a moon passing behind and in front, a capture halo apart from the ring, and a simplified small-size look. It has seven states plus hover and click; sleep comes after 3 minutes of quiet, done lasts 8 s, error is wired to failed Claude tasks, and listening is its own state.
+  - Checks: `npm test` 845/845; typecheck and compile clean. QA screenshots in headless Chromium, reviewed by the parent (menu done and needs, pill working).
+  - Not verified: the real Windows cursor feed, display scaling, frame rate.

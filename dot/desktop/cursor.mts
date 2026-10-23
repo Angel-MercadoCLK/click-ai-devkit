@@ -1,4 +1,4 @@
-// Where the cursor is, for the Lente character's eye. Only the main process can read the cursor anywhere on the screen,
+// Where the cursor is, for the Orbi character's eyes. Only the main process can read the cursor anywhere on the screen,
 // so it polls (about 30 Hz) and pushes the position to the island page as a DOM event. It polls only while the island
 // shows something that could look at the cursor, and it stops by itself the moment that is no longer true.
 //

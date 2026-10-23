@@ -4,15 +4,22 @@
 import { COMPUTER_USE_TEXT, type AgentAttention, type PendingView } from "../../lib/agent-state.ts";
 import type { AgentSessionView, SessionState } from "../../lib/agent-sessions.ts";
 import type { WindowMode } from "../../lib/window-mode.ts";
-import type { LenteState } from "./lente-look.ts";
+import type { ClaudeTaskView } from "../../lib/agent-state.ts";
+import type { OrbiState } from "./orbi-look.ts";
 
 const MAX_DOTS = 5;
 
-/** The character follows the agent: needing the user wins, then working (listening counts), then done. */
-export function lenteStateFor({ attention, listening, sessions }: { attention: AgentAttention; listening: boolean; sessions: readonly AgentSessionView[] }): LenteState {
-  if (attention === "needs") return "approval";
-  if (attention === "working" || listening) return "working";
-  return sessions.some((session) => session.state === "listo") ? "done" : "idle";
+/**
+ * Orbi follows what is going on: needing the user wins, then Voz listening, then an agent working, then a task that just
+ * failed, then something that just finished, then sleeping (after the long quiet) and idle otherwise. News always wakes it.
+ */
+export function orbiStateFor({ attention, listening, finished = false, failed = false, asleep = false }: { attention: AgentAttention; listening: boolean; finished?: boolean; failed?: boolean; asleep?: boolean }): OrbiState {
+  if (attention === "needs") return "needs";
+  if (listening) return "listening";
+  if (attention === "working") return "working";
+  if (failed) return "error";
+  if (finished) return "done";
+  return asleep ? "sleeping" : "idle";
 }
 
 /** Something is going on: an agent works or needs the user, the screen is shared, Voz listens, or a session just finished. */
@@ -140,4 +147,14 @@ export const sessionStates = (sessions: readonly AgentSessionView[]): Record<str
 /** A session that was working (or needed the user) and is now ready is news. One the page first sees already finished is not. */
 export function newlyFinished(previous: Readonly<Record<string, SessionState>>, sessions: readonly AgentSessionView[]) {
   return sessions.some((session) => session.state === "listo" && (previous[session.id] === "trabajando" || previous[session.id] === "te necesita"));
+}
+
+const FAILED_TASKS: readonly ClaudeTaskView["state"][] = ["failed", "timed_out"];
+
+/** The background tasks by id and state, to tell later which one just failed. */
+export const taskStates = (tasks: readonly Pick<ClaudeTaskView, "id" | "state">[]): Record<string, ClaudeTaskView["state"]> => Object.fromEntries(tasks.map((task) => [task.id, task.state]));
+
+/** A task that was running and has now failed or timed out is a failure worth showing. Cancelled by the user is not, and neither is one first seen already failed. */
+export function newlyFailed(previous: Readonly<Record<string, ClaudeTaskView["state"]>>, tasks: readonly Pick<ClaudeTaskView, "id" | "state">[]) {
+  return tasks.some((task) => FAILED_TASKS.includes(task.state) && previous[task.id] === "running");
 }
