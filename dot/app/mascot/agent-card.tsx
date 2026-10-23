@@ -15,7 +15,7 @@ type CardProps = {
   onDecide: (choice: AgentChoice, answers?: Answers) => void;
 };
 
-/** The permission request or the question Claude Code is waiting on. Its own state is reset for every request. */
+/** The permission request or the question Dot (or one of its tools, Claude Code, Codex) is waiting on. Its own state is reset for every request. */
 export function AgentCard({ pending, busy, failed, onDecide }: CardProps) {
   return <CardContent key={pending.id} pending={pending} busy={busy} failed={failed} onDecide={onDecide} />;
 }

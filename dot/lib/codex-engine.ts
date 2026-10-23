@@ -44,6 +44,8 @@ export const COMPUTER_SERVER = "computer";
 const DOT_SERVER = "dot";
 /** How long a turn waits for Codex to confirm an interrupt before it ends anyway. */
 export const INTERRUPT_GRACE_MS = 10_000;
+/** Longest title of a running turn in the island's activity list. */
+const TURN_TITLE_MAX = 60;
 
 const CARD_TOOL = "Codex";
 const HISTORY_PAGE = 30;
@@ -67,6 +69,8 @@ export interface CodexTransport {
   status(): CodexStatus;
   onStatus(listener: (status: CodexStatus) => void): () => void;
   onRestart(listener: () => void): () => void;
+  /** Looks for Codex again after it was missing, unsupported or failed. The desktop shell's server has it; a bare transport may not. */
+  recheck?(): Promise<CodexStatus>;
 }
 
 const TRANSPORT_METHODS = ["request", "notify", "onNotification", "setRequestHandler", "status", "onStatus", "onRestart"] as const;
@@ -192,6 +196,9 @@ const clippedLines = (lines: Array<string | null | undefined | false>) => {
 
 type Run = {
   threadId: string;
+  /** The user's message as one short line, for the island's activity list. */
+  title: string;
+  startedAt: number;
   turnId: string | null;
   signal: AbortSignal;
   emit: (event: CodexTurnEvent) => unknown;
@@ -445,9 +452,22 @@ export function createCodexEngine(transport: CodexTransport, deps: CodexEngineDe
     status: () => transport.status(),
 
     /** What Dot is doing to the user's machine right now: the servers with a call in progress and the chats they run in. */
-    activity(): { computerUse: { active: boolean; servers: string[]; threadIds: string[] } } {
+    activity(): { computerUse: { active: boolean; servers: string[]; threadIds: string[] }; turns: Array<{ threadId: string; title: string; startedAt: number }> } {
       const calls = [...computerCalls.values()];
-      return { computerUse: { active: calls.length > 0, servers: [...new Set(calls.map((call) => call.server))], threadIds: [...new Set(calls.map((call) => call.threadId))] } };
+      return {
+        computerUse: { active: calls.length > 0, servers: [...new Set(calls.map((call) => call.server))], threadIds: [...new Set(calls.map((call) => call.threadId))] },
+        // The chats whose turn is running now: Dot is working on them for the user.
+        turns: [...runs.values()].map((run) => ({ threadId: run.threadId, title: run.title, startedAt: run.startedAt })),
+      };
+    },
+
+    /** Looks for Codex again (after an update, for example) and answers the status. Never throws. */
+    async recheck(): Promise<CodexStatus> {
+      try {
+        return (await transport.recheck?.()) ?? transport.status();
+      } catch {
+        return transport.status();
+      }
     },
 
     /** Detener from the island: interrupts every turn that has a Chrome or computer call in progress. Returns how many were asked to stop. */
@@ -556,6 +576,8 @@ export function createCodexEngine(transport: CodexTransport, deps: CodexEngineDe
       let graceTimer: unknown;
       const run: Run = {
         threadId,
+        title: oneLine(request.text, TURN_TITLE_MAX),
+        startedAt: Date.now(),
         turnId: null,
         signal,
         emit: request.emit,

@@ -64,6 +64,26 @@ export function engineNotice(status: EngineStatus): string | null {
   return null;
 }
 
+// Looking for Codex again -------------------------------------------------------------------------------------------
+
+/** While the chat card is open and Codex is not working, Dot looks again at most this often. */
+export const RECHECK_INTERVAL_MS = 15_000;
+export type RecheckTrigger = "open" | "tick" | "button";
+
+/** A Codex that is missing, unsupported or failed may have been fixed outside Dot (an update, an install): worth looking again. */
+export function needsRecheck(status: EngineStatus | null): boolean {
+  return status !== null && (status.codex.state === "unavailable" || status.codex.state === "stopped");
+}
+
+/**
+ * Whether to look for Codex again now: only with the card open and a Codex that needs it. Opening the card and pressing
+ * "Reintentar" always look; the timer lets 15 s pass since the last look.
+ */
+export function recheckDue({ status, open, trigger, lastAt, now }: { status: EngineStatus | null; open: boolean; trigger: RecheckTrigger; lastAt: number | null; now: number }): boolean {
+  if (!open || !needsRecheck(status)) return false;
+  return trigger !== "tick" || lastAt === null || now - lastAt >= RECHECK_INTERVAL_MS;
+}
+
 export type ChatGate =
   | { kind: "checking" }
   | { kind: "chat"; engine: "codex" | "builtin" }

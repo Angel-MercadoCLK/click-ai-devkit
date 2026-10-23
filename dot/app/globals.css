@@ -185,7 +185,11 @@ body:has(.mascot-root) { height: 100vh; min-height: 0; overflow: hidden; line-he
 .island-menu { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 10px; }
 .island-sessions { display: flex; min-height: 0; align-items: center; gap: 10px; padding: 12px 14px 12px 8px; }
 .island-sessions-main { min-width: 0; max-height: 100%; flex: 1; overflow-y: auto; }
+.island-section-title { margin: 0 0 6px; color: var(--dot-muted); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
 .island-empty { margin: 0; color: var(--dot-muted); font-size: 14px; line-height: 1.45; }
+.island-empty-state { display: grid; justify-items: start; gap: 8px; }
+.island-ask { height: 30px; padding: 0 14px; border: 1px solid rgba(127, 166, 255, 0.5); border-radius: 15px; background: transparent; color: var(--dot-working); font-size: 13px; font-weight: 600; cursor: pointer; }
+.island-ask:hover { background: rgba(127, 166, 255, 0.12); }
 .menu-sessions { display: grid; margin: 0; padding: 0; gap: 8px; list-style: none; }
 .menu-session { display: grid; min-width: 0; gap: 3px; padding: 8px 12px; border: 1px solid transparent; border-radius: 14px; background: var(--dot-row); }
 .menu-session[data-state="needs"] { border-color: rgba(255, 179, 64, 0.35); }
@@ -196,6 +200,7 @@ body:has(.mascot-root) { height: 100vh; min-height: 0; overflow: hidden; line-he
 .menu-session[data-state="needs"] .session-dot { background: var(--dot-needs); }
 .menu-session-state { flex: none; margin-left: auto; color: var(--dot-muted); font-size: 12px; }
 .menu-session small { overflow: hidden; color: var(--dot-muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.menu-session-source { color: var(--dot-muted); font-size: 12px; }
 .diff-add, .diff-del { font-family: var(--dot-mono); font-size: 12px; }
 .diff-add { color: var(--dot-done); }
 .diff-del { color: var(--dot-removed); }

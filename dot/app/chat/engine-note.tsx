@@ -1,6 +1,6 @@
 "use client";
 
-import { engineNotice } from "../../lib/engine-client.ts";
+import { engineNotice, needsRecheck } from "../../lib/engine-client.ts";
 import type { EngineState } from "./use-engine";
 
 /**
@@ -15,10 +15,15 @@ export function EngineNote({ engine, signInShown }: { engine: EngineState; signI
   const pending = status.codex.login.state === "pending";
   const failed = status.codex.login.state === "failed" ? status.codex.login.message : undefined;
   const tools = status.engine === "codex" ? status.tools : null;
+  // A Codex that is missing, unsupported or failed may have been fixed outside Dot (an update): the button looks for it again.
+  const recheckable = notice !== null && needsRecheck(status);
   if (!notice && !signedOut && !tools && !failed && !engine.loginError) return null;
   return (
     <div className="engine-note">
       {notice && <p className="bubble-note" role="status">{notice}</p>}
+      {recheckable && (
+        <button className="compact-link" type="button" onClick={() => void engine.recheck()} disabled={engine.rechecking}>{engine.rechecking ? "Comprobando…" : "Reintentar"}</button>
+      )}
       {signedOut && (
         <div className="engine-login">
           <button className="menu-button primary" type="button" onClick={() => void engine.login()} disabled={engine.loginBusy || pending}>

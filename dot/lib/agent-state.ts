@@ -1,5 +1,6 @@
-// What the mascot page knows about Claude Code: the shapes `/api/agent/state` answers with, how the page reads them
-// defensively, and what they mean for the mascot's look. No Node imports: the page uses this file too.
+// What the mascot page knows about what Dot is doing for the user: the shapes `/api/agent/state` (Claude Code sessions and
+// requests) and `/api/agent/activity` (Codex turns, background Claude Code tasks, computer use) answer with, how the page
+// reads them defensively, and what they mean for the mascot's look. No Node imports: the page uses this file too.
 
 import { projectName, type AgentSessionView, type SessionState } from "./agent-sessions.ts";
 
@@ -75,7 +76,7 @@ export function applyAgentPoll(poll: AgentPollState, result: AgentPollResult): A
   return { state: failures >= AGENT_FAILURE_LIMIT ? EMPTY_AGENT_STATE : poll.state, failures };
 }
 
-/** The mascot's look for Claude Code: a request or a session that needs the user wins over sessions that are working. */
+/** The mascot's look: a request or a session that needs the user wins over activity that is working. */
 export function agentAttention(state: AgentState): AgentAttention {
   if (state.pending || state.sessions.some((session) => session.state === "te necesita")) return "needs";
   return state.sessions.some((session) => session.state === "trabajando") ? "working" : "idle";
@@ -83,16 +84,18 @@ export function agentAttention(state: AgentState): AgentAttention {
 
 // Background Claude Code tasks and computer use --------------------------------------------------------------------
 //
-// `/api/agent/activity` answers with what Dot is doing for the user outside the chat: the background Claude Code tasks Codex
-// started through Dot's MCP server, and whether a Chrome or mouse-and-keyboard call is running right now.
+// `/api/agent/activity` answers with what Dot is doing for the user: the Codex chats with a turn running, the background
+// Claude Code tasks Codex started through Dot's MCP server, and whether a Chrome or mouse-and-keyboard call is running now.
 
 export type ClaudeTaskState = "running" | "done" | "failed" | "cancelled" | "timed_out";
 export type ClaudeTaskView = { id: string; project: string; state: ClaudeTaskState; latestLine: string | null; startedAt: number };
 export type ComputerUseView = { active: boolean; servers: string[] };
-export type AgentActivity = { tasks: ClaudeTaskView[]; computerUse: ComputerUseView };
+/** A Codex chat whose turn is running now; the title is the user's message as one short line. */
+export type CodexTurnView = { id: string; title: string; startedAt: number };
+export type AgentActivity = { tasks: ClaudeTaskView[]; computerUse: ComputerUseView; codexTurns: CodexTurnView[] };
 
 export const COMPUTER_USE_TEXT = "Dot está usando tu equipo";
-export const EMPTY_ACTIVITY: AgentActivity = { tasks: [], computerUse: { active: false, servers: [] } };
+export const EMPTY_ACTIVITY: AgentActivity = { tasks: [], computerUse: { active: false, servers: [] }, codexTurns: [] };
 const TASK_STATES: readonly ClaudeTaskState[] = ["running", "done", "failed", "cancelled", "timed_out"];
 /** A finished task stays in the menu this long after it started; a task that is still running always shows. */
 export const TASK_RECENT_MS = 30 * 60_000;
@@ -111,7 +114,16 @@ export function readAgentActivity(value: unknown): AgentActivity | undefined {
   }
   const { active, servers } = value.computerUse;
   if (typeof active !== "boolean" || !Array.isArray(servers) || !servers.every((server) => typeof server === "string")) return undefined;
-  return { tasks, computerUse: { active, servers: servers as string[] } };
+  // An answer from a shell that does not list Codex turns (older, or no Codex) simply has none.
+  const codexTurns: CodexTurnView[] = [];
+  if (value.codexTurns !== undefined) {
+    if (!Array.isArray(value.codexTurns)) return undefined;
+    for (const item of value.codexTurns) {
+      if (!isRecord(item) || typeof item.id !== "string" || typeof item.title !== "string" || typeof item.startedAt !== "number") return undefined;
+      codexTurns.push({ id: item.id, title: item.title, startedAt: item.startedAt });
+    }
+  }
+  return { tasks, computerUse: { active, servers: servers as string[] }, codexTurns };
 }
 
 const TASK_ENDINGS: Record<Exclude<ClaudeTaskState, "running" | "done">, string> = { failed: "Terminó con error", cancelled: "Cancelada", timed_out: "Se agotó el tiempo" };
@@ -123,14 +135,31 @@ export function claudeTaskSessions(tasks: readonly ClaudeTaskView[], now: number
     .slice(0, MAX_TASK_SESSIONS)
     .map((task) => ({
       id: `task:${task.id}`,
-      project: `${projectName(task.project)} (tarea)`,
+      project: projectName(task.project),
       state: task.state === "running" ? ("trabajando" as const) : ("listo" as const),
       action: task.latestLine ?? (task.state === "running" ? "Claude Code está trabajando" : task.state === "done" ? "Tarea terminada" : TASK_ENDINGS[task.state]),
       updatedAt: task.startedAt,
     }));
 }
 
-export const mergeSessions = (sessions: readonly AgentSessionView[], tasks: readonly AgentSessionView[]): AgentSessionView[] => [...sessions, ...tasks];
+const MAX_CODEX_TURNS = 10;
+const UNTITLED_TURN = "Chat con Dot";
+
+/** The Codex chats working now as island activity: always "trabajando", titled by what the user asked. */
+export function codexTurnSessions(turns: readonly CodexTurnView[]): AgentSessionView[] {
+  return turns.slice(0, MAX_CODEX_TURNS).map((turn) => ({
+    id: `codex:${turn.id}`,
+    project: turn.title.trim() || UNTITLED_TURN,
+    state: "trabajando" as const,
+    action: null,
+    updatedAt: turn.startedAt,
+  }));
+}
+
+/** Everything Dot is doing for the user, in the island's order: Codex chats in progress, background Claude tasks, Claude Code sessions. */
+export function activityList({ sessions, tasks, codexTurns, now }: { sessions: readonly AgentSessionView[]; tasks: readonly ClaudeTaskView[]; codexTurns: readonly CodexTurnView[]; now: number }): AgentSessionView[] {
+  return [...codexTurnSessions(codexTurns), ...claudeTaskSessions(tasks, now), ...sessions];
+}
 
 export type ActivityPollState = { activity: AgentActivity; failures: number };
 export type ActivityPollResult = { ok: true; activity: AgentActivity } | { ok: false };

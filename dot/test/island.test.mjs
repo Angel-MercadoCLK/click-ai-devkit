@@ -153,11 +153,11 @@ test("the pill says what Claude Code is doing, with the latest working session f
   assert.equal(island.compactLine(base), "Dot");
 });
 
-test("the session count and the in-progress summary are short Spanish labels", () => {
-  assert.equal(island.sessionCountLabel(0), "");
-  assert.equal(island.sessionCountLabel(1), "1 sesión");
-  assert.equal(island.sessionCountLabel(2), "2 sesiones");
-  assert.equal(island.inProgressLabel([]), "Sin sesiones");
+test("the activity count and the in-progress summary are short Spanish labels", () => {
+  assert.equal(island.activityCountLabel([]), "");
+  assert.equal(island.activityCountLabel([session()]), "1 en curso");
+  assert.equal(island.activityCountLabel([session(), session({ id: "b" })]), "2 en curso");
+  assert.equal(island.inProgressLabel([]), "Todo tranquilo");
   assert.equal(island.inProgressLabel([session({ state: "listo" })]), "Todo listo");
   assert.equal(island.inProgressLabel([session(), session({ id: "b", state: "te necesita" }), session({ id: "c", state: "listo" })]), "2 en curso");
 });

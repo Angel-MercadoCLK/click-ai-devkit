@@ -597,3 +597,43 @@ test("readThread falls back to the turns list when Codex will not hydrate turns 
   fake.on("thread/read", () => { throw new Error("gone"); });
   await assert.rejects(engine.readThread(THREAD), /gone/);
 });
+
+// Activity (S2) and recheck (S1) -----------------------------------------------------------------------------------
+
+test("activity lists the turns running now, with a one-line title from the user's message, until they end", async () => {
+  const env = setup();
+  assert.deepEqual(env.engine.activity().turns, []);
+  const { result } = await startTurn(env, { text: "  Revisa   el README\ny dime qué falta  " });
+  const turns = env.engine.activity().turns;
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].threadId, THREAD);
+  assert.equal(turns[0].title, "Revisa el README y dime qué falta");
+  assert.equal(typeof turns[0].startedAt, "number");
+  env.fake.notify("turn/completed", completed());
+  await result;
+  assert.deepEqual(env.engine.activity().turns, []);
+});
+
+test("a long message is cut to a short title", async () => {
+  const env = setup();
+  const { result, abort } = await startTurn(env, { text: "x".repeat(300) });
+  const [turn] = env.engine.activity().turns;
+  assert.ok(turn.title.length <= 60, String(turn.title.length));
+  assert.ok(turn.title.endsWith("…"));
+  abort.abort();
+  env.fake.notify("turn/completed", completed("interrupted"));
+  await result;
+});
+
+test("recheck goes through the transport when it has one and is a harmless no-op when it does not", async () => {
+  const env = setup();
+  assert.deepEqual(await env.engine.recheck(), { state: "ready", restarts: 0 });
+  let calls = 0;
+  const withRecheck = setup();
+  withRecheck.fake.transport.recheck = async () => { calls += 1; return { state: "ready", restarts: 0, version: "0.170.0" }; };
+  const again = engineModule.createCodexEngine(withRecheck.fake.transport, { broker: withRecheck.broker });
+  assert.equal((await again.recheck()).version, "0.170.0");
+  assert.equal(calls, 1);
+  withRecheck.fake.transport.recheck = async () => { throw new Error("boom"); };
+  assert.equal((await again.recheck()).state, "ready", "a failing recheck answers the current status");
+});

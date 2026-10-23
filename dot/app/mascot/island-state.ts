@@ -87,16 +87,47 @@ export function compactLine({ sessions, pending, listening, finishedRecently, co
   return "Dot";
 }
 
-export function sessionCountLabel(count: number) {
-  if (count <= 0) return "";
-  return count === 1 ? "1 sesión" : `${count} sesiones`;
+const inProgress = (sessions: readonly AgentSessionView[]) => sessions.filter((session) => session.state !== "listo").length;
+
+/** The count beside the pill's line: how many things are in progress, nothing when none is. */
+export function activityCountLabel(sessions: readonly AgentSessionView[]) {
+  const running = inProgress(sessions);
+  return running === 0 ? "" : `${running} en curso`;
 }
 
 /** The right side of the expanded head. */
 export function inProgressLabel(sessions: readonly AgentSessionView[]) {
-  if (sessions.length === 0) return "Sin sesiones";
-  const running = sessions.filter((session) => session.state !== "listo").length;
+  if (sessions.length === 0) return "Todo tranquilo";
+  const running = inProgress(sessions);
   return running === 0 ? "Todo listo" : `${running} en curso`;
+}
+
+// The menu's "Actividad" -----------------------------------------------------------------------------------------
+
+export const ACTIVITY_TITLE = "Actividad";
+export const ACTIVITY_EMPTY = "Todo tranquilo. Pídele algo a Dot.";
+export const ACTIVITY_ASK = "Pedir algo a Dot";
+
+export type ActivitySource = "dot" | "claude-task" | "claude-code";
+
+/** Where an activity item comes from, by the id its list gives it: `codex:` for Dot's own chats, `task:` for background Claude tasks. */
+export function activitySource(item: Pick<AgentSessionView, "id">): ActivitySource {
+  if (item.id.startsWith("codex:")) return "dot";
+  return item.id.startsWith("task:") ? "claude-task" : "claude-code";
+}
+
+const SOURCE_LABELS: Record<ActivitySource, string> = { dot: "Dot", "claude-task": "Tarea en Claude Code", "claude-code": "Claude Code" };
+
+/** The small line that says whose item it is: Claude Code is named only on the items that are Claude's. */
+export const activitySourceLabel = (item: Pick<AgentSessionView, "id">) => SOURCE_LABELS[activitySource(item)];
+
+/**
+ * The island's accessible name: capture first, then what Dot is doing, then listening. Dot speaks for itself; Claude Code is
+ * named only when it is the one that needs you (a request from Codex or from one of Dot's tools is Dot's).
+ */
+export function islandLabel({ sharingText, attention, listening, pending }: { sharingText: string | null; attention: AgentAttention; listening: boolean; pending: Pick<PendingView, "kind"> | null }) {
+  const activity = attention === "working" ? "Dot está trabajando" : attention === "needs" ? (pending && pending.kind !== "claude-code" ? "Dot te necesita" : "Claude Code te necesita") : null;
+  return [sharingText, activity, listening ? "Escuchando…" : null].filter(Boolean).join(". ") || "Dot";
 }
 
 /** One dot per session (at most five), colored by its state. */
