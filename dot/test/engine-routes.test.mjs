@@ -113,12 +113,12 @@ test("the activity route lists the background tasks and whether Dot is using the
   const tasks = [{ id: "task_aaaaaaaaaaaa", project: "/p", state: "running", latestLine: "x", startedAt: 5 }];
   const { h } = handlers(engine, { readTasks: () => tasks });
   const body = await (await h.activity(get("/api/agent/activity"))).json();
-  assert.deepEqual(body, { tasks: [{ id: "task_aaaaaaaaaaaa", project: "/p", state: "running", latestLine: "x", startedAt: 5 }], computerUse: { active: true, servers: ["computer"] } });
+  assert.deepEqual(body, { tasks: [{ id: "task_aaaaaaaaaaaa", project: "/p", state: "running", latestLine: "x", startedAt: 5 }], computerUse: { active: true, servers: ["computer"] }, codexTurns: [] });
   const stopped = await (await h.stop(write("/api/codex/stop", { headers: { "content-type": "application/json" }, body: "{}" }))).json();
   assert.deepEqual(stopped, { stopped: 1 });
   assert.deepEqual(engine.calls.at(-1), ["stop"]);
   const none = await (await handlers(null).h.activity(get("/api/agent/activity"))).json();
-  assert.deepEqual(none, { tasks: [], computerUse: { active: false, servers: [] } });
+  assert.deepEqual(none, { tasks: [], computerUse: { active: false, servers: [] }, codexTurns: [] });
   assert.deepEqual(await (await handlers(null).h.stop(write("/api/codex/stop"))).json(), { stopped: 0 });
 });
 
@@ -133,4 +133,70 @@ test("the published task list is read through the bridge and a malformed one rea
     globalThis[key] = { list: () => [{ id: "task_aaaaaaaaaaaa", project: "/p", state: "done", latestLine: null, startedAt: 1, secret: "must not leak" }, { id: 5 }] };
     assert.deepEqual(http.readClaudeTasks(), [{ id: "task_aaaaaaaaaaaa", project: "/p", state: "done", latestLine: null, startedAt: 1 }]);
   } finally { if (saved === undefined) delete globalThis[key]; else globalThis[key] = saved; }
+});
+
+// Recheck (S1) -------------------------------------------------------------------------------------------------------
+
+test("the recheck route has the guard of the other write routes", async () => {
+  let rechecks = 0;
+  const { h } = handlers(fakeEngine({ recheck: async () => { rechecks += 1; } }));
+  assert.equal((await h.recheck(write("/api/codex/recheck", { headers: { origin: "http://evil.example" } }))).status, 403);
+  assert.equal((await h.recheck(write("/api/codex/recheck", { headers: { host: "evil.example" } }))).status, 403);
+  assert.equal((await h.recheck(new Request("http://127.0.0.1:3000/api/codex/recheck", { method: "POST", headers: { host: "127.0.0.1:3000" } }))).status, 403, "a write must send the exact origin");
+  await withToken(async () => {
+    assert.equal((await h.recheck(write("/api/codex/recheck"))).status, 403, "no cookie");
+    assert.equal((await h.recheck(write("/api/codex/recheck", { headers: { cookie: `click_dot_control=${TOKEN}` } }))).status, 200);
+  });
+  assert.equal(rechecks, 1, "only the guarded request reached the engine");
+});
+
+test("an update is picked up by the recheck and a Codex that was already signed in is used at once, without a second sign-in", async () => {
+  let state = { state: "unavailable", restarts: 0, message: "Dot necesita Codex >=0.163.0 y tienes la versión 0.145.0. Instala esa versión de Codex; mientras tanto Dot usa su asistente integrado." };
+  let logins = 0;
+  const engine = fakeEngine({
+    status: () => state,
+    recheck: async () => { state = { state: "ready", restarts: 0, version: "0.163.0" }; return state; },
+    startLogin: async () => { logins += 1; return { loginId: "L", authUrl: "https://auth.openai.com/x" }; },
+  });
+  const { h, flow } = handlers(engine);
+  const before = await (await h.status(get("/api/codex/status"))).json();
+  assert.equal(before.engine, "builtin");
+  assert.equal(before.codex.state, "unavailable");
+
+  const response = await h.recheck(write("/api/codex/recheck"));
+  assert.equal(response.status, 200);
+  assert.ok(response.headers.get("cache-control").includes("no-store"));
+  const after = await response.json();
+  assert.equal(after.engine, "codex");
+  assert.equal(after.codex.state, "ready");
+  assert.equal(after.codex.version, "0.163.0");
+  assert.equal(after.codex.account.state, "signedIn");
+  assert.equal(logins, 0);
+  assert.equal(flow.view().state, "idle");
+  const selected = await engineLib.selectEngine({ getEngine: () => engine });
+  assert.equal(selected?.kind, "codex");
+});
+
+test("a recheck that still fails answers the new note, a failing recheck never leaks its error, and no engine is simply absent", async () => {
+  const stillOld = fakeEngine({
+    status: () => ({ state: "unavailable", restarts: 0, message: "Tu versión de Codex (0.170.0) es más nueva que la que Dot conoce; no pudo conectarse. Actualiza Dot." }),
+    recheck: async () => { throw new Error("secret path /home/u/.codex"); },
+  });
+  const body = await (await handlers(stillOld).h.recheck(write("/api/codex/recheck"))).json();
+  assert.equal(body.engine, "builtin");
+  assert.match(body.codex.message, /más nueva que la que Dot conoce/);
+  assert.ok(!JSON.stringify(body).includes("secret"));
+  const none = await handlers(null).h.recheck(write("/api/codex/recheck"));
+  assert.equal(none.status, 200);
+  assert.equal((await none.json()).codex.state, "absent");
+});
+
+test("the activity route lists the Codex turns running now next to the Claude tasks", async () => {
+  const engine = fakeEngine({ activity: () => ({ computerUse: { active: false, servers: [], threadIds: [] }, turns: [{ threadId: THREAD, title: "Revisa el README", startedAt: 5 }] }) });
+  const body = await (await handlers(engine).h.activity(get("/api/agent/activity"))).json();
+  assert.deepEqual(body.codexTurns, [{ id: THREAD, title: "Revisa el README", startedAt: 5 }]);
+  const idle = await (await handlers(null).h.activity(get("/api/agent/activity"))).json();
+  assert.deepEqual(idle.codexTurns, []);
+  const notReady = await (await handlers(fakeEngine({ status: () => ({ state: "unavailable", restarts: 0, message: "x" }) })).h.activity(get("/api/agent/activity"))).json();
+  assert.deepEqual(notReady.codexTurns, []);
 });

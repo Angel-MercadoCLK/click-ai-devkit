@@ -20,10 +20,16 @@ import {
 // The user's own `codex` and default CODEX_HOME are used on purpose: their login, `AGENTS.md` rules and `[mcp_servers]`
 // (Engram) all apply. Dot adds its own MCP servers per launch with `-c` overrides, so no config file is ever edited.
 
-/** The one place that says which Codex versions Dot speaks to. The protocol types in lib/codex-protocol come from the lower bound. */
-export const CODEX_SUPPORTED_RANGE = ">=0.163.0 <0.164.0";
+/**
+ * The one place that says which Codex versions Dot speaks to. The protocol types in lib/codex-protocol come from the lower
+ * bound. There is no upper bound on purpose: Codex ships often and an update must not lock Dot out. A version newer than
+ * `CODEX_PROTOCOL_VERSION` is tried, and when its handshake fails the note says Dot is the one to update.
+ */
+export const CODEX_SUPPORTED_RANGE = ">=0.163.0";
+/** The Codex version the generated protocol types in lib/codex-protocol come from. */
+export const CODEX_PROTOCOL_VERSION = "0.163.0";
 const SUPPORTED_MIN = [0, 163, 0] as const;
-const SUPPORTED_BELOW = [0, 164, 0] as const;
+const PROTOCOL = [0, 163, 0] as const;
 
 export const CODEX_ENGINE_KEY = "click-dot.codex-engine";
 
@@ -53,18 +59,25 @@ function compare(version: Version, bound: readonly [number, number, number]) {
   return 0;
 }
 
-/** A prerelease of the lower bound sorts below it, so it is not supported: only released builds are. */
+/** A prerelease of the lower bound sorts below it, so it is not supported; a prerelease of anything newer is. */
 export function isSupportedCodexVersion(output: string) {
   const version = parseCodexVersion(output);
-  if (!version || version.prerelease !== null) return false;
-  return compare(version, SUPPORTED_MIN) >= 0 && compare(version, SUPPORTED_BELOW) < 0;
+  if (!version) return false;
+  const order = compare(version, SUPPORTED_MIN);
+  return order > 0 || (order === 0 && version.prerelease === null);
 }
+
+const isNewerThanProtocol = (seen: string) => {
+  const version = parseCodexVersion(seen);
+  return !!version && compare(version, PROTOCOL) > 0;
+};
 
 const MESSAGES = {
   missing: "Dot no encontró Codex en este equipo. Instálalo (npm i -g @openai/codex) e inicia sesión con ChatGPT; mientras tanto Dot usa su asistente integrado.",
   unsupported: (version: string | null) =>
     `Dot necesita Codex ${CODEX_SUPPORTED_RANGE}${version ? ` y tienes la versión ${version}` : " y no pudo leer tu versión"}. Instala esa versión de Codex; mientras tanto Dot usa su asistente integrado.`,
   failed: "Codex no pudo iniciarse. Dot usa su asistente integrado mientras tanto.",
+  newer: (version: string) => `Tu versión de Codex (${version}) es más nueva que la que Dot conoce; no pudo conectarse. Actualiza Dot.`,
 } as const;
 
 // Errors --------------------------------------------------------------------------------------------------------
@@ -141,6 +154,12 @@ export interface CodexTransport {
 
 export interface CodexAppServer extends CodexTransport {
   start(): Promise<CodexStartResult>;
+  /**
+   * Looks for Codex again (where it is, its version) and starts the app-server when it is valid, without restarting Dot. It
+   * covers a Codex that was missing, unsupported or failed, or that gave up restarting; on a running or stopped server it does
+   * nothing. Concurrent calls share one detection. Never throws; it answers with the status afterwards.
+   */
+  recheck(): Promise<CodexStatus>;
   stop(): Promise<void>;
 }
 
@@ -445,9 +464,11 @@ export function createCodexAppServer(options: CodexAppServerOptions = {}): Codex
     }, delay);
   }
 
-  async function startOnce(): Promise<CodexStartResult> {
+  async function startOnce(quiet = false): Promise<CodexStartResult> {
     stopping = false;
-    setState("starting");
+    version = undefined;
+    // A recheck of a Codex that is already unavailable keeps showing its note until it knows something new.
+    if (!quiet) setState("starting");
     let found: string | string[] | null | undefined;
     try { found = await which(); } catch { found = null; }
     launcher = chooseLauncher(found, platform);
@@ -474,10 +495,10 @@ export function createCodexAppServer(options: CodexAppServerOptions = {}): Codex
     const parsed = parseCodexVersion(outcome.stdout);
     const seen = parsed ? `${parsed.major}.${parsed.minor}.${parsed.patch}${parsed.prerelease ? `-${parsed.prerelease}` : ""}` : undefined;
     if (!isSupportedCodexVersion(outcome.stdout)) return unavailable("unsupported", MESSAGES.unsupported(seen ?? null), seen);
-    version = seen;
 
     const connected = await connect();
-    if (!connected.ok) return unavailable("failed", MESSAGES.failed, seen);
+    if (!connected.ok) return unavailable("failed", seen !== undefined && isNewerThanProtocol(seen) ? MESSAGES.newer(seen) : MESSAGES.failed, seen);
+    version = seen;
     attempt = 0;
     setState("ready");
     return { ok: true, version: seen!, userAgent: connected.userAgent, codexHome: connected.codexHome };
@@ -488,6 +509,12 @@ export function createCodexAppServer(options: CodexAppServerOptions = {}): Codex
       if (state === "ready" || state === "restarting") return Promise.resolve<CodexStartResult>({ ok: true, version: version ?? "", userAgent: "", codexHome: "" });
       starting ??= startOnce().finally(() => { starting = undefined; });
       return starting;
+    },
+
+    recheck() {
+      if (state === "ready" || state === "restarting" || state === "stopped") return Promise.resolve(status());
+      starting ??= startOnce(state === "unavailable").finally(() => { starting = undefined; });
+      return starting.then(status, status);
     },
 
     async stop() {

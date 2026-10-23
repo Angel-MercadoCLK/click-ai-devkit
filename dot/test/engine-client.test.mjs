@@ -8,7 +8,7 @@ const task = (extra = {}) => ({ id: "task_aaaaaaaaaaaa", project: "/home/u/proj-
 
 test("the page reads the activity answer and refuses anything malformed", () => {
   const read = state.readAgentActivity({ tasks: [task()], computerUse: { active: true, servers: ["computer"] } });
-  assert.deepEqual(read, { tasks: [task()], computerUse: { active: true, servers: ["computer"] } });
+  assert.deepEqual(read, { tasks: [task()], computerUse: { active: true, servers: ["computer"] }, codexTurns: [] }, "an answer without Codex turns still reads");
   assert.equal(state.readAgentActivity({ tasks: [], computerUse: { active: false, servers: [] } }).tasks.length, 0);
   assert.equal(state.readAgentActivity({ tasks: [task({ state: "weird" })], computerUse: { active: false, servers: [] } }), undefined);
   assert.equal(state.readAgentActivity({ tasks: [task({ id: 3 })], computerUse: { active: false, servers: [] } }), undefined);
@@ -40,15 +40,15 @@ test("background Claude tasks show as sessions: running works, finished is ready
     ["task:task_eeeeeeeeeeee", "listo", "Se agotó el tiempo"],
     ["task:task_gggggggggggg", "trabajando", "Claude Code está trabajando"],
   ]);
-  assert.equal(sessions[0].project, "proj-x (tarea)");
+  assert.equal(sessions[0].project, "proj-x", "Claude Code is named by the row's source, not glued onto the project");
   assert.equal(state.claudeTaskSessions([], now).length, 0);
 });
 
 test("a running task makes the island work, and the mix with Claude Code sessions keeps both", () => {
   const sessions = state.claudeTaskSessions([task()], 1_000_100);
   assert.equal(state.agentAttention({ sessions, pending: null, queued: 0 }), "working");
-  const merged = state.mergeSessions([{ id: "s1", project: "p", state: "listo", action: null, updatedAt: 1 }], sessions);
-  assert.deepEqual(merged.map((session) => session.id), ["s1", "task:task_aaaaaaaaaaaa"]);
+  const merged = state.activityList({ sessions: [{ id: "s1", project: "p", state: "listo", action: null, updatedAt: 1 }], tasks: [task()], codexTurns: [], now: 1_000_100 });
+  assert.deepEqual(merged.map((session) => session.id), ["task:task_aaaaaaaaaaaa", "s1"]);
   assert.equal(island.compactLine({ sessions, pending: null, listening: false, finishedRecently: false }), "Editando a.ts");
 });
 
@@ -62,7 +62,7 @@ test("while Dot uses the computer the island says so, is never at rest, and keep
 });
 
 test("a failed activity read keeps what was known and three in a row forget it", () => {
-  const known = { tasks: [task()], computerUse: { active: true, servers: ["chrome"] } };
+  const known = { tasks: [task()], computerUse: { active: true, servers: ["chrome"] }, codexTurns: [] };
   let poll = state.applyActivityPoll(state.INITIAL_ACTIVITY_POLL, { ok: true, activity: known });
   assert.deepEqual(poll.activity, known);
   poll = state.applyActivityPoll(poll, { ok: false });
@@ -206,4 +206,129 @@ test("the choices a Codex card offers: Siempre only when the engine offered it, 
   assert.deepEqual(cardView.availableChoices(pending({ kind: "dot-tool", alwaysOffered: false })), ["deny", "allow"]);
   assert.equal(cardView.choiceLabel("always", "codex"), "Siempre en esta sesión");
   assert.equal(cardView.choiceLabel("always", "claude-code"), "Siempre");
+});
+
+// Activity (S2) ----------------------------------------------------------------------------------------------------
+
+const turn = (extra = {}) => ({ id: "01a165bf-926d-79f0-9b12-3ce7cd822aea", title: "Revisa el README", startedAt: 2_000_000, ...extra });
+
+test("the page reads the Codex turns of the activity answer and refuses malformed ones", () => {
+  const body = { tasks: [], computerUse: { active: false, servers: [] }, codexTurns: [turn()] };
+  assert.deepEqual(state.readAgentActivity(body).codexTurns, [turn()]);
+  assert.equal(state.readAgentActivity({ ...body, codexTurns: [turn({ title: 3 })] }), undefined);
+  assert.equal(state.readAgentActivity({ ...body, codexTurns: [turn({ startedAt: "x" })] }), undefined);
+  assert.equal(state.readAgentActivity({ ...body, codexTurns: "x" }), undefined);
+  assert.deepEqual(state.EMPTY_ACTIVITY.codexTurns, []);
+});
+
+test("Codex turns in progress are activity items that work, titled by what the user asked", () => {
+  const items = state.codexTurnSessions([turn(), turn({ id: "01a165bf-926d-79f0-9b12-3ce7cd822aeb", title: "   " })]);
+  assert.deepEqual(items.map((item) => [item.id, item.project, item.state, item.action]), [
+    ["codex:01a165bf-926d-79f0-9b12-3ce7cd822aea", "Revisa el README", "trabajando", null],
+    ["codex:01a165bf-926d-79f0-9b12-3ce7cd822aeb", "Chat con Dot", "trabajando", null],
+  ]);
+  assert.equal(state.agentAttention({ sessions: items, pending: null, queued: 0 }), "working");
+  assert.equal(island.compactLine({ sessions: items.slice(0, 1), pending: null, listening: false, finishedRecently: false }), "Trabajando en Revisa el README");
+});
+
+test("the activity list puts Codex turns first, then background Claude tasks, then Claude Code sessions", () => {
+  const hook = { id: "s1", project: "alpha", state: "trabajando", action: "Ejecutando npm test", updatedAt: 5 };
+  const list = state.activityList({ sessions: [hook], tasks: [task()], codexTurns: [turn()], now: 1_000_100 });
+  assert.deepEqual(list.map((item) => island.activitySource(item)), ["dot", "claude-task", "claude-code"]);
+  assert.deepEqual(state.activityList({ sessions: [], tasks: [], codexTurns: [], now: 1 }), []);
+});
+
+test("only Claude's own items say Claude Code; Dot's say Dot", () => {
+  assert.equal(island.activitySourceLabel({ id: "codex:x" }), "Dot");
+  assert.equal(island.activitySourceLabel({ id: "task:x" }), "Tarea en Claude Code");
+  assert.equal(island.activitySourceLabel({ id: "abc-session" }), "Claude Code");
+});
+
+test("the empty state invites the user to ask Dot, and the head counts what is in progress", () => {
+  assert.equal(island.ACTIVITY_TITLE, "Actividad");
+  assert.equal(island.ACTIVITY_EMPTY, "Todo tranquilo. Pídele algo a Dot.");
+  assert.equal(island.ACTIVITY_ASK, "Pedir algo a Dot");
+  const working = { id: "a", project: "p", state: "trabajando", action: null, updatedAt: 1 };
+  const needs = { ...working, id: "b", state: "te necesita" };
+  const done = { ...working, id: "c", state: "listo" };
+  assert.equal(island.inProgressLabel([]), "Todo tranquilo");
+  assert.equal(island.inProgressLabel([done]), "Todo listo");
+  assert.equal(island.inProgressLabel([working, needs, done]), "2 en curso");
+  assert.equal(island.activityCountLabel([]), "");
+  assert.equal(island.activityCountLabel([done]), "");
+  assert.equal(island.activityCountLabel([working]), "1 en curso");
+  assert.equal(island.activityCountLabel([working, needs, done]), "2 en curso");
+});
+
+test("the island's accessible name speaks for Dot, and names Claude Code only when Claude is the one asking", () => {
+  const base = { sharingText: null, listening: false, pending: null };
+  assert.equal(island.islandLabel({ ...base, attention: "idle" }), "Dot");
+  assert.equal(island.islandLabel({ ...base, attention: "working" }), "Dot está trabajando");
+  assert.equal(island.islandLabel({ ...base, attention: "needs" }), "Claude Code te necesita");
+  assert.equal(island.islandLabel({ ...base, attention: "needs", pending: { kind: "codex" } }), "Dot te necesita");
+  assert.equal(island.islandLabel({ ...base, attention: "needs", pending: { kind: "dot-tool" } }), "Dot te necesita");
+  assert.equal(island.islandLabel({ sharingText: "Viendo tu pantalla", attention: "working", listening: true, pending: null }), "Viendo tu pantalla. Dot está trabajando. Escuchando…");
+});
+
+test("the menu section is 'Actividad' for Dot, with the empty state, the ask button and sources, and no Claude-only wording", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const mascot = await readFile(new URL("../app/mascot/mascot.tsx", import.meta.url), "utf8");
+  assert.ok(!mascot.includes("Sesiones de Claude Code"));
+  assert.ok(!mascot.includes("Sin sesiones de Claude Code"));
+  assert.match(mascot, /ACTIVITY_TITLE/);
+  assert.match(mascot, /ACTIVITY_EMPTY/);
+  assert.match(mascot, /ACTIVITY_ASK/);
+  assert.match(mascot, /activitySourceLabel\(/);
+  assert.match(mascot, /islandLabel\(/);
+  assert.match(mascot, /activityList\(/);
+  assert.match(mascot, /codexTurns/);
+  assert.equal((mascot.match(/role="button"/g) ?? []).length, 1);
+  // The ask button opens the chat and is not inside the menu the packaged smoke reads buttons from.
+  assert.match(mascot, /className="island-ask"[\s\S]{0,120}setMode\("chat"\)/);
+  assert.ok(mascot.indexOf('className="island-ask"') < mascot.indexOf('className="mascot-menu'), "the ask button comes before, and outside, the `.mascot-menu` nav");
+  for (const label of ["Compartir mi pantalla", "Voz", "Mensaje", "Conectar con ChatGPT"]) assert.ok(mascot.includes(label), label);
+  assert.match(mascot, /<span>Mensaje<\/span>/);
+});
+
+// Re-detection (S1) ------------------------------------------------------------------------------------------------
+
+const unavailable = status({ codex: { state: "unavailable", message: "Dot necesita Codex >=0.163.0 y tienes la versión 0.145.0." } });
+
+test("only an unavailable Codex is worth looking for again; a ready, starting, signed-out or absent one is not", () => {
+  assert.equal(client.needsRecheck(unavailable), true);
+  assert.equal(client.needsRecheck(status({ codex: { state: "stopped" } })), true);
+  for (const other of [status(), status({ codex: { state: "starting" } }), status({ codex: { state: "restarting" } }), status({ engine: "codex", codex: { state: "ready", account: signedIn } }), status({ codex: { state: "ready", account: signedOut } })]) {
+    assert.equal(client.needsRecheck(other), false);
+  }
+  assert.equal(client.needsRecheck(null), false);
+});
+
+test("the recheck triggers: when the card opens, at most every 15 s while it stays open, and the button, never with the card closed", () => {
+  assert.equal(client.RECHECK_INTERVAL_MS, 15_000);
+  const due = (extra) => client.recheckDue({ status: unavailable, open: true, trigger: "tick", lastAt: null, now: 100_000, ...extra });
+  assert.equal(due({ trigger: "open", lastAt: 99_999 }), true, "opening the card always looks again");
+  assert.equal(due({ trigger: "button", lastAt: 99_999 }), true, "Reintentar always looks again");
+  assert.equal(due({ trigger: "tick", lastAt: null }), true);
+  assert.equal(due({ trigger: "tick", lastAt: 100_000 - 14_999 }), false);
+  assert.equal(due({ trigger: "tick", lastAt: 100_000 - 15_000 }), true);
+  assert.equal(due({ open: false, trigger: "open" }), false);
+  assert.equal(due({ open: false, trigger: "tick" }), false);
+  assert.equal(due({ trigger: "tick", status: status({ engine: "codex", codex: { state: "ready", account: signedIn } }) }), false, "a working Codex is never rechecked");
+  assert.equal(due({ trigger: "open", status: null }), false);
+});
+
+test("the engine note offers Reintentar for an unavailable Codex and the hook posts to the guarded route and rechecks on the three triggers", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const note = await readFile(new URL("../app/chat/engine-note.tsx", import.meta.url), "utf8");
+  const hook = await readFile(new URL("../app/chat/use-engine.ts", import.meta.url), "utf8");
+  const mascot = await readFile(new URL("../app/mascot/mascot.tsx", import.meta.url), "utf8");
+  assert.match(note, /needsRecheck\(/);
+  assert.match(note, />\{?[^<]*Reintentar/);
+  assert.match(note, /engine\.recheck\(/);
+  assert.match(hook, /\/api\/codex\/recheck/);
+  assert.match(hook, /method: "POST"/);
+  assert.match(hook, /recheckDue\(/);
+  for (const trigger of ['"open"', '"tick"', '"button"']) assert.ok(hook.includes(trigger), trigger);
+  assert.match(hook, /RECHECK_INTERVAL_MS|setInterval/);
+  assert.match(mascot, /useEngine\(\{ chatOpen: win\.mode === "chat" \}\)/);
 });

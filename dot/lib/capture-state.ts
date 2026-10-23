@@ -66,13 +66,13 @@ export type MascotIndicatorView = {
   pause: { action: "pause" | "resume"; name: "Pausar" | "Reanudar"; glyph: "pause" | "play" } | null;
   listening: boolean;
   cancel: boolean;
-  /** What Claude Code is doing, from the companion's session list; needing the user wins over working. */
+  /** What Dot is doing for the user; needing the user wins over working. */
   agent: AgentLook;
-  /** Accessible name of the mascot: capture first, then Claude Code, then listening. */
+  /** Accessible name of the mascot: capture first, then what Dot is doing, then listening. */
   label: string;
 };
 
-const AGENT_TEXT: Record<AgentLook, string | null> = { idle: null, working: "Claude Code está trabajando", needs: "Claude Code te necesita" };
+const AGENT_TEXT: Record<AgentLook, string | null> = { idle: null, working: "Dot está trabajando", needs: "Dot te necesita" };
 
 export function mascotIndicator(indicator: CaptureIndicator, listening: boolean, agent: AgentLook = "idle"): MascotIndicatorView {
   const sharing = indicator === "live" || indicator === "paused";

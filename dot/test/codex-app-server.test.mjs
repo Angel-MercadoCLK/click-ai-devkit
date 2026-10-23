@@ -20,7 +20,7 @@ function manualTimers() {
 
 /** A fake `codex`: `--version` answers from `version`, `app-server` is a child the test drives line by line. */
 function fakeCodex({ version = "codex-cli 0.163.0\n", versionExit = 0, autoInitialize = true, startFails = false } = {}) {
-  const control = { autoInitialize };
+  const control = { autoInitialize, version, versionExit, startFails };
   const spawns = [];
   const servers = [];
   function child(kind) {
@@ -44,13 +44,13 @@ function fakeCodex({ version = "codex-cli 0.163.0\n", versionExit = 0, autoIniti
     };
   }
   const spawn = (executable, args, options) => {
-    if (startFails) throw new Error("ENOENT");
+    if (control.startFails) throw new Error("ENOENT");
     const isVersion = args.some((arg) => String(arg).includes("--version"));
     const proc = child(isVersion ? "version" : "server");
     const record = { executable, args, options, proc };
     spawns.push(record);
     if (isVersion) {
-      setImmediate(() => { proc.listeners.stdout?.(Buffer.from(version)); proc.listeners.close?.(versionExit); });
+      setImmediate(() => { proc.listeners.stdout?.(Buffer.from(control.version)); proc.listeners.close?.(control.versionExit); });
     } else {
       servers.push(record);
       {
@@ -85,21 +85,21 @@ function setup(options = {}, codexOptions = {}) {
 
 // Version ---------------------------------------------------------------------------------------------------------
 
-test("only codex 0.163.x is supported, from one pinned range constant", () => {
-  assert.equal(mod.CODEX_SUPPORTED_RANGE, ">=0.163.0 <0.164.0");
-  for (const ok of ["codex-cli 0.163.0", "codex-cli 0.163.7\n", "0.163.0"]) assert.equal(mod.isSupportedCodexVersion(ok), true, ok);
-  for (const bad of ["codex-cli 0.162.9", "codex-cli 0.164.0", "codex-cli 1.0.0", "codex-cli 0.163.0-alpha.1", "", "no version here"]) assert.equal(mod.isSupportedCodexVersion(bad), false, bad);
+test("codex 0.163.0 and anything newer is supported, from one pinned range constant", () => {
+  assert.equal(mod.CODEX_SUPPORTED_RANGE, ">=0.163.0");
+  for (const ok of ["codex-cli 0.163.0", "codex-cli 0.163.7\n", "0.163.0", "codex-cli 0.170.0", "codex-cli 0.164.2", "codex-cli 1.0.0", "codex-cli 0.164.0-alpha.1"]) assert.equal(mod.isSupportedCodexVersion(ok), true, ok);
+  for (const bad of ["codex-cli 0.162.9", "codex-cli 0.162.0", "codex-cli 0.145.0", "codex-cli 0.163.0-alpha.1", "", "no version here"]) assert.equal(mod.isSupportedCodexVersion(bad), false, bad);
 });
 
 test("an unsupported codex stops before app-server starts and says so in Spanish", async () => {
-  const { server, fake } = setup({}, { version: "codex-cli 0.164.2\n" });
+  const { server, fake } = setup({}, { version: "codex-cli 0.145.0\n" });
   const result = await server.start();
   assert.equal(result.ok, false);
   assert.equal(result.reason, "unsupported");
-  assert.equal(result.version, "0.164.2");
+  assert.equal(result.version, "0.145.0");
   assert.match(result.message, /Codex/);
-  assert.match(result.message, /0\.164\.2/);
-  assert.match(result.message, />=0\.163\.0 <0\.164\.0/);
+  assert.match(result.message, /0\.145\.0/);
+  assert.match(result.message, />=0\.163\.0/);
   assert.equal(fake.servers.length, 0);
   assert.equal(server.status().state, "unavailable");
 });
@@ -315,6 +315,109 @@ test("an answer to a request from a process that has since crashed is dropped, n
   release({ decision: "accept" });
   await settle();
   assert.equal(fresh.lines().some((message) => message.id === 0 && "result" in message), false, "the stale answer is dropped");
+});
+
+// Re-detection (S1) -----------------------------------------------------------------------------------------------
+
+const versionSpawns = (fake) => fake.spawns.filter((record) => record.args.some((arg) => String(arg).includes("--version"))).length;
+
+test("an update is noticed without restarting Dot: a recheck after an unsupported start finds the new version and starts", async () => {
+  const { server, fake } = setup({}, { version: "codex-cli 0.145.0\n" });
+  const first = await server.start();
+  assert.equal(first.reason, "unsupported");
+  assert.equal(server.status().state, "unavailable");
+
+  fake.control.version = "codex-cli 0.163.0\n";
+  const status = await server.recheck();
+  assert.equal(status.state, "ready");
+  assert.equal(status.version, "0.163.0");
+  assert.equal(server.status().state, "ready");
+  assert.equal(fake.servers.length, 1);
+  assert.deepEqual(fake.last().lines().map((m) => m.method), ["initialize", "initialized"]);
+});
+
+test("a recheck also recovers a codex that was missing, and one that gave up restarting", async () => {
+  const missing = setup({}, { startFails: true });
+  assert.equal((await missing.server.start()).reason, "missing");
+  missing.fake.control.startFails = false;
+  assert.equal((await missing.server.recheck()).state, "ready");
+
+  const crashed = setup();
+  await crashed.server.start();
+  crashed.fake.control.autoInitialize = false;
+  crashed.fake.last().exit(1);
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const [delay] = crashed.timers.msList();
+    if (delay === undefined) break;
+    crashed.timers.fire(delay);
+    await settle();
+    crashed.fake.last().exit(1);
+    await settle();
+  }
+  assert.equal(crashed.server.status().state, "unavailable");
+  crashed.fake.control.autoInitialize = true;
+  assert.equal((await crashed.server.recheck()).state, "ready");
+  assert.equal(crashed.server.status().restarts, 0);
+});
+
+test("a recheck that still finds an unsupported codex keeps the Spanish note and does not flicker through starting", async () => {
+  const { server, fake } = setup({}, { version: "codex-cli 0.145.0\n" });
+  await server.start();
+  const states = [];
+  server.onStatus((status) => states.push(status.state));
+  fake.control.version = "codex-cli 0.150.0\n";
+  const status = await server.recheck();
+  assert.equal(status.state, "unavailable");
+  assert.match(status.message, /0\.150\.0/);
+  assert.ok(!states.includes("starting"), `states: ${states.join(",")}`);
+});
+
+test("concurrent rechecks are coalesced into one detection", async () => {
+  const { server, fake } = setup({}, { version: "codex-cli 0.145.0\n" });
+  await server.start();
+  const before = versionSpawns(fake);
+  fake.control.version = "codex-cli 0.163.0\n";
+  const [a, b, c] = await Promise.all([server.recheck(), server.recheck(), server.recheck()]);
+  assert.equal(versionSpawns(fake) - before, 1);
+  assert.equal(fake.servers.length, 1);
+  assert.deepEqual([a.state, b.state, c.state], ["ready", "ready", "ready"]);
+});
+
+test("a recheck on a running codex does nothing, and after stop it never restarts the process", async () => {
+  const { server, fake } = setup();
+  await server.start();
+  const before = fake.spawns.length;
+  assert.equal((await server.recheck()).state, "ready");
+  assert.equal(fake.spawns.length, before);
+  fake.last().api.exitOnEnd = true;
+  await server.stop();
+  assert.equal((await server.recheck()).state, "stopped");
+  assert.equal(fake.spawns.length, before);
+});
+
+test("a codex newer than the generated protocol is tried; when the handshake fails the note says so in Spanish", async () => {
+  assert.equal(mod.CODEX_PROTOCOL_VERSION, "0.163.0");
+  const ok = setup({}, { version: "codex-cli 0.170.0\n" });
+  const worked = await ok.server.start();
+  assert.equal(worked.ok, true);
+  assert.equal(ok.server.status().version, "0.170.0");
+
+  const bad = setup({}, { version: "codex-cli 0.170.0\n", autoInitialize: false });
+  const failed = bad.server.start();
+  await settle();
+  bad.timers.fire(20_000);
+  const result = await failed;
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "failed");
+  assert.equal(result.message, "Tu versión de Codex (0.170.0) es más nueva que la que Dot conoce; no pudo conectarse. Actualiza Dot.");
+  assert.equal(bad.server.status().message, result.message);
+
+  const same = setup({}, { version: "codex-cli 0.163.0\n", autoInitialize: false });
+  const sameStart = same.server.start();
+  await settle();
+  same.timers.fire(20_000);
+  const sameResult = await sameStart;
+  assert.equal(sameResult.message, "Codex no pudo iniciarse. Dot usa su asistente integrado mientras tanto.");
 });
 
 // Crash and shutdown ----------------------------------------------------------------------------------------------

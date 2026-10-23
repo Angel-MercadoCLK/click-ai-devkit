@@ -1,5 +1,5 @@
 // The routes the chat card and the island use around the Codex engine (S1, S3, S5, S6): its status and sign-in, the chat
-// history (Codex threads), the background Claude Code tasks and the "Detener" of computer use. Every route has the same guard
+// history (Codex threads), what Dot is doing now (Codex turns and background Claude Code tasks) and the "Detener" of computer use. Every route has the same guard
 // as the other control routes: the exact local Host (and Origin for a write) and the per-launch control cookie.
 //
 // The handlers are built by `createEngineHandlers` so tests can supply the engine; the route files use the default set, which
@@ -121,14 +121,29 @@ export function createEngineHandlers(deps: EngineHandlerDeps = {}) {
       }
     },
 
-    /** GET /api/agent/activity: the background Claude Code tasks and whether Dot is using the computer now. */
+    /** POST /api/codex/recheck: look for Codex again (a new version, a fresh install) and answer the status, as GET status does. */
+    async recheck(request: Request): Promise<Response> {
+      if (!guarded(request, true)) return fail(403, "Request rejected.");
+      const found = engine();
+      if (found) {
+        try {
+          await found.recheck();
+        } catch {
+          // The status below says what is true now; the error text never reaches the page.
+        }
+      }
+      return ok(await engineStatus({ getEngine: engine, readTools: deps.readTools ?? readExternalTools, ...(deps.loginFlow ? { loginFlow: deps.loginFlow } : {}) }));
+    },
+
+    /** GET /api/agent/activity: what Dot is doing for the user: Codex chats with a turn running, the background Claude Code tasks and whether it is using the computer now. */
     async activity(request: Request): Promise<Response> {
       if (!guarded(request, false)) return fail(403, "Request rejected.");
       const found = engine();
-      const computer = found && found.status().state === "ready" ? found.activity().computerUse : undefined;
+      const live = found && found.status().state === "ready" ? found.activity() : undefined;
       return ok({
         tasks: (deps.readTasks ?? readClaudeTasks)(),
-        computerUse: { active: computer?.active ?? false, servers: computer?.servers ?? [] },
+        computerUse: { active: live?.computerUse.active ?? false, servers: live?.computerUse.servers ?? [] },
+        codexTurns: (live?.turns ?? []).map((turn) => ({ id: turn.threadId, title: turn.title, startedAt: turn.startedAt })),
       });
     },
 

@@ -1,8 +1,8 @@
-// One listener for the cursor events the desktop shell pushes, shared by every Lente on the page. The listener exists only
+// One listener for the cursor events the desktop shell pushes, shared by every Orbi on the page. The listener exists only
 // while something is subscribed, so a hidden or collapsed island keeps nothing running.
 
 import { CURSOR_EVENT } from "../../lib/cursor-feed.ts";
-import { readCursor, type Vec } from "./lente-motion.ts";
+import { readCursor, type Vec } from "./orbi-motion.ts";
 
 type Listener = (cursor: Vec) => void;
 

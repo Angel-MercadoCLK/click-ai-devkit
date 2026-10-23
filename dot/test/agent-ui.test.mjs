@@ -75,7 +75,7 @@ test("needing the user wins over working, and working wins over idle", () => {
   assert.equal(state.agentAttention(body({ sessions: [session()], pending: pending() })), "needs");
 });
 
-test("the indicator adds Claude Code to the mascot without touching the capture or listening parts", () => {
+test("the indicator adds what Dot is doing to the mascot without touching the capture or listening parts", () => {
   for (const indicator of ["live", "paused", "off", "unavailable"]) {
     for (const listening of [false, true]) {
       const before = captureState.mascotIndicator(indicator, listening);
@@ -91,20 +91,20 @@ test("the indicator adds Claude Code to the mascot without touching the capture 
   }
 });
 
-test("while sharing the screen, Claude Code needing the user never hides the capture ring, text or pause control", () => {
+test("while sharing the screen, Dot needing the user never hides the capture ring, text or pause control", () => {
   const view = captureState.mascotIndicator("live", false, "needs");
   assert.equal(view.ring, "live");
   assert.equal(view.sharingText, "Viendo tu pantalla");
   assert.deepEqual(view.pause, { action: "pause", name: "Pausar", glyph: "pause" });
   assert.ok(view.label.startsWith("Viendo tu pantalla"), "capture is named first");
-  assert.match(view.label, /Claude Code te necesita/);
+  assert.match(view.label, /Dot te necesita/);
   assert.match(captureState.mascotIndicator("off", true, "working").label, /Escuchando/);
 });
 
-test("the label names what Claude Code is doing, and the mascot alone still says Dot", () => {
+test("the label speaks for Dot, and the mascot alone still says Dot", () => {
   assert.equal(captureState.mascotIndicator("off", false, "idle").label, "Dot");
-  assert.equal(captureState.mascotIndicator("off", false, "working").label, "Claude Code está trabajando");
-  assert.equal(captureState.mascotIndicator("off", false, "needs").label, "Claude Code te necesita");
+  assert.equal(captureState.mascotIndicator("off", false, "working").label, "Dot está trabajando");
+  assert.equal(captureState.mascotIndicator("off", false, "needs").label, "Dot te necesita");
 });
 
 // --- window modes ----------------------------------------------------------------------------------------------

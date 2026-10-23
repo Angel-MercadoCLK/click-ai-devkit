@@ -4,15 +4,22 @@
 import { COMPUTER_USE_TEXT, type AgentAttention, type PendingView } from "../../lib/agent-state.ts";
 import type { AgentSessionView, SessionState } from "../../lib/agent-sessions.ts";
 import type { WindowMode } from "../../lib/window-mode.ts";
-import type { LenteState } from "./lente-look.ts";
+import type { ClaudeTaskView } from "../../lib/agent-state.ts";
+import type { OrbiState } from "./orbi-look.ts";
 
 const MAX_DOTS = 5;
 
-/** The character follows the agent: needing the user wins, then working (listening counts), then done. */
-export function lenteStateFor({ attention, listening, sessions }: { attention: AgentAttention; listening: boolean; sessions: readonly AgentSessionView[] }): LenteState {
-  if (attention === "needs") return "approval";
-  if (attention === "working" || listening) return "working";
-  return sessions.some((session) => session.state === "listo") ? "done" : "idle";
+/**
+ * Orbi follows what is going on: needing the user wins, then Voz listening, then an agent working, then a task that just
+ * failed, then something that just finished, then sleeping (after the long quiet) and idle otherwise. News always wakes it.
+ */
+export function orbiStateFor({ attention, listening, finished = false, failed = false, asleep = false }: { attention: AgentAttention; listening: boolean; finished?: boolean; failed?: boolean; asleep?: boolean }): OrbiState {
+  if (attention === "needs") return "needs";
+  if (listening) return "listening";
+  if (attention === "working") return "working";
+  if (failed) return "error";
+  if (finished) return "done";
+  return asleep ? "sleeping" : "idle";
 }
 
 /** Something is going on: an agent works or needs the user, the screen is shared, Voz listens, or a session just finished. */
@@ -87,16 +94,47 @@ export function compactLine({ sessions, pending, listening, finishedRecently, co
   return "Dot";
 }
 
-export function sessionCountLabel(count: number) {
-  if (count <= 0) return "";
-  return count === 1 ? "1 sesión" : `${count} sesiones`;
+const inProgress = (sessions: readonly AgentSessionView[]) => sessions.filter((session) => session.state !== "listo").length;
+
+/** The count beside the pill's line: how many things are in progress, nothing when none is. */
+export function activityCountLabel(sessions: readonly AgentSessionView[]) {
+  const running = inProgress(sessions);
+  return running === 0 ? "" : `${running} en curso`;
 }
 
 /** The right side of the expanded head. */
 export function inProgressLabel(sessions: readonly AgentSessionView[]) {
-  if (sessions.length === 0) return "Sin sesiones";
-  const running = sessions.filter((session) => session.state !== "listo").length;
+  if (sessions.length === 0) return "Todo tranquilo";
+  const running = inProgress(sessions);
   return running === 0 ? "Todo listo" : `${running} en curso`;
+}
+
+// The menu's "Actividad" -----------------------------------------------------------------------------------------
+
+export const ACTIVITY_TITLE = "Actividad";
+export const ACTIVITY_EMPTY = "Todo tranquilo. Pídele algo a Dot.";
+export const ACTIVITY_ASK = "Pedir algo a Dot";
+
+export type ActivitySource = "dot" | "claude-task" | "claude-code";
+
+/** Where an activity item comes from, by the id its list gives it: `codex:` for Dot's own chats, `task:` for background Claude tasks. */
+export function activitySource(item: Pick<AgentSessionView, "id">): ActivitySource {
+  if (item.id.startsWith("codex:")) return "dot";
+  return item.id.startsWith("task:") ? "claude-task" : "claude-code";
+}
+
+const SOURCE_LABELS: Record<ActivitySource, string> = { dot: "Dot", "claude-task": "Tarea en Claude Code", "claude-code": "Claude Code" };
+
+/** The small line that says whose item it is: Claude Code is named only on the items that are Claude's. */
+export const activitySourceLabel = (item: Pick<AgentSessionView, "id">) => SOURCE_LABELS[activitySource(item)];
+
+/**
+ * The island's accessible name: capture first, then what Dot is doing, then listening. Dot speaks for itself; Claude Code is
+ * named only when it is the one that needs you (a request from Codex or from one of Dot's tools is Dot's).
+ */
+export function islandLabel({ sharingText, attention, listening, pending }: { sharingText: string | null; attention: AgentAttention; listening: boolean; pending: Pick<PendingView, "kind"> | null }) {
+  const activity = attention === "working" ? "Dot está trabajando" : attention === "needs" ? (pending && pending.kind !== "claude-code" ? "Dot te necesita" : "Claude Code te necesita") : null;
+  return [sharingText, activity, listening ? "Escuchando…" : null].filter(Boolean).join(". ") || "Dot";
 }
 
 /** One dot per session (at most five), colored by its state. */
@@ -109,4 +147,14 @@ export const sessionStates = (sessions: readonly AgentSessionView[]): Record<str
 /** A session that was working (or needed the user) and is now ready is news. One the page first sees already finished is not. */
 export function newlyFinished(previous: Readonly<Record<string, SessionState>>, sessions: readonly AgentSessionView[]) {
   return sessions.some((session) => session.state === "listo" && (previous[session.id] === "trabajando" || previous[session.id] === "te necesita"));
+}
+
+const FAILED_TASKS: readonly ClaudeTaskView["state"][] = ["failed", "timed_out"];
+
+/** The background tasks by id and state, to tell later which one just failed. */
+export const taskStates = (tasks: readonly Pick<ClaudeTaskView, "id" | "state">[]): Record<string, ClaudeTaskView["state"]> => Object.fromEntries(tasks.map((task) => [task.id, task.state]));
+
+/** A task that was running and has now failed or timed out is a failure worth showing. Cancelled by the user is not, and neither is one first seen already failed. */
+export function newlyFailed(previous: Readonly<Record<string, ClaudeTaskView["state"]>>, tasks: readonly Pick<ClaudeTaskView, "id" | "state">[]) {
+  return tasks.some((task) => FAILED_TASKS.includes(task.state) && previous[task.id] === "running");
 }

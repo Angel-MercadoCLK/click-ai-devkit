@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { agentAttention, claudeTaskSessions, COMPUTER_USE_TEXT, mergeSessions } from "../../lib/agent-state.ts";
+import { activityList, agentAttention, COMPUTER_USE_TEXT } from "../../lib/agent-state.ts";
 import { chatGate } from "../../lib/engine-client.ts";
+import type { ClaudeTaskView } from "../../lib/agent-state.ts";
 import type { SessionState } from "../../lib/agent-sessions.ts";
 import { mascotIndicator } from "../../lib/capture-state.ts";
 import { nextMascotMode, type WindowMode } from "../../lib/window-mode.ts";
@@ -13,10 +14,11 @@ import { useEngine } from "../chat/use-engine";
 import { approvalKeyChoice } from "./agent-choices.ts";
 import { AgentCard } from "./agent-card";
 import { Icon } from "./icons";
-import { approvalTitle, compactLine, inProgressLabel, isActive, lenteStateFor, newlyFinished, raisedCardFor, restingMode, restingTarget, sessionCountLabel, sessionDots, sessionStates, settleMode, splitAction } from "./island-state.ts";
-import { Lente } from "./lente";
+import { ACTIVITY_ASK, ACTIVITY_EMPTY, ACTIVITY_TITLE, activityCountLabel, activitySourceLabel, approvalTitle, compactLine, inProgressLabel, isActive, islandLabel, newlyFailed, newlyFinished, orbiStateFor, raisedCardFor, restingMode, restingTarget, sessionDots, sessionStates, settleMode, splitAction, taskStates } from "./island-state.ts";
+import { Orbi } from "./orbi";
 import { useAgent } from "./use-agent";
 import { useCaptureView } from "./use-capture";
+import { useSleep } from "./use-sleep";
 import { useMascotWindow } from "./use-window";
 import { useVoice } from "./use-voice";
 import { voiceAvailability } from "./voice-result.ts";
@@ -46,11 +48,12 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   const win = useMascotWindow();
   const capture = useCaptureView();
   const agent = useAgent();
-  const engine = useEngine();
+  const engine = useEngine({ chatOpen: win.mode === "chat" });
   const [seed, setSeed] = useState<ChatSeed | null>(null);
   const [chatOpened, setChatOpened] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [finishedRecently, setFinishedRecently] = useState(false);
+  const [failedRecently, setFailedRecently] = useState(false);
   const { mode, setMode, hidden, morph, leaving } = win;
   const expanded = mode !== "collapsed" && mode !== "compact";
 
@@ -62,10 +65,10 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   });
 
   const { pending } = agent.state;
-  // The background Claude Code tasks Codex started show next to the Claude Code sessions.
+  // What Dot is doing for the user: Codex chats in progress, the background Claude Code tasks and the Claude Code sessions.
   const hookSessions = agent.state.sessions;
-  const tasks = agent.activity.tasks;
-  const sessions = useMemo(() => mergeSessions(hookSessions, claudeTaskSessions(tasks, Date.now())), [hookSessions, tasks]);
+  const { tasks, codexTurns } = agent.activity;
+  const sessions = useMemo(() => activityList({ sessions: hookSessions, tasks, codexTurns, now: Date.now() }), [hookSessions, tasks, codexTurns]);
   // While Dot controls Chrome or the mouse it says so, and the island is never at rest or hidden from it.
   const computerUse = agent.activity.computerUse.active;
   const pendingId = pending?.id ?? null;
@@ -74,12 +77,15 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   const attention = agentAttention({ ...agent.state, sessions });
   const view = mascotIndicator(indicator, voice.listening, attention);
   const { sharing } = view;
-  const active = isActive({ attention, sharing, listening: voice.listening, finishedRecently, computerUse });
+  const active = isActive({ attention, sharing, listening: voice.listening, finishedRecently: finishedRecently || failedRecently, computerUse });
+  // Orbi dozes off after about three minutes of nothing going on; the pointer on the island wakes it.
+  const { asleep, wake } = useSleep({ quiet: !active });
   // Something going on (an agent working, the screen shared, Voz listening) keeps the island as the pill, never as the resting strip.
   // Hidden by the user (tray: "Ocultar Dot"), the island is nothing at rest; only a shared screen still shows the pill.
   const resting = restingMode({ active, hovered, hidden, sharing: sharing || computerUse });
   const restingQuiet = restingMode({ active, hovered: false, hidden, sharing: sharing || computerUse });
-  const lenteState = lenteStateFor({ attention, listening: voice.listening, sessions });
+  const label = islandLabel({ sharingText: view.sharingText, attention, listening: voice.listening, pending });
+  const orbiState = orbiStateFor({ attention, listening: voice.listening, finished: finishedRecently, failed: failedRecently, asleep });
 
   // The mode the card interrupted, so the menu or the chat comes back once the request is over.
   const modeBeforeCard = useRef<WindowMode | null>(null);
@@ -145,10 +151,23 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
     finishedTimer.current = window.setTimeout(() => setFinishedRecently(false), FINISHED_MS);
   }, [sessions]);
 
+  // A background task that just failed is news too: Orbi looks worried for the same few seconds.
+  const knownTasks = useRef<Record<string, ClaudeTaskView["state"]>>({});
+  const failedTimer = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    const failed = newlyFailed(knownTasks.current, tasks);
+    knownTasks.current = taskStates(tasks);
+    if (!failed) return;
+    setFailedRecently(true);
+    window.clearTimeout(failedTimer.current);
+    failedTimer.current = window.setTimeout(() => setFailedRecently(false), FINISHED_MS);
+  }, [tasks]);
+
   const peekTimer = useRef<number | undefined>(undefined);
   useEffect(
     () => () => {
       window.clearTimeout(finishedTimer.current);
+      window.clearTimeout(failedTimer.current);
       window.clearTimeout(peekTimer.current);
     },
     [],
@@ -203,6 +222,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
 
   // Hovering the strip unfolds the pill; leaving it puts the strip back after a moment.
   const onPointerEnter = () => {
+    wake();
     window.clearTimeout(peekTimer.current);
     setHovered(true);
   };
@@ -214,7 +234,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
   const voiceChoice = voiceAvailability({ connected: auth.status === null ? null : auth.status.connected, listening: voice.listening });
   const pauseCapture = () => view.pause && void capture.act(view.pause.action);
   const dots = sessionDots(sessions);
-  const countLabel = sessionCountLabel(sessions.length);
+  const countLabel = activityCountLabel(sessions);
   const line = compactLine({ sessions, pending, listening: voice.listening, finishedRecently, computerUse });
   const sharingNow = view.sharing && view.pause;
 
@@ -230,6 +250,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
       data-leaving={leaving}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
+      onPointerMove={wake}
     >
       <div className="island" data-mode={mode} data-morph={morph.flip} data-grows={morph.grows} style={{ "--morph-x": `${morph.x}%`, "--morph-y": `${morph.y}%` } as React.CSSProperties}>
         <header className="island-head">
@@ -237,9 +258,9 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
             className="island-toggle"
             role="button"
             tabIndex={0}
-            aria-label={view.label}
+            aria-label={label}
             aria-expanded={expanded}
-            title={view.label}
+            title={label}
             onClick={toggle}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
@@ -250,7 +271,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
           >
             {mode === "compact" && (
               <>
-                <Lente state={lenteState} size={34} ring={view.ring} listening={voice.listening} />
+                <Orbi state={orbiState} size={34} ring={view.ring} />
                 <span className="island-line" title={line}>
                   <ActionText action={line} />
                 </span>
@@ -266,7 +287,7 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
           </div>
           {expanded && (
             <span className="island-title" data-needs={mode === "approval"}>
-              {mode === "chat" && <Lente state={lenteState} size={28} ring={view.ring} listening={voice.listening} />}
+              {mode === "chat" && <Orbi state={orbiState} size={28} ring={view.ring} />}
               {mode === "approval" && pending ? approvalTitle(pending) : "Dot"}
             </span>
           )}
@@ -299,11 +320,12 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
 
         {mode === "menu" && (
           <div className="island-body island-menu">
-            <section className="island-card island-sessions" aria-label="Estado de Dot">
-              <Lente state={lenteState} size={76} ring={view.ring} listening={voice.listening} />
+            <section className="island-card island-sessions" aria-label="Actividad de Dot">
+              <Orbi state={orbiState} size={92} ring={view.ring} />
               <div className="island-sessions-main">
+                <h2 className="island-section-title">{ACTIVITY_TITLE}</h2>
                 {sessions.length > 0 ? (
-                  <ul className="menu-sessions" aria-label="Sesiones de Claude Code">
+                  <ul className="menu-sessions" aria-label={ACTIVITY_TITLE}>
                     {sessions.map((session) => (
                       <li className="menu-session" key={session.id} data-state={SESSION_LOOK[session.state]}>
                         <span className="menu-session-head">
@@ -311,12 +333,18 @@ export function Mascot({ canonicalOrigin }: { canonicalOrigin: string }) {
                           <b>{session.project}</b>
                           <span className="menu-session-state">{session.state}</span>
                         </span>
-                        {session.action && <small title={session.action}><ActionText action={session.action} /></small>}
+                        <small title={session.action ?? undefined}>
+                          <span className="menu-session-source">{activitySourceLabel(session)}</span>
+                          {session.action && <> · <ActionText action={session.action} /></>}
+                        </small>
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <p className="island-empty">Sin sesiones de Claude Code. Dot te avisa cuando haya una.</p>
+                  <div className="island-empty-state">
+                    <p className="island-empty">{ACTIVITY_EMPTY}</p>
+                    <button className="island-ask" type="button" onClick={() => void setMode("chat")}>{ACTIVITY_ASK}</button>
+                  </div>
                 )}
               </div>
             </section>

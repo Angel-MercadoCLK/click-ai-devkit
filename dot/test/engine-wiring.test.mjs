@@ -39,12 +39,13 @@ test("the island keeps Dot's own sign-in label for the packaged smoke and adds C
   assert.match(mascot, /chatGate\(/);
 });
 
-test("the island shows 'Dot está usando tu equipo' with a Detener that stops Codex, and the menu lists the background tasks", async () => {
+test("the island shows 'Dot está usando tu equipo' with a Detener that stops Codex, and the Actividad lists the Codex chats and background tasks", async () => {
   const mascot = await read("app/mascot/mascot.tsx");
   const hook = await read("app/mascot/use-agent.ts");
   assert.match(mascot, /COMPUTER_USE_TEXT/);
   assert.match(mascot, /agent\.stopComputer\(\)/);
-  assert.match(mascot, /claudeTaskSessions\(/);
+  assert.match(mascot, /activityList\(/);
+  assert.match(mascot, /codexTurns/);
   assert.match(hook, /\/api\/agent\/activity/);
   assert.match(hook, /\/api\/codex\/stop/);
 });
